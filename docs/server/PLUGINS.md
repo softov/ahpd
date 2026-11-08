@@ -63,10 +63,9 @@ ahpd looks for a bare name in the configuration directory only. Use `ahpd plugin
 ```bash
 ahpd plugin update all          # every plugin
 ahpd plugin update @ahpd/agent-pi
-ahpd plugin update all --force  # one npm call per plugin, so one failure does not stop the rest
 ```
 
-Each plugin moves to its newest version whose `@ahpd/sdk` range fits this daemon. A plugin installed from a path, git or a URL is left as it is.
+Each plugin moves to its newest version whose `@ahpd/sdk` range fits this daemon, in an npm call of its own, so one npm cannot install stops no other, as VS Code updates each extension and answers each. A plugin with no version that fits is named and left as it is, and a plugin installed from a path, git or a URL is left as it is.
 
 ## Options
 
@@ -116,7 +115,7 @@ A spec is a package name or a path. A path is tried from the working directory, 
 
 ## Language
 
-A client that sends a `locale` reads the new session form and the plugins screen in that language. The host and each first-party plugin ship `pt` and `es`. A string with no translation shows in English. A client that changes its language connects again. See [Text in the client's language](../plugins/PLUGINS.md#text-in-the-client-s-language) to ship a catalog with a plugin.
+A client that sends a `locale` reads the new session form and the plugins screen in that language. The host and each first-party plugin ship `pt` and `es`. A string with no translation shows in English, and so does every string for a tag longer than 35 characters, which is read as no locale sent. A client that changes its language connects again. See [Text in the client's language](../plugins/PLUGINS.md#text-in-the-client-s-language) to ship a catalog with a plugin.
 
 ## Where a plugin keeps its records
 

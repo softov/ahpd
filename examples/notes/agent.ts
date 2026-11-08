@@ -43,8 +43,13 @@ import type { Agent, Bag, Listed, MessageAttachment, MessageFrom, Session, Start
  *   working tree's at the time somebody looked.
  */
 
-/** When a tool stops and waits for a person. */
-type Ask = 'writes' | 'always' | 'never';
+/**
+ * When a tool stops and waits for a person: VS Code's approvals levels
+ * (`AutoApproveLevel`, src/vs/platform/agentHost/common/agentHostSchema.ts L266
+ * at 6b68d3fe). Reading runs at every level, writing waits unless the level is
+ * `autoApprove`: this backend's one risky tool is the write.
+ */
+type AutoApprove = 'default' | 'assisted' | 'autoApprove';
 
 /**
  * Something the session is waiting on, by request id.
@@ -97,12 +102,12 @@ const nameOf = (said: string): string | undefined => {
   return one.endsWith('.md') ? one : `${one}.md`;
 };
 
-/** What the two commands do, said by the `ask` setting in force, since that decides which of them asks. */
-const helpOf = (ask: Ask): string => [
+/** What the two commands do, said by the `autoApprove` level in force, since that decides whether writing asks. */
+const helpOf = (level: AutoApprove): string => [
   'I keep notes in a directory. Two things I can do, typed or picked from the slash menu:',
   '',
-  `- \`read <name>\` - read one.${ask === 'always' ? ' I will ask before I do.' : ''} Leave the name out and I will ask which.`,
-  `- \`write <name> <text>\` - write one.${ask === 'never' ? '' : ' I will ask before I do.'}`,
+  '- `read <name>` - read one. Leave the name out and I will ask which.',
+  `- \`write <name> <text>\` - write one.${level === 'autoApprove' ? '' : ' I will ask before I do.'}`,
 ].join('\n');
 
 /**
@@ -155,18 +160,24 @@ export function notes(options: NotesOptions): Agent<Session> {
    */
   const schema = (): Bag => ({
     properties: {
-      ask: {
+      /*
+       * VS Code's approvals key, its name, words and levels, so a VS Code
+       * client draws its own control for it
+       * (src/vs/platform/agentHost/common/agentHostSchema.ts L387-L405 at
+       * 6b68d3fe).
+       */
+      autoApprove: {
         type: 'string',
-        title: 'Ask before',
-        description: 'Which tools stop and wait for you.',
-        enum: ['writes', 'always', 'never'],
-        enumLabels: ['Writes', 'Everything', 'Nothing'],
+        title: 'Approvals',
+        description: 'Tool approval behavior for this session',
+        enum: ['default', 'assisted', 'autoApprove'],
+        enumLabels: ['Manual permissions', 'Assisted permissions', 'Allow all'],
         enumDescriptions: [
-          'Reading runs; writing waits for you',
-          'Every tool waits for you',
-          'Nothing waits, which is what the difference looks like',
+          'Asks when approval settings don\'t apply',
+          'Evaluates risk before running tools',
+          'Runs tool calls without asking',
         ],
-        default: 'writes',
+        default: 'default',
         sessionMutable: true,
       },
       /*
@@ -187,7 +198,7 @@ export function notes(options: NotesOptions): Agent<Session> {
     },
   });
 
-  const defaults = (): Record<string, unknown> => ({ ask: 'writes', tone: 'plain' });
+  const defaults = (): Record<string, unknown> => ({ autoApprove: 'default', tone: 'plain' });
 
   /** Every note there is, newest name last. Missing directory means none yet. */
   const listNotes = async (): Promise<string[]> => {
@@ -392,14 +403,10 @@ export function notes(options: NotesOptions): Agent<Session> {
         call.status = allowed ? 'running' : 'cancelled';
         if (allowed) call.confirmed = 'user-action';
         else call.reason = 'denied';
-        // Said back, like every other action a client originates.
-        start.emit('chat', {
-          type: 'chat/toolCallConfirmed',
-          turnId: turn.id,
-          toolCallId: callId,
-          approved: allowed,
-          ...(allowed ? { confirmed: 'user-action' } : { reason: 'denied' }),
-        });
+        // The host has said the client's decision, as VS Code's host echoes a
+        // confirmation once and hands it to its agent
+        // (src/vs/platform/agentHost/node/agentSideEffects.ts L1878-L1904 at
+        // 6b68d3fe), so it is not said again here.
         if (!allowed) return false;
       }
 
@@ -547,7 +554,7 @@ export function notes(options: NotesOptions): Agent<Session> {
     /** What the line asked for, done. */
     const work = async (turn: Bag, text: string): Promise<void> => {
       const line = parse(text);
-      const policy = (settings.ask ?? 'writes') as Ask;
+      const policy = (settings.autoApprove ?? 'default') as AutoApprove;
 
       if (line.verb === 'help') {
         await responsePart(turn, helpOf(policy));
@@ -572,8 +579,7 @@ export function notes(options: NotesOptions): Agent<Session> {
           displayName: 'Read note',
           invocation: `Read ${file}`,
           input: file,
-          // Reading is the tool that does not ask, unless somebody set it to.
-          ...(policy === 'always' ? { confirmationTitle: `Read ${file}?` } : {}),
+          // Reading is the tool that does not ask.
           run: async () => {
             const held = await readFile(path, 'utf8');
             return held === '' ? `${file} is empty` : held;
@@ -588,8 +594,8 @@ export function notes(options: NotesOptions): Agent<Session> {
         displayName: 'Write note',
         invocation: `Write ${file}`,
         input: line.text === '' ? file : `${file}: ${line.text}`,
-        // Writing is the tool that asks, unless somebody set it not to.
-        ...(policy === 'never' ? {} : { confirmationTitle: `Write ${file}?` }),
+        // Writing is the tool that asks, unless the level is Allow all.
+        ...(policy === 'autoApprove' ? {} : { confirmationTitle: `Write ${file}?` }),
         edits: path,
         run: async () => {
           await mkdir(dir, { recursive: true });
@@ -735,11 +741,11 @@ export function notes(options: NotesOptions): Agent<Session> {
        * different things to go and fix.
        */
       setConfig: (key, value) => {
-        if (key !== 'ask') return `${key} is not a config key this backend takes`;
-        if (value !== 'writes' && value !== 'always' && value !== 'never') {
-          return `ask is one of writes, always or never - not ${String(value)}`;
+        if (key !== 'autoApprove') return `${key} is not a config key this backend takes`;
+        if (value !== 'default' && value !== 'assisted' && value !== 'autoApprove') {
+          return `autoApprove is one of default, assisted or autoApprove - not ${String(value)}`;
         }
-        settings.ask = value;
+        settings.autoApprove = value;
         return true;
       },
 

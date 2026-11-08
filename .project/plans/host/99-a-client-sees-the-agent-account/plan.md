@@ -104,7 +104,7 @@ The shape follows VS Code's `vscode.codexAccount`, so VS Code's window can read 
 - **Watch out for:**
   - Decision `a-role-refuses-at-the-dispatch-boundary.md` says the root state is never hidden, so the filter is an overlay as in `host.ts:570-593`.
   - The key for the Claude account is ahpd's own, because VS Code has a key for Codex only. Task 02 names it after `vscode.codexAccount`.
-  - Decision `root-config-declares-what-vscode-pushes-and-refuses-the-rest.md` governs a new root config key.
+  - Decision `root-config-declares-what-vscode-pushes-and-keeps-every-key.md` governs a new root config key.
   - The SDK `AccountInfo` type is from 0.3.278 in `node_modules`, and the range is `^0.3.301`. Read the installed type first.
 
 ## Final verification checklist

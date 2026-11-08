@@ -144,7 +144,7 @@ it('offers a mode beside the notes fields, as a real host does', async () => {
     snapshot: { state: { config?: { schema: { properties: Record<string, { title: string }> }; values: Record<string, unknown> } } };
   };
   const config = opened.snapshot.state.config;
-  expect(Object.keys(config?.schema.properties ?? {})).toEqual(expect.arrayContaining(['mode', 'ask', 'tone']));
+  expect(Object.keys(config?.schema.properties ?? {})).toEqual(expect.arrayContaining(['mode', 'autoApprove', 'tone']));
   expect(config?.schema.properties.mode?.title).toBe('Agent Mode');
   expect(config?.values.mode).toBe('interactive');
 });

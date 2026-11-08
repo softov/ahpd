@@ -42,9 +42,10 @@ export interface Logins {
    * Put a new CLI on `turn`'s conversation, cut where `cut` says, on `login`.
    *
    * `started` is false when the session closed while the conversation was
-   * deleted; `failed` is why a conversation could not be started over.
+   * deleted, and when the new CLI did not start, which `unstarted` says in the
+   * SDK's words; `failed` is why a conversation could not be started over.
    */
-  restartAt: (turn: string, cut: Cut, login: Login | undefined) => Promise<{ started: boolean; failed?: string }>;
+  restartAt: (turn: string, cut: Cut, login: Login | undefined) => Promise<{ started: boolean; failed?: string; unstarted?: string }>;
   /** The words the running turn ends with, for a failure of its login that it did not show. */
   failure: () => string | undefined;
   /**
@@ -194,7 +195,7 @@ export function createLogins(ctx: SessionContext): Logins {
    * Where a failed turn is cut back to, or nothing when it cannot be.
    *
    * The last turn before it that ran on the CLI, skipping `!` commands, which
-   * the CLI never saw. Its entry in `ends` is where a rewind cuts. A turn read
+   * the CLI never saw. Its fork anchor is where a rewind cuts. A turn read
    * back after a restart has an entry only once the backend records one at the
    * transcript read, and a turn with none cannot be cut back to: the turn ends
    * with its failure rather than run again on a conversation that still holds
@@ -206,10 +207,10 @@ export function createLogins(ctx: SessionContext): Logins {
     for (let i = ctx.turns.length - 1; i >= 0; i--) {
       const turn = bag(ctx.turns[i]);
       if (isCommand(turn)) continue;
-      const at = ctx.ends.get(String(turn.id));
+      const at = ctx.forkAnchorUuids.get(String(turn.id));
       return at === undefined ? undefined : { at };
     }
-    if (ctx.options.resume !== undefined || ctx.options.spawn !== undefined) return undefined;
+    if ((ctx.options.resume !== undefined && !ctx.unwritten) || ctx.options.spawn !== undefined) return undefined;
     return { over: true };
   };
 
@@ -300,16 +301,18 @@ export function createLogins(ctx: SessionContext): Logins {
    * Cut back to the end of the turn before it, as a rewind cuts, so the failed
    * prompt is not in the conversation the new CLI resumes; or, for a
    * conversation's first turn, started over under its id. The conversation's
-   * entry for this turn goes with the cut or the delete, so it is taken out of
-   * `ends`. The turn's prompt is left to the caller to send.
+   * entry for this turn goes with the cut or the delete, so its fork anchor is
+   * taken out. The turn's prompt is left to the caller to send.
    *
    * A conversation whose delete fails still holds the failed prompt and its
    * reply. It comes back as it is, on the new login, and `failed` says why, for
    * a caller that ends the turn with the failure; the reply stays its last
    * entry. `started` is false when the session closed while the delete ran,
-   * which starts no CLI that nothing would close.
+   * which starts no CLI that nothing would close, and when the new CLI did not
+   * start, whose reason in the SDK's words `unstarted` carries for the caller
+   * to end the turn with, the CLI it replaced held for the next send.
    */
-  const restartAt = async (turn: string, cut: Cut, login: Login | undefined): Promise<{ started: boolean; failed?: string }> => {
+  const restartAt = async (turn: string, cut: Cut, login: Login | undefined): Promise<{ started: boolean; failed?: string; unstarted?: string }> => {
     const was = ctx.query;
     let failed: string | undefined;
     closing = was;
@@ -319,18 +322,21 @@ export function createLogins(ctx: SessionContext): Logins {
       ctx.login = login;
       if (cut.over === true) {
         // Stopped before the delete, so nothing writes the conversation back.
-        await (was as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
-        if (ctx.agentId !== undefined) {
-          failed = await forgetSession(ctx.agentId, ctx.options.cwd).then(() => undefined, reason);
+        await (was as unknown as { [Symbol.asyncDispose]?: () => Promise<void> } | undefined)?.[Symbol.asyncDispose]?.();
+        if (ctx.sdkSessionId !== undefined) {
+          failed = await forgetSession(ctx.sdkSessionId, ctx.options.cwd).then(() => undefined, reason);
         }
-        if (ctx.closed) return { started: false, ...(failed === undefined ? {} : { failed }) };
+        if (ctx.disposed) return { started: false, ...(failed === undefined ? {} : { failed }) };
       }
-      if (failed === undefined) ctx.ends.delete(turn);
-      ctx.gone = undefined;
-      ctx.query = cut.over !== true
-        ? ctx.startQuery(ctx.running, false, cut.at)
-        : ctx.startQuery(ctx.running, failed === undefined);
-      void ctx.consume();
+      if (failed === undefined) ctx.forkAnchorUuids.delete(turn);
+      try {
+        if (cut.over !== true) await ctx.startQuery(ctx.appliedAgent, false, cut.at);
+        else await ctx.startQuery(ctx.appliedAgent, failed === undefined);
+      }
+      catch (error: unknown) {
+        if (was !== undefined) ctx.rebind = was;
+        return { started: false, unstarted: reason(error) };
+      }
       return { started: true, ...(failed === undefined ? {} : { failed }) };
     }
     finally {
@@ -347,10 +353,22 @@ export function createLogins(ctx: SessionContext): Logins {
     const held = move;
     const turn = ctx.active;
     if (held === undefined || turn === undefined || held.turn !== String(turn.id)) return;
-    // The steering messages the CLI owes the turn an answer to, which it takes
-    // with it when it is put away.
-    const steers = [...ctx.owed.values()].filter((owed) => owed.steering && owed.turn === held.turn);
+    // The turn's steering messages still in the queue, handed or not, which the
+    // CLI takes with it when it is put away.
+    const steers = [...ctx.yielded.values(), ...ctx.toYield]
+      .filter((pending) => pending.steeringPendingId !== undefined && pending.turnId === held.turn);
+    // They go to the new CLI behind the turn's prompt, each under a new uuid.
+    for (const one of steers) {
+      const at = ctx.toYield.indexOf(one);
+      if (at >= 0) ctx.toYield.splice(at, 1);
+    }
     const restarted = await restartAt(held.turn, held, login);
+    // A CLI that did not start ends the turn in the SDK's words.
+    if (restarted.unstarted !== undefined && !ctx.disposed) {
+      move = undefined;
+      ctx.failTurn(restarted.unstarted);
+      return;
+    }
     // A session closed while its conversation was deleted starts nothing.
     if (!restarted.started) return;
     // A turn stopped while its conversation was deleted keeps the new CLI and

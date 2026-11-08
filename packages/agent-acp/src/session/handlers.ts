@@ -9,7 +9,6 @@ import type {
   CreateTerminalResponse,
   KillTerminalRequest,
   KillTerminalResponse,
-  PermissionOption,
   PermissionOptionKind,
   ReadTextFileRequest,
   ReadTextFileResponse,
@@ -19,33 +18,25 @@ import type {
   SessionUpdate,
   TerminalOutputRequest,
   TerminalOutputResponse,
+  ToolKind,
   WaitForTerminalExitRequest,
   WaitForTerminalExitResponse,
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import { hostPathOf, str } from '@ahpd/sdk';
-import type { Bag, BackgroundTask, BoundTool, OpenTerminal, Session } from '@ahpd/sdk';
+import { hostPathOf, str, withSkillArgumentHintMeta } from '@ahpd/sdk';
+import type { Bag, BackgroundTask, OpenTerminal, PendingConfirmation, PermissionKind, Session } from '@ahpd/sdk';
 import { callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
-import type { PermissionAnswer } from '../types.js';
-import { TOOL_USE_ID } from './clientcalls.js';
+import type { AcpTurn, PermissionAnswer } from '../types.js';
 import { messageIdOf } from '../transcript.js';
 import { bag } from './common.js';
-import { HOST_TOOLS, machineIdOf } from './opening.js';
+import { machineIdOf } from './opening.js';
 import type { HeldTerminal, SessionContext } from './context.js';
 
 /** Everything the server sends this session: its updates, its requests and the answers to them. */
 export interface Handlers {
   sessionUpdate(sessionId: string, update: SessionUpdate): void;
   requestPermission(request: RequestPermissionRequest): Promise<PermissionAnswer>;
-  /**
-   * Whether a tool the host serves may run, asked before the tools server runs
-   * it.
-   *
-   * The agent calls that server directly, so this is the one place a question
-   * about such a call can be put before the tool has already done its work.
-   */
-  askTool(tool: BoundTool, input: Record<string, unknown>, meta: Record<string, unknown> | undefined): Promise<boolean>;
   askElicitation(request: CreateElicitationRequest, signal?: AbortSignal): Promise<CreateElicitationResponse>;
   heardElicitationComplete(notification: CompleteElicitationNotification): void;
   answerElicitation(requestId: string, accepted: boolean, answers: Bag, response?: 'accept' | 'decline' | 'cancel'): boolean;
@@ -70,26 +61,23 @@ export interface Handlers {
 }
 
 /**
- * The name the operator's rule matches a tool call by.
- *
- * A tool of an MCP server is `mcp__<server>__<tool>` on the wire, and a rule
- * names it `<server>/<tool>`, as VS Code does. Everything else is its own name.
+ * What each kind of call an ACP server asks about does, in VS Code's
+ * permission kinds, as VS Code's Claude table rows its tools: running a
+ * command a shell's, reading and searching a read's, editing, deleting and
+ * moving a write's, and fetching a URL's. Any other kind is an MCP server's
+ * tool by its `mcp__` name, and else a custom tool, as VS Code's
+ * `getClaudePermissionKind` falls back.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L134
  */
-const referenceName = (toolName: string): string => {
-  const named = /^mcp__(.+?)__(.+)$/.exec(toolName);
-  return named === null ? toolName : `${named[1]}/${named[2]}`;
+const PERMISSION_KINDS: Readonly<Partial<Record<ToolKind, PermissionKind>>> = {
+  execute: 'shell',
+  read: 'read',
+  search: 'read',
+  edit: 'write',
+  delete: 'write',
+  move: 'write',
+  fetch: 'url',
 };
-
-/**
- * A permission request's options less the ones that would keep an answer.
- *
- * A rule that makes a tool ask every time leaves a person nothing to keep, so
- * the "always" choices a server offered are left out of what the card draws. A
- * server offering no once option of a kind then leaves that answer `cancelled`,
- * which is the rule's own answer rather than an "always" the person never gave.
- */
-const onlyOnce = (options: readonly PermissionOption[]): PermissionOption[] =>
-  options.filter((one) => one.kind === 'allow_once' || one.kind === 'reject_once');
 
 export function createHandlers(ctx: SessionContext): Handlers {
   const { emit, provider, start, cwd, seeds, replay, permissions, terminals, elicitations } = ctx;
@@ -101,20 +89,22 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * the commands its runtime reports and as the spec classes a slash command:
    * a skill whose URI is the `agent-builtin:` one VS Code mints for a skill no
    * file stands behind, its id that URI. The input hint is carried as an
-   * argument hint, which is what a composer puts beside the name, under
-   * `_meta['ahpd.argumentHint']`: `SkillCustomization` declares `description`
-   * and no argument hint.
+   * argument hint, which is what a composer puts beside the name, under the
+   * `_meta` key VS Code's host publishes a skill's hint under:
+   * `SkillCustomization` declares `description` and no argument hint.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeBuiltinCommands.ts#L90-L123
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/skillCustomizationMeta.ts#L8-L26
    */
   const commandLeaf = (command: AvailableCommand): Bag => {
     const uri = `agent-builtin:/skill/${encodeURIComponent(command.name)}`;
+    const meta = withSkillArgumentHintMeta(undefined, command.input?.hint);
     return {
       type: 'skill',
       id: uri,
       uri,
       name: command.name,
       ...(command.description === '' ? {} : { description: command.description }),
-      ...(command.input === null || command.input === undefined ? {} : { _meta: { 'ahpd.argumentHint': command.input.hint } }),
+      ...(meta === undefined ? {} : { _meta: meta }),
     };
   };
 
@@ -259,7 +249,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
     }
     if (update.sessionUpdate === 'config_option_update') {
       ctx.configOptionsChanged(update.configOptions);
-      ctx.learnConfigOptions(update.configOptions);
       return;
     }
     if (update.sessionUpdate === 'available_commands_update') {
@@ -280,6 +269,95 @@ export function createHandlers(ctx: SessionContext): Handlers {
       return;
     }
     /*
+     * A chunk that carries bytes waits for the host to keep them, and every
+     * update after it waits behind it, so the parts keep the order the server
+     * wrote them in.
+     */
+    const held = bytesOf(update);
+    if (held === undefined && ctx.waiting === 0) {
+      heard(update, at, current);
+      return;
+    }
+    ctx.waiting += 1;
+    ctx.keeping = ctx.keeping.then(async () => {
+      const kept = held === undefined ? update : await keep(update, held, current?.turnId ?? 'load');
+      ctx.waiting -= 1;
+      if (kept !== undefined) heard(kept, at, current);
+    });
+  };
+
+  /**
+   * The bytes a message or thought chunk carries, with the name and the type
+   * the host keeps them under: the data of an image with no source and of
+   * audio, and an embedded resource's text or blob. Nothing for any other
+   * update, an image that names its source being said by it.
+   */
+  const bytesOf = (update: SessionUpdate): { name: string; contentType: string; bytes: Uint8Array } | undefined => {
+    if (update.sessionUpdate !== 'agent_message_chunk' && update.sessionUpdate !== 'agent_thought_chunk') return undefined;
+    const content = update.content;
+    if (content.type === 'image') {
+      if (typeof content.uri === 'string' && content.uri !== '') return undefined;
+      return { name: 'image', contentType: content.mimeType, bytes: Buffer.from(content.data, 'base64') };
+    }
+    if (content.type === 'audio') return { name: 'audio', contentType: content.mimeType, bytes: Buffer.from(content.data, 'base64') };
+    if (content.type !== 'resource') return undefined;
+    const resource = content.resource;
+    return 'text' in resource
+      ? { name: shownAs(resource.uri, 'resource'), contentType: resource.mimeType ?? 'text/plain', bytes: Buffer.from(resource.text, 'utf8') }
+      : { name: shownAs(resource.uri, 'resource'), contentType: resource.mimeType ?? 'application/octet-stream', bytes: Buffer.from(resource.blob, 'base64') };
+  };
+
+  /** The last segment of a URI, a name a person reads content by, or `fallback`. */
+  const shownAs = (uri: string | undefined, fallback: string): string => {
+    const last = uri?.split(/[/\\]/).filter((one) => one !== '').pop();
+    return last === undefined || last === '' ? fallback : last;
+  };
+
+  /**
+   * A chunk whose bytes the host kept, naming the reference the host answered
+   * as a link to it, as VS Code's host keeps an embedded resource before it
+   * publishes a reference to it. An embedded resource the host kept nothing of
+   * keeps its own URI, and an image or audio is left out.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L148-L183
+   */
+  const keep = async (
+    update: SessionUpdate,
+    held: { name: string; contentType: string; bytes: Uint8Array },
+    turnId: string,
+  ): Promise<SessionUpdate | undefined> => {
+    if (update.sessionUpdate !== 'agent_message_chunk' && update.sessionUpdate !== 'agent_thought_chunk') return update;
+    ctx.keptCount += 1;
+    const ref = await start.storeToolResultResource?.({
+      turnId,
+      toolCallId: `${turnId}:content-${String(ctx.keptCount)}`,
+      ordinal: 0,
+      name: held.name,
+      contentType: held.contentType,
+      bytes: held.bytes,
+    }).catch(() => undefined);
+    if (ref !== undefined) {
+      return {
+        ...update,
+        content: {
+          type: 'resource_link',
+          uri: ref.uri,
+          name: held.name,
+          ...(ref.contentType === undefined ? {} : { mimeType: ref.contentType }),
+          ...(ref.sizeHint === undefined ? {} : { size: ref.sizeHint }),
+        },
+      };
+    }
+    return update.content.type === 'resource' ? update : undefined;
+  };
+
+  /**
+   * One update that belongs to a turn or to a load's replay, as it came or as
+   * the host's keeping rewrote it: into the replay while a load runs, else
+   * into the turn that was running when it arrived, and nowhere once that
+   * turn has gone.
+   */
+  const heard = (update: SessionUpdate, at: number, current: AcpTurn | undefined): void => {
+    /*
      * While the session is opening, everything the server sends is the load's
      * replay.
      *
@@ -293,7 +371,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       replay.push(update);
       return;
     }
-    if (current === undefined) return;
+    if (current === undefined || ctx.mapping !== current) return;
     const messageId = messageIdOf(update);
     if (current.prompted === true && current.recordedMessageId === undefined && messageId !== undefined) {
       current.recordedMessageId = messageId;
@@ -507,57 +585,32 @@ export function createHandlers(ctx: SessionContext): Handlers {
   };
 
   /**
-   * A permission the server is blocked on, put to a person.
+   * A permission the server is blocked on, put to the host as a question.
    *
-   * Every option the server lists is offered on the call, approvals before
-   * refusals, and the one the person picks is the one the server is sent. An
-   * answer that picked none selects the server's `allow_once` or
-   * `reject_once` - never an `always`, which would change this session's
-   * policy from a single answer - and a server with no once option of that
-   * kind is answered `cancelled`, because selecting an `always` is a decision
-   * the person did not make.
+   * The question says what the call asks to do, for the host's chain to decide
+   * it by, as VS Code's agents raise a pending confirmation: its kind by the
+   * call's ACP kind, the path a read or a write names first among its
+   * locations, the URL a fetch's input names, and a command's line, read as
+   * bash, this host's reading of the line codex-acp sends as
+   * `rawInput.command`. It offers no options of its own, so the host puts
+   * VS Code's, save a mode switch's, whose options are the switch's own
+   * buttons, as VS Code's Claude agent puts its plan's approve and deny.
    *
-   * A tool the operator's rule names is the exception: its question offers the
-   * once options alone, so the card has nothing on it that would keep an
-   * answer. ACP's `requestPermission`.
+   * The server is answered once, whatever the host keeps, as VS Code's agents
+   * answer their runtimes: its `allow_once` or `reject_once`, and `cancelled`
+   * where it offered no once option of that kind, selecting an `always` being
+   * a decision the person did not make; a mode switch's button the person
+   * picked is sent as itself. ACP's `requestPermission`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L32-L47
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8640
    */
   const requestPermission = async (request: RequestPermissionRequest): Promise<PermissionAnswer> => {
     const option = (kind: PermissionOptionKind): string | undefined =>
       request.options.find((one) => one.kind === kind)?.optionId;
     const allow = option('allow_once');
     const reject = option('reject_once');
-    /*
-     * The rule, read before the server's own options.
-     *
-     * A tool the rule names is one a person answers on every call, so the
-     * "always" choices the server offered are not put to them and a remembered
-     * one never applies. Read without an await, because the question has to be
-     * on the session before an update that arrives behind this request can
-     * ready the call itself.
-     */
     const called = request.toolCall.name ?? request.toolCall.title ?? request.toolCall.toolCallId;
-    const matched = start.getAutoApproval?.('tool', referenceName(called)) === 'ask';
-    /*
-     * A shell command the owner's rules already allow.
-     *
-     * An ACP server asks about a command as a call of kind `execute`, and
-     * codex-acp 1.13.1 sends the line as `rawInput.command` beside its folder.
-     * The host answers from the rules the window that started this session
-     * pushed, and only an approval reaches here: a rule that denied it and a
-     * line no rule could read both answer nothing, and the question is put as
-     * it always was. The server's `allow_once` is selected rather than an
-     * "always", which would change this session's policy from one command;
-     * a server offering no `allow_once` is not answered by the check at all.
-     *
-     * A call the rule names is not the shell check's: the rule wins over every
-     * terminal allow, so its question is put anyway.
-     */
-    if (!matched && request.toolCall.kind === 'execute') {
-      const command = str(bag(request.toolCall.rawInput).command);
-      if (command !== undefined && (await start.getAutoApproval?.('shell', command, 'bash')) === 'not-needed') {
-        if (allow !== undefined) return { optionId: allow };
-      }
-    }
     /*
      * A question with no turn running is one nobody can be shown: the chat has
      * no turn to hold the call. It is refused at once, as VS Code's host
@@ -568,9 +621,20 @@ export function createHandlers(ctx: SessionContext): Handlers {
       ctx.options.log?.(`${ctx.provider}: refusing a permission with no turn running: ${request.toolCall.toolCallId}`);
       return 'cancelled';
     }
-    const offered = confirmationOptions(matched ? onlyOnce(request.options) : request.options);
+    const offered = request.toolCall.kind === 'switch_mode' ? confirmationOptions(request.options) : [];
     const toolCallId = request.toolCall.toolCallId;
     const requestId = `${toolCallId}:permission`;
+    const raw = bag(request.toolCall.rawInput);
+    const permissionKind = PERMISSION_KINDS[request.toolCall.kind ?? 'other'] ?? (called.startsWith('mcp__') ? 'mcp' : 'custom-tool');
+    const path = request.toolCall.locations?.[0]?.path;
+    const url = str(raw.url);
+    const line = str(raw.command);
+    const confirmation: PendingConfirmation = {
+      permissionKind,
+      ...((permissionKind === 'read' || permissionKind === 'write') && path !== undefined ? { permissionPath: path } : {}),
+      ...(permissionKind === 'url' && url !== undefined ? { permissionUrl: url } : {}),
+      ...(permissionKind === 'shell' && line !== undefined ? { shellCommand: line, shellLanguage: 'bash' as const } : {}),
+    };
 
     const answered = new Promise<PermissionAnswer>((resolve) => {
       permissions.set(toolCallId, {
@@ -578,6 +642,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
         ...(allow === undefined ? {} : { allow }),
         ...(reject === undefined ? {} : { reject }),
         offered,
+        readied: ctx.mapping?.calls.get(toolCallId)?.readied === true,
         settle: resolve,
       });
     });
@@ -591,13 +656,15 @@ export function createHandlers(ctx: SessionContext): Handlers {
      */
     const turnId = ctx.mapping?.turnId ?? '';
     // Which client's tool the question is about, read the way the mapping reads
-    // a reported call: the name it gave, and the title only when it named none.
-    const owner = ctx.ownerOf(request.toolCall.name ?? undefined, request.toolCall.title ?? toolCallId);
-    const contributor: Bag = owner === undefined ? {} : { contributor: { kind: 'client', clientId: owner } };
+    // a reported call: the name it gave, and the title only when it named none;
+    // a client's call named by the tool the client announced, as the mapping
+    // names one.
+    const tool = ctx.clientToolOf(request.toolCall.name ?? undefined, request.toolCall.title ?? toolCallId);
+    const contributor: Bag = tool === undefined ? {} : { contributor: { kind: 'client', clientId: tool.owner } };
     const existing = ctx.mapping === undefined ? undefined : callPartOf(ctx.mapping, toolCallId);
     const call = existing === undefined ? {
       toolCallId,
-      toolName: request.toolCall.name ?? request.toolCall.title ?? toolCallId,
+      toolName: tool?.name ?? request.toolCall.name ?? request.toolCall.title ?? toolCallId,
       displayName: request.toolCall.title ?? request.toolCall.name ?? toolCallId,
       ...(request.toolCall.rawInput === undefined ? {} : { toolInput: JSON.stringify(request.toolCall.rawInput) }),
     } as Bag : bag(bag(existing).toolCall);
@@ -649,7 +716,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
         displayName: String(call.displayName),
         readied: true,
         asked: true,
-        ...(owner === undefined ? {} : { owner }),
+        ...(tool === undefined ? {} : { contributor: tool.owner }),
       });
     }
     emit('chat', {
@@ -658,64 +725,13 @@ export function createHandlers(ctx: SessionContext): Handlers {
       ...(call.toolInput === undefined ? {} : { toolInput: call.toolInput }),
       confirmationTitle: call.confirmationTitle,
       ...(offered.length > 0 ? { options: offered } : {}),
+      ...confirmation,
     });
-    emit('session', {
-      type: 'session/inputNeededSet',
-      request: { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: { ...call } },
-    });
+    const entry: Bag = { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: { ...call } };
+    const held = permissions.get(toolCallId);
+    if (held !== undefined) held.entry = entry;
+    emit('session', { type: 'session/inputNeededSet', request: entry });
     return answered;
-  };
-
-  /**
-   * Whether a tool the host serves may run, asked by the tools server first.
-   *
-   * The agent calls the host's tools over the MCP server this session handed
-   * it, so the call never passes through this bridge and the server has to be
-   * the one that asks. A tool the rule does not name answers at once, which is
-   * every call in a session with no rule.
-   *
-   * A tool it names is asked about on the call the agent reported for it, as
-   * VS Code's host asks on the agent's own call, which then runs and
-   * completes: the call the request names in its `_meta`, and otherwise the
-   * latest call of the running turn that names this tool as the host offers
-   * it, with one approval and one refusal and nothing to keep, and the MCP
-   * call held on the person's answer. A call a person has answered for
-   * already, on the agent's own question, runs on that answer. A call the
-   * agent never reported is one no client draws a question on, and is
-   * refused.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1770-L1790
-   */
-  const askTool = async (tool: BoundTool, input: Record<string, unknown>, meta: Record<string, unknown> | undefined): Promise<boolean> => {
-    const name = tool.definition.name;
-    if (start.getAutoApproval?.('tool', `${HOST_TOOLS}/${name}`) !== 'ask') return true;
-    const calls = [...(ctx.mapping?.calls.values() ?? [])];
-    const reported = calls.find((call) => call.toolCallId === meta?.[TOOL_USE_ID])
-      ?? calls.findLast((call) => (call.owner === undefined
-        ? [call.toolName, call.displayName].some((one) => referenceName(one) === `${HOST_TOOLS}/${name}`)
-        : `${call.owner}__${call.toolName}` === name));
-    if (reported === undefined || ctx.mapping === undefined) {
-      ctx.options.log?.(`${provider}: refusing ${HOST_TOOLS}/${name}: the agent reported no call for it to ask on`);
-      return false;
-    }
-    if (reported.asked) {
-      return bag(bag(callPartOf(ctx.mapping, reported.toolCallId)).toolCall).confirmed === 'user-action';
-    }
-    const answered = await requestPermission({
-      sessionId: ctx.acpSessionId ?? '',
-      toolCall: {
-        toolCallId: reported.toolCallId,
-        title: reported.displayName,
-        name: reported.toolName,
-        kind: 'other',
-        status: 'pending',
-        rawInput: input,
-      },
-      options: [
-        { optionId: 'approve', name: 'Approve', kind: 'allow_once' },
-        { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
-      ],
-    });
-    return answered !== 'cancelled' && answered.optionId === 'approve';
   };
 
   /** How many forms this session has asked for, for the ones with no name of their own. */
@@ -792,21 +808,20 @@ export function createHandlers(ctx: SessionContext): Handlers {
       ...(page === undefined ? {} : { url: page.url }),
       ...(questions.length === 0 ? {} : { questions }),
     };
+    // The chat input entry, which is the one kind of input request that names
+    // no turn: a question stands on the chat rather than in the turn that
+    // happened to be running when the server asked it.
+    const entry: Bag = { id, chat: start.chatUri, kind: 'chatInput', request: asking };
     const answered = new Promise<CreateElicitationResponse>((resolve) => {
       elicitations.set(id, {
         fields: new Set(questions.map((one) => String(one.id))),
         typed: typedOf(held.requestedSchema),
+        entry,
         settle: resolve,
       });
     });
     emit('chat', { type: 'chat/inputRequested', request: asking });
-    // The chat input entry, which is the one kind of input request that names
-    // no turn: a question stands on the chat rather than in the turn that
-    // happened to be running when the server asked it.
-    emit('session', {
-      type: 'session/inputNeededSet',
-      request: { id, chat: start.chatUri, kind: 'chatInput', request: asking },
-    });
+    emit('session', { type: 'session/inputNeededSet', request: entry });
     /*
      * The question the server takes back.
      *
@@ -839,11 +854,10 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * False when nothing here is waiting on that id, which the host reads as an
    * answer to something this session never asked.
    *
-   * `response` is the kind the client sent, where it sent one: a cancel is
-   * answered `cancel`, and every other refusal is a decline. The two are not
-   * the same thing to say to a server - a decline is somebody saying no, a
-   * cancel is nobody having been asked - and a client that named no kind is
-   * answered by the boolean it did send.
+   * `response` is the kind the client sent: a decline is answered `decline`,
+   * somebody saying no, and every other refusal `cancel`, a question that
+   * stopped being asked, as VS Code's Claude agent answers its elicitations.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitation.ts#L164-L169
    */
   const answerElicitation = (
     requestId: string,
@@ -859,7 +873,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const content = contentOf(answers, open.fields, open.typed);
     open.settle(accepted
       ? { action: 'accept', ...(Object.keys(content).length === 0 ? {} : { content }) }
-      : { action: response === 'cancel' ? 'cancel' : 'decline' });
+      : { action: response === 'decline' ? 'decline' : 'cancel' });
     return true;
   };
 
@@ -917,14 +931,15 @@ export function createHandlers(ctx: SessionContext): Handlers {
   };
 
   /**
-   * A person's answer to the permission the server is waiting on.
+   * The host's answer to the permission the server is waiting on, a person's
+   * or its own.
    *
    * Found by the tool call the entry names rather than assumed to be the one
    * held, because two calls can be waiting at once and answering the wrong
-   * one is worse than answering none. The option picked is sent when the
-   * server offered it and it is of the answer's kind; otherwise the once
-   * option of that kind, and with none the request is refused instead, with
-   * the person's answer standing as the reason.
+   * one is worse than answering none. A mode switch's own button the person
+   * picked is sent when it is of the answer's kind; otherwise the once option
+   * of that kind, and with none the request is answered `cancelled`, the
+   * answer standing as the reason.
    */
   const confirm: Session['confirm'] = (toolCallId, approved, optionId) => {
     const held = permissions.get(toolCallId);
@@ -933,11 +948,18 @@ export function createHandlers(ctx: SessionContext): Handlers {
     // The entry follows the chat's state: the host took it down when it said
     // the confirmation that moved the call.
     const picked = held.offered.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
+    /*
+     * The row in this session's own snapshot moves with the decision, as the
+     * protocol's reducer moves it: running when approved, and cancelled as
+     * `denied` when refused, the reason its cancelled state carries.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L629
+     */
     const part = ctx.mapping === undefined ? undefined : callPartOf(ctx.mapping, toolCallId);
     if (part !== undefined) {
       const call = bag(bag(part).toolCall);
       call.status = approved ? 'running' : 'cancelled';
       if (approved) call.confirmed = 'user-action';
+      else call.reason = 'denied';
       delete call.options;
       delete call.confirmationTitle;
       if (picked !== undefined) call.selectedOption = picked;
@@ -952,10 +974,24 @@ export function createHandlers(ctx: SessionContext): Handlers {
      * client's confirmation by now, so the entry follows the call into
      * `running`, as VS Code's host raises it from the chat's state.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L133
+     *
+     * A refused call is kept as declined, so the failure the server reports
+     * for it completes as a denial, and its question is over, so a call the
+     * chat held as not yet started is said running by the report that ends
+     * it. A refusal the host makes itself is said to no client, and that
+     * report is what ends the call for them, as VS Code's agents report the
+     * failure their runtime gives a refused call.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1727-L1735
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L7259-L7264
      */
-    const allowed = ctx.mapping?.calls.get(toolCallId);
-    if (approved && allowed !== undefined && ctx.mapping !== undefined) {
-      ctx.openCall(allowed, ctx.mapping.turnId);
+    const mapped = ctx.mapping?.calls.get(toolCallId);
+    if (mapped !== undefined && !approved) {
+      mapped.declined = true;
+      mapped.asked = false;
+      mapped.readied = held.readied;
+    }
+    if (approved && mapped !== undefined && ctx.mapping !== undefined) {
+      ctx.openCall(mapped, ctx.mapping.turnId);
     }
     const chosen = picked?.id ?? (approved ? held.allow : held.reject);
     held.settle(chosen === undefined ? 'cancelled' : { optionId: chosen });
@@ -965,7 +1001,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
   return {
     sessionUpdate,
     requestPermission,
-    askTool,
     readTextFile,
     writeTextFile,
     createTerminal,

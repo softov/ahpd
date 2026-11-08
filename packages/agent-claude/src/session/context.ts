@@ -1,35 +1,46 @@
-import type { query } from '@anthropic-ai/claude-agent-sdk';
+import type { query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
 import type { AgentLogins } from '../logins.js';
-import type { Asked, Spawned } from '../spawn.js';
+import type { OfferedModel } from '../models.js';
+import type { Asked, SpawnedProcess } from '../spawn.js';
 import type { Asking } from './asking.js';
 import type { ClientTools } from './clienttools.js';
 import type { Config } from './config.js';
 import type { ContextFigure } from './contextusage.js';
+import type { ParseYaml } from './disk.js';
 import type { Logins } from './logins.js';
 import type { Parts } from './parts.js';
 import type { Query } from './query.js';
-import type { SavedOutputs } from './savedoutput.js';
+import type { ClaudeTerminalOutputs } from './savedoutput.js';
 import type { Servers } from './servers.js';
 import type { Stream } from './stream.js';
 import type { Turns } from './turns.js';
 import type { Workers } from './workers.js';
 
-/** A prompt the CLI was handed, for as long as no result has named it. */
-export interface Owed {
+/**
+ * A prompt this session hands the CLI, from the moment it is pushed until a
+ * result names it: VS Code's pending SDK message, one record through the
+ * queue's two lists, `toYield` until the input stream hands it to the SDK and
+ * `yielded` from then until a result names it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L14-L32
+ */
+export interface PendingSdkMessage {
+  /** The message as the SDK takes it, once its blocks are built. */
+  sdkMessage?: SDKUserMessage;
+  /** The uuid it goes under, which the CLI writes it under and names its answer by. */
+  sdkUuid: string;
+  /** The turn its answer belongs to: its own, or the one it steers. */
+  turnId: string;
+  /** A steering message's own id, the one a client knows it by; a turn's prompt has none. */
+  steeringPendingId?: string;
   /** What it said, which a turn opened for its answer carries. */
   message: Bag;
-  /** Whether it steers a turn rather than starting one. */
-  steering: boolean;
-  /** The turn its answer belongs to: its own, or the one it steers. */
-  turn: string;
-  /** A steering message's own id, the one a client knows it by. */
-  id?: string;
   /**
-   * What the CLI said it did with it, from its `command_lifecycle` frames:
-   * nothing yet, `queued` once it holds it, `started` once it took it in.
+   * What the CLI said it did with it, from the `state` of its
+   * `command_lifecycle` frames: nothing yet, `queued` once it holds it,
+   * `started` once it took it in.
    */
-  cli: 'sent' | 'queued' | 'started';
+  lifecycle: 'sent' | 'queued' | 'started';
 }
 
 /**
@@ -66,27 +77,42 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   shellEnv?: ShellEnv;
   /**
-   * How long the CLI has to answer its handshake before it is a CLI that died.
+   * How long the CLI has to answer its handshake: the bound the SDK's
+   * `startup` is handed, past which the CLI did not start.
    *
    * Absent is the bound this backend ships with, which is the ordinary
    * install: a deployment whose machines are slower raises it through the
    * plugin's own option rather than by building a session by hand.
    */
   handshakeTimeoutMs?: number;
+  /**
+   * The CLIs of this agent's closed sessions that are still exiting, by each
+   * conversation id one could write: a conversation starts under an id once
+   * the CLI that could write its transcript has exited, as VS Code's Claude
+   * shuts the live query down before it deletes a transcript.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
+   */
+  exits?: Map<string, Promise<unknown>>;
+  /**
+   * The plugin context's YAML reader, which a customization file's frontmatter
+   * is read with. Absent where the session is built outside a plugin, and a
+   * frontmatter is then read as none.
+   */
+  parseYaml?: ParseYaml;
   /** Start the CLI somewhere other than this host. */
-  spawn?: (asked: Asked) => Spawned;
+  spawn?: (asked: Asked) => SpawnedProcess;
   /** Where the CLI is wherever `spawn` starts it. */
   spawnExecutable?: string;
   /** The `CLAUDE_CONFIG_DIR` it reads there, or `false` for the image's own. */
   spawnConfigDir?: string | false;
   /**
-   * Where each turn of `seed` ended, in the CLI's own names, by turn id.
+   * The fork anchor of each turn of `seed`, in the CLI's own names, by turn id.
    *
-   * What the read of the transcript named for the conversation this session
+   * What the read of the transcript resolved for the conversation this session
    * resumes: the entry a fork of a turn copies through and a rewind to it
    * keeps. A turn this session watches run names its own.
    */
-  seedEnds?: ReadonlyMap<string, string>;
+  seedForkAnchorUuids?: ReadonlyMap<string, string>;
   /**
    * The declared options this backend's variant holds.
    *
@@ -112,7 +138,7 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   model?: string;
   /** The list the CLI reports, as the harness offers it; absent is the CLI's. */
-  offerModels?: (cli: { id: string; name: string }[]) => Promise<{ id: string; name: string }[]>;
+  offerModels?: (cli: OfferedModel[]) => Promise<OfferedModel[]>;
   /**
    * The Claude logins the agent's record may name, and whose agent it is.
    *
@@ -130,15 +156,6 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   trusted?: (folder: string) => boolean;
   /**
-   * Whether this session's shell commands are approved by its owner's rules,
-   * carried from `Start`.
-   *
-   * The rules are the connection's that started the session: what a window
-   * allows is that window's. Absent is a host that says nothing, and a command
-   * line no rule could read is a call that asks.
-   */
-  getAutoApproval?: Start['getAutoApproval'];
-  /**
    * Whether this session loads the settings of the person who runs the daemon,
    * carried from `Start`. Absent is yes.
    *
@@ -148,6 +165,12 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   userSettings?: boolean;
   /**
+   * The operator's managed settings, carried from `Start`, which the query
+   * hands the CLI as its own policy tier in Claude Code's grammar. Absent where
+   * the operator set none.
+   */
+  managedSettings?: Start['managedSettings'];
+  /**
    * The host's seam for a chat of one tool call's own.
    *
    * A subagent is a conversation inside one call, and the host owns what a
@@ -156,6 +179,8 @@ export interface ClaudeSessionOptions extends SessionOptions {
    * offer one, and then a subagent's frames stay in the turn that spawned it.
    */
   subagent?: (toolCallId: string, request: SubagentRequest) => SubagentChat;
+  /** The chat the host mints for one tool call's worker, carried from `Start`. */
+  subagentChatOf?: (toolCallId: string) => string;
   /**
    * The host's background-task seam, carried from `Start`.
    *
@@ -192,7 +217,7 @@ export interface ClaudeSessionOptions extends SessionOptions {
  * used rather than copied onto the factory's own scope at construction - so
  * the order the areas are built in never matters and nothing is frozen.
  */
-export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTools, 'methods'>, Parts, Omit<Workers, 'methods'>, Stream, SavedOutputs, Asking, Logins, Omit<Query, 'methods'>, Omit<Servers, 'methods'>, Omit<Turns, 'methods'> {
+export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTools, 'methods'>, Parts, Omit<Workers, 'methods'>, Stream, ClaudeTerminalOutputs, Asking, Logins, Omit<Query, 'methods'>, Omit<Servers, 'methods'>, Omit<Turns, 'methods'> {
   /** The options `createSession` was given. */
   options: ClaudeSessionOptions;
   /** Say one thing on one channel, to every client watching it. */
@@ -222,10 +247,29 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   failed: string | undefined;
   /**
-   * The CLI a stop closed, or that died, never answered its handshake or
-   * ended its stream without a result, while the next send has not yet
-   * started one that resumes the conversation, as the reference marks its
-   * pipeline for a rebind. Its reader ends without failing the session.
+   * Whether the last turn was stopped here and its result has not come yet.
+   *
+   * An interrupt ends with a result of its own, `error_during_execution` with
+   * `is_error`, after the stop has already ended the turn as cancelled, and it
+   * says the turn was stopped, which is no failure of the session.
+   */
+  interrupted: boolean;
+  /**
+   * The calls a stop answered itself and the CLI has not reported yet, while
+   * the stop's interrupt waits for them.
+   *
+   * The CLI keeps an answer only once it has recorded the call's result, and
+   * an interrupt that reaches it before that has it write its own text for
+   * the call instead: "The user doesn't want to proceed with this tool use".
+   * Nothing while no stop is waiting.
+   */
+  stopAnswers: Set<string> | undefined;
+  /**
+   * The CLI that died, ended its stream without a result or was closed by a
+   * stop that aborts the query, or that a CLI meant to replace it did not
+   * start beside, while the next send
+   * has not yet started one that resumes the conversation, as the reference
+   * marks its pipeline for a rebind. Its reader ends without failing the session.
    * Nothing while the CLI answering is the one reading.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718
@@ -243,8 +287,12 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   ran: string | undefined;
   /** The content block the session's own agent is streaming, by its index. */
   streaming: string | undefined;
-  /** What is let waiting for the input stream to be read again. */
-  wake: (() => void) | undefined;
+  /**
+   * What the input stream's parked read waits on, which a prompt pushed
+   * completes: VS Code's queue's pending-prompt deferred.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L67
+   */
+  pendingPromptDeferred: (() => void) | undefined;
   /**
    * The turns this session has already had.
    *
@@ -253,16 +301,17 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    * completes.
    */
   turns: Bag[];
-  /** Whether the input stream has ended, which no later turn can undo. */
-  closed: boolean;
+  /** Whether the session was disposed, which ends its input stream for good. */
+  disposed: boolean;
   /**
-   * The directories beside `cwd`, as this session currently has them.
+   * The directories beside `cwd`, as this session currently has them: the
+   * SDK's `additionalDirectories`, as VS Code's Claude session names them.
    *
-   * Mutable because a client may add and remove peers on a running session;
-   * `cwd` itself never moves, which is what the protocol's `immutablePrimary`
-   * says and what the SDK enforces anyway.
+   * Mutable because a client may add and remove them on a running session;
+   * `cwd` itself is fixed, which is what the protocol's `immutablePrimary`
+   * says and what the SDK enforces.
    */
-  peers: string[];
+  additionalDirectories: string[];
   /**
    * A steering message, for as long as it is waiting to be read.
    *
@@ -275,19 +324,26 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   steering: Bag | undefined;
   /**
-   * Every prompt the CLI was handed that no result has named yet.
+   * Every prompt the CLI was handed that no result has named yet: VS Code's
+   * yielded list, the second of the two the pending messages go through.
    *
    * Keyed by the uuid it was sent under. The CLI names the prompts an answer
    * is for in `user_message_uuids`, on the answer's frames and on its result,
    * and the turn a prompt belongs to is the turn those frames and that result
    * are about. A steering message it reads after the turn's last tool call is
    * run as a turn of its own once the turn's result is out, so a turn is not
-   * over while it owes one. A CLI that is put away, or that dies, takes the
-   * rest with it.
+   * over while one of its prompts is here or waits in `toYield`. A CLI that is
+   * put away, or that dies, takes the rest with it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L57-L58
    */
-  owed: Map<string, Owed>;
-  /** The prompt the CLI's current answer is for, from the last frame that named it. */
-  answering: string | undefined;
+  yielded: Map<string, PendingSdkMessage>;
+  /**
+   * The uuid of the prompt the CLI's current answer is for, from the last frame
+   * that named it: the pending message VS Code's pipeline routes a frame to
+   * (`peekParent`).
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L664-L669
+   */
+  parentSdkUuid: string | undefined;
   /**
    * What the host asked said to the model, and the turn it asked it for.
    *
@@ -299,24 +355,33 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   hostInstructions: { turn: Bag; said: string[] } | undefined;
   /**
-   * The agent the running query was built with, and the CLI answering it.
+   * The agent the running query was built with: what was applied, as VS
+   * Code's pipeline names what it last gave the CLI.
    *
-   * `running` is what a message's pick is compared against: it is what the CLI
-   * is actually running on, so a pick equal to it changes nothing and only a
-   * different one pays for a new CLI.
+   * A message's pick is compared against it: it is what the CLI is running
+   * on, so a pick equal to it changes nothing and a different one pays for a
+   * new CLI.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L556-L570
    */
-  running: string | undefined;
+  appliedAgent: string | undefined;
   /**
-   * The id the agent gave this session, which is not the URI it is served at.
+   * The id the SDK gave this conversation, VS Code's `sdkSessionId`, beside
+   * the URI the session is served at.
    *
    * The client picks the URI before anything exists; the CLI picks its own id
    * when it starts and writes the transcript under that. Both name the same
-   * conversation, so the catalogue has to know they do - otherwise the row on
-   * disk and the row in memory are two sessions saying the same thing.
+   * conversation, so the catalogue has to know they do: the row on disk and
+   * the row in memory are one session.
    */
-  agentId: string | undefined;
-  /** The CLI's `init` frame, once it has answered with one. */
-  handshake: Bag | undefined;
+  sdkSessionId: string | undefined;
+  /**
+   * Whether the SDK said it holds no conversation under the id this session
+   * was asked to resume, which the first CLI's start asks: such a session
+   * starts a conversation under that id.
+   */
+  unwritten: boolean;
+  /** The CLI's `init` frame, the SDK's `system`/`init` message, once it has answered with one. */
+  init: Bag | undefined;
   /**
    * The last context breakdown the CLI gave, at its handshake or at a turn's
    * end, which the session's `_meta` carries before and between turns.
@@ -332,8 +397,8 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   gone: string | undefined;
   /** What this session has been told the CLI can do, by customization. */
   customizations: Bag[];
-  /** The models the CLI offered, as this session offers them. */
-  offered: { id: string; name: string }[];
+  /** The models the CLI offered, as this session offers them, each with the thinking control it supports. */
+  models: OfferedModel[];
   /*
    * The declared Claude options this session runs on, by field.
    *
@@ -354,22 +419,23 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   valuesOf: (preset: Bag) => Bag;
   /**
-   * The values the running CLI was built from, as a comparison string.
+   * The values the running CLI was built from, as a comparison string: what
+   * was applied, as VS Code's pipeline names it.
    *
    * A turn compares the record's values now with what the CLI was started with,
-   * and restarts it only when the two differ. Set at every `startQuery`, so the
+   * and restarts it when the two differ. Set at every `startQuery`, so the
    * question is always about the CLI that is answering.
    */
-  startedWith: string;
-  /** The config in force, by key. What `session/configChanged` merges into. */
-  /*
-   * What this session was told to run as.
+  appliedValues: string;
+  /**
+   * The config in force, by key: the protocol's config, what
+   * `session/configChanged` merges into.
    *
-   * `unknown` and not `string`, because the protocol declares a config bag
+   * `unknown` values, because the protocol declares a config bag
    * `Record<string, unknown>` and `permissions` is an object. Keys this
    * backend declared a string are narrowed where they are read.
    */
-  settings: Record<string, unknown>;
+  config: Record<string, unknown>;
   /**
    * The tools this session has already been told about, by name.
    *
@@ -398,13 +464,11 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   offering: BoundTool[];
   /**
    * The query this session is reading, once there is one: the SDK's `Query`,
-   * named as the SDK and VS Code's Claude name it.
-   *
-   * Typed as the query and not as the query or nothing: it exists from the
-   * start of the session, nothing reads it before the query is built, and the
-   * identity checks that follow it want the query either way.
+   * named as the SDK and VS Code's Claude pipeline name it, which holds none
+   * before its first bind. A session's first send starts its first CLI.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L187-L193
    */
-  query: ReturnType<typeof query>;
+  query: ReturnType<typeof query> | undefined;
   /**
    * What somebody is part-way through typing.
    *
@@ -414,15 +478,22 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   draft: Bag | undefined;
   /**
-   * The turn `beginTurn` is starting, from the moment it waits on a switch until
-   * it is running or refused.
+   * The turn being prepared, VS Code's `prepareTurn`: the turn `beginTurn` is
+   * starting, from the moment it waits on a switch until it is running or
+   * refused.
    *
    * Until the CLI has taken the model there is no `active`, but the turn has
    * begun: it is this session's, and one started beside it would reach the CLI
-   * beside this one. Held here rather than as a chain of switches, so every
-   * question of whether a turn is running is asked of one thing.
+   * beside this one. One field, so every question of whether a turn is
+   * running is asked of one thing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1260
    */
-  beginning: string | undefined;
+  preparingTurn: string | undefined;
+  /**
+   * The CLI start a session made with `cliStart` at `open` began as it was
+   * made, which the first send waits for before it starts one of its own.
+   */
+  opening: Promise<void> | undefined;
   /**
    * The tools the host handed since the CLI was last given a set, while there
    * are any: VS Code's client-tool diff, which the next send gives the CLI
@@ -448,7 +519,12 @@ export interface Scope {
   chat: SubagentChat | undefined;
   turn: Bag | undefined;
   parts: Map<string, Bag>;
-  calling: Map<string, string>;
+  /**
+   * Which tool call each streaming content block opened: VS Code's mapper's
+   * active tool blocks.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L51
+   */
+  activeToolBlocks: Map<string, string>;
   streaming: string | undefined;
   /**
    * Frames for a worker whose chat is not open yet, in the order they came.
@@ -459,4 +535,9 @@ export interface Scope {
    * whole when the chat opens, so it is applied as if it had arrived then.
    */
   waiting?: (() => void)[] | undefined;
+  /**
+   * Whether the worker's spawn never came within the hold's bound: its held
+   * frames were dropped, and what it says after is dropped too.
+   */
+  failed?: boolean;
 }

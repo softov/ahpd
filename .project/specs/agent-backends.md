@@ -9,7 +9,7 @@ covers:
   - packages/sdk/src/types/terminals.ts
 decisions:
   - decisions/claude-approvals-keeps-dont-ask.md
-  - decisions/each-backend-offers-its-options-unless-a-rule-asks.md
+  - decisions/the-host-puts-each-tool-question-and-keeps-the-sessions-answer.md
   - decisions/pi-is-embedded-not-spawned.md
   - decisions/subagent-chats-are-restored-from-the-cli-meta-file.md
   - decisions/the-daemon-bundles-no-agent-and-starts-without-one.md
@@ -19,7 +19,8 @@ refs:
   - "[code://packages/agent-claude/src/options.ts#L27-L36](../../packages/agent-claude/src/options.ts#L27-L36) - `Declaration`, one Claude option with its schema and its place"
   - "[code://packages/agent-claude/src/options.ts#L156](../../packages/agent-claude/src/options.ts#L156) - `DECLARED`, the options a session and a preset share"
   - "[code://packages/agent-claude/src/options.ts#L216-L232](../../packages/agent-claude/src/options.ts#L216-L232) - `presetSchema`, a preset held to the same declarations"
-  - "[code://packages/agent-claude/src/catalog.ts#L115-L123](../../packages/agent-claude/src/catalog.ts#L115-L123) - `sharedCatalogue`, one listing run for all variants"
+  - "[code://packages/agent-claude/src/catalog.ts#L33-L57](../../packages/agent-claude/src/catalog.ts#L33-L57) - `catalogue` and `findSession`, the SDK's store asked with no directory"
+  - "[code://packages/agent-claude/src/catalog.ts#L170-L192](../../packages/agent-claude/src/catalog.ts#L170-L192) - `sharedCatalogue`, one listing run for all variants"
   - "[code://packages/agent-claude/src/plugin.ts#L173-L197](../../packages/agent-claude/src/plugin.ts#L173-L197) - the options every variant of one load shares"
   - "[code://packages/agent-claude/src/claude.ts#L246-L256](../../packages/agent-claude/src/claude.ts#L246-L256) - `permissionMode`, the six Claude modes"
   - "[code://packages/agent-claude/src/session/clienttools.ts#L492-L515](../../packages/agent-claude/src/session/clienttools.ts#L492-L515) - `setTools`, the `ahp` server removed and added again"
@@ -59,10 +60,18 @@ WHEN the Claude plugin loads a preset
 THEN each key is held to the schema of its declaration, or to the variant keys
 AND a key that is neither makes the preset fail with a message that names it.
 
+### The Claude catalogue is the CLI's whole store
+
+WHEN the Claude backend lists its sessions
+THEN it lists every session the CLI's store holds, wherever each ran, as VS Code's Claude agent lists them
+AND a row is in the folder the store names for the session, and in none when the store names none.
+WHEN the host asks the Claude backend for one session, its transcript or its subagents
+THEN the backend asks the store by the session's id alone, whatever folder the host recorded.
+
 ### Claude variants share one listing
 
 WHEN the Claude plugin registers more than one variant
-THEN all variants read the same paths
+THEN all variants list the same store
 AND they share one run over the projects folder when the sessions are listed
 AND the shared run is dropped when it ends, because the host keeps the catalogue.
 
@@ -83,20 +92,21 @@ The reason: the CLI writes a prompt under the `uuid` it carries and sends no fra
 A read after a restart names the turn by that uuid.
 See [`code://packages/agent-claude/src/session/turns.ts`](../../packages/agent-claude/src/session/turns.ts).
 
-### A Claude conversation the CLI never wrote
+### A Claude conversation the SDK does not hold
 
 WHEN the host starts a Claude session with `resume`
-AND no project folder holds a transcript of that id with an entry of a conversation in it
+AND the SDK's `getSessionInfo`, asked as the session's first CLI starts, holds no session under that id
 THEN the backend sends no `resume`, no fork point and no rewind point
 AND it starts a new conversation under the chat's own id, or under that id when the chat has none.
-WHEN a project folder holds the transcript with an entry in it, the folder's own or another one
+WHEN the SDK holds the session, in the folder's own project or another one
 THEN the backend resumes it.
 WHEN the backend starts a new conversation under an id
-AND the project folder of the session's folder holds a transcript of that id with no entry of a conversation in it
-THEN the backend deletes that transcript before the CLI starts.
+AND the project folder of the session's folder holds a transcript of that id in which the SDK's `getSessionInfo` finds no session
+THEN the backend waits until the CLI that could write that transcript has exited
+AND it deletes the transcript through the SDK's `deleteSession` before the new CLI starts.
 The reason: the CLI writes a conversation when its first message reaches it.
-A CLI closed after its prompt arrived and before it wrote the prompt's entry leaves a transcript of its other lines alone.
-The CLI ends at startup when it is told to resume an id with no entry.
+VS Code's Claude agent asks `getSessionInfo` as it starts a chat's CLI at its first send, and resumes what the SDK holds.
+The CLI ends at startup when it is told to resume an id it holds no conversation under.
 It also ends at startup when it is told to start a conversation under an id that its folder's project holds a transcript for.
 See [`code://packages/agent-claude/src/catalog.ts`](../../packages/agent-claude/src/catalog.ts).
 
@@ -139,7 +149,9 @@ See [`code://packages/agent-claude/src/session/logins.ts`](../../packages/agent-
 WHEN a turn starts on a new CLI, for an agent the message picked, an edited record or another login
 THEN its prompt goes to the new CLI, however late the SDK starts reading that CLI's input
 AND the reader of the CLI it replaced takes nothing more and ends.
-The reason: the SDK reads a new CLI's input only after its initialize request is written, which waits on the manifests of the in-process MCP servers, and it drops what a closed CLI's reader is handed.
+The reason: the SDK reads a new CLI's input only after its initialize request is written.
+That request waits on the manifests of the in-process MCP servers.
+And the SDK drops what a closed CLI's reader is handed.
 See [`code://packages/agent-claude/src/session/query.ts`](../../packages/agent-claude/src/session/query.ts).
 
 ### A Claude steering message answered after the turn's last answer
@@ -154,20 +166,32 @@ WHEN a message waits in the queue meanwhile
 THEN it starts only after that result.
 WHEN a result names no prompt
 THEN it ends the turn.
-WHEN the turn is stopped or fails while the CLI holds the steering message
+WHEN the turn is stopped while the CLI holds the steering message, which it has not taken into the turn
 THEN a turn of its own opens at once, under the uuid the message was sent with, carrying the message
 AND it names the message in `queuedMessageId`
 AND the CLI's answer to the message is that turn's
 AND the rest of the stopped turn's answer opens no turn and joins none.
-WHEN a client sends a turn while that turn runs
-THEN the host refuses it, as it refuses any turn sent while one runs.
+WHEN the turn is stopped before the CLI was handed the steering message
+THEN the message goes with the stop.
+WHEN the record's `stopEnds` is `query` and the turn is stopped while the CLI holds the steering message
+THEN the CLI closes, as VS Code's stop aborts its query, and the message goes with it
+AND no turn opens for the message
+AND the next turn goes to a CLI that resumes the conversation.
+WHEN the closed CLI says anything after the stop
+THEN it ends no turn and joins none.
+WHEN the turn fails while the CLI holds the steering message
+THEN no turn opens for the message, as VS Code's steering takes the turn it went into
+AND the CLI's answer to the message goes nowhere
+AND a turn sent after that answer goes out.
+WHEN a client sends a turn while the turn of the steering message runs
+THEN the backend runs it once that turn has ended.
 WHEN that turn is stopped
 THEN the message stops with it, and the CLI's answer to the message opens no turn and joins none.
 WHEN a stopped turn's result comes while another turn runs
 THEN it ends no turn.
 WHEN the steered turn moves to another login
 THEN the new CLI gets the turn's prompt again under a new uuid that `onTurnRecorded` tells the host
-AND the turn's steering messages behind it, each under a new uuid that began no turn, so the host reads them back inside the turn
+AND the turn's steering messages behind it, each under a new uuid, which the host reads back as a turn of its own
 AND a turn opened for a steering message sends the message again as its prompt, under a new uuid that `onTurnRecorded` tells the host.
 WHEN the turn ends with the refusal because its conversation could not start over
 THEN the new CLI gets the steering messages the old one never took in
@@ -175,14 +199,17 @@ AND each is answered in a turn of its own.
 WHEN the transcript is read back
 THEN a message the SDK's reader marks `isQueuedCommand` joins the open turn
 AND the CLI's stop text opens no turn and ends the open turn as cancelled
-AND the host reads a steering message the CLI ran late back inside the turn it steered, because the message began no turn
-AND a steering message answered in a turn of its own reads back as that turn, which began.
-WHEN a session resumes a conversation the host read back so
-THEN a turn ends where the last prompt read back inside it ends, up to a rewind's point.
+AND the host reads a steering message the CLI ran late back as a turn of its own
+AND a steering message answered in a turn of its own reads back as that turn.
+WHEN a session resumes a conversation whose turn the host read back as one turn run twice
+THEN that turn ends where its later run ends, up to a rewind's point.
 The reason: the CLI folds a steering message into a turn at its next tool call.
-One that arrives after the last tool call runs as a turn of its own.
-The CLI writes nothing else that ties that message to the turn it steered.
+One that arrives after the last tool call runs as a turn of its own, which the CLI writes as a prompt.
+VS Code's replay starts a turn at every prompt a transcript holds.
 A prompt that reaches the CLI while such a message waits there runs with it, as one turn with one answer.
+VS Code's stop aborts the query with every entry it holds, and its steering entry takes the turn of the send in flight.
+So a stop or a failure takes a held steering message with it.
+See https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L476-L496 and https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L438-L474.
 *A turn is read back as it began* in the sessions spec says how the host reads such a turn back.
 See [`code://packages/agent-claude/src/session/query.ts`](../../packages/agent-claude/src/session/query.ts) and [`code://packages/agent-claude/src/transcript.ts`](../../packages/agent-claude/src/transcript.ts).
 
@@ -201,7 +228,9 @@ THEN it is sent once the CLI has answered the one before it.
 WHEN a turn begins while a change is being taken
 THEN its prompt goes to the CLI once the CLI has answered that change
 AND a turn with no change in hand starts at once.
-The reason: the protocol applies a session's actions in one order, so a turn a client sends after announcing its tools is a turn of a session that has them, and the host hands the tools over without waiting for them to land.
+The reason: the protocol applies a session's actions in one order.
+So a turn a client sends after announcing its tools is a turn of a session that has them.
+The host hands the tools over without waiting for them to land.
 
 ### pi models come from the pi runtime
 
@@ -218,10 +247,19 @@ This is so that a turn does not go to a provider that nobody chose.
 
 ### pi thinking and approvals
 
-WHEN a pi model has more than one thinking level
-THEN its `configSchema` offers them under `thinkingLevel`.
+WHEN pi gives a model a thinking level
+THEN its `configSchema` offers pi's levels under `thinkingLevel` in VS Code's property, a single level included
+AND its default is the level pi starts a session on for that model, where offered.
 WHEN a pi session shows its approvals
 THEN it offers the pi `permissionMode` property.
+
+### pi's customizations
+
+WHEN pi has loaded skills, prompt templates and extensions for a session
+THEN the session lists a directory for each folder pi loaded a kind from, holding that kind
+AND an installed pi package as a plugin holding its kinds, each customization named by its URI.
+WHEN a client switches one of them, or its folder or package
+THEN pi is built again before the next turn and its loader leaves out what is off.
 
 ### A pi session from disk
 
@@ -229,6 +267,13 @@ WHEN a client opens a pi session that this process did not watch
 THEN the backend reads the pi session file and raises its entries as the events that pi raises live
 AND it maps them through the same `mapEvent` as a live turn
 AND each turn keeps the id of the entry where it ended, so a rewind can cut at a turn from disk.
+
+### A pi turn at close
+
+WHEN a pi session closes while a turn runs
+THEN the turn ends for every client with an error that is not resumable, and then its completion
+AND nothing records an ending for it, so a read back finds it interrupted and resumable.
+The reason: VS Code's agent ends a turn whose runtime goes in this way, and its reader finds a turn with no ending interrupted.
 
 ### A pi chat is forked
 
@@ -241,6 +286,21 @@ WHEN the ACP backend shakes hands with a server
 THEN it says it can read files, write files or open terminals only when it has a handler for each
 AND the file and terminal handlers use `Start.resources` and `Start.terminals`.
 The reason: a capability without a handler is a request that nobody answers.
+
+### An ACP server's options
+
+WHEN an ACP server names its session config options
+THEN the values of its model option are the agent's models, said again where they move
+AND the values of its mode option are the session's `availableApprovalModes`
+AND each other option is a session control under `<provider>.<id>`, with the values the server gave as the session opened
+AND a value that the server moves is said with `session/configChanged`.
+WHEN the server names a `thought_level` option for the model that it runs on
+THEN that model's row has a `configSchema` with those levels as its `thinkingLevel`, in VS Code's property
+AND the agent keeps those levels for its later sessions
+AND a turn whose model selection names one of those levels runs at it
+AND any other turn runs at the session's value of the control.
+The reason: no action changes a schema that a client was served.
+VS Code's Codex agent takes the effort of a turn from its model selection, and then from the setting of its session.
 
 ### Start carries the host's files, shells and tools
 

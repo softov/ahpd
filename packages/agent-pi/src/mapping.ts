@@ -88,15 +88,19 @@ export function resultText(result: unknown): string {
 }
 
 /**
- * The call an event names, opening the row the first time it is seen.
+ * The call an event names, with the start that announces it the first time
+ * it is seen.
  *
  * Opened here rather than only where the model starts writing the call,
  * because an update or an end for a call whose start was missed is still a
  * call a client should see, and dropping it would leave a turn with a result
- * nothing accounts for.
+ * nothing accounts for. It is announced with `chat/toolCallStart` before the
+ * actions that name it, as the ACP mapping announces one, so every action
+ * names a call each client holds.
  */
-function callOf(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
-  return turn.calls.get(toolCallId) ?? openCall(turn, toolCallId, toolName);
+function callOf(turn: PiTurn, toolCallId: string, toolName: string): { call: PiCall; opened: Bag[] } {
+  const opened = startCall(turn, toolCallId, toolName);
+  return { call: turn.calls.get(toolCallId) as PiCall, opened };
 }
 
 /**
@@ -349,8 +353,7 @@ export function readyRow(row: Bag, displayName: string, input: Bag, extra: Bag):
  *
  * Returns an empty array for an event that says nothing a client needs, which
  * is most of pi's union: the retry and summarization events are pi telling its
- * own terminal what it is doing, and the activity line carries that better
- * than a turn part would.
+ * own terminal what it is doing.
  *
  * `at` is when the event happened, as epoch milliseconds, and is given only by
  * a replay reading pi's own file: live, an event arrives as it happens and the
@@ -436,10 +439,10 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
 
     /** Output while it is still running, which is what a long command gives. */
     case 'tool_execution_update': {
-      const call = callOf(turn, event.toolCallId, event.toolName);
+      const { call, opened } = callOf(turn, event.toolCallId, event.toolName);
       const text = resultText(event.partialResult);
-      if (text === '') return [];
-      return [{
+      if (text === '') return opened;
+      return [...opened, {
         type: 'chat/toolCallContentChanged',
         turnId: turn.turnId,
         toolCallId: call.toolCallId,
@@ -450,7 +453,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
     /** The row closed, which is the only action carrying a result. */
     case 'tool_execution_end': {
       const when = at ?? Date.now();
-      const call = callOf(turn, event.toolCallId, event.toolName);
+      const { call, opened } = callOf(turn, event.toolCallId, event.toolName);
       const success = !event.isError;
       const text = resultText(event.result);
       const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
@@ -461,8 +464,16 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
        * validate, or an extension that blocked it first. A client completes a
        * call only from `running` or `pending-confirmation`, so it is readied
        * here, or the row would stay open in every client.
+       *
+       * So is a call refused at its question: a refusal the host makes itself
+       * is said to no client, which still holds the call as pi opened it, and
+       * the failure pi reports for the block is what ends it for them, as
+       * VS Code's agents report the failure their runtime gives a refused
+       * call. A client that said the refusal holds the call cancelled, and
+       * takes neither.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1727-L1735
        */
-      const unreadied = held.status === 'streaming';
+      const unreadied = held.status === 'streaming' || held.status === 'cancelled';
       const owner = turn.ownerOf?.(call.toolName);
       const readied: Bag = {
         invocationMessage,
@@ -486,9 +497,9 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
         ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
       };
       /*
-       * A call a person declined is already `cancelled`. pi reports the block
-       * as a failed execution, and a result does not reopen a row somebody
-       * answered no to.
+       * A call refused at its question is already `cancelled` here. pi reports
+       * the block as a failed execution, and a result does not reopen a row
+       * somebody answered no to.
        *
        * Otherwise onto the held call and into the actions, from one object
        * each. The protocol's reducer builds a completed call from the running
@@ -503,7 +514,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       }
       // The whole bag on both, because an action's `_meta` replaces the call's.
       const meta = held._meta === undefined ? {} : { _meta: bag(held._meta) };
-      return [...(unreadied ? [{
+      return [...opened, ...(unreadied ? [{
         type: 'chat/toolCallReady',
         turnId: turn.turnId,
         toolCallId: call.toolCallId,
@@ -546,26 +557,10 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
     /*
      * Everything else: the retry and summarization events, the queue, the
      * compaction pair, the entries pi appended and the level it is thinking
-     * at. Each is either the session's business rather than the turn's -
-     * handled in `session.ts`, where the state it changes lives - or pi
-     * narrating to its own terminal, which the activity line carries.
+     * at. Each is either the session's business, handled in `session.ts`
+     * where the state it changes lives, or pi narrating to its own terminal.
      */
     default:
       return [];
-  }
-}
-
-/** What the session should say it is doing, for an event that changes it. */
-export function activityOf(event: AgentSessionEvent): string | undefined | false {
-  switch (event.type) {
-    case 'agent_start': return 'Thinking';
-    case 'tool_execution_start': return `Running ${event.toolName}`;
-    case 'tool_execution_end': return 'Thinking';
-    case 'compaction_start': return 'Compacting the conversation';
-    case 'auto_retry_start': return `Retrying, attempt ${event.attempt} of ${event.maxAttempts}`;
-    case 'agent_settled': return undefined;
-    // `false` is "this event says nothing about activity", which is not the
-    // same answer as `undefined`, which clears it.
-    default: return false;
   }
 }

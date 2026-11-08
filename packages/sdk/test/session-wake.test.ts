@@ -256,7 +256,8 @@ it('wakes a pinned session for an automation run and makes no new session', asyn
   store.create('ahp-automation:/check', pinnedTo(dir, one.resource));
 
   await client.handle({ method: 'runAutomation', params: { channel: 'ahp-automations://', automation: 'ahp-automation:/check', requestId: 'r' } });
-  await until(() => (store.get('ahp-automation:/check')?.runs ?? []).length === 1, 'the run');
+  // The run is recorded first and its session joined to it after.
+  await until(() => ((store.get('ahp-automation:/check')?.runs ?? [])[0] as unknown as Bag | undefined)?.primarySession !== undefined, 'the run');
   const run = (store.get('ahp-automation:/check')?.runs ?? [])[0] as unknown as Bag;
   expect(run.primarySession).toBe(one.resource);
   expect(counts.starts).toEqual([undefined, 'one']);
@@ -349,23 +350,22 @@ it('does not sleep a session while it is waking', async () => {
   expect(await awake()).toBe(1);
 });
 
-it('refuses a second Run of a pinned automation while the first wakes the session', async () => {
+it('answers a second Run of a pinned automation pressed while the first wakes the session with the first run, as VS Code\'s host', async () => {
   const counts: Counts = { starts: [], closes: 0, pace: 30 };
   const store = memoryAutomations();
   const { client, open, sleep, textsOf, dir } = await serving(counts, store);
   const one = await open('one');
   await sleep(one);
   store.create('ahp-automation:/check', pinnedTo(dir, one.resource));
-  const run = (id: string): Promise<unknown> =>
-    client.handle({ method: 'runAutomation', params: { channel: 'ahp-automations://', automation: 'ahp-automation:/check', requestId: id } });
+  const run = (id: string): Promise<{ resource: string }> =>
+    client.handle({ method: 'runAutomation', params: { channel: 'ahp-automations://', automation: 'ahp-automation:/check', requestId: id } }) as Promise<{ resource: string }>;
 
-  // Both pressed in one tick: the second fails as it does on a live session.
-  await Promise.all([run('r1'), run('r2')]);
+  // Both pressed in one tick: the second is answered with the run going.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1546-L1555
+  const [first, second] = await Promise.all([run('r1'), run('r2')]);
+  expect(second.resource).toBe(first.resource);
   const runs = (): Bag[] => (store.get('ahp-automation:/check')?.runs ?? []) as unknown as Bag[];
-  await until(() => runs().length === 2 && runs().every((one) => (one.lifecycle as Bag).status !== 'running'), 'both runs settling');
-  const ends = runs().map((one) => [(one.lifecycle as Bag).status, ((one.lifecycle as Bag).error as Bag | undefined)?.message]);
-  expect(ends).toContainEqual(['completed', undefined]);
-  expect(ends).toContainEqual(['failed', 'The chat this automation runs in is already running a turn']);
+  await until(() => runs().length === 1 && (runs()[0]?.lifecycle as Bag).status === 'completed', 'the run settling');
   expect((await textsOf(one.chat)).filter((text) => text === 'check in')).toHaveLength(1);
   expect(counts.starts).toEqual([undefined, 'one']);
 });
@@ -492,6 +492,23 @@ it('wakes a sleeping session for a chat forked from it, and forks at the turn', 
   expect(counts.made?.at(-1)).toMatchObject({ chatUri: 'ahp-chat:/copy', resume: 'one', forkAt: 'end:t1' });
   const chats = ((await read(one.channel)).chats as Bag[]).map((chat) => chat.resource);
   expect(chats).toContain('ahp-chat:/copy');
+});
+
+it('says no ready for a session it wakes, which is ready as its state is handed out, as VS Code\'s host restores one', async () => {
+  const counts: Counts = { starts: [], closes: 0 };
+  const { client, peer: p, open, sleep, read, awake } = await serving(counts);
+  const one = await open('one');
+  await sleep(one);
+  await read(one.channel);
+  const from = p.notes.length;
+
+  await client.handle({ method: 'createChat', params: { channel: one.channel, chat: 'ahp-chat:/second' } });
+  expect(await awake()).toBe(1);
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1596-L1602
+  const said = p.notes.slice(from).filter((note) => note.method === 'action' && note.channel === one.channel)
+    .map((note) => (note.action as Bag).type);
+  expect(said).not.toContain('session/ready');
+  expect(said).toContain('session/chatAdded');
 });
 
 it('wakes a sleeping session for a new chat in it', async () => {

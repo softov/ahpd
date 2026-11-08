@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
@@ -159,10 +158,11 @@ async function colleague(host: ReturnType<typeof createHost>, token: string) {
 }
 
 const uri = 'ahp-session:/scoped';
-const chatUri = chatUriFor(uri);
 
-/** A first turn, sent on the chat the client watches, which is where its end is said. */
+/** A turn sent on the session's chat, which the client sending it watches. */
 const turn = async (client: Client, text = 'go') => {
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return client.handle({
     method: 'dispatchAction',
@@ -192,18 +192,19 @@ const stateOf = async (client: Client): Promise<{
   return { values: config.values, properties: config.schema?.properties ?? {} };
 };
 
-/** Every refusal one connection was sent, in the order it arrived. */
 /**
- * Why each turn was not run: a refusal, or the error a start ends in, as the
- * host says a client's start and then ends a turn it will not run.
+ * Every refusal one connection was sent, in the order it arrived: an action
+ * refused, and a turn its admission refused, which is said started and then
+ * ended in an error in the check's words, as VS Code's host admits a turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2241-L2346
  */
 const refusedIn = (wire: ReturnType<typeof peer>): string[] => wire.notes
   .filter((one) => one.method === 'action')
   .map((one) => one.params as Note)
-  .flatMap((one) => {
+  .flatMap((one): string[] => {
     if (one.rejectionReason !== undefined) return [one.rejectionReason];
-    const action = one.action as { type?: string; part?: { error?: { message?: string } } } | undefined;
-    return action?.type === 'chat/error' ? [String(action.part?.error?.message ?? '')] : [];
+    const error = (one.action.part as { error?: { errorType?: string; message?: string } } | undefined)?.error;
+    return one.action.type === 'chat/error' && error?.errorType === 'rejected' ? [error.message ?? ''] : [];
   });
 
 it('offers the asking person their own memberships, starting on their primary', async () => {
@@ -266,16 +267,18 @@ it('settles a scope and a key that starts a backend in one action, with one star
   expect(spawns).toHaveLength(1);
 
   // One action, one decision: the scope moves and so does a key a session is
-  // built around, and there is one start rather than two.
+  // built around, and there is one start rather than two, at the session's
+  // next turn boundary, as VS Code relaunches a runtime there.
   await change(client, { scope: 'frontend:controllr', branch: 'elsewhere' });
   await settle();
-  expect(spawns).toHaveLength(2);
-  // The restarted backend is handed what the first start was: no host keys.
-  expect(spawns[1]?.scope).toBeUndefined();
-  expect(spawns[1]?.branch).toBeUndefined();
+  expect(spawns).toHaveLength(1);
 
   await turn(client);
   await settle();
+  expect(spawns).toHaveLength(2);
+  // The relaunched backend is handed what the first start was: no host keys.
+  expect(spawns[1]?.scope).toBeUndefined();
+  expect(spawns[1]?.branch).toBeUndefined();
   expect(began).toEqual(['go']);
   expect(store.scope('scoped')).toEqual({ team: 'frontend', project: 'controllr' });
 });

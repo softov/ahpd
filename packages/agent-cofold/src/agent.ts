@@ -12,15 +12,15 @@
  */
 
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { EFFORT_LEVELS, PERMISSION_MODES, PERMISSION_MODE_DESCRIPTIONS, createMemoryStore, effortOf, textOf } from '@cofold/agents';
 import type { ModelAdapter, ModelInfo, ModelProvider, Policy, SessionRecord, Store } from '@cofold/agents';
 import { openaiCompat, openaiCompatProvider, splitModel } from '@cofold/model-openai-compat';
-import { createFileStore } from '@cofold/store-file';
-import { titleFrom, uriOf } from '@ahpd/sdk';
+import type { OpenAICompatOptions, OpenAICompatProviderOptions, ProviderConfig } from '@cofold/model-openai-compat';
+import { createFileStore, resolveHome } from '@cofold/store-file';
+import { getReasoningEffortDescription, getReasoningEffortLabel, ReasoningEffortConfigKey, titleFrom, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@ahpd/sdk';
 import { harnessConfig, harnessConfigPath } from './config.js';
-import type { HarnessConfig, HarnessProvider } from './config.js';
+import type { HarnessConfig } from './config.js';
 import type { ToolsConfig } from './capabilities.js';
 import { cofoldSession } from './session.js';
 import { turnsOf } from './transcript.js';
@@ -49,18 +49,25 @@ export interface CofoldOptions {
   resource?: string;
   /** The model id a session that names none runs on. */
   model?: string;
+  /**
+   * What the operator says of `baseUrl`'s models, each by its id on that
+   * endpoint: the thinking levels it accepts, as VS Code's Custom Endpoint
+   * models declare `supportsReasoningEffort`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/extensions/copilot/package.json#L2043-L2049
+   */
+  models?: { id: string; supportsReasoningEffort?: string[] }[];
   /** The system prompt the agent is created with. */
   instructions?: string;
   /**
    * The configuration directory the harness reads *inside a machine*.
    *
-   * The configuration is mounted there and `COFOLD_CONFIG` is pointed at the
+   * The configuration is mounted there and `PAPO_CONFIG` is pointed at the
    * file, so a cofold host in the machine finds the providers whatever user the
    * image runs as, and `XDG_CONFIG_HOME` is left as the image has it.
    * `false` says nothing at all and leaves the image's own.
    */
   computerConfigDir?: string | false;
-  /** Where the file store lives; absent means the tool's own data directory. */
+  /** Where the file store lives; absent means cofold's own home. */
   store?: string;
   /** Hold everything in memory instead of on disk; for a test. */
   memory?: boolean;
@@ -87,12 +94,24 @@ export interface CofoldOptions {
   /**
    * The estimated history size at which a session folds itself into a summary.
    *
-   * Never above 80% of the model's listed `contextTokens`, or of 32000 when the
-   * list gave none, and that 80% is what an absent value means: a point at the
-   * window itself would make the summary step ask for more than the model can
-   * take.
+   * Never above the `autoCompactAt` share of the model's listed
+   * `contextTokens`, or of 32000 when the list gave none, and that share is
+   * what an absent value means: a point at the window itself would make the
+   * summary step ask for more than the model can take.
    */
   autoCompactTokens?: number;
+  /**
+   * The share of a model's window a session folds its history at, and the
+   * most `autoCompactTokens` may name; 0.8 by default, the share papo keeps.
+   * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/agent.ts#L11
+   */
+  autoCompactAt?: number;
+  /**
+   * How long the endpoint is given to publish its catalogue, in milliseconds;
+   * 15000 by default, the time VS Code gives a runtime's model catalogue.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L293
+   */
+  catalogueTimeoutMs?: number;
   /**
    * The run-level policy an approval decision comes from.
    *
@@ -113,20 +132,32 @@ export interface CofoldOptions {
 }
 
 /**
- * Where a cofold store lives when nothing named one.
- *
- * Data rather than configuration: sessions and runs are written by the daemon,
- * not edited by a person, and `XDG_DATA_HOME` is the variable for exactly that.
+ * Where a cofold store lives when nothing named one: cofold's own home,
+ * `$COFOLD_HOME` or `~/.cofold`, where cofold's file store keeps its sessions,
+ * so the sessions this backend lists are the ones cofold keeps, as ahpd's
+ * Claude lists the CLI's own store.
+ * https://www.npmjs.com/package/@cofold/store-file
  */
-export const defaultStoreRoot = (): string =>
-  join(process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'ahpd', 'cofold');
+export const defaultStoreRoot = (): string => resolveHome({ name: 'cofold' });
 
 /** A short string, or nothing for a blank or missing one. */
 const text = (value: unknown): string | undefined =>
   (typeof value === 'string' && value.trim() !== '' ? value : undefined);
 
-/** The resource a client authenticates against when nothing named one. */
-export const FALLBACK_RESOURCE = 'https://ahpd.dev/agent-cofold';
+/**
+ * The session control that sets how much every turn has the model reason:
+ * cofold's own session-wide setting, papo's `reasoning`, under the agent's
+ * provider id, as VS Code names Codex's `codex.modelReasoningEffort`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/codexSessionConfigKeys.ts#L15-L25
+ */
+export const reasoningKeyOf = (options: CofoldOptions): string => `${options.provider ?? 'cofold'}.reasoning`;
+
+/**
+ * The level the person's harness sets, else papo's own default, `off`.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/config.ts#L76-L81
+ */
+const harnessReasoningOf = (harness: HarnessConfig): string =>
+  (EFFORT_LEVELS as readonly string[]).includes(harness.reasoning ?? '') ? harness.reasoning as string : 'off';
 
 /**
  * The approvals modes a session may be put in, in the harness's own order.
@@ -154,28 +185,30 @@ export const PERMISSION_DESCRIPTIONS: readonly string[] =
   PERMISSION_MODES.map((mode) => PERMISSION_MODE_DESCRIPTIONS[mode]);
 
 /**
- * The protected resource a token for this backend belongs to.
+ * The protected resource a token for this backend belongs to, or none.
  *
- * `resource` when it was named, the origin of an `https` endpoint when one is
- * known - the plugin's own `baseUrl`, or the endpoint the harness
- * configuration's model names - and a constant otherwise. RFC 9728 wants an
- * `https` URL with no fragment, which is why the endpoint's origin is used
- * rather than the whole URL: a token is for the service, not for one path
- * under it.
+ * `resource` when it was named, and otherwise the origin of an `https`
+ * endpoint when one is known - the plugin's own `baseUrl`, or the endpoint the
+ * harness configuration's model names - as VS Code's agents advertise the API
+ * a token is for. RFC 9728 names a resource by its own `https` URL with no
+ * fragment, which is why the endpoint's origin is the resource: a token is for
+ * the service, and one path under it is the same service. An endpoint with no
+ * `https` origin names no resource, and none is advertised.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L647-L648
+ * https://www.rfc-editor.org/rfc/rfc9728#section-2
  */
-export const resourceOf = (options: CofoldOptions = {}, harness: HarnessConfig = harnessConfig()): string => {
+export const resourceOf = (options: CofoldOptions = {}, harness: HarnessConfig = harnessConfig()): string | undefined => {
   if (options.resource !== undefined) return options.resource;
   const named = options.baseUrl ?? endpointOf(options, harness)?.baseUrl;
-  if (named !== undefined) {
-    try {
-      const url = new URL(named);
-      if (url.protocol === 'https:') return url.origin;
-    }
-    catch {
-      // Not a URL at all, so there is nothing to name a resource after.
-    }
+  if (named === undefined) return undefined;
+  try {
+    const url = new URL(named);
+    return url.protocol === 'https:' ? url.origin : undefined;
   }
-  return FALLBACK_RESOURCE;
+  catch {
+    // Not a URL at all, so there is nothing to name a resource after.
+    return undefined;
+  }
 };
 
 /**
@@ -189,43 +222,13 @@ const endpointOf = (
   options: CofoldOptions,
   harness: HarnessConfig,
   ref?: string,
-): HarnessProvider | undefined => {
+): ProviderConfig | undefined => {
   const model = ref ?? options.model ?? harness.model;
   if (model === undefined) return undefined;
   const named = splitModel(model);
   if (named === undefined) return undefined;
   return harness.providers.find((one) => one.id === named.provider);
 };
-
-/**
- * Where a model is asked for, and with what.
- *
- * One resolution for both the adapter a turn runs on and the catalogue a
- * picker draws, so the two cannot disagree about which endpoint is in force:
- * a model offered by the list is selected through the same provider, base URL,
- * key and headers the list was read from.
- */
-export interface Connection {
-  /** The model as it was spelled: a reference, or a bare id. */
-  reference?: string;
-  /** The model id the endpoint is asked for, without any provider prefix. */
-  model?: string;
-  baseUrl: string;
-  apiKey?: string | (() => string | Promise<string>);
-  headers?: Record<string, string>;
-  /**
-   * The prefix a model this endpoint serves is offered under.
-   *
-   * The harness provider that owns the endpoint, so a choice selects the same
-   * provider back; this backend's own id only for an endpoint no entry owns,
-   * which is an explicit `baseUrl` or the local endpoint when the file carries
-   * no provider.
-   */
-  prefix: string;
-}
-
-/** The endpoint a model is asked for when nothing named one; LM Studio's own port. */
-const LOCAL_ENDPOINT = 'http://127.0.0.1:1234/v1';
 
 /**
  * The model reference a turn runs on, where nothing here builds an adapter.
@@ -266,13 +269,13 @@ const keyOf = (
   options: CofoldOptions,
   credentials: Record<string, string>,
   harness: HarnessConfig,
-  owner?: HarnessProvider,
-): Connection['apiKey'] => {
+  owner?: ProviderConfig,
+): OpenAICompatProviderOptions['apiKey'] => {
   const own = owner !== undefined && owner.baseUrl === baseUrl
     ? owner.apiKey
     : harness.providers.find((one) => one.baseUrl === baseUrl)?.apiKey;
   const resource = resourceOf(options, harness);
-  const lent = sameOrigin(baseUrl, resource) ? text(credentials[resource]) : undefined;
+  const lent = resource !== undefined && sameOrigin(baseUrl, resource) ? text(credentials[resource]) : undefined;
   const option = options.baseUrl !== undefined
     ? sameOrigin(baseUrl, options.baseUrl)
     : endpointOf(options, harness)?.baseUrl === baseUrl;
@@ -280,89 +283,109 @@ const keyOf = (
 };
 
 /**
- * Resolve the connection a model setting names, without requiring that a model
- * was chosen: a probe lists what an endpoint serves before anybody picks.
+ * The options a turn's model is built with: cofold's options for one model on
+ * one endpoint, their `name` the provider id a reference names the model by,
+ * with the reference as it was spelled.
  *
- * `strict` is the difference between asking and running. A call that builds an
- * adapter refuses a missing model and a reference naming a provider the file
- * does not carry; a call that only reads a catalogue falls back to the first
- * provider's endpoint and lists what it has. `connectionsOf` is the listing
- * case with more than one provider to ask.
+ * One resolution for the adapter a turn runs on and the endpoints a picker
+ * lists, so the two cannot disagree about which endpoint is in force: a model
+ * the list offered is selected through the provider, base URL, key and headers
+ * the list was read from. A turn refuses a missing model and a reference naming
+ * a provider the file does not carry; `providerOptionsOf` lists endpoints with
+ * no model chosen.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/model-openai-compat/src/types/options.ts#L3-L26
  */
-const connectionOf = (
+const adapterOptionsOf = (
   options: CofoldOptions,
   settings: Record<string, unknown>,
   credentials: Record<string, string>,
   harness: HarnessConfig,
-  strict: boolean,
-): Connection => {
+): OpenAICompatOptions & { reference: string } => {
   const own = options.provider ?? 'cofold';
   const reference = modelReferenceOf(options, settings, harness);
-  const named = reference === undefined ? undefined : splitModel(reference);
+  if (reference === undefined) {
+    throw new Error(`${own}: no model is configured and this backend has no default; add "model" (as "<provider>/<model>") to ${harness.path}`);
+  }
+  const named = splitModel(reference);
   const provider = endpointOf(options, harness, reference);
-  const explicitBase = text(settings.baseUrl) ?? options.baseUrl;
-  if (strict) {
-    if (reference === undefined) {
-      throw new Error(`${own}: no model is configured and this backend has no default; add "model" (as "<provider>/<model>") to ${harness.path}`);
-    }
-    /*
-     * This backend's own id is not a provider the file has to carry. It names
-     * an endpoint only where one was given outright, or where the file carries
-     * no provider at all; any other reference has to match a file provider.
-     */
-    if (named !== undefined && provider === undefined && explicitBase === undefined) {
-      const known = harness.providers.map((one) => one.id);
-      if (known.length > 0 || named.provider !== own) {
-        throw new Error(`${own}: model "${reference}" names provider "${named.provider}", and ${harness.path} configures ${known.length === 0 ? 'none' : known.join(', ')}`);
-      }
+  /*
+   * This backend's own id is not a provider the file has to carry: it names
+   * the endpoint given outright, and any other reference has to match a file
+   * provider.
+   */
+  if (named !== undefined && provider === undefined && options.baseUrl === undefined) {
+    const known = harness.providers.map((one) => one.id);
+    if (known.length > 0 || named.provider !== own) {
+      throw new Error(`${own}: model "${reference}" names provider "${named.provider}", and ${harness.path} configures ${known.length === 0 ? 'none' : known.join(', ')}`);
     }
   }
-  const model = reference === undefined ? undefined : (named === undefined ? reference : named.modelId);
-  const baseUrl = explicitBase ?? provider?.baseUrl ?? harness.providers[0]?.baseUrl ?? LOCAL_ENDPOINT;
+  const baseUrl = options.baseUrl ?? provider?.baseUrl ?? harness.providers[0]?.baseUrl;
+  /*
+   * A turn with no endpoint is refused as a turn with no model is: nothing
+   * named one, and cofold's model adapter takes its target server from
+   * configuration alone.
+   * https://www.npmjs.com/package/@cofold/model-openai-compat
+   */
+  if (baseUrl === undefined) {
+    throw new Error(`${own}: no endpoint is configured and this backend has no default; add a provider with its "baseUrl" to ${harness.path}`);
+  }
   const key = keyOf(baseUrl, options, credentials, harness, provider);
   return {
-    ...(reference === undefined ? {} : { reference }),
-    ...(model === undefined ? {} : { model }),
+    reference,
+    model: named === undefined ? reference : named.modelId,
     baseUrl,
     ...(key === undefined ? {} : { apiKey: key }),
     ...(provider?.headers === undefined ? {} : { headers: provider.headers }),
-    prefix: provider?.id ?? own,
+    name: provider?.id ?? own,
   };
 };
 
 /**
- * Every connection a catalogue is read from.
+ * Every endpoint a catalogue is read from, as the options cofold's provider
+ * takes, each named by the provider id a model it serves is offered under, as
+ * cofold's `providersOf` names each provider of a configuration by its id.
  *
  * Without an explicit endpoint, the harness configuration's providers are
  * asked one by one, each under its own id and with its own key, so every
- * provider a person wrote in the file is listed rather than the first alone.
- * An explicit `baseUrl` has no provider id to be offered under, and a file
- * with no provider leaves only this backend's own endpoint, so both answer the
- * one connection `connectionOf` resolves.
+ * provider a person wrote in the file is listed, and a file with no provider
+ * names nothing to list. An explicit `baseUrl` is listed under the id of the
+ * provider the configured model names, else this backend's own.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/model-openai-compat/src/config.ts#L20-L30
  */
-const connectionsOf = (
+const providerOptionsOf = (
   options: CofoldOptions,
   settings: Record<string, unknown>,
   credentials: Record<string, string>,
   harness: HarnessConfig,
-): Connection[] => {
-  const explicitBase = text(settings.baseUrl) ?? options.baseUrl;
-  if (explicitBase !== undefined || harness.providers.length === 0) {
-    return [connectionOf(options, settings, credentials, harness, false)];
+): OpenAICompatProviderOptions[] => {
+  if (options.baseUrl !== undefined) {
+    const provider = endpointOf(options, harness, modelReferenceOf(options, settings, harness));
+    const key = keyOf(options.baseUrl, options, credentials, harness, provider);
+    return [{
+      name: provider?.id ?? options.provider ?? 'cofold',
+      baseUrl: options.baseUrl,
+      ...(key === undefined ? {} : { apiKey: key }),
+      ...(provider?.headers === undefined ? {} : { headers: provider.headers }),
+    }];
   }
   return harness.providers.map((provider) => {
     const key = keyOf(provider.baseUrl, options, credentials, harness, provider);
     return {
+      name: provider.id,
       baseUrl: provider.baseUrl,
       ...(key === undefined ? {} : { apiKey: key }),
       ...(provider.headers === undefined ? {} : { headers: provider.headers }),
-      prefix: provider.id,
     };
   });
 };
 
-/** How long the endpoint is given to publish its catalogue before the configured model stands alone. */
-const CATALOGUE_TIMEOUT_MS = 5000;
+/**
+ * How long the endpoint is given to publish its catalogue before the configured
+ * model stands alone, unless the record's `catalogueTimeoutMs` says otherwise:
+ * the 15 seconds VS Code gives a runtime's model catalogue.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L293
+ */
+const CATALOGUE_TIMEOUT_MS = 15_000;
 
 /**
  * One catalogue entry as a client is offered it.
@@ -373,15 +396,59 @@ const CATALOGUE_TIMEOUT_MS = 5000;
  * number rather than a made-up one and a client sizes the conversation against
  * what the endpoint actually said.
  *
+ * How hard a model can be told to think is its own `configSchema`, the
+ * model-specific options AHP's model info carries, under `thinkingLevel`, the
+ * key the reference client's picker writes for its models: the levels the
+ * agent's configuration declares for a model of its endpoint, those of
+ * cofold's four it names, else cofold's four where the catalogue published
+ * reasoning among the model's parameters. A model neither names takes none,
+ * as cofold's own default says it cannot reason and as VS Code shows no picker
+ * for a model that declares no levels; a caller's adapter builds its own
+ * requests, so its models take none. The property is the one VS Code's agent
+ * host draws, its words and each level's label and description from VS Code's
+ * shared helpers, and `off`, cofold's own default, is the default where it is
+ * offered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L858
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/extensions/copilot/src/extension/byok/vscode-node/byokModelInfo.ts#L14-L32
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L4536-L4553
+ *
  * Nothing else of `ModelInfo` travels: a row is what a picker draws, and the
  * catalogue's `features` and `pricing` are what a turn is built from.
  */
-export const rowOf = (info: ModelInfo): Offered['models'][number] => ({
-  id: info.id,
-  name: info.name,
-  ...(typeof info.contextTokens === 'number' && info.contextTokens > 0 ? { maxContextWindow: info.contextTokens } : {}),
-  ...(typeof info.maxOutputTokens === 'number' && info.maxOutputTokens > 0 ? { maxOutputTokens: info.maxOutputTokens } : {}),
-});
+export const rowOf = (
+  options: CofoldOptions,
+  info: Pick<ModelInfo, 'id' | 'name'> & Partial<ModelInfo>,
+): Offered['models'][number] => {
+  const own = options.provider ?? 'cofold';
+  // The model's id on the agent's own endpoint, which a declaration names.
+  const onEndpoint = options.baseUrl === undefined ? undefined : info.id.startsWith(`${own}/`) ? info.id.slice(own.length + 1) : info.id;
+  const declared = options.models?.find((one) => one.id === onEndpoint)?.supportsReasoningEffort;
+  const levels = options.adapter !== undefined
+    ? []
+    : EFFORT_LEVELS.filter((level) => (declared === undefined ? info.features?.reasoning === true : declared.includes(level)));
+  return {
+    id: info.id,
+    name: info.name,
+    ...(typeof info.contextTokens === 'number' && info.contextTokens > 0 ? { maxContextWindow: info.contextTokens } : {}),
+    ...(typeof info.maxOutputTokens === 'number' && info.maxOutputTokens > 0 ? { maxOutputTokens: info.maxOutputTokens } : {}),
+    ...(levels.length === 0 ? {} : {
+      configSchema: {
+        type: 'object',
+        properties: {
+          [ReasoningEffortConfigKey]: {
+            type: 'string',
+            title: 'Effort Level',
+            description: 'Controls how much reasoning effort the model uses.',
+            enum: levels,
+            enumLabels: levels.map(getReasoningEffortLabel),
+            enumDescriptions: levels.map((level) => getReasoningEffortDescription(level) ?? ''),
+            ...(levels.includes('off') ? { default: 'off' } : {}),
+          },
+        },
+      },
+    }),
+  };
+};
 
 /**
  * What the backend already holds for a turn's model.
@@ -392,8 +459,8 @@ export const rowOf = (info: ModelInfo): Offered['models'][number] => ({
  * nothing here, and `modelOf` builds an adapter of its own.
  */
 export interface Held {
-  /** The transport one endpoint is asked through, built once per endpoint and key. */
-  providerOf(connection: Connection): ModelProvider;
+  /** The transport one endpoint is asked through, built once per endpoint, name and key. */
+  providerOf(endpoint: OpenAICompatProviderOptions): ModelProvider;
   /** What the catalogue said about a model reference, read from the cache. */
   infoOf(reference: string | undefined): ModelInfo | undefined;
 }
@@ -428,8 +495,15 @@ export const modelOf = (
   held?: Held,
 ): ModelAdapter => {
   if (options.adapter !== undefined) return options.adapter;
-  const connection = connectionOf(options, settings, credentials, harness, true);
-  const effort = effortOf(settings.effortLevel);
+  const { reference, ...adapter } = adapterOptionsOf(options, settings, credentials, harness);
+  /*
+   * The level the turn's model selection carries, its `configSchema`'s answer,
+   * winning over the chat's or the session's `effortLevel`, then the session's
+   * own `<provider>.reasoning`, which wins over the person's harness, as VS
+   * Code resolves a Codex turn's effort.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1953-L1960
+   */
+  const effort = effortOf(settings[ReasoningEffortConfigKey] ?? settings.effortLevel ?? settings[reasoningKeyOf(options)] ?? harnessReasoningOf(harness));
   /*
    * A chosen level is a request param and nothing more. The adapter turns
    * reasoning on from it, so a host that also set the feature would be saying
@@ -443,22 +517,14 @@ export const modelOf = (
      * of a session run before the endpoint has answered, and a turn that waited
      * on a catalogue would be a turn that starts late.
      */
-    const pricing = held.infoOf(connection.reference)?.pricing;
-    // Strict resolution has answered that a model was chosen.
-    return held.providerOf(connection).model({
-      id: connection.model as string,
+    const pricing = held.infoOf(reference)?.pricing;
+    return held.providerOf(adapter).model({
+      id: adapter.model,
       ...(pricing === undefined ? {} : { pricing }),
       ...chosen,
     });
   }
-  // Strict resolution has answered that a model was chosen.
-  return openaiCompat({
-    baseUrl: connection.baseUrl,
-    model: connection.model as string,
-    ...(connection.apiKey === undefined ? {} : { apiKey: connection.apiKey }),
-    ...(connection.headers === undefined ? {} : { headers: connection.headers }),
-    ...chosen,
-  });
+  return openaiCompat({ ...adapter, ...chosen });
 };
 
 /** The store this backend keeps its sessions and runs in. */
@@ -509,54 +575,74 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    */
   const readEnds = new Map<string, ReadonlyMap<string, string>>();
   /*
-   * The harness configuration, read once for this backend.
+   * The harness configuration as the backend reads it, outside any session's
+   * folder.
    *
-   * It is the same file the harness reads, so a person who has already chosen
-   * a provider and a model does not say it again in the plugin's options, and
-   * the backend's own defaults and advertised resource follow from it.
+   * It is what the harness reads, so a person who has already chosen a
+   * provider and a model does not say it again in the plugin's options, and
+   * the backend's own defaults, its catalogue and its advertised resource
+   * follow from it. A session with a folder reads its own (`create`).
    */
   const harness = harnessConfig();
+  /** The protected resource this backend advertises, where its endpoint names one. */
+  const advertised = resourceOf(options, harness);
 
   /**
    * What a session may be told.
    *
-   * `baseUrl` is configuration, which the protocol lets a client change on a
-   * running session through `session/configChanged`. The model is not here: it
-   * belongs to the turn, and the list reaches a client through `Session.models`
-   * and the agent's `models`. The key is not here either: a bearer token is a
-   * credential, and the protocol's path for one is `authenticate` against a
-   * protected resource advertised below.
+   * The endpoint is the agent's configuration, as VS Code keeps a provider's
+   * settings in the host's root configuration.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1338
+   * The model belongs to the turn, and the list reaches a client through
+   * `Session.models` and the agent's `models`. The key is a credential, and the
+   * protocol's path for one is `authenticate` against a protected resource
+   * advertised below.
    *
-   * The mode and the effort are the two controls a client draws beyond the
-   * text fields, and each is offered only where this backend can honour it:
-   * the mode when no run-level `policy` was configured, because that policy is
-   * the authority and a picker that changed nothing would be a lie, and the
-   * effort when this backend builds the request, because a caller-passed
-   * adapter keeps its own list.
+   * The mode is the control a client draws beyond the text fields, offered
+   * only where this backend can honour it: when no run-level `policy` was
+   * configured, because that policy is the authority and a picker that changed
+   * nothing would be a lie. How hard a model thinks is that model's own
+   * `configSchema` (`rowOf`), and the session's own reasoning control stands
+   * for a turn whose model selection names no level.
    */
   const schema = (): Bag => ({
     type: 'object',
     properties: {
-      baseUrl: {
-        type: 'string',
-        title: 'Endpoint',
-        description: 'An OpenAI-compatible base URL, e.g. https://api.deepseek.com/v1.',
-      },
       instructions: {
         type: 'string',
         title: 'Instructions',
         description: 'The system prompt this agent runs with.',
       },
       /*
+       * cofold's own session-wide reasoning, papo's `reasoning` setting, as VS
+       * Code keeps Codex's `codex.modelReasoningEffort` as a session control
+       * beside each model's picker: cofold's levels, the shared helpers' words,
+       * and the person's harness level for its default, else papo's `off`.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L465-L475
+       */
+      [reasoningKeyOf(options)]: {
+        type: 'string',
+        title: 'Reasoning Effort',
+        description: `Controls how much reasoning effort ${displayName} uses.`,
+        enum: [...EFFORT_LEVELS],
+        enumLabels: EFFORT_LEVELS.map(getReasoningEffortLabel),
+        enumDescriptions: EFFORT_LEVELS.map((level) => getReasoningEffortDescription(level) ?? ''),
+        default: harnessReasoningOf(harness),
+        sessionMutable: true,
+        chatMutable: true,
+      },
+      /*
        * The approvals mode. The names and labels are the ones the window
        * already draws for Claude, so one session reads the same whichever
        * backend it is; the default is `auto`, which is cofold's own policy,
-       * asking only about a tool that says it is destructive.
+       * asking only about a tool that says it is destructive. Each chat keeps
+       * its own, as VS Code's Claude agent marks its mode `chatMutable`: every
+       * chat of a cofold session is a cofold session of its own.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2283-L2305
        */
       ...(options.policy === undefined
         ? {
             permissionMode: {
-              scope: 'session',
               type: 'string',
               title: 'Approvals',
               description: 'How the agent handles tool approvals.',
@@ -565,13 +651,15 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
               enumDescriptions: [...PERMISSION_DESCRIPTIONS],
               default: 'auto',
               sessionMutable: true,
+              chatMutable: true,
             },
           }
         : {}),
+      // How hard it thinks, offered where this backend builds the request, since a caller's adapter keeps its own list.
       ...(options.adapter === undefined
         ? {
             effortLevel: {
-              scope: 'chat',
+              chatMutable: true,
               type: 'string',
               title: 'Effort',
               description: 'How hard it thinks before answering.',
@@ -592,19 +680,17 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   });
 
   /**
-   * What a session starts at: an endpoint that was configured.
+   * What a session starts at: each key at its schema's own default.
    *
-   * The model is not a session setting: a turn names it, and a turn that names
-   * none falls back to the plugin option or the harness file through
-   * `modelReferenceOf`. A default invented for a model nobody can reach is a
-   * session that fails at the first call, so only what was configured is here.
+   * The endpoint and the key are the agent's configuration, and the model is
+   * the turn's: a turn that names none falls back to the plugin option or the
+   * harness file through `modelReferenceOf`.
    */
-  const defaults = (): Record<string, unknown> => ({
-    ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
-  });
+  const defaults = (): Record<string, unknown> => ({});
 
   /**
-   * What each endpoint answered, by the endpoint and the key it was asked with.
+   * What each endpoint answered, by the endpoint, the provider id it is listed
+   * under and the key it was asked with.
    *
    * One `GET /models` per backend rather than per session or per turn: a picker
    * is drawn from the root channel before any session exists, and every session
@@ -618,24 +704,29 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   const catalogues = new Map<string, ModelInfo[]>();
 
   /**
-   * The transport one endpoint is asked through, by the endpoint and the key.
+   * The transport one endpoint is asked through, by the endpoint, its provider
+   * id and the key.
    *
-   * One per endpoint and key rather than one per turn: a turn's model is built
+   * One per endpoint, which every turn on it shares: a turn's model is built
    * from the provider the catalogue was read from, so the two cannot disagree
    * about which endpoint is in force, and the price the list gave reaches
-   * `.model()` by cofold's own route.
+   * `.model()` by cofold's own route. Built as cofold's `providersOf` builds a
+   * configuration's provider, named by its provider id.
+   * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/model-openai-compat/src/config.ts#L20-L30
    */
   const providers = new Map<string, ModelProvider>();
-  const cacheKey = (connection: Connection): string => `${connection.baseUrl}\n${connection.apiKey ?? ''}`;
+  const cacheKey = (endpoint: OpenAICompatProviderOptions): string =>
+    `${endpoint.name ?? ''}\n${endpoint.baseUrl}\n${endpoint.apiKey ?? ''}`;
 
-  const providerOf = (connection: Connection): ModelProvider => {
-    const key = cacheKey(connection);
+  const providerOf = (endpoint: OpenAICompatProviderOptions): ModelProvider => {
+    const key = cacheKey(endpoint);
     const held = providers.get(key);
     if (held !== undefined) return held;
     const built = openaiCompatProvider({
-      baseUrl: connection.baseUrl,
-      ...(connection.apiKey === undefined ? {} : { apiKey: connection.apiKey }),
-      ...(connection.headers === undefined ? {} : { headers: connection.headers }),
+      ...(endpoint.name === undefined ? {} : { name: endpoint.name }),
+      baseUrl: endpoint.baseUrl,
+      ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }),
+      ...(endpoint.headers === undefined ? {} : { headers: endpoint.headers }),
     });
     providers.set(key, built);
     return built;
@@ -648,20 +739,22 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    * it routes to and what LM Studio answers with what it has loaded. Each id is
    * offered as `<provider>/<model id>`, the spelling the harness itself writes,
    * because OpenRouter's ids contain slashes and a bare one would be read as a
-   * provider reference.
+   * provider reference. The provider id is the endpoint's `name`, and the URL's
+   * host for an endpoint given none, as cofold's provider defaults its own.
    *
    * Anything that goes wrong - a refused connection, a wrong shape, a timeout -
-   * is an empty list: an endpoint that cannot be asked offers the configured
-   * model alone, rather than a picker with no rows.
+   * is an empty list, which `catalogueOf` answers with the last good one: an
+   * endpoint never listed offers the configured model alone.
    */
-  const listModels = async (connection: Connection): Promise<ModelInfo[]> => {
+  const listModels = async (endpoint: OpenAICompatProviderOptions): Promise<ModelInfo[]> => {
     try {
-      const found = await providerOf(connection).listModels({ signal: AbortSignal.timeout(CATALOGUE_TIMEOUT_MS) });
+      const found = await providerOf(endpoint).listModels({ signal: AbortSignal.timeout(options.catalogueTimeoutMs ?? CATALOGUE_TIMEOUT_MS) });
+      const named = endpoint.name ?? new URL(endpoint.baseUrl).host;
       const models: ModelInfo[] = [];
       for (const info of found) {
         const id = text(info.id);
         if (id === undefined) continue;
-        models.push({ ...info, id: `${connection.prefix}/${id}`, name: text(info.name) ?? id });
+        models.push({ ...info, id: `${named}/${id}`, name: text(info.name) ?? id });
       }
       return models;
     }
@@ -670,13 +763,22 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
     }
   };
 
-  const catalogueOf = async (connection: Connection): Promise<ModelInfo[]> => {
-    const key = cacheKey(connection);
-    const held = catalogues.get(key);
-    if (held !== undefined) return held;
-    const listed = await listModels(connection);
+  /**
+   * One endpoint's catalogue, listed again.
+   *
+   * Every call asks the endpoint, so a probe the host makes is a refresh, as
+   * VS Code's agents list their models again whenever their host refreshes a
+   * catalogue; a listing that fails or comes back empty answers the last good
+   * list, as VS Code's Claude agent keeps its last known-good catalogue so a
+   * failed refresh never wipes the picker.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentModelRefreshScheduler.ts#L106-L125
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L918-L924
+   */
+  const catalogueOf = async (endpoint: OpenAICompatProviderOptions): Promise<ModelInfo[]> => {
+    const key = cacheKey(endpoint);
+    const listed = await listModels(endpoint);
     if (listed.length > 0) catalogues.set(key, listed);
-    return listed;
+    return catalogues.get(key) ?? [];
   };
 
   /**
@@ -686,10 +788,10 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    * asked answers nothing on this call and is asked in the background; the
    * configured model stands in until it lands.
    */
-  const knownCatalogue = (connection: Connection): ModelInfo[] => {
-    const held = catalogues.get(cacheKey(connection));
+  const knownCatalogue = (endpoint: OpenAICompatProviderOptions): ModelInfo[] => {
+    const held = catalogues.get(cacheKey(endpoint));
     if (held !== undefined) return held;
-    void catalogueOf(connection);
+    void catalogueOf(endpoint);
     return [];
   };
 
@@ -728,7 +830,10 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    * session: a row that comes back changed is a client sent a
    * `root/sessionSummaryChanged` for a session that did not move. The store
    * keeps no title of its own, so the first thing the person said is the
-   * honest one, and a session that has said nothing is titled by its id.
+   * honest one, and a session nobody said anything in is listed with an empty
+   * title, which a client draws as an untitled session, as VS Code lists a
+   * session that has no summary.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6140-L6146
    *
    * The messages are read per record, because the store has no call that
    * answers the first user message alone - which is why `find` reads one
@@ -739,7 +844,7 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
     const first = messages.find((one) => one.role === 'user' && one.source === 'input');
     return {
       id: record.sessionId,
-      title: first === undefined ? record.sessionId : titleFrom(textOf(first), record.sessionId),
+      title: first === undefined ? '' : titleFrom(textOf(first), ''),
       createdAt: record.createdAt,
       modifiedAt: record.updatedAt,
       workingDirectories: record.workspace === undefined ? [] : [uriOf(record.workspace)],
@@ -761,19 +866,28 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   function create(start: Start & { forkAt?: undefined; rewindAt?: undefined }): Session;
   function create(start: Start): Session | Promise<Session>;
   function create(start: Start): Session | Promise<Session> {
-    const opened = (resumed: Start): Session => cofoldSession(
-      options,
-      resumed,
-      store,
-      harness,
-      (settings, credentials) => connectionsOf(options, settings, credentials, harness)
-        .flatMap((connection) => knownCatalogue(connection)),
-      held,
-      // Where the turns it opens with ended, for a session that carries a
-      // conversation on, a fork's copy included: a fork keeps the message ids
-      // it copies.
-      start.resume === undefined ? undefined : readEnds.get(start.resume),
-    );
+    const opened = (resumed: Start): Session => {
+      /*
+       * The harness configuration as papo reads it in the session's own
+       * workspace, that workspace's `.papo.json` among its layers; a session
+       * given no folder has no project of its own and reads the backend's.
+       * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/config.ts#L92-L94
+       */
+      const read = resumed.workingDirectory === undefined ? harness : harnessConfig(process.env, homedir(), resumed.workingDirectory);
+      return cofoldSession(
+        options,
+        resumed,
+        store,
+        read,
+        (settings, credentials) => providerOptionsOf(options, settings, credentials, read)
+          .flatMap((endpoint) => knownCatalogue(endpoint)),
+        held,
+        // Where the turns it opens with ended, for a session that carries a
+        // conversation on, a fork's copy included: a fork keeps the message ids
+        // it copies.
+        start.resume === undefined ? undefined : readEnds.get(start.resume),
+      );
+    };
     const { forkAt, rewindAt, ...resumed } = start;
     if (forkAt === undefined && rewindAt === undefined) return opened(start);
     return (async (): Promise<Session> => {
@@ -806,7 +920,7 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
      */
     chats: { fork: true },
     /*
-     * The resource a client may lend a token for.
+     * The resource a client may lend a token for, where the endpoint names one.
      *
      * `required: false` because the daemon runs as whoever started it and
      * already holds its own key - its options or the harness file - so a
@@ -814,23 +928,23 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
      * refused every session until one arrived would be a backend nobody could
      * use from an automation.
      */
-    protectedResources: [{ resource: resourceOf(options, harness), resource_name: displayName, required: false }],
+    protectedResources: advertised === undefined ? [] : [{ resource: advertised, resource_name: displayName, required: false }],
     schema,
     defaults,
     /*
      * What a machine needs for this harness to find its providers.
      *
      * The harness configuration holds the provider keys, and it is mounted
-     * read-only at a fixed target under `computerConfigDir`, with `COFOLD_CONFIG`
-     * naming that file. The variable is this package's own, and it is a path to
-     * one file rather than a directory, because `XDG_CONFIG_HOME` cannot be
-     * moved for one program: it is the nested host's own folder as well, and a
-     * machine's mount point is root-owned, so a cofold machine whose image runs
-     * as anybody else would exit with EACCES creating its usage folder. Nothing
-     * here touches `XDG_CONFIG_HOME`, so every other program in the machine
-     * keeps its own.
+     * read-only at a fixed target under `computerConfigDir`, with `PAPO_CONFIG`
+     * naming that file, the layer papo's resolver reads from the variable. It
+     * is a path to one file rather than a directory, because `XDG_CONFIG_HOME`
+     * cannot be moved for one program: it is the nested host's own folder as
+     * well, and a machine's mount point is root-owned, so a cofold machine whose
+     * image runs as anybody else would exit with EACCES creating its usage
+     * folder. Nothing here touches `XDG_CONFIG_HOME`, so every other program in
+     * the machine keeps its own.
      *
-     * The target keeps the `cofold/config.json` shape the file has on a host, so
+     * The target keeps the `papo/config.json` shape the file has on a host, so
      * a person reading a mounted machine sees the same relative path they see
      * at `~/.config`.
      *
@@ -863,22 +977,22 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
       return {
         cofoldState: {
           state: configDir,
-          seed: [{ source: read, target: 'cofold/config.json' }],
+          seed: [{ source: read, target: 'papo/config.json' }],
           credential: true,
-          description: 'The cofold configuration, which holds the provider endpoints and their keys, kept in a volume.',
+          description: 'The harness configuration, which holds the provider endpoints and their keys, kept in a volume.',
         },
         cofoldConfig: {
           file: read,
-          target: `${configDir}/cofold/config.json`,
+          target: `${configDir}/papo/config.json`,
           readOnly: true,
           required: true,
           when: 'host',
           credential: true,
-          description: 'The cofold configuration, which holds the provider endpoints and their keys.',
+          description: 'The harness configuration, which holds the provider endpoints and their keys.',
         },
         cofoldConfigPath: {
-          name: 'COFOLD_CONFIG',
-          default: `${configDir}/cofold/config.json`,
+          name: 'PAPO_CONFIG',
+          default: `${configDir}/papo/config.json`,
           description: 'Where the harness looks for its configuration inside the machine.',
         },
         cofoldBaseUrl: {
@@ -912,14 +1026,14 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
        * file's order. A provider that fails answers an empty list, so its rows
        * are absent and the others are still offered.
        */
-      const connections = connectionsOf(options, {}, {}, harness);
+      const endpoints = providerOptionsOf(options, {}, {}, harness);
       const listed = options.adapter === undefined
-        ? (await Promise.all(connections.map((connection) => catalogueOf(connection)))).flat().map(rowOf)
+        ? (await Promise.all(endpoints.map((endpoint) => catalogueOf(endpoint)))).flat().map((info) => rowOf(options, info))
         : [];
       const reference = modelReferenceOf(options, {}, harness);
       const models = reference === undefined || listed.some((model) => model.id === reference)
         ? listed
-        : [{ id: reference, name: reference }, ...listed];
+        : [rowOf(options, { id: reference, name: reference }), ...listed];
       return { models, customizations: [], commands: await commandsOf(options) };
     },
     /*

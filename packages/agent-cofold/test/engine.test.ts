@@ -1,5 +1,5 @@
 import { WAIT_MS } from '../../../tools/wait.ts';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -139,7 +139,7 @@ it('registers the cofold engine, its form, its template and its host-only fields
   // agents channel owns and without the two only an embedder can set.
   const fields = Object.keys((engine?.schema.properties ?? {}) as Bag).sort();
   expect(fields).toEqual([
-    'apiKey', 'autoCompactTokens', 'baseUrl', 'computerConfigDir', 'hostTools', 'instructions', 'memory', 'resource', 'store', 'tools',
+    'apiKey', 'autoCompactAt', 'autoCompactTokens', 'baseUrl', 'catalogueTimeoutMs', 'computerConfigDir', 'hostTools', 'instructions', 'memory', 'models', 'resource', 'store', 'tools',
   ]);
   for (const owned of ['provider', 'displayName', 'name', 'description', 'icon', 'model', 'adapter', 'policy', 'strictTools']) {
     expect(fields).not.toContain(owned);
@@ -148,13 +148,13 @@ it('registers the cofold engine, its form, its template and its host-only fields
   expect((engine?.schema.properties as Bag | undefined)?.['apiKey']).toMatchObject({ type: 'string', secret: true });
 
   // One template, and it sets nothing: a record made from it runs on the
-  // harness configuration at ~/.config/cofold/config.json, which the harness
-  // itself reads.
+  // harness configuration papo reads, ~/.config/papo/config.json and a
+  // project's .papo.json.
   const templates = engine?.templates ?? [];
   expect(templates).toHaveLength(1);
   expect(templates[0]?.name).toBe('Cofold');
   expect(templates[0]?.config).toEqual({});
-  expect(templates[0]?.description).toContain('~/.config/cofold/config.json');
+  expect(templates[0]?.description).toContain('~/.config/papo/config.json');
 
   // The plugin registers the engine and no agent: every agent is a record.
   expect(served.agents).toHaveLength(1);
@@ -180,6 +180,36 @@ it('opens one backend per record, with the record\'s own id, name and instructio
   expect(model.requests).toHaveLength(2);
   expect(model.requests[0]?.instructions).toContain('You answer as One.');
   expect(model.requests[1]?.instructions).toContain('You answer as Two.');
+});
+
+/*
+ * Every record opens cofold's own store, at cofold's home, so each agent lists
+ * the sessions cofold keeps, as ahpd's Claude agents share the CLI's store.
+ * https://www.npmjs.com/package/@cofold/store-file
+ */
+it('opens every record\'s store at cofold\'s home, so each lists the sessions cofold keeps', async () => {
+  const home = folderOf('home');
+  const was = { home: process.env.COFOLD_HOME, data: process.env.XDG_DATA_HOME };
+  process.env.COFOLD_HOME = home;
+  // Where a store elsewhere would be written, kept out of this machine's own.
+  process.env.XDG_DATA_HOME = folderOf('data');
+  try {
+    const model = createFakeModel({ script: [{ text: 'answered' }], stream: true });
+    const engine = await engineOf({ adapter: model, memory: false });
+    const first = opened(engine, 'cofold-one', () => ({}), folderOf('one'));
+    first.session.sendMessage('t1', 'hello');
+    await until(() => endings(first.actions).length === 1);
+    const second = engine.open(viewOf('cofold-two', () => ({})));
+
+    expect((await second.list?.())?.map((row) => row.id)).toEqual([first.session.agentId?.()]);
+    expect(existsSync(join(home, 'workspaces'))).toBe(true);
+  }
+  finally {
+    for (const [key, value] of [['COFOLD_HOME', was.home], ['XDG_DATA_HOME', was.data]] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
 
 it('applies an edit at the next turn, not to the one already running', async () => {

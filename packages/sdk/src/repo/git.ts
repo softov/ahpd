@@ -1,6 +1,11 @@
 /** What git can say about a directory the host serves. */
 
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import type { ProjectInfo } from '@microsoft/agent-host-protocol';
+import { uriOf } from '../resources/fileuri.js';
 import type { DirectoryFacts } from '../types/host.js';
 import { gitArgv } from './hardened.js';
 
@@ -13,12 +18,12 @@ import { gitArgv } from './hardened.js';
 const quiet = (): NodeJS.ProcessEnv => ({ ...process.env, GIT_OPTIONAL_LOCKS: '0' });
 
 /**
- * The branch each served directory is on, as a host's `DirectoryFacts`.
+ * The project and the branch of each served directory, as a host's
+ * `DirectoryFacts`.
  *
  * Deliberately not part of `createHost`: it spawns `git`, which is a binary
  * rather than a runtime API and may not be installed at all. The daemon wires
- * it in, a library caller opts in, and a host without it still names its
- * projects - so nothing here is load-bearing for the protocol.
+ * it in, and a library caller opts in.
  *
  * ```ts
  * createHost({ path, agents: [claude({ paths })], directories: gitBranches() });
@@ -32,10 +37,22 @@ export function gitBranches(): DirectoryFacts {
    * otherwise ask git ninety-eight times for one answer.
    */
   const facts = new Map<string, Record<string, unknown>>();
+  /** The project of each directory git placed in a repository, by directory. */
+  const projects = new Map<string, ProjectInfo>();
+  /** Every directory whose project was read, placed in a repository or not. */
+  const read = new Set<string>();
 
-  /** Run git in a directory and answer what it said, or nothing at all. */
+  /**
+   * Run git in a directory and answer what it said, or nothing at all, and
+   * nothing without asking for a directory that is not there, which git can
+   * only refuse: a process is dear on Windows, and a refresh asks three times.
+   */
   const git = (dir: string, args: string[]): Promise<string | undefined> =>
     new Promise((answer) => {
+      if (!existsSync(dir)) {
+        answer(undefined);
+        return;
+      }
       execFile('git', gitArgv(dir, args), { timeout: 2000, env: quiet(), windowsHide: true }, (error, out) => {
         answer(error ? undefined : out.toString().trim());
       });
@@ -54,20 +71,57 @@ export function gitBranches(): DirectoryFacts {
   };
 
   /**
+   * The project a directory's sessions are in, as VS Code's agents resolve
+   * it: the primary checkout of the repository the directory is in, which is
+   * the first record `git worktree list` gives, or the repository's own root
+   * where it gives none, named by its basename; nothing outside git.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotGitProject.ts#L18-L30
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostGitService.ts#L158-L166
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitService.ts#L1855-L1862
+   */
+  const projectOf = async (dir: string): Promise<ProjectInfo | undefined> => {
+    const root = await git(dir, ['rev-parse', '--show-toplevel']);
+    if (root === undefined || root === '') return undefined;
+    const listed = await git(root, ['worktree', 'list', '--porcelain', '-z']);
+    const primary = listed?.split('\0\0').find((record) => record.startsWith('worktree '))?.split('\0')[0]?.slice('worktree '.length);
+    // git writes a Windows path with forward slashes; this host's own
+    // spelling is what a URI is made from.
+    const path = resolve(primary === undefined || primary === '' ? root : primary);
+    return { uri: uriOf(path), displayName: basename(path) || uriOf(path) };
+  };
+
+  /**
    * Ask git, and answer whether what it said differs from what was held.
    *
    * A directory that is not a repository, or one whose HEAD is detached, has
    * no branch and is remembered as having none: `rev-parse --abbrev-ref` says
    * `HEAD` for a detached head, and reporting that would draw a branch called
-   * HEAD.
+   * HEAD. Its project is read first, since a detached head is still in its
+   * repository.
    */
+  const readProject = async (dir: string): Promise<boolean> => {
+    const project = await projectOf(dir);
+    read.add(dir);
+    const placed = !isDeepStrictEqual(projects.get(dir), project);
+    if (project === undefined) projects.delete(dir);
+    else projects.set(dir, project);
+    return placed;
+  };
+  /*
+   * A directory's project read once, and kept until `refresh` reads it again,
+   * as VS Code's git service keeps a folder's repository root and its primary
+   * worktree root once it has asked git for them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitService.ts#L225-L270
+   */
+  const refreshProject = async (dir: string): Promise<boolean> => (read.has(dir) ? false : readProject(dir));
   const refresh = async (dir: string): Promise<boolean> => {
+    const placed = await readProject(dir);
     const said = await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
     const branchName = said === undefined || said === '' || said === 'HEAD' ? undefined : said;
     if (branchName === undefined) {
       const had = facts.has(dir);
       facts.delete(dir);
-      return had;
+      return had || placed;
     }
     /*
      * The rest in two more calls, both cheap and both answering a question a
@@ -79,10 +133,20 @@ export function gitBranches(): DirectoryFacts {
      * only way to know whether this is a GitHub repository, which is what
      * turns a client's pull-request affordances on.
      */
-    const [status, origin] = await Promise.all([
+    /*
+     * And the repository's default branch, the target of `origin/HEAD`, which
+     * is the base branch VS Code's git service reports for a folder: the branch
+     * whose pull requests are nobody's work in progress.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitService.ts#L1306-L1331
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitService.ts#L2229-L2234
+     */
+    const [status, origin, defaultBranchRef] = await Promise.all([
       git(dir, ['status', '-sb', '--porcelain']),
       git(dir, ['remote', 'get-url', 'origin']),
+      git(dir, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']),
     ]);
+    const ref = defaultBranchRef?.trim();
+    const baseBranchName = !ref ? undefined : ref.startsWith('refs/remotes/origin/') ? ref.substring('refs/remotes/origin/'.length) : ref;
     const lines = (status ?? '').split('\n');
     const head = lines[0] ?? '';
     const upstream = /^## [^.]*\.\.\.(\S+)/.exec(head)?.[1];
@@ -105,11 +169,12 @@ export function gitBranches(): DirectoryFacts {
         outgoingChanges: ahead,
       }),
       uncommittedChanges: lines.slice(1).filter((one) => one.trim() !== '').length,
+      ...(baseBranchName === undefined ? {} : { baseBranchName }),
       hasGitHubRemote: owner !== undefined,
       ...(owner ? { githubOwner: owner.owner, githubRepo: owner.repo } : {}),
     };
     const before = facts.get(dir);
-    if (before !== undefined && JSON.stringify(before) === JSON.stringify(now)) return false;
+    if (before !== undefined && JSON.stringify(before) === JSON.stringify(now)) return placed;
     facts.set(dir, now);
     return true;
   };
@@ -118,12 +183,11 @@ export function gitBranches(): DirectoryFacts {
     /*
      * `git` is the well-known key, and the field names are the reference host's.
    *
-   * Not the protocol's: it declares no `_meta` keys at all. The names come
-   * from a capture of the other implementation - `branchName`,
-   * `upstreamBranchName`, `incomingChanges`, `outgoingChanges`,
-   * `uncommittedChanges`, `hasGitHubRemote`, `githubOwner`, `githubRepo` -
-   * because a client reads one spelling, and this host used to write `branch`
-   * where that client looks for `branchName` and so said nothing at all.
+   * The protocol declares no `_meta` keys at all. The names are VS Code's
+   * session git state's - `branchName`, `upstreamBranchName`,
+   * `incomingChanges`, `outgoingChanges`, `uncommittedChanges`,
+   * `baseBranchName`, `hasGitHubRemote`, `githubOwner`, `githubRepo` - since a
+   * client reads that one spelling.
    *
    * Written whole, and correct only because this is the only producer of
    * `_meta` here.
@@ -136,6 +200,11 @@ export function gitBranches(): DirectoryFacts {
       const held = facts.get(dir);
       return held === undefined ? undefined : { git: { ...held } };
     },
+    project: (dir) => {
+      const held = projects.get(dir);
+      return held === undefined ? undefined : { ...held };
+    },
+    refreshProject,
     refresh,
   };
 }

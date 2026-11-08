@@ -10,7 +10,7 @@ import { memoryRecords } from '../src/resources/records.js';
 import { idOf } from '../src/sessions/catalog.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { sdkVersion } from '../src/version.js';
-import { claude, createHost, hello, machine, peer, resetSdk, sessionQueries, settle } from './support/host.js';
+import { builtServer, claude, createHost, hello, machine, peer, resetSdk, settle } from './support/host.js';
 import { directory, signIn } from './users-gate-helpers.js';
 import type { Connector, ServedAdapter } from '../src/types/connectors.js';
 import type { HostOptions, HostTool } from '../src/types/host.js';
@@ -147,10 +147,10 @@ async function world(over: Partial<HostOptions> = {}, contribution?: Contributio
   return { host, client, put, remove, start, ran, adapter };
 }
 
-/** The tools the last started session was handed, by name. */
+/** The tools the last session made was handed, by name. */
 const toolsOf = (): Record<string, Tool> => {
-  const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-  return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
+  const host = builtServer('host') as { tools: Tool[] } | undefined;
+  return Object.fromEntries((host?.tools ?? []).map((one) => [one.name, one]));
 };
 
 /** Call one tool the way the model does, and answer what it said. */

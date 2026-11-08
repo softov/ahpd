@@ -42,9 +42,28 @@ export interface TemplateSteps {
   boot(name: string): Promise<SshReach>;
   /** The helper shut down and gone, with its disk kept as the template. */
   keep(name: string): Promise<void>;
-  /** The helper and its disk removed, whatever of them there is. */
+  /** The helper and its disk removed, whatever of them there is: an older template among them. */
   drop(name: string): Promise<void>;
+  /** The templates a VM on the server backs onto. */
+  backed(): Promise<string[]>;
 }
+
+/**
+ * When each older template was first found with no VM backing onto it, by
+ * server and name, kept beside the configuration so a restart does not start
+ * the week again.
+ */
+export interface TemplateLedger {
+  read(): Record<string, number>;
+  write(held: Record<string, number>): void;
+}
+
+/**
+ * How long an older template no VM backs onto is kept, as VS Code keeps a
+ * cached version the product no longer asks for a week after its last use.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L17-L22
+ */
+export const TEMPLATE_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** What a VM made from a template must not inherit from the helper: its instance and its logs. */
 const SEAL = ['sudo', 'cloud-init', 'clean', '--logs', '--machine-id'];
@@ -53,11 +72,42 @@ const SEAL = ['sudo', 'cloud-init', 'clean', '--logs', '--machine-id'];
  * The function that makes a server's template once, by name.
  *
  * Two VMs asked for at once on a server with no template build it once: the
- * second waits for the first one's build. An older template is named in the
- * log and kept, because a VM may still back onto it.
+ * second waits for the first one's build. An older template is kept while a
+ * VM backs onto it, and removed once none has for `TEMPLATE_KEPT_MS`, swept
+ * each time a VM is made on the server, as VS Code removes a cached version
+ * unused for a week.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L30-L78
  */
-export const templateMaker = (parts: TemplateParts, log?: (line: string) => void) => {
+export const templateMaker = (parts: TemplateParts, log?: (line: string) => void, ledger?: TemplateLedger) => {
   const building = new Map<string, Promise<string>>();
+
+  /** The server's older templates, each removed a week after it was first found with no VM. */
+  const sweep = async (server: string, steps: TemplateSteps, name: string, there: readonly string[]): Promise<void> => {
+    const old = there.filter((one) => one.startsWith(TEMPLATE_PREFIX) && one !== name);
+    if (old.length === 0) return;
+    const backed = new Set(await steps.backed());
+    const held = ledger?.read() ?? {};
+    const now = Date.now();
+    for (const one of old) {
+      const key = `${server}\n${one}`;
+      if (backed.has(one)) {
+        delete held[key];
+        continue;
+      }
+      held[key] ??= now;
+      if (now - (held[key] ?? now) < TEMPLATE_KEPT_MS) continue;
+      try {
+        await steps.drop(one);
+        delete held[key];
+        log?.(`${server} removed the template ${one}, which no VM has backed onto for over a week`);
+      }
+      catch (error) {
+        log?.(`${server} did not remove the template ${one}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    ledger?.write(held);
+  };
+
   return async (server: string, steps: TemplateSteps): Promise<string> => {
     const tag = await parts.joined();
     const name = templateNameOf(tag);
@@ -66,7 +116,10 @@ export const templateMaker = (parts: TemplateParts, log?: (line: string) => void
     if (held !== undefined) return held;
     const made = (async () => {
       const there = await steps.templates();
-      if (there.includes(name)) return name;
+      if (there.includes(name)) {
+        await sweep(server, steps, name, there).catch(() => { /* swept again with the next VM */ });
+        return name;
+      }
       try {
         const reach = await steps.boot(name);
         await parts.into(tag, reach);
@@ -80,8 +133,7 @@ export const templateMaker = (parts: TemplateParts, log?: (line: string) => void
         });
         throw new Error(`The template ${name} was not made on ${server}: ${error instanceof Error ? error.message : String(error)}`);
       }
-      const old = there.filter((one) => one.startsWith(TEMPLATE_PREFIX) && one !== name);
-      if (old.length > 0) log?.(`${server} keeps the older templates ${old.join(', ')}; remove one once no VM backs onto it`);
+      await sweep(server, steps, name, there).catch(() => { /* swept again with the next VM */ });
       return name;
     })();
     building.set(key, made);

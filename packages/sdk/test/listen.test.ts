@@ -554,11 +554,13 @@ it('answers the client it closed when it comes back, with a replay or snapshots'
     expect(answer.error).toBeUndefined();
     // A replay of what it missed, or state where the gap is longer than the
     // buffer: either way it is served, on the listener that closed it.
-    const result = answer.result as { type: string; missing: string[] };
+    const result = answer.result as { type: string; missing?: string[]; snapshots?: { resource: string }[] };
     expect(['replay', 'snapshot']).toContain(result.type);
     // And nothing it asked back for has gone, which is the other half of a
-    // client that dropped being answerable at all.
-    expect(result.missing).toEqual([]);
+    // client that dropped being answerable at all: a replay names nothing
+    // missing, and state holds every channel it asked for.
+    expect(result.type === 'replay' ? result.missing : result.snapshots?.map((one) => one.resource))
+      .toEqual(result.type === 'replay' ? [] : ['ahp-root://']);
   }
   finally {
     client.destroy();

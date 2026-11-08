@@ -1,11 +1,11 @@
 import { run } from '@cofold/agents';
-import type { Agent as CofoldAgent, ContentPart, ImagePart, TextPart } from '@cofold/agents';
+import type { Agent as CofoldAgent, ContentPart, ImagePart, RunEvent, TextPart } from '@cofold/agents';
 import { bag, partsOf, reason, str, titleFrom } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, TurnOptions } from '@ahpd/sdk';
 import { modelReferenceOf } from './agent.js';
 import { mapTurn } from './mapping.js';
-import type { TurnMapping } from './mapping.js';
-import { ruleName } from './tools.js';
+import type { SendFailure, TurnMapping } from './mapping.js';
+import { confirmationOf } from './tools.js';
 import { AGENT_ID } from './turnagent.js';
 import type { SessionContext } from './context.js';
 
@@ -41,7 +41,8 @@ export const partsFor = async (
 
 /** What opening a turn and running the turns handed offer the other areas. */
 export interface Turns {
-  beginTurn: (
+  /** Run a message, once the run in front of it is over: VS Code's agent's `sendMessage`. */
+  sendMessage: (
     turnId: string,
     text: string,
     model?: Chosen,
@@ -67,6 +68,11 @@ export interface Turns {
    * refuses images is a turn that fails rather than a correction.
    */
   supportsVision: () => boolean;
+  /**
+   * The `run.finished` a turn whose send failed ends with, typed by the stage
+   * it failed at, for every area that ends one.
+   */
+  turnFailure: (turnId: string, code: SendFailure, why: unknown) => RunEvent;
 }
 
 export const createTurns = (ctx: SessionContext): Turns => {
@@ -84,11 +90,15 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * The values a turn runs on, and the model reference they resolve to.
    *
    * A model named on the turn wins over the session's, and is what the usage
-   * report names. The reference is the one `connectionOf` resolves: the values
-   * in force, then the plugin option, then the harness file.
+   * report names, with the thinking level its own `configSchema` was answered
+   * with. The reference is the one `adapterOptionsOf` resolves: the values in
+   * force, then the plugin option, then the harness file.
    */
   const valuesFor = (model?: Chosen): { values: Record<string, unknown>; reference: string | undefined } => {
-    const values: Record<string, unknown> = model === undefined ? ctx.values : { ...ctx.values, model: model.id };
+    const level = model?.config?.thinkingLevel;
+    const values: Record<string, unknown> = model === undefined
+      ? ctx.values
+      : { ...ctx.values, model: model.id, ...(level === undefined ? {} : { thinkingLevel: level }) };
     return { values, reference: modelReferenceOf(options, values, harness) };
   };
 
@@ -106,6 +116,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
     parts: Bag[],
     began: number,
     reference: string | undefined,
+    resumed = false,
   ): TurnMapping => mapTurn({
     turnId,
     chatUri: start.chatUri,
@@ -120,17 +131,18 @@ export const createTurns = (ctx: SessionContext): Turns => {
     },
     ownerOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.owner,
     cancelled: () => ctx.cancelRequested,
-    // The operator's rule, read when a call is put to a person: a matched
-    // tool's question offers no session choice cofold would remember.
-    asksEveryTime: (name) => start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask',
-    // A failed turn can be put back when there is a point to cut to: the last
-    // message of the turn before, or, for a conversation's first turn, no
+    // What the host decides a question by.
+    confirmationOf: (name, input) => confirmationOf(name, input, ctx.where),
+    // A failed turn can be put back when there is a point to truncate to: the
+    // last message of the turn before, or, for a conversation's first turn, no
     // session at all. A turn before it that nobody named a point for is one
-    // this process cannot cut back to.
-    canCut: () => {
+    // this process cannot truncate back to.
+    canTruncate: () => {
       const before = turns.at(-1);
       return before === undefined || ctx.points.has(String(before.id));
     },
+    resumed,
+    keptOf: (key) => ctx.kept.get(key),
     ...(reference !== undefined ? { model: reference } : {}),
   });
 
@@ -186,12 +198,12 @@ export const createTurns = (ctx: SessionContext): Turns => {
         // beside the words the turn was accepted with - and so a message the
         // queue handed over keeps what was pasted into it.
         ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-        // The protocol's `Message.model`: the model this turn runs on, so a
-        // client that reconnects shows it. The client's own `config` travels
-        // with it, as a claude turn's does.
-        ...(reference !== undefined
-          ? { model: { id: reference, ...(model?.config === undefined ? {} : { config: model.config }) } }
-          : {}),
+        // The protocol's `Message.model` as the client sent it, the start every
+        // client holds, as VS Code's host says a client's start; the model the
+        // run used is the turn's as it is read back.
+        ...(model === undefined
+          ? {}
+          : { model: { id: model.id, ...(model.config === undefined ? {} : { config: model.config }) } }),
       },
       responseParts: [],
     };
@@ -246,7 +258,9 @@ export const createTurns = (ctx: SessionContext): Turns => {
       agent = ctx.agentOf(values, instructions);
     }
     catch (error) {
-      void ctx.apply(mapping, turnId, refusal(turnId, 'start_failed', error));
+      // An agent that cannot be built is a model nothing resolves: no model
+      // configured, a provider the file lacks, no endpoint.
+      void ctx.apply(mapping, turnId, turnFailure(turnId, 'modelSelectionFailed', error));
       return;
     }
     // Before the run, so a correction sent the moment the turn appears is read
@@ -274,7 +288,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
         });
       }
       catch (error) {
-        void ctx.apply(mapping, turnId, refusal(turnId, 'start_failed', error));
+        void ctx.apply(mapping, turnId, turnFailure(turnId, 'sendFailed', error));
         return;
       }
       ctx.handle = live;
@@ -297,13 +311,13 @@ export const createTurns = (ctx: SessionContext): Turns => {
         // this call's to start, and not this call's to fail either.
         if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
         if (ctx.cancelRequested || ctx.disposed) {
-          await ctx.apply(mapping, turnId, stopped(turnId));
+          await ctx.apply(mapping, turnId, turnCancelled(turnId));
           return;
         }
         launch(parts);
       }
       catch (error) {
-        await ctx.apply(mapping, turnId, refusal(turnId, 'start_failed', error));
+        await ctx.apply(mapping, turnId, turnFailure(turnId, 'sendFailed', error));
       }
     })();
   };
@@ -341,8 +355,13 @@ export const createTurns = (ctx: SessionContext): Turns => {
     );
   };
 
-  /** The `run.finished` a turn that never ran ends with. */
-  const refusal = (turnId: string, code: string, why: unknown) => ({
+  /**
+   * The `run.finished` a turn that never ran ends with: VS Code's turn
+   * failure, typed by the stage its send failed at, with the failure's own
+   * words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2553-L2574
+   */
+  const turnFailure = (turnId: string, code: SendFailure, why: unknown): RunEvent => ({
     seq: 0,
     runId: `${turnId}:refused`,
     sessionId,
@@ -359,17 +378,18 @@ export const createTurns = (ctx: SessionContext): Turns => {
   });
 
   /**
-   * The `run.finished` a turn that was stopped before it ran ends with.
+   * The `run.finished` a turn cancelled before it ran ends with, the spec's
+   * `chat/turnCancelled` once mapped.
    *
    * A cancel reaches a run through its handle, and a turn whose message is
-   * still being read has no handle yet, so the stop finds nothing to stop. The
-   * turn is already open on the wire, though, and one that never settles is a
-   * spinner nothing can clear - so the ending it would have had is handed to
-   * the mapping, the way a turn that cannot start is.
+   * still being read has no handle yet, so the cancel finds nothing to cancel.
+   * The turn is already open on the wire, though, and one that never settles
+   * is a spinner nothing can clear - so the ending it would have had is handed
+   * to the mapping, the way a turn that cannot start is.
    */
-  const stopped = (turnId: string) => ({
+  const turnCancelled = (turnId: string) => ({
     seq: 0,
-    runId: `${turnId}:stopped`,
+    runId: `${turnId}:cancelled`,
     sessionId,
     agentId: AGENT_ID,
     at: new Date().toISOString(),
@@ -403,7 +423,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
   ): void => {
     const opened = openTurn(turnId, text, model, from, attachments);
     if (opened === undefined) return;
-    void ctx.apply(opened.mapping, turnId, refusal(turnId, 'record_refused', why));
+    void ctx.apply(opened.mapping, turnId, turnFailure(turnId, 'sendFailed', why));
   };
 
   /**
@@ -448,9 +468,9 @@ export const createTurns = (ctx: SessionContext): Turns => {
       ctx.resumedFrom = resumedFrom;
       ctx.cancelRequested = false;
       ctx.error = undefined;
-      const mapping = mappingOn(turnId, kept, Date.now(), str(bag(bag(reopened.message).model).id));
+      const mapping = mappingOn(turnId, kept, Date.now(), str(bag(bag(reopened.message).model).id), true);
       ctx.activeMapping = mapping;
-      void ctx.resumePaused(turnId, mapping);
+      ctx.resumePaused(turnId, mapping);
       return true;
     }
     /*
@@ -491,7 +511,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       : { id, ...(named.config === undefined ? {} : { config: named.config as NonNullable<Chosen['config']> }) };
     const { values, reference } = valuesFor(chosen);
     const began = Date.now();
-    const mapping = mappingOn(turnId, kept, began, reference);
+    const mapping = mappingOn(turnId, kept, began, reference, true);
     ctx.activeMapping = mapping;
     /*
      * A record that can no longer be used cannot run the turn either, and the
@@ -499,7 +519,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
      * spinner nothing can settle.
      */
     if (broken !== undefined) {
-      void ctx.apply(mapping, turnId, refusal(turnId, 'resume_failed', new Error(broken)));
+      void ctx.apply(mapping, turnId, turnFailure(turnId, 'sendFailed', new Error(broken)));
       return true;
     }
     void (async (): Promise<void> => {
@@ -512,7 +532,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       catch (error) {
         // The store would not truncate the conversation, so there is nothing
         // to run on, and the resumed turn ends with the reason.
-        await ctx.apply(mapping, turnId, refusal(turnId, 'resume_failed', error));
+        await ctx.apply(mapping, turnId, turnFailure(turnId, 'sendFailed', error));
         return;
       }
       const text = str(message.text) ?? '';
@@ -534,10 +554,12 @@ export const createTurns = (ctx: SessionContext): Turns => {
 
   /**
    * A turn handed, run once the run in front of it is over, as the reference
-   * agent runs each send after the one before it. The turn it takes the place
-   * of in every client's state runs on here and ends in no history.
+   * agent runs each send after the one before it: the step VS Code's agent
+   * names `sendMessage`. The turn it takes the place of in every client's
+   * state runs on here and ends in no history.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1311
    */
-  const beginTurn = (
+  const sendMessage = (
     turnId: string,
     text: string,
     model?: Chosen,
@@ -584,9 +606,10 @@ export const createTurns = (ctx: SessionContext): Turns => {
   };
 
   return {
-    beginTurn,
+    sendMessage,
     resumeTurn,
     sendNext,
     supportsVision: () => supportsVision,
+    turnFailure,
   };
 };

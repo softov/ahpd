@@ -24,7 +24,7 @@ import { asCreatedBy, asOrigin, depthOf, readOrigin } from '../src/sessions/remo
 import { fileSessions } from '../src/sessions/sessions.js';
 import type { HostOptions } from '../src/types/host.js';
 import {
-  claude, createHost, emit, hello, machine, peer, resetSdk, sdk, sessionQueries, settle,
+  claude, createHost, emit, firstMessage, hello, machine, peer, resetSdk, sdk, sessionQueries, settle,
 } from './support/host.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
@@ -157,6 +157,9 @@ const made = async (
   const state = (await client.handle({ method: 'subscribe', params: { channel: SESSION } }) as {
     snapshot: { state: { _meta?: Record<string, unknown>; defaultChat: string } };
   }).snapshot.state;
+  // Its first turn, answered: a session is listed from its first message.
+  await firstMessage(client, state.defaultChat);
+  await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
     items: { resource: string; _meta?: Record<string, unknown> }[];
   };
@@ -196,6 +199,20 @@ describe('a session a window sent here', () => {
     expect(meta?.[DEPTH]).toBe(2);
     expect(meta?.[CREATED_BY]).toEqual({ session: 'abc', chat: 'abc#one', turnId: 't1' });
     expect(row?._meta?.[ORIGIN]).toEqual({ session: FROM, chat: CHAT, depth: 2 });
+  });
+
+  /*
+   * The multi-root workspace a window made the session from, kept on the
+   * session's `_meta` as VS Code's host keeps it, and none where the value is
+   * not a workspace file's URI.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10672-L10684
+   */
+  it('keeps the multi-root workspace the window made it from, and none that is not one', async () => {
+    const workspace = { workspaceFile: 'file:///home/softov/work.code-workspace' };
+    const { meta } = await made({}, {}, undefined, { multiRoot: workspace });
+    expect(meta?.multiRoot).toEqual(workspace);
+    const bare = await made({}, {}, undefined, { multiRoot: { workspaceFile: 'work.code-workspace' } });
+    expect(bare.meta?.multiRoot).toBeUndefined();
   });
 
   it('has none of the three for a session this host began itself', async () => {
@@ -350,6 +367,7 @@ describe('telling each turn of a session another window sent here to report back
     // session, so the backend is started without them either way.
     expect(started()).toEqual({ type: 'preset', preset: 'claude_code' });
     await says(client, chat, 'first');
+    await settle();
     expect(await told()).toEqual([REPORT_BACK]);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 3 });
 

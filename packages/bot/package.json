@@ -87,10 +87,24 @@
       "type": "object",
       "properties": {
         "root": { "type": "string", "description": "Folder for bot workspaces, one '<root>/<slug>' per bot. Defaults to '~/.bots'. Cannot be inside the configuration folder." },
-        "lastChats": { "type": "integer", "minimum": 1, "description": "How many recent chats '{{chats}}' lists in a template. Defaults to 10." },
         "mainTurnPostMessageAbsent": {
           "type": "string",
           "description": "What the bot's chat shows when its work session ends without post_message. 'post' (default) shows the session's last words; 'notice' shows a notice; 'silence' shows nothing; 'postNotice' shows the last words, or the notice when there are none."
+        },
+        "instructionsIn": {
+          "type": "string",
+          "enum": ["section", "body"],
+          "description": "Where the bot's instructions are in its AGENTS.md. 'section' (default) reads its '## Instructions' section; 'body' reads the whole body after the frontmatter."
+        },
+        "contextIn": {
+          "type": "string",
+          "enum": ["text", "meta"],
+          "description": "Where a woken message's context goes. 'text' (default) adds a block before the person's words with the main chat, the person and the time; 'meta' sends the words as said, with the main chat in the message's delegation _meta."
+        },
+        "askIn": {
+          "type": "string",
+          "enum": ["main", "own"],
+          "description": "Where the work session's questions and approvals appear. 'main' (default) copies them into the main chat to answer there; 'own' leaves them in the work session's chat and lists them on the main chat's inputNeeded."
         }
       }
     }

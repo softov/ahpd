@@ -42,9 +42,13 @@ const sdk = vi.hoisted(() => {
   return state;
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  query: () => {
+  query: ({ prompt }: { prompt: unknown }) => {
+    // The CLI reads every prompt it is handed, which is when a turn's prompt leaves the queue.
+    if (typeof prompt === 'object' && prompt !== null && Symbol.asyncIterator in prompt) {
+      void (async () => { for await (const _ of prompt as AsyncIterable<unknown>) { /* read */ } })();
+    }
     const feed = sdk.feed;
     return {
       async *[Symbol.asyncIterator]() {
@@ -76,7 +80,7 @@ const fixture = (name: string): Record<string, unknown>[] => readFileSync(
 ).split('\n').filter((line) => line.trim() !== '').map((line) => JSON.parse(line) as Record<string, unknown>);
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /**

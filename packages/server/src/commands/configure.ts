@@ -286,16 +286,17 @@ export async function configure(options: ConfigureOptions): Promise<Configured> 
    */
   const platform = process.platform;
   const path = options.path ?? process.env.PATH ?? '';
-  const runtimes = await findRuntimes({ run: options.run, path, platform });
+  const onPath = held.onPath === 'findExecutable' ? 'findExecutable' : 'runnable';
+  const runtimes = await findRuntimes({ run: options.run, path, platform, onPath });
   for (const line of runtimeLines(runtimes)) options.say(line);
 
   const configured = configuredAgents(held.plugins, await agentRecords.list());
-  const found = await findAgents({ run: options.run, path, platform }, configured);
+  const found = await findAgents({ run: options.run, path, platform, onPath }, configured);
   const taken: string[] = [];
   if (answering(options.term)) {
     for (const line of agentLines(found.agents)) options.say(line);
   }
-  for (const line of alsoLines(await findAlso({ run: options.run, path, platform }))) options.say(line);
+  for (const line of alsoLines(await findAlso({ run: options.run, path, platform, onPath }))) options.say(line);
   if (answering(options.term)) {
     for (const one of found.agents) {
       /*

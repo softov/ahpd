@@ -36,10 +36,11 @@ it('reads a session held under its provider\'s scheme as a session, and a file a
   expect(await call(guest, 'subscribe', { channel: session })).toMatchObject({ code: -32009 });
   expect(await call(guest, 'subscribe', { channel: chat })).toMatchObject({ code: -32009 });
 
-  // A chat the client named itself, whose scheme says nothing about whose it is.
-  expect(await call(admin, 'createChat', { channel: session, chat: 'peer:/two' })).toHaveProperty('result');
-  expect(await call(member, 'subscribe', { channel: 'peer:/two' })).toHaveProperty('result');
-  expect(await call(guest, 'subscribe', { channel: 'peer:/two' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
+  // A chat the client named itself, whose id says nothing about whose it is,
+  // read as a chat of the session that holds it.
+  expect(await call(admin, 'createChat', { channel: session, chat: 'ahp-chat:/two' })).toHaveProperty('result');
+  expect(await call(member, 'subscribe', { channel: 'ahp-chat:/two' })).toHaveProperty('result');
+  expect(await call(guest, 'subscribe', { channel: 'ahp-chat:/two' })).toMatchObject({ code: -32009, message: expect.stringContaining('chat:turns') });
 });
 
 it('needs a session\'s write group to drive one, and the act it is refused is the one it did', async () => {
@@ -271,8 +272,8 @@ it('keeps config for a channel that names no session out of the store', async ()
    */
   await admin.send('zzz:/disk', { type: 'session/configChanged', config: { voice: 'whisper' } });
   expect(admin.refused()).toEqual([
-    'zzz:/nothing: zzz:/nothing is not a session here',
-    'zzz:/disk: zzz:/disk is not a session here',
+    'zzz:/nothing: No agent for session: zzz:/nothing',
+    'zzz:/disk: No agent for session: zzz:/disk',
   ]);
   expect(store.config('nothing')).toBeUndefined();
   // The row that is a session keeps the backend's key and not this host's own.
@@ -393,7 +394,7 @@ it('asks an automation\'s owner for computer:write, and refuses a run it cannot 
       title: 'nightly', enabled: true, message: { text: 'review' },
       session: { ...session, config: { ...session.config } }, triggers: [],
     }, owner);
-    await call(admin.client, 'runAutomation', { channel: 'ahp-automations://', automation: resource });
+    await call(admin.client, 'runAutomation', { channel: 'ahp-automations://', automation: resource, requestId: resource });
     // `!`: the run was just made, so the entry already shows it.
     return store.get(resource)!.runs[0] as { lifecycle: { status: string; error?: { message: string } } };
   };

@@ -7,7 +7,7 @@ import { botTarget, turnEnds } from './bot.js';
 import { webhookAdapter } from './adapter.js';
 import { DEFAULT_MAX_BODY_BYTES } from './call.js';
 import { NAME, webhookRoute } from './route.js';
-import type { Bag, Plugin, PluginHost, PluginPeer, TurnEndEvent } from '@ahpd/sdk';
+import type { Plugin, PluginHost, PluginPeer, TurnEndEvent, TurnStartEvent } from '@ahpd/sdk';
 import type { BotSeams } from './bot.js';
 import type { Endpoint } from './record.js';
 
@@ -46,6 +46,9 @@ export const defaults = {
 
 /** What the plugin's connection calls itself. */
 const CLIENT = 'ahpd-webhook';
+
+/** The provider a chat with a bot runs on, the bot plugin's. */
+const BOT_CHAT = 'bot-chat';
 
 /** How long a dispatch waits for the host's echo before its delivery is unconfirmed, in milliseconds. */
 const ECHO_MS = 10_000;
@@ -198,6 +201,7 @@ const textOf = (state: unknown, turn: string): string => {
 export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number): BotSeams {
   const peer = async (): Promise<PluginPeer> => (await open()).conn;
   const ends = turnEnds();
+  host.on('turn_start', (event: TurnStartEvent) => { ends.started(event); });
   host.on('turn_end', (event: TurnEndEvent) => { ends.heard(event); });
   const problem = (line: string): void => { host.problem(`${name}: ${line}`); };
   /*
@@ -227,6 +231,8 @@ export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout:
     subscriptions.delete(chat);
     conn.notify('unsubscribe', { channel: chat });
   };
+  /** The plugin's session with each bot, by the bot's URI, once one is asked for. */
+  const withBot = new Map<string, Promise<string | undefined>>();
   // Each callback's wait for its next attempt, ended when the plugin closes.
   const waits = new Map<NodeJS.Timeout, (error: Error) => void>();
   host.registerClose(() => {
@@ -239,30 +245,39 @@ export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout:
   return {
     threads: host.records('webhook-threads'),
     /**
-     * The plugin's own session with the bot, read the way a client reads one.
-     *
-     * The read answers `chat` only to a reader who may chat - a holder of
-     * `bot:chat`, or the bot's owner - and the session is started there if it
-     * is not one this host holds, so the two grants the plugin needs are named
-     * in one problem line when the read answers the record without it.
+     * The plugin's own session with the bot, made as a client makes a chat
+     * with one: `createSession` on the bot's chat provider, the bot named in
+     * its config. Made the first time a call to the bot needs it, and again
+     * where the host no longer holds it, a daemon that restarted among them.
      */
     session: async (bot): Promise<string | undefined> => {
-      const conn = await peer();
-      let said: Bag;
-      try {
-        const read = await conn.request('resourceRead', { uri: bot });
-        said = JSON.parse(String((read as { data?: unknown }).data)) as Bag;
+      const kept = withBot.get(bot);
+      if (kept !== undefined) {
+        const session = await kept;
+        if (session !== undefined && await host.sessionOwner(session) !== undefined) return session;
       }
-      catch (error) {
-        problem(`${bot} cannot be read: ${reason(error)}`);
-        return undefined;
-      }
-      const session = said['chat'];
-      if (typeof session !== 'string' || session === '') {
-        problem(`needs the grants bot:chat and session:create to be answered a chat by ${bot}`);
-        return undefined;
-      }
-      return session;
+      const made = (async (): Promise<string | undefined> => {
+        let slug: string;
+        try {
+          slug = new URL(bot).host;
+        }
+        catch {
+          problem(`${bot} is not a bot's URI`);
+          return undefined;
+        }
+        const conn = await peer();
+        const session = `ahp-session:/${randomUUID()}`;
+        try {
+          await conn.request('createSession', { channel: session, provider: BOT_CHAT, config: { bot: slug } });
+        }
+        catch (error) {
+          problem(`could not open a session with ${bot}, which needs the grant session:create: ${reason(error)}`);
+          return undefined;
+        }
+        return session;
+      })();
+      withBot.set(bot, made);
+      return await made;
     },
     /**
      * A chat of one caller thread's own, opened as a client opens one: a
@@ -281,33 +296,35 @@ export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout:
       }
       return chat;
     },
-    send: async (chat, turn, text) => {
+    send: async (chat, message, text) => {
       const { conn, sender } = await open();
-      // The host echoes a taken turn only to the subscribers of its chat.
+      // The host echoes a taken message only to the subscribers of its chat.
       await hold(conn, chat);
       /*
-       * Sent as VS Code's client sends a turn: the time it starts and a
-       * person's message, which the host says as it came.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L3717-L3726
+       * Queued as VS Code's router sends a message into another session's
+       * chat: a pending message whatever the chat is doing, since the host
+       * takes queued messages up in the order they came, and an agent's.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L270-L282
        */
       return await sender.dispatch(chat, {
-        type: 'chat/turnStarted',
-        turnId: turn,
-        startedAt: new Date().toISOString(),
-        message: { text, origin: { kind: 'user' } },
+        type: 'chat/pendingMessageSet',
+        kind: 'queued',
+        id: message,
+        message: { text, origin: { kind: 'agent' } },
       });
     },
-    forget: (chat, turn) => {
-      ends.forget(chat, turn);
+    turnOf: (chat, message) => ends.turnOf(chat, message),
+    forget: (chat, message) => {
+      ends.forget(chat, message);
       void peer().then((conn) => { release(conn, chat); });
     },
-    ended: async (chat, turn) => {
-      const ending = await ends.wait(chat, turn);
+    ended: async (chat, message) => {
+      const ending = await ends.wait(chat, message);
       const conn = await peer();
       try {
-        // Read through the subscription the turn holds, then let it go.
+        // Read through the subscription the message holds, then let it go.
         const opened = await conn.request('subscribe', { channel: chat }) as { snapshot?: { state?: unknown } };
-        return { ...ending, text: textOf(opened.snapshot?.state, turn) };
+        return { ...ending, text: textOf(opened.snapshot?.state, ending.turn) };
       }
       finally {
         release(conn, chat);

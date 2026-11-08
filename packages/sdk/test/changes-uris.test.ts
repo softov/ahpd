@@ -363,10 +363,11 @@ describe('ahp-edit://pending, the file a tool would leave', () => {
     })).toEqual({ data: 'as it is\nand more\n', encoding: 'utf-8' });
 
     changes.settle?.('ahp-session:/s', 'toolu_9');
-    // Answered for while the question is open, and nobody's once it is not.
+    // Answered for while the question is open, and nobody's once it is not:
+    // NotFound, as VS Code's host answers a resource nothing serves.
     await expect(client.handle({
       method: 'resourceRead', params: { channel: 'ahp-root://', uri: after },
-    })).rejects.toMatchObject({ code: -32601 });
+    })).rejects.toMatchObject({ code: -32008 });
   });
 });
 
@@ -419,24 +420,33 @@ describe('the host\'s channels, in the form VS Code prints them', () => {
     expect(vscode('ahp-automations://')).toBe('ahp-automations:');
   });
 
-  it('takes `ahp-root:` as the root channel wherever it takes `ahp-root://`', async () => {
+  /*
+   * Answered and said as `ahp-root://` whatever spelling asked, as VS Code's
+   * host answers the root and sends its actions, its client matching the
+   * root's spellings by scheme.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1079-L1086
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L1458-L1482
+   */
+  it('takes `ahp-root:` as the root channel wherever it takes `ahp-root://`, and answers and says it as `ahp-root://`', async () => {
     for (const root of ['ahp-root://', vscode('ahp-root://')]) {
       const { client, notes, hello } = await introduced(root);
-      expect(hello.snapshots.map((one) => one.resource)).toEqual([root]);
+      expect(hello.snapshots.map((one) => one.resource)).toEqual(['ahp-root://']);
       const opened = await client.handle({ method: 'subscribe', params: { channel: root } }) as {
         snapshot: { resource: string; state: Record<string, unknown> };
       };
-      expect(opened.snapshot.resource).toBe(root);
+      expect(opened.snapshot.resource).toBe('ahp-root://');
       expect(opened.snapshot.state.agents).toBeDefined();
       await expect(client.handle({ method: 'listSessions', params: { channel: root } })).resolves.toBeTruthy();
       await expect(client.handle({ method: 'listAutomationTriggerDefinitions', params: { channel: root } })).resolves.toBeTruthy();
+      // A change that moves a value, since one that leaves the root as it is
+      // is neither kept nor said.
       await client.handle({
         method: 'dispatchAction',
-        params: { channel: root, clientSeq: 1, action: { type: 'root/configChanged', config: {} } },
+        params: { channel: root, clientSeq: 1, action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
       });
       const echoed = notes.filter((one) => one.method === 'action')
         .map((one) => one.params as { channel: string; action: { type: string } });
-      expect(echoed.some((one) => one.channel === root && one.action.type === 'root/configChanged')).toBe(true);
+      expect(echoed.some((one) => one.channel === 'ahp-root://' && one.action.type === 'root/configChanged')).toBe(true);
       await client.handle({ method: 'unsubscribe', params: { channel: root } });
     }
   });
@@ -446,9 +456,11 @@ describe('the host\'s channels, in the form VS Code prints them', () => {
     const channel = vscode('ahp-automations://');
     const opened = await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { resource: string } };
     expect(opened.snapshot.resource).toBe(channel);
+    // Answered by the method under that spelling: an automation the store does
+    // not keep is refused in VS Code's words, not for the channel.
     await expect(client.handle({
       method: 'fetchAutomationRuns', params: { channel, automation: 'ahp-automation:/nightly' },
-    })).resolves.toBeTruthy();
+    })).rejects.toMatchObject({ code: -32603, message: 'Automation not found: ahp-automation:/nightly' });
   });
 
   it('prints every other URI the host mints as it was minted', () => {

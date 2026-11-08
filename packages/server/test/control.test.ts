@@ -17,6 +17,7 @@ import type { Control, ControlledSignal, Running } from '../src/daemon.js';
 import { controlIn, controlServer } from '../src/control.js';
 import type { ControlHandlers } from '../src/control.js';
 import { answerRestartSignal, restartAtTerminal } from '../src/commands/restart.js';
+import type { RestartOutcome } from '../src/commands/restart.js';
 
 let home: string;
 let socket: string;
@@ -222,13 +223,19 @@ describe('deliver', () => {
 });
 
 describe('a restart reached over the control', () => {
-  /** The daemon's own facts, faked as `server-restart.test.ts` fakes them. */
+  /**
+   * The daemon's own facts, faked as `server-restart.test.ts` fakes them: the
+   * restart parks while a turn runs unless forced, as `checkedRestart` does.
+   */
   const facts = (turning: string[], said: string[], restarted: string[][]) => ({
     self: 7,
     recorded: () => recordOf(),
-    turning: () => turning,
     log: (line: string) => { said.push(line); },
-    restart: (argv: string[]) => { restarted.push(argv); },
+    restart: (argv: string[], force: boolean): RestartOutcome => {
+      if (turning.length > 0 && !force) return { parked: turning };
+      restarted.push(argv);
+      return { restartDelayMs: 3000 };
+    },
   });
 
   /** The three handlers `run.ts` binds the control to, over those facts, each said to come through the pipe. */
@@ -238,7 +245,7 @@ describe('a restart reached over the control', () => {
     SIGUSR2: () => { void answerRestartSignal(true, facts(turning, said, restarted), true); },
   });
 
-  it('logs the refusal of a SIGHUP request while a turn runs, naming the pipe, and a SIGUSR2 request restarts', async () => {
+  it('logs a SIGHUP request parked while a turn runs, naming the pipe, and a SIGUSR2 request restarts', async () => {
     const control = here();
     const said: string[] = [];
     const restarted: string[][] = [];
@@ -246,7 +253,7 @@ describe('a restart reached over the control', () => {
     await server.listening;
     try {
       await send(control, request(control.key, 'SIGHUP'));
-      expect(said).toEqual(['restart refused (control pipe): A turn is running in ahp-session:/a; pass --force to restart anyway.']);
+      expect(said).toEqual(['restart parked (control pipe): A turn is running in ahp-session:/a; it restarts once the turns end, or at once with --force.']);
       expect(restarted).toEqual([]);
 
       // The same turn, forced: the restart runs, and its receipt names the pipe and the force.

@@ -9,7 +9,6 @@ import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { posix } from '../../../tools/posix.js';
 import { name } from '../src/plugin.js';
-import { startedNow } from '../../sdk/test/support/started.js';
 import { keyVariablesOf, presets as shipped } from '../src/presets.js';
 
 /*
@@ -92,14 +91,14 @@ const startOf = (label: string, extra: Record<string, unknown> = {}): Start => (
 } as never);
 
 /** One record's session, released after the case. */
-const sessionOf = (
+const sessionOf = async (
   kind: Engine,
   id: string,
   held: () => Bag,
   label: string,
   extra: Record<string, unknown> = {},
-): Session => {
-  const session = startedNow(kind.open(viewOf(id, held)).create(startOf(label, extra)));
+): Promise<Session> => {
+  const session = await kind.open(viewOf(id, held)).create(startOf(label, extra));
   started.push(session);
   return session;
 };
@@ -148,7 +147,7 @@ const spawnOf = async (
   if (savedPath === undefined) savedPath = process.env.PATH;
   process.env.PATH = `${dir}${delimiter}${process.env.PATH ?? ''}`;
 
-  const session = sessionOf(kind, id, held, `run-${id}`);
+  const session = await sessionOf(kind, id, held, `run-${id}`);
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && !existsSync(out); i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
   if (!existsSync(out)) throw new Error(`${command} was not run`);
@@ -167,7 +166,7 @@ const turnOf = async (
   const env = { ACP_LOG: log, ...(typeof own === 'object' && own !== null ? own as Record<string, string> : {}) };
   const ended: string[] = [];
   const said: string[] = [];
-  const session = sessionOf(kind, id, () => ({
+  const session = await sessionOf(kind, id, () => ({
     ...config,
     command: process.execPath,
     args: [FIXTURE, ...(extra.flags ?? [])],
@@ -379,7 +378,7 @@ it('keeps hostTools plugin-wide and lets a record set its own', async () => {
   const withDefault = await turnOf(on.kind, 'copilot', {}, extra);
   expect(withDefault.servers).toEqual([{
     type: 'http',
-    name: 'ahp',
+    name: 'host',
     url: endpoint.url,
     headers: [{ name: 'authorization', value: `Bearer ${endpoint.token}` }],
   }]);
@@ -407,7 +406,7 @@ it('lists the modes a row found, and keeps a text box where it found none', asyn
   expect(approvalsOf('cline')).not.toHaveProperty('enum');
 });
 
-it('keeps a row\'s modes on the agent, and the modes a session hears on that session', async () => {
+it('refreshes a row\'s modes on the agent from the ones a session hears, and keeps them on that session', async () => {
   const { kind } = await load();
   const log = join(scratch('heard'), 'requests.jsonl');
   const agent = kind.open(viewOf('codex', () => ({
@@ -419,18 +418,41 @@ it('keeps a row\'s modes on the agent, and the modes a session hears on that ses
   expect(approvalsOf()['enum']).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access']);
 
   const ended: string[] = [];
-  const session = startedNow(agent.create(startOf('heard', {
+  const session = await agent.create(startOf('heard', {
     emit: (_channel: string, action: Bag) => {
       if (action.type === 'chat/turnComplete' || action.type === 'chat/error') ended.push(String(action.type));
     },
-  })));
+  }));
   started.push(session);
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
   expect(ended).toEqual(['chat/turnComplete']);
 
   // The fixture names `ask` and `code`, which are not the row's own: they are
-  // that session's, and the next session of the agent is offered the row's.
-  expect(approvalsOf()['enum']).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access']);
+  // that session's, and the agent's from here, so the next session a client
+  // sets up for the agent is offered what its server last named.
+  expect(approvalsOf()).toMatchObject({ enum: ['ask', 'code'], enumLabels: ['Ask', 'Code'] });
   expect(session.settings().availableApprovalModes).toEqual(['ask', 'code']);
+});
+
+/*
+ * A record whose `modes` is `preset` keeps the row's modes on the agent, as
+ * VS Code's agents keep the modes they declare; the session still reports its
+ * server's as its own.
+ */
+it('keeps a row\'s modes on the agent when the record says modes preset', async () => {
+  const { kind } = await load();
+  const log = join(scratch('kept'), 'requests.jsonl');
+  const agent = kind.open(viewOf('codex', () => ({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { ACP_LOG: log },
+    modes: 'preset',
+  })));
+  const approvalsOf = (): Bag => ((agent.schema() as Bag)['properties'] as Bag)['permissionMode'] as Bag;
+  const session = await agent.create(startOf('kept'));
+  started.push(session);
+
+  expect(session.settings().availableApprovalModes).toEqual(['ask', 'code']);
+  expect(approvalsOf()['enum']).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access']);
 });

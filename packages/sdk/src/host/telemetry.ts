@@ -1,9 +1,10 @@
 import { raise } from '../plugins/plugins.js';
+import { idOf } from '../sessions/catalog.js';
 import type { Bag } from '../types/common.js';
 import type { HostEvent } from '../types/events.js';
 import type { HostContext } from './context.js';
 
-/** What the host says about itself: its own log, and turns as spans and counters. */
+/** What the host says about itself: its own log, and turns as spans and histograms. */
 export interface Telemetry {
   LOGS: string;
   TRACES: string;
@@ -26,9 +27,9 @@ export function createTelemetry(ctx: HostContext): Telemetry {
    * than a new source of them.
    *
    * Stateless and ephemeral, as the protocol says: nothing is replayed on
-   * reconnect, and a subscriber gets only what was emitted after it arrived.
-   * There is no state to snapshot either, which is why `subscribe` answers an
-   * empty one rather than refusing.
+   * reconnect, a subscriber gets only what was emitted after it arrived, and
+   * `subscribe` answers an empty result with no snapshot.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/telemetry-channel.md#L43
    */
   const LOGS = 'ahp-otlp://logs';
   /**
@@ -45,7 +46,7 @@ export function createTelemetry(ctx: HostContext): Telemetry {
   /** Tell whoever is watching an OTLP channel. Never replayed: these are streams. */
   const telling = (method: string, channel: string, payload: Bag): void => {
     for (const connection of connections) {
-      if (connection.watching.has(channel)) connection.peer.notify(method, { channel, payload });
+      if (connection.activeSubscriptions.has(channel)) connection.peer.notify(method, { channel, payload });
     }
   };
 
@@ -144,12 +145,22 @@ export function createTelemetry(ctx: HostContext): Telemetry {
         }],
       }],
     };
-    for (const level of ['info', '']) {
-      const channel = level === '' ? LOGS : `${LOGS}/${level}`;
-      for (const connection of connections) {
+    /*
+     * To every logs channel a connection watches whose level the record
+     * reaches, the level read case-blind, under the channel's own name, as VS
+     * Code's host fans a record out to each subscription whose band includes
+     * its severity: an INFO line reaches `trace`, `debug` and `info`.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4529-L4558
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/otlp/otlpLogEmitter.ts#L28-L61
+     */
+    const reached = ['trace', 'debug', 'info'];
+    for (const connection of connections) {
+      for (const channel of connection.activeSubscriptions) {
+        const level = channel.startsWith(`${LOGS}/`) ? channel.slice(LOGS.length + 1).toLowerCase() : undefined;
         // A notification, not an action: it carries no `serverSeq` and moves
         // no state, so it does not belong in the replay buffer.
-        if (connection.watching.has(channel)) connection.peer.notify('otlp/exportLogs', { channel, payload });
+        if (channel === LOGS || (level !== undefined && reached.includes(level)))
+          connection.peer.notify('otlp/exportLogs', { channel, payload });
       }
     }
   };
@@ -167,10 +178,8 @@ export function createTelemetry(ctx: HostContext): Telemetry {
    * is for - a collector joins them by `traceId`, and holding a turn's
    * children until the turn finished would lose them all if the daemon went.
    */
-  const turning = new Map<string, { trace: string; span: string; at: number; text: string }>();
+  const turning = new Map<string, { trace: string; span: string; at: number; text: string; calls: number }>();
   const calling = new Map<string, { span: string; at: number; name: string; turn: string }>();
-  let turnsRun = 0;
-  let toolsRun = 0;
 
   /** One span, on the wire, with the resource it belongs to. */
   const spanned = (span: Bag): void => {
@@ -179,45 +188,88 @@ export function createTelemetry(ctx: HostContext): Telemetry {
     });
   };
 
+  /*
+   * The agent and tool metrics OpenTelemetry's GenAI conventions define, each
+   * with the units and bucket boundaries they name: an invocation's duration
+   * and the tool calls it made, and each tool execution's duration.
+   * https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md
+   */
+  const METRIC_SHAPES: Record<string, { unit: string; bounds: number[] }> = {
+    'gen_ai.invoke_agent.duration': { unit: 's', bounds: [0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8, 25.6, 51.2, 102.4, 204.8, 409.6] },
+    'gen_ai.invoke_agent.tool_calls': { unit: '{tool_call}', bounds: [1, 2, 4, 8, 16, 32, 64, 128] },
+    'gen_ai.execute_tool.duration': {
+      unit: 's',
+      bounds: [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92],
+    },
+  };
   /**
-   * What is true of this host right now, as OTLP metrics.
-   *
-   * Cumulative sums with the process start as their reference point, which is
-   * what `aggregationTemporality: 2` means - a collector restarted mid-run
+   * Each histogram's totals since the process started, by metric and by the
+   * attributes of its point: cumulative, so a collector restarted mid-run
    * reads the totals rather than a difference it missed the start of.
    */
-  const measured = (extra: Bag[] = []): void => {
+  const histograms = new Map<string, Map<string, { attributes: Bag[]; count: number; sum: number; buckets: number[] }>>();
+
+  /** One observation of a metric, under the attributes it is recorded with. */
+  const observe = (metric: string, value: number, attributes: Bag[]): void => {
+    const { bounds } = METRIC_SHAPES[metric] as { bounds: number[] };
+    const points = histograms.get(metric) ?? new Map();
+    histograms.set(metric, points);
+    const key = JSON.stringify(attributes);
+    const point = points.get(key) ?? { attributes, count: 0, sum: 0, buckets: bounds.map(() => 0).concat(0) };
+    points.set(key, point);
+    point.count += 1;
+    point.sum += value;
+    const bucket = bounds.findIndex((bound) => value <= bound);
+    point.buckets[bucket === -1 ? bounds.length : bucket] += 1;
+  };
+
+  /** What this host has measured so far, as OTLP histograms with the process start as their reference point. */
+  const measured = (): void => {
     const at = String(Date.now() * 1_000_000);
-    const sum = (name: string, count: number, unit: string): Bag => ({
-      name,
-      unit,
-      sum: {
-        aggregationTemporality: 2,
-        isMonotonic: true,
-        dataPoints: [{ asInt: String(count), startTimeUnixNano: String(Date.parse(startedAt) * 1_000_000), timeUnixNano: at }],
-      },
-    });
+    const from = String(Date.parse(startedAt) * 1_000_000);
     telling('otlp/exportMetrics', METRICS, {
       resourceMetrics: [{
         resource: attributed(),
         scopeMetrics: [{
           scope: { name: 'ahpd' },
-          metrics: [
-            sum('ahpd.turns', turnsRun, '{turn}'),
-            sum('ahpd.tool_calls', toolsRun, '{call}'),
-            ...extra,
-          ],
+          metrics: [...histograms].map(([name, points]) => ({
+            name,
+            unit: METRIC_SHAPES[name]?.unit,
+            histogram: {
+              aggregationTemporality: 2,
+              dataPoints: [...points.values()].map((point) => ({
+                attributes: point.attributes,
+                startTimeUnixNano: from,
+                timeUnixNano: at,
+                count: String(point.count),
+                sum: point.sum,
+                bucketCounts: point.buckets.map(String),
+                explicitBounds: METRIC_SHAPES[name]?.bounds,
+              })),
+            },
+          })),
         }],
       }],
     });
   };
 
-  /** A turn or a tool call moving, as far as telemetry is concerned. */
+  /**
+   * A turn or a tool call moving, as far as telemetry is concerned.
+   *
+   * Each record carries the spec's correlation attributes, the session's id,
+   * the turn's and the tool call's, and a tool's name as the GenAI
+   * conventions name it.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/telemetry-channel.md#L141-L149
+   */
   const telemetered = (channel: string, action: Record<string, unknown>): void => {
     const type = String(action.type ?? '');
     if (!type.startsWith('chat/')) return;
     const turnId = String(action.turnId ?? '');
-    const at = String(Date.now() * 1_000_000);
+    const now = Date.now();
+    const at = String(now * 1_000_000);
+    const session = { key: 'ahp.session.id', value: { stringValue: idOf(ctx.sessionFor(channel)) } };
+    const agent = ctx.sessions.get(ctx.sessionFor(channel))?.agent.displayName;
+    const named = agent === undefined ? [] : [{ key: 'gen_ai.agent.name', value: { stringValue: agent } }];
     if (type === 'chat/turnStarted') {
       const message = (typeof action.message === 'object' && action.message !== null
         ? action.message
@@ -225,8 +277,9 @@ export function createTelemetry(ctx: HostContext): Telemetry {
       turning.set(turnId, {
         trace: hex(16),
         span: hex(8),
-        at: Date.now(),
+        at: now,
         text: typeof message.text === 'string' ? message.text : '',
+        calls: 0,
       });
       return;
     }
@@ -235,17 +288,22 @@ export function createTelemetry(ctx: HostContext): Telemetry {
     if (type === 'chat/toolCallStart') {
       calling.set(String(action.toolCallId ?? ''), {
         span: hex(8),
-        at: Date.now(),
+        at: now,
         name: String(action.toolName ?? 'tool'),
         turn: turnId,
       });
       return;
     }
     if (type === 'chat/toolCallComplete') {
-      const call = calling.get(String(action.toolCallId ?? ''));
+      const id = String(action.toolCallId ?? '');
+      const call = calling.get(id);
       if (call === undefined) return;
-      calling.delete(String(action.toolCallId ?? ''));
-      toolsRun += 1;
+      calling.delete(id);
+      turn.calls += 1;
+      observe('gen_ai.execute_tool.duration', (now - call.at) / 1000, [
+        { key: 'gen_ai.tool.name', value: { stringValue: call.name } },
+        ...named,
+      ]);
       spanned({
         traceId: turn.trace,
         spanId: call.span,
@@ -257,15 +315,29 @@ export function createTelemetry(ctx: HostContext): Telemetry {
         startTimeUnixNano: String(call.at * 1_000_000),
         endTimeUnixNano: at,
         attributes: [
-          { key: 'ahp.chat', value: { stringValue: channel } },
-          { key: 'ahp.tool', value: { stringValue: call.name } },
+          session,
+          { key: 'ahp.turn.id', value: { stringValue: turnId } },
+          { key: 'ahp.tool_call.id', value: { stringValue: id } },
+          { key: 'gen_ai.tool.name', value: { stringValue: call.name } },
         ],
       });
       return;
     }
-    if (type !== 'chat/turnComplete' && type !== 'chat/turnCancelled') return;
+    if (type !== 'chat/turnComplete' && type !== 'chat/turnCancelled' && type !== 'chat/error') return;
+    // The turn's entry and every call of it still open are let go at its end.
     turning.delete(turnId);
-    turnsRun += 1;
+    for (const [id, call] of [...calling]) if (call.turn === turnId) calling.delete(id);
+    /*
+     * A turn that ended in an error says so on its span and its metric, and a
+     * cancelled one leaves its status unset: OpenTelemetry sets `Error` only
+     * where a convention calls the outcome one, and a cancel somebody asked
+     * for is not.
+     * https://opentelemetry.io/docs/specs/otel/trace/api/#set-status
+     */
+    const error = type === 'chat/error'
+      ? ((action.part as { error?: { errorType?: unknown; message?: unknown } } | undefined)?.error ?? {})
+      : undefined;
+    const errorType = error === undefined ? undefined : (typeof error.errorType === 'string' ? error.errorType : '_OTHER');
     spanned({
       traceId: turn.trace,
       spanId: turn.span,
@@ -275,14 +347,14 @@ export function createTelemetry(ctx: HostContext): Telemetry {
       kind: 2,
       startTimeUnixNano: String(turn.at * 1_000_000),
       endTimeUnixNano: at,
-      attributes: [
-        { key: 'ahp.chat', value: { stringValue: channel } },
-        { key: 'ahp.turn', value: { stringValue: turnId } },
-      ],
-      // Cancelled is not an error - somebody asked - so the only status this
-      // sets is the one the protocol's own action names.
-      ...(type === 'chat/turnCancelled' ? { status: { code: 2, message: 'cancelled' } } : {}),
+      attributes: [session, { key: 'ahp.turn.id', value: { stringValue: turnId } }],
+      ...(error === undefined ? {} : { status: { code: 2, message: typeof error.message === 'string' ? error.message : '' } }),
     });
+    observe('gen_ai.invoke_agent.duration', (now - turn.at) / 1000, [
+      ...named,
+      ...(errorType === undefined ? [] : [{ key: 'error.type', value: { stringValue: errorType } }]),
+    ]);
+    observe('gen_ai.invoke_agent.tool_calls', turn.calls, named);
     measured();
   };
 

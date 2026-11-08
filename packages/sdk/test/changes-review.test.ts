@@ -86,6 +86,31 @@ describe('what the source keeps', () => {
 
     expect(source.review?.(dir, 's1', 'uncommitted', [uriOf(join(dir, 'base.txt'))], true)).toEqual(expect.any(String));
   });
+
+  /*
+   * A revert undoes the agent's edits to a file, so it says which, and that a
+   * file the turn created is gone, for the host to tell the agent, as VS
+   * Code's host reports the edits a discard undid.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostDiscardChangesOperationHandler.ts#L496-L504
+   */
+  it('says what a revert undid of the agent\'s edits, and that a file the turn made is gone', async () => {
+    const dir = repository();
+    const source = gitChanges();
+    const made = join(dir, 'made.txt');
+    const base = join(dir, 'base.txt');
+    writeFileSync(made, 'made\n');
+    await source.observe?.(dir, 's1', 't1', made, 'before', '');
+    await source.observe?.(dir, 's1', 't1', made, 'after', 'made\n');
+    writeFileSync(base, 'changed\n');
+    await source.observe?.(dir, 's1', 't1', base, 'before', 'base\n');
+    await source.observe?.(dir, 's1', 't1', base, 'after', 'changed\n');
+    const revert = (path: string) => source.invoke?.({
+      dir, session: 's1', scope: 'turn/t1', operationId: 'revert', target: { kind: 'resource', resource: uriOf(path) },
+    });
+
+    expect((await revert(made))?.discarded).toEqual([{ resource: uriOf(made), deleted: true }]);
+    expect((await revert(base))?.discarded).toEqual([{ resource: uriOf(base), deleted: false }]);
+  });
 });
 
 /** An envelope as a client reads it. */

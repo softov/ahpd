@@ -11,14 +11,25 @@
  * suites that are.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Peer } from '../../src/types/rpc.js';
 import type { HostOptions } from '../../src/types/host.js';
-import { sdk, resetSdk, wrote } from './claude-sdk.js';
+import { SIGNED_IN, sdk, resetSdk, wrote } from './claude-sdk.js';
 
-export { sdk, resetSdk, wrote };
+export { SIGNED_IN, sdk, resetSdk, wrote };
 
 /** The CLIs that belong to a session. The boot probe is not one of them. */
 export const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== undefined);
+
+/**
+ * The `index`-th in-process server named `name` the sessions built, the last
+ * by default: the server a session hands its CLI, whose tools a case calls as
+ * the model would.
+ */
+export const builtServer = (name: string, index = -1) => sdk.built.filter((one) => one.name === name).at(index);
+
+/** How many in-process servers named `name` the sessions built: the index after the newest one's. */
+export const builtCount = (name: string): number => sdk.built.filter((one) => one.name === name).length;
 
 export const { createHost } = await import('../../src/host.js');
 export const { fileResources, list, read, resolve, complete } = await import('../../src/resources/resources.js');
@@ -68,15 +79,27 @@ export const hello = (versions: unknown[], extra: Record<string, unknown> = {}) 
   params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: versions, ...extra },
 });
 
-/** A connected client with one session, subscribed to both its channels. */
-export async function running(over: Partial<HostOptions> = {}) {
+/** A host whose Claude sessions start their CLI at their first send, as VS Code's provisional session does. */
+export const startedBySend = (path = '/home/softov'): Partial<HostOptions> => ({
+  agents: [claude({ paths: [path], preset: { cliStart: 'send' } })],
+});
+
+/**
+ * What an older VS Code window says at `initialize`: it names itself, and
+ * declares the `ahp-session:` URIs it addresses and no opaque chat, so a
+ * session it makes has the shaped default chat it computes from the session.
+ */
+export const OLDER_WINDOW = { clientInfo: { name: 'vscode-editor-window', title: 'VS Code' }, _meta: { 'vscode.ahpSessionUris': true } };
+
+/** A connected client with one session, subscribed to both its channels; `extra` is what the client says at `initialize`. */
+export async function running(over: Partial<HostOptions> = {}, extra: Record<string, unknown> = {}) {
   const host = serving('/home/softov', [], over);
   const p = peer();
   const client = host.accept(p);
   // Root included: a catalogue notification goes to the connections watching
   // the root channel and to no others, so a client that never subscribed to
   // it hears nothing - correctly.
-  await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+  await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'], ...extra }));
   const uri = 'ahp-session:/live';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
   // Read, not assumed. What a session calls its chat is the host's to say and
@@ -88,6 +111,43 @@ export async function running(over: Partial<HostOptions> = {}) {
   const chatUri = opened.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return { host, client, peer: p, uri, chatUri };
+}
+
+/**
+ * A session's default chat, read off the session's state as `running` reads it:
+ * the host mints a new session's, so a case reads it rather than spelling it.
+ * Subscribes the client to the session, as every client that opens one is.
+ */
+export async function defaultChatOf(client: ReturnType<ReturnType<typeof createHost>['accept']>, session: string): Promise<string> {
+  const opened = await client.handle({ method: 'subscribe', params: { channel: session } }) as {
+    snapshot: { state: { defaultChat: string } };
+  };
+  return opened.snapshot.state.defaultChat;
+}
+
+/**
+ * A session's first message, sent on the chat named.
+ *
+ * A session made fresh is provisional until its first message, which announces
+ * it: until then no listing holds it, no count includes it and nobody is told
+ * of it, as VS Code's host keeps a session its provider made provisional.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6347-L6362
+ */
+export async function firstMessage(client: ReturnType<ReturnType<typeof createHost>['accept']>, chatUri: string, text = 'hi'): Promise<void> {
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text } } },
+  });
+  await settle();
+}
+
+/**
+ * The root's `showExternalSessions`, pushed as a window pushes it: which of the
+ * sessions a backend lists that this host never ran a listing shows. A case
+ * about a backend's own transcripts lists them by the mode it means.
+ */
+export async function showExternal(client: ReturnType<ReturnType<typeof createHost>['accept']>, mode = 'last30Days'): Promise<void> {
+  await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { showExternalSessions: mode } } } });
 }
 
 export const actions = (p: ReturnType<typeof peer>, channel?: string) => p.notes
@@ -105,6 +165,14 @@ export const settle = async (times = 4): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
+/**
+ * Past the catalogue's 100 ms debounce, so every row that moved has been said,
+ * as VS Code's host says a session's moves together once they are quiet.
+ */
+export const flushed = async (): Promise<void> => {
+  await new Promise((r) => { setTimeout(r, 120); });
+};
+
 /** Say what the session's own CLI said. */
 export async function emit(...frames: Record<string, unknown>[]): Promise<void> {
   const fake = sessionQueries().at(-1);
@@ -113,4 +181,30 @@ export async function emit(...frames: Record<string, unknown>[]): Promise<void> 
   fake.wake?.();
   fake.wake = undefined;
   await settle();
+}
+
+/**
+ * A turn sent on a chat, the chat a session's default when the channel names
+ * a session, with no wait for what follows.
+ *
+ * A Claude session starts its CLI at its first send, as VS Code's Claude
+ * session materializes at its first, so a case about the CLI a session runs
+ * sends one first.
+ */
+export async function sendTurn(client: { handle(request: { method: string; params: unknown }): unknown }, channel: string, text = 'hello'): Promise<void> {
+  const opened = await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { state: { defaultChat?: string } } };
+  const chat = opened.snapshot.state.defaultChat ?? channel;
+  if (chat !== channel) await client.handle({ method: 'subscribe', params: { channel: chat } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: randomUUID(), startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
+  });
+}
+
+/** A turn sent as `sendTurn` sends one, and answered, so the case's own turns are sends of their own. */
+export async function sendAnswered(client: { handle(request: { method: string; params: unknown }): unknown }, channel: string, text = 'hello'): Promise<void> {
+  await sendTurn(client, channel, text);
+  await settle(8);
+  await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  await settle(8);
 }

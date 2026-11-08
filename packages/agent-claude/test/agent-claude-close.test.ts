@@ -14,7 +14,7 @@ import { expect, it, vi } from 'vitest';
 
 const sdk = vi.hoisted(() => ({ exited: false, closed: false }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: () => ({
     async *[Symbol.asyncIterator]() { /* nothing streamed */ },
@@ -47,6 +47,9 @@ it('settles its close once the query has cleaned up, and not before', async () =
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-close-')),
     emit: () => {},
   });
+  // The CLI its first send started.
+  session.sendMessage('t1', 'hello');
+  await new Promise((done) => { setTimeout(done, 20); });
   const closing = session.close();
   expect(sdk.closed).toBe(true);
   expect(sdk.exited).toBe(false);

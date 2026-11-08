@@ -21,7 +21,7 @@ const REPO = join(import.meta.dirname, '../../..');
 const MAIN = 'packages/server/src/main.ts';
 /** A backend, so the daemon has an agent to serve and reaches its handshake. */
 const ECHO = './packages/server/test/fixtures/plugin-echo';
-/** The plugin that registers `bot:chat`. */
+/** The plugin that serves the `bot:` scheme. */
 const BOT = './packages/bot/src/index.ts';
 
 /** One entry of the advertised map, as a role editor reads it. */
@@ -109,10 +109,10 @@ it('advertises the grants the daemon and the bot require, with the groups the ta
   // The command over the channels that offer operations, which the daemon
   // serves itself beside them.
   expect(grants['operation']).toMatchObject({ title: 'Operations', operations: ['invoke'] });
-  // The bot plugin registers the one operation it asks for, beside the
-  // resource operations its provider serves, and the entry's title comes from
-  // that provider's `describe`.
-  expect(grants['bot']).toMatchObject({ title: 'Bot', operations: expect.arrayContaining(['chat']) });
+  // The bot plugin's scheme, whose entry's title comes from its provider's
+  // `describe`; a chat with a bot is a session, which `session` grants cover.
+  expect(grants['bot']).toMatchObject({ title: 'Bot' });
+  expect(grants['bot']?.operations ?? []).not.toContain('chat');
 
   // `apply` and `reload` are table operations now, and `plugin:write` is the
   // group that holds them.

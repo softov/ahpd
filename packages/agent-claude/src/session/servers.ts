@@ -1,14 +1,17 @@
+import { fileURLToPath } from 'node:url';
 import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
+import { isClaudeAccountSetUp } from '../logins.js';
 import { protectedResource, urlOf } from '../mcp.js';
 import { flagSettingsOf } from '../options.js';
-import { SDK_DEFAULT_MODEL_VALUE } from './config.js';
+import { SDK_DEFAULT_MODEL_VALUE, thinkingFor } from './config.js';
 import { isHostInjectedMcpServerName } from './clienttools.js';
-import { customizationsOf, rootOf } from './customizations.js';
-import { configDirOf, diskOf, managedDirOf } from './disk.js';
-import { watchFolders } from './watch.js';
+import { customizationsOf, pluginIdOf, pluginRootOf } from './customizations.js';
+import { configDirOf, diskBoundsOf, diskOf, managedDirOf } from './disk.js';
+import { createClaudeCustomizationWatcher } from './watch.js';
 import type { Published } from './customizations.js';
+import type { Disk, DiskKind } from './disk.js';
 
 /** The servers the CLI reports, less this session's own in-process two. */
 const reportedServers = (answer: unknown): unknown[] => (Array.isArray(answer) ? answer : [])
@@ -22,11 +25,25 @@ export interface Servers {
   mcpServers: Record<string, Bag>;
   /** Ask the CLI what its MCP servers are, and keep the answer. */
   refreshMcp: () => Promise<void>;
-  /** Say what the CLI's servers are, in chat. */
+  /** Ask the CLI this session reads what it has, until a CLI has answered. */
   describe: () => Promise<void>;
-  /** Ask the CLI for its agents, commands and skills again, and say the list. */
-  reread: () => Promise<void>;
-  /** Stop the watch of the Claude folders, which `describe` starts. */
+  /**
+   * Ask the CLI for its agents, commands, skills and plugins again, and say the
+   * list: VS Code's pipeline's `reloadPlugins`, the SDK's own reload.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L91-L94
+   */
+  reloadPlugins: () => Promise<void>;
+  /** What this session lists until a CLI has answered: the agent's own with the disk scan. */
+  provisionalCustomizations: () => Bag[];
+  /**
+   * Bring the servers the CLI runs to the session's switches before a turn's
+   * prompt goes out: VS Code's session's MCP enablement reconcile at the send.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1084
+   */
+  reconcileMcpServerEnablement: () => Promise<void>;
+  /** The plugins this session switched, by `enabledPlugins` id, as the CLI's `enabledPlugins` setting takes them. */
+  enabledPlugins: () => Record<string, boolean>;
+  /** Stop the watch of the Claude folders. */
   unwatch: () => void;
   methods: {
     setCustomizationEnabled: (id: string, enabled: boolean) => Promise<boolean>;
@@ -73,6 +90,14 @@ export function createServers(ctx: SessionContext): Servers {
   const stopRequested = new Set<string>();
 
   /**
+   * The session's switch of each server a client switched, by name: VS Code's
+   * desired MCP server enablement, which the CLI is brought to before each
+   * turn's prompt, the first CLI's included.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1590-L1600
+   */
+  const desired = new Map<string, boolean>();
+
+  /**
    * What the CLI last said it has, kept so the list can be built again.
    *
    * A switch moves the plugins and nothing else, and the SDK asks for a whole
@@ -84,7 +109,8 @@ export function createServers(ctx: SessionContext): Servers {
   const reported: { init: Bag; mcp: unknown[]; skills: unknown[] } = { init: {}, mcp: [], skills: [] };
 
   /**
-   * What this session has decided about each plugin, by id.
+   * What this session has decided about each plugin, by its container's id,
+   * with the plugin as the CLI described it.
    *
    * Two things are made of it. The ones it switched off are the rows the CLI
    * has stopped reporting and the session still lists - a switch here is an
@@ -98,7 +124,22 @@ export function createServers(ctx: SessionContext): Servers {
    * no opinion about the ones it moved before, and the CLI would load them
    * again.
    */
-  const switched = new Map<string, { name: string; source: string; enabled: boolean }>();
+  const switched = new Map<string, { plugin: Bag; enabled: boolean }>();
+
+  /** The plugins the CLI reported last, as it described each. */
+  let lastPlugins: Bag[] = [];
+
+  /**
+   * The disk as it is now, read again each time so a file written since is the
+   * file listed. A session in a machine reads nothing here: its CLI reads its
+   * own volume.
+   */
+  const diskNow = (): Disk | undefined => (ctx.options.spawn !== undefined ? undefined : diskOf({
+    configDir: configDirOf(ctx.options.env),
+    managedDir: managedDirOf(),
+    ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
+    ...diskBoundsOf(ctx.values),
+  }, ctx.options.parseYaml));
 
   /**
    * Lay the session's customizations out from a plugin list, and say them.
@@ -113,18 +154,10 @@ export function createServers(ctx: SessionContext): Servers {
    */
   const laid = (plugins: unknown[]): void => {
     const handed = new Set((ctx.options.plugins ?? []).map((one) => one.path));
-    const off = [...switched.values()]
-      .filter((one) => !one.enabled)
-      .map((one) => ({ name: one.name, path: one.source, source: one.source }));
-    // Read again each time, so a file written since is the file listed. A
-    // session in a machine reads nothing here: its CLI reads its own volume.
-    const disk = ctx.options.spawn !== undefined ? undefined : diskOf({
-      configDir: configDirOf(ctx.options.env),
-      managedDir: managedDirOf(),
-      ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
-    });
+    lastPlugins = plugins.map((raw) => bag(raw));
+    const off = [...switched.values()].filter((one) => !one.enabled).map((one) => one.plugin);
     const was = JSON.stringify(ctx.customizations);
-    ctx.customizations = customizationsOf(reported.init, reported.mcp, reported.skills, wanted, plugins, handed, off, disk, stopRequested);
+    ctx.customizations = customizationsOf(reported.init, reported.mcp, reported.skills, wanted, plugins, handed, off, diskNow(), stopRequested);
     if (JSON.stringify(ctx.customizations) !== was) {
       ctx.emit('session', { type: 'session/customizationsChanged', customizations: ctx.customizations });
     }
@@ -155,19 +188,23 @@ export function createServers(ctx: SessionContext): Servers {
    * can come back `ready`, still `authRequired`, or `error`, and only the CLI's
    * answer says which. What changed is measured against the entry this
    * session holds, which is what every client was last told of the server, a
-   * client's start or stop included.
+   * client's start or stop included. A server is one name in the list, so the
+   * entry held for it is the top-level one of that name.
    */
   const refreshMcp = async (): Promise<void> => {
-    const found = await ctx.query.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]);
+    const to = ctx.query;
+    if (to === undefined) return;
+    const found = await to.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]);
     reported.mcp = found;
     await discover(found);
+    const disk = diskNow();
     for (const raw of found) {
       const server = bag(raw);
       const name = str(server.name);
       if (!name) continue;
-      const id = `mcp:${name}`;
-      const held = ctx.customizations.find((entry) => str(entry.id) === id);
-      const fresh = bag(customizationsOf({}, [server], [], wanted, [], undefined, [], undefined, stopRequested)[0]);
+      const held = ctx.customizations.find((entry) => str(entry.type) === 'mcpServer' && str(entry.name) === name);
+      const fresh = bag(customizationsOf({}, [server], [], wanted, [], undefined, [], disk, stopRequested)
+        .find((entry) => str(entry.type) === 'mcpServer'));
       if (!held) {
         ctx.customizations.push(fresh);
         ctx.emit('session', { type: 'session/customizationUpdated', customization: fresh });
@@ -191,6 +228,9 @@ export function createServers(ctx: SessionContext): Servers {
       for (const [callId, running] of ctx.onServer) {
         if (running.server !== name || running.blocked === asking) continue;
         running.blocked = asking;
+        // The session entry's id, as VS Code's host names a tool's sign-in.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L220
+        const entry = `toolAuthentication:${ctx.options.chatUri}:${running.turnId}:${callId}`;
         const at = ctx.parts.get(callId);
         const call = bag(at?.toolCall);
         if (asking) {
@@ -201,7 +241,7 @@ export function createServers(ctx: SessionContext): Servers {
           // The same block at the session level, which is where a client
           // looking at a list rather than at a conversation sees it.
           ctx.inputNeededSet({
-            id: `auth:${callId}`,
+            id: entry,
             chat: ctx.options.chatUri,
             kind: 'toolAuthentication',
             turnId: running.turnId,
@@ -212,7 +252,7 @@ export function createServers(ctx: SessionContext): Servers {
           call.status = 'running';
           delete call.auth;
           ctx.emit('chat', { type: 'chat/toolCallAuthResolved', turnId: running.turnId, toolCallId: callId });
-          ctx.inputNeededRemoved(`auth:${callId}`);
+          ctx.inputNeededRemoved(entry);
         }
       }
       held.state = fresh.state;
@@ -224,7 +264,7 @@ export function createServers(ctx: SessionContext): Servers {
       if (switched)
         ctx.emit('session', { type: 'session/customizationUpdated', customization: { ...held } });
       else
-        ctx.emit('session', { type: 'session/mcpServerStateChanged', id, state: fresh.state });
+        ctx.emit('session', { type: 'session/mcpServerStateChanged', id: str(held.id) as string, state: fresh.state });
     }
     /*
      * And the ones that are no longer there.
@@ -235,12 +275,11 @@ export function createServers(ctx: SessionContext): Servers {
      * removal is the change, and a list re-sent on every refresh is the row
      * redrawn whether or not anything moved.
      */
-    const still = new Set(found.map((raw) => `mcp:${str(bag(raw).name) ?? ''}`));
+    const still = new Set(found.map((raw) => str(bag(raw).name) ?? ''));
     for (const entry of [...ctx.customizations]) {
-      const id = str(entry.id) ?? '';
-      if (!id.startsWith('mcp:') || still.has(id)) continue;
+      if (str(entry.type) !== 'mcpServer' || still.has(str(entry.name) ?? '')) continue;
       ctx.customizations.splice(ctx.customizations.indexOf(entry), 1);
-      ctx.emit('session', { type: 'session/customizationRemoved', id });
+      ctx.emit('session', { type: 'session/customizationRemoved', id: str(entry.id) as string });
     }
   };
 
@@ -265,15 +304,15 @@ export function createServers(ctx: SessionContext): Servers {
   /**
    * The server name behind an id that names one, if it is one.
    *
-   * Two ids name a server. `mcp:<name>` is how this session's own list names
-   * the ones the CLI reported. A plugin's server is named by the file that
-   * declares it with the server in a fragment, `<file uri>#mcp=<name>`, which
-   * is how a client reads it and so how a client switches it off - and the
-   * escaped name is the server's own, so it is decoded before it is used.
+   * A server is named by the file that declares it with the server in a
+   * fragment, `<file uri>#mcp=<name>`, a server no file declares by its
+   * internal uri the same way, which is how a client reads it and so how a
+   * client switches it off. The escaped name is the server's own, so it is
+   * decoded before it is used.
    */
   const serverNamed = (id: string): string | undefined => {
     const at = id.indexOf('#mcp=');
-    if (at === -1) return id.startsWith('mcp:') ? id.slice(4) : undefined;
+    if (at === -1) return undefined;
     try {
       return decodeURIComponent(id.slice(at + '#mcp='.length));
     }
@@ -284,110 +323,174 @@ export function createServers(ctx: SessionContext): Servers {
   };
 
   /**
-   * Switch a plugin this session offered, the CLI's own built-ins included.
+   * Switch a plugin this session offered.
    *
    * The CLI has no call for it. What it takes is an `enabledPlugins` setting,
-   * named by the source a plugin is keyed under - `<name>@<marketplace>`, and
-   * `<name>@builtin` for one the CLI ships itself - and it reads that when it
-   * loads its plugins, so the switch is the setting and then a reload to make
-   * it now. The reload is also the answer: a plugin gone from the list is one
-   * that stopped being loaded, and one still in it is a switch the CLI did not
-   * take, which is what a person is entitled to be told.
+   * named by the plugin's `enabledPlugins` id, `<name>@<marketplace>`, which the
+   * plugin's row is named by, and it reads that when it loads its plugins, so
+   * the switch is the setting and then a reload to make it now. The reload is
+   * also the answer: a plugin gone from the list is one that stopped being
+   * loaded, and one still in it is a switch the CLI did not take, which is what
+   * a person is entitled to be told.
    *
    * The rest of the flag settings go with it rather than the one setting
    * alone: `applyFlagSettings` merges into the layer, and a set written from
    * nothing would say this host has an opinion about the style and the
    * `enabledPlugins` of every other plugin.
+   *
+   * A session with no CLI yet keeps the switch for its first, which starts
+   * with every decision in its settings, and the row says it at once.
    */
   const switchPlugin = async (id: string, enabled: boolean): Promise<boolean> => {
     const held = ctx.customizations.find((entry) => str(entry.id) === id);
-    const name = str(held?.name);
-    const source = str(held?.uri);
-    if (str(held?.type) !== 'plugin' || name === undefined || name === '' || source === undefined || source === '')
+    const key = str(held?.name);
+    if (held === undefined || str(held.type) !== 'plugin' || key === undefined || key === '')
       return false;
+    /*
+     * The plugin as the CLI described it, as this session kept it at an
+     * earlier switch, or, for a row no CLI of this session has described, as
+     * the row says it: its root, which the row is id'd by.
+     */
+    const plugin = lastPlugins.find((one) => pluginRootOf(one) === id) ?? switched.get(id)?.plugin ?? (id.startsWith('file:') ? {
+      name: key,
+      source: key,
+      path: fileURLToPath(id),
+      ...(str(held.version) !== undefined ? { version: str(held.version) } : {}),
+    } : undefined);
+    if (plugin === undefined)
+      return false;
+    const to = ctx.query;
+    if (to === undefined) {
+      switched.set(id, { plugin, enabled });
+      if (enabled) delete held.enablement;
+      else held.enablement = [{ kind: 'session', enabled: false }];
+      ctx.emit('session', { type: 'session/customizationUpdated', customization: { ...held } });
+      return true;
+    }
     const decided = Object.fromEntries([
-      ...[...switched.values()].map((one) => [one.source, one.enabled] as const),
-      [source, enabled] as const,
+      ...[...switched.values()].map((one) => [pluginIdOf(one.plugin), one.enabled] as const),
+      [key, enabled] as const,
     ]);
     try {
-      await ctx.query.applyFlagSettings({ ...flagSettingsOf(ctx.values), enabledPlugins: decided });
+      await to.applyFlagSettings({ ...flagSettingsOf(ctx.values), enabledPlugins: decided });
     }
     catch {
       return false;
     }
-    const plugins = await ctx.query.reloadPlugins()
+    const plugins = await to.reloadPlugins()
       .then((answer) => list(bag(answer as unknown).plugins))
       .catch(() => undefined);
     if (plugins === undefined)
       return false;
-    const loading = plugins.some((raw) => rootOf(bag(raw)) === source);
+    const loading = plugins.some((raw) => pluginIdOf(bag(raw)) === key);
     if (enabled ? !loading : loading)
       return false;
-    switched.set(id, { name, source, enabled });
+    switched.set(id, { plugin, enabled });
     laid(plugins);
     return true;
   };
 
-  /** Whether a read again is running, and whether a change came during it. */
-  let rereading = false;
+  /** Whether a reload is running, and whether a change came during it. */
+  let reloading = false;
   let again = false;
 
   /**
    * Ask the CLI again for what a file on disk can change: its agents and
    * commands, its skills and its plugins.
    *
-   * `initializationResult()` is the answer of the first connect and never
-   * changes, so the two reloads are what the CLI reads from disk again. Their
+   * `initializationResult()` is the answer of the first connect and stays as
+   * it was, so the two reloads are what the CLI reads from disk again. Their
    * answers replace what `describe` kept, and the list is laid out again. A
    * reload that fails keeps the lists that were there, and says nothing.
    *
-   * One at a time: a change during a read is one more read after it, because
-   * the read that runs may have read the folder before that change.
+   * One at a time: a change during a reload is one more reload after it,
+   * because the one that runs may have read the folder before that change.
    */
-  const reread = async (): Promise<void> => {
-    if (rereading) {
+  const reloadPlugins = async (): Promise<void> => {
+    if (reloading) {
       again = true;
       return;
     }
-    rereading = true;
+    reloading =true;
     try {
       do {
         again = false;
-        if (ctx.closed) return;
+        const to = ctx.query;
+        if (ctx.disposed || to === undefined) return;
         const answered = await Promise.all([
-          ctx.query.reloadPlugins().then((r) => bag(r as unknown)),
-          ctx.query.reloadSkills().then((r) => list(bag(r as unknown).skills)),
+          to.reloadPlugins().then((r) => bag(r as unknown)),
+          to.reloadSkills().then((r) => list(bag(r as unknown).skills)),
         ]).catch(() => undefined);
-        if (answered === undefined || ctx.closed) continue;
+        if (answered === undefined || ctx.disposed) continue;
         const [plugins, skills] = answered;
         reported.init = { ...reported.init, agents: list(plugins.agents), commands: list(plugins.commands) };
         reported.skills = skills;
         laid(list(plugins.plugins));
-      } while (again && !ctx.closed);
+      } while (again && !ctx.disposed);
     }
     finally {
-      rereading = false;
+      reloading =false;
     }
   };
 
-  /** Stops the watch of the Claude folders, once `describe` started one. */
-  let unwatch: (() => void) | undefined;
+  /**
+   * What this session lists before a CLI has answered: VS Code's Claude
+   * session before its first send, whose list is the agent's own with what
+   * the disk scan finds.
+   *
+   * The agent's own is what the host seeded this session with, which a client
+   * reads until the agent reports its own; the scan adds what the seeds do not
+   * hold, the working directory's scope among it, each file under the name the
+   * CLI knows it by and each server a settings file declares as stopped, as
+   * VS Code's scan lists one before its session starts. The servers are the
+   * scan's alone, since the seeds' carry the states of a CLI this session does
+   * not run, and each switch kept for the first CLI is on its row.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1499-L1533
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeMcpScan.ts#L43-L51
+   */
+  const provisionalCustomizations = (): Bag[] => {
+    const disk = diskNow();
+    const named = (kind: DiskKind): Bag[] => [...new Set((disk?.files ?? []).filter((one) => one.kind === kind).map((one) => one.name))]
+      .map((name) => ({ name }));
+    const skills = named('skill');
+    const handed = new Set((ctx.options.plugins ?? []).map((one) => one.path));
+    const scanned = customizationsOf({ commands: skills, agents: named('agent') }, named('mcpServer'), skills, wanted, [], handed, [], disk, stopRequested);
+    const own = (ctx.options.seedCustomizations ?? []).filter((one) => str(one.type) !== 'mcpServer');
+    const held = new Set(own.map((one) => str(one.id)));
+    return [...own, ...scanned.filter((one) => !held.has(str(one.id)))].map((one) => {
+      const plugin = str(one.type) === 'plugin' ? switched.get(str(one.id) ?? '') : undefined;
+      const server = str(one.type) === 'mcpServer' ? desired.get(str(one.name) ?? '') : undefined;
+      if (plugin !== undefined) {
+        const { enablement: _kept, ...row } = one;
+        return plugin.enabled ? row : { ...row, enablement: [{ kind: 'session', enabled: false }] };
+      }
+      return server === undefined ? { ...one } : { ...one, enablement: [{ kind: 'session', enabled: server }] };
+    });
+  };
+
+  /** Whether a CLI of this session has answered what it has. */
+  let described = false;
 
   /**
-   * Ask the CLI what it can do, without asking it to do anything.
+   * Ask the CLI this session reads what it can do, without asking it to do
+   * anything.
    *
-   * Fired as soon as the query exists. Best effort: a CLI that will not answer
-   * yet leaves the lists empty, which is a real answer - the same one a host
-   * gives for a harness nobody has signed into - rather than a session that
-   * refuses to open.
+   * Asked of each CLI the session starts until one answers, whose answer lays
+   * the list out. Best effort: a CLI that does not answer leaves the lists as
+   * they are and the next CLI is asked, as VS Code's session keeps its disk
+   * set when its read of the SDK fails, and the answer of a CLI put away while
+   * it answered is not the session's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1521-L1533
    */
   const describe = async (): Promise<void> => {
+    const to = ctx.query;
+    if (described || to === undefined) return;
     const [init, mcp, skills, plugins] = await Promise.all([
-      ctx.query.initializationResult().then((r) => bag(r as unknown)).catch(() => ({} as Bag)),
-      ctx.query.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]),
+      to.initializationResult().then((r) => bag(r as unknown)).catch(() => undefined),
+      to.mcpServerStatus().then(reportedServers).catch(() => [] as unknown[]),
       // The only way to know which commands are skills. It re-reads them from
       // disk, which at the start of a session is what one wants anyway.
-      ctx.query.reloadSkills().then((r) => list(bag(r as unknown).skills)).catch(() => [] as unknown[]),
+      to.reloadSkills().then((r) => list(bag(r as unknown).skills)).catch(() => [] as unknown[]),
       /*
        * The plugins, which `initializationResult()` does not report.
        *
@@ -395,17 +498,31 @@ export function createServers(ctx: SessionContext): Servers {
        * plugin list is used: it re-reads commands and agents too, and those
        * are already answered above.
        */
-      ctx.query.reloadPlugins().then((r) => list(bag(r as unknown).plugins)).catch(() => [] as unknown[]),
+      to.reloadPlugins().then((r) => list(bag(r as unknown).plugins)).catch(() => [] as unknown[]),
     ]);
-    ctx.offered = list(init.models)
+    if (init === undefined || described || ctx.disposed || ctx.query !== to) return;
+    described = true;
+    /*
+     * The models, where the CLI is signed in to anything, as VS Code's Claude
+     * agent offers none where no account is set up. The CLI runs on this
+     * session's credential, so its account says whether the session has one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1002-L1021
+     */
+    const setUp = isClaudeAccountSetUp(init.account);
+    ctx.models = (setUp ? list(init.models) : [])
       .map((raw) => {
         const model = bag(raw);
         // `value`, not `id`. Reading the wrong name costs every model there
-        // is and leaves a picker that offers nothing.
-        return { id: str(model.value) ?? '', name: str(model.displayName) ?? str(model.value) ?? '' };
+        // is and leaves a picker that offers nothing. Each with the thinking
+        // control it supports, as the probe reads it.
+        return {
+          id: str(model.value) ?? '',
+          name: str(model.displayName) ?? str(model.value) ?? '',
+          ...thinkingFor(list(model.supportedEffortLevels).filter((one): one is string => typeof one === 'string')),
+        };
       })
       .filter((model) => model.id !== '' && model.id !== SDK_DEFAULT_MODEL_VALUE);
-    if (ctx.options.offerModels) ctx.offered = await ctx.options.offerModels(ctx.offered);
+    if (setUp && ctx.options.offerModels) ctx.models = await ctx.options.offerModels(ctx.models);
     /*
      * The style the preset names, applied once the CLI is there to take it.
      *
@@ -416,25 +533,62 @@ export function createServers(ctx: SessionContext): Servers {
      */
     const asked = str(ctx.values.outputStyle);
     if (asked !== undefined && asked !== str(init.output_style)) {
-      await ctx.query.applyFlagSettings(flagSettingsOf(ctx.values)).catch(() => {});
+      await to.applyFlagSettings(flagSettingsOf(ctx.values)).catch(() => {});
     }
     reported.init = init;
     reported.mcp = mcp;
     reported.skills = skills;
     await discover(mcp);
     laid(plugins);
-    /*
-     * The Claude folders, watched from here so a file written into one is
-     * listed without a restart. Not for a session in a machine, whose CLI
-     * reads its own config volume, and not for one closed while it waited.
-     */
-    if (ctx.options.spawn === undefined && !ctx.closed && unwatch === undefined) {
-      unwatch = watchFolders({
-        configDir: configDirOf(ctx.options.env),
-        ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
-      }, () => { void reread(); });
-    }
     ctx.options.onHandshake?.();
+  };
+
+  /**
+   * The Claude folders, watched for the session's life so a file written into
+   * one is listed without a restart, as VS Code's session watches its folders
+   * from the moment it is made: the list is laid out again from the scan until
+   * a CLI has answered, and the CLI is asked again after. Not for a session in
+   * a machine, whose CLI reads its own config volume.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L500
+   */
+  let unwatch = ctx.options.spawn !== undefined ? undefined : createClaudeCustomizationWatcher({
+    configDir: configDirOf(ctx.options.env),
+    ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
+    ...(typeof ctx.values['watchWaitMs'] === 'number' ? { waitMs: ctx.values['watchWaitMs'] } : {}),
+  }, () => {
+    if (described) {
+      void reloadPlugins();
+      return;
+    }
+    if (ctx.disposed) return;
+    const was = JSON.stringify(ctx.customizations);
+    ctx.customizations = provisionalCustomizations();
+    if (JSON.stringify(ctx.customizations) !== was) {
+      ctx.emit('session', { type: 'session/customizationsChanged', customizations: ctx.customizations });
+    }
+  });
+
+  /**
+   * The CLI's servers brought to the session's switches before a turn's
+   * prompt, as VS Code's pipeline reconciles them: what the CLI runs is read,
+   * and each server it reports whose switch differs is switched, one switched
+   * on asked to connect again. A server a stop switched off stays off until a
+   * start. A switch the CLI refuses fails the turn, as it fails VS Code's send.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L125-L155
+   */
+  const reconcileMcpServerEnablement = async (): Promise<void> => {
+    const to = ctx.query;
+    if (to === undefined || desired.size === 0) return;
+    const observed = new Map((await to.mcpServerStatus()).map((server) => [server.name, server.status !== 'disabled']));
+    let moved = false;
+    for (const [server, enabled] of desired) {
+      const current = observed.get(server);
+      if (current === undefined || current === enabled || stopRequested.has(server)) continue;
+      await to.toggleMcpServer(server, enabled);
+      if (enabled) await to.reconnectMcpServer(server);
+      moved = true;
+    }
+    if (moved) await refreshMcp();
   };
 
   const methods: Servers['methods'] = {
@@ -445,17 +599,30 @@ export function createServers(ctx: SessionContext): Servers {
      * prompt, a subagent - the CLI has no switch for at all, and those are
      * refused rather than accepted and dropped: a switch that reports success
      * and changes nothing is worse than one that says it cannot.
+     *
+     * A server's switch is kept as the session's, which each send brings the
+     * CLI to; a session with no CLI yet says it on the row at once and its
+     * first CLI is brought to it before the first prompt.
      */
     setCustomizationEnabled: async (id, enabled) => {
       const server = serverNamed(id);
       if (!server)
         return switchPlugin(id, enabled);
       stopRequested.delete(server);
+      desired.set(server, enabled);
       const held = ctx.customizations.find((entry) => str(entry.id) === id);
+      const to = ctx.query;
+      if (to === undefined) {
+        if (held !== undefined) {
+          held.enablement = [{ kind: 'session', enabled }];
+          ctx.emit('session', { type: 'session/customizationUpdated', customization: { ...held } });
+        }
+        return true;
+      }
       const was = str(bag(held?.state).kind);
       try {
         if (!enabled) {
-          await ctx.query.toggleMcpServer(server, false);
+          await to.toggleMcpServer(server, false);
         }
         /*
          * Switching on a server that is not ready is how somebody signs into
@@ -468,12 +635,12 @@ export function createServers(ctx: SessionContext): Servers {
          * sign-in.
          */
         else if (was === 'ready') {
-          await ctx.query.toggleMcpServer(server, true);
+          await to.toggleMcpServer(server, true);
         }
         else {
-          await ctx.query.toggleMcpServer(server, true).catch(() => {});
+          await to.toggleMcpServer(server, true).catch(() => {});
           request(id, 'session/mcpServerStartRequested');
-          await ctx.query.reconnectMcpServer(server);
+          await to.reconnectMcpServer(server);
         }
       }
       catch {
@@ -501,18 +668,23 @@ export function createServers(ctx: SessionContext): Servers {
      * state the CLI reports, a call that threw included: the guide has the
      * host follow a start with `session/mcpServerStateChanged`.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md#L50
+     *
+     * A session with no CLI yet runs no server to start, and refuses, as VS
+     * Code's session refuses a start before its first send.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1003-L1008
      */
     startMcpServer: async (id) => {
       const server = serverNamed(id);
-      if (!server)
+      const to = ctx.query;
+      if (!server || to === undefined)
         return false;
       request(id, 'session/mcpServerStartRequested');
       try {
         if (stopRequested.has(server)) {
-          await ctx.query.toggleMcpServer(server, true);
+          await to.toggleMcpServer(server, true);
           stopRequested.delete(server);
         }
-        await ctx.query.reconnectMcpServer(server);
+        await to.reconnectMcpServer(server);
       }
       catch {
         // Said by the refresh below, which reads what the CLI made of it.
@@ -538,7 +710,8 @@ export function createServers(ctx: SessionContext): Servers {
       const named = server === undefined
         ? [...wanted.entries()].find(([, published]) => published.resource === resource)?.[0]
         : serverNamed(server);
-      if (named === undefined || wanted.get(named)?.resource !== resource) return false;
+      const to = ctx.query;
+      if (named === undefined || wanted.get(named)?.resource !== resource || to === undefined) return false;
       // The set the session holds now, its in-process servers among it: the
       // client tools' declarations replace the set the session started with.
       const config = ctx.mcpServers[named];
@@ -548,11 +721,11 @@ export function createServers(ctx: SessionContext): Servers {
         : {};
       ctx.mcpServers[named] = { ...config, headers: { ...headers, Authorization: `Bearer ${token}` } };
       try {
-        await ctx.query.setMcpServers(ctx.mcpServers as never);
+        await to.setMcpServers(ctx.mcpServers as never);
         // Discovered again next time: a server that connects is no longer one
         // anybody needs to sign into.
         wanted.delete(named);
-        await ctx.query.reconnectMcpServer(named);
+        await to.reconnectMcpServer(named);
       }
       catch { return false; }
       await refreshMcp();
@@ -572,16 +745,21 @@ export function createServers(ctx: SessionContext): Servers {
      * stop. Once the request is said it is answered, and what follows it is
      * the state the CLI reports, a call that threw included.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md#L48-L51
+     *
+     * A session with no CLI yet runs no server to stop, and refuses, as VS
+     * Code's session refuses a stop before its first send.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1003-L1008
      */
     stopMcpServer: async (id) => {
       const server = serverNamed(id);
-      if (!server)
+      const to = ctx.query;
+      if (!server || to === undefined)
         return false;
       const on = bag(list(ctx.customizations.find((entry) => str(entry.id) === id)?.enablement)[0]).enabled !== false;
       request(id, 'session/mcpServerStopRequested');
       if (on) stopRequested.add(server);
       try {
-        await ctx.query.toggleMcpServer(server, false);
+        await to.toggleMcpServer(server, false);
       }
       catch {
         // Said by the refresh below, which reads what the CLI made of it.
@@ -597,7 +775,10 @@ export function createServers(ctx: SessionContext): Servers {
     mcpServers,
     refreshMcp,
     describe,
-    reread,
+    reloadPlugins,
+    provisionalCustomizations,
+    reconcileMcpServerEnablement,
+    enabledPlugins: () => Object.fromEntries([...switched.values()].map((one) => [pluginIdOf(one.plugin), one.enabled])),
     unwatch: () => {
       unwatch?.();
       unwatch = undefined;

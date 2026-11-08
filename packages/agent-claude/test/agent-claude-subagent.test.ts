@@ -29,6 +29,10 @@ const sdk = vi.hoisted(() => {
   const fresh = (): Feed => ({ held: [], wake: undefined });
   const state = {
     canUseTool: undefined as undefined | ((name: string, input: Bag, about?: Bag) => Promise<unknown>),
+    /** The input stream the query built last was handed, which a case reads where its CLI reads its prompts. */
+    prompt: undefined as AsyncIterable<unknown> | undefined,
+    /** Whether the next query reads its prompts as the SDK reads its input; a case sets it, and `reset` leaves it. */
+    reads: false,
     /** The feed the next query reads, and the one `push` writes to. */
     feed: fresh(),
     /** The task ids `stopTask` was called with, in order. */
@@ -55,16 +59,18 @@ const sdk = vi.hoisted(() => {
   return state;
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  query: ({ options }: { options: Record<string, unknown> }) => {
+  query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
     sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
+    sdk.prompt = prompt;
+    if (sdk.reads) void (async () => { for await (const _ of prompt) { /* read, as the SDK reads its input */ } })();
     const feed = sdk.feed;
     return {
       async *[Symbol.asyncIterator]() {
         for (;;) yield await sdk.next(feed);
       },
-      interrupt: async () => { sdk.interrupted += 1; },
+      interrupt: async () => {},
       stopTask: async (taskId: string) => { sdk.stopped.push(taskId); },
       setPermissionMode: async () => {},
       setModel: async () => {},
@@ -92,7 +98,7 @@ const fixture = (name: string): Record<string, unknown>[] => readFileSync(
 ).split('\n').filter((line) => line.trim() !== '').map((line) => JSON.parse(line) as Record<string, unknown>);
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 interface Worker {
@@ -103,7 +109,7 @@ interface Worker {
 }
 
 /** Replay one fixture through a real session with a recording host seam. */
-async function replay(name: string, frames: Record<string, unknown>[] = fixture(name), tools: BoundTool[] = []) {
+async function replay(name: string, frames: Record<string, unknown>[] = fixture(name), tools: BoundTool[] = [], preset?: Bag) {
   sdk.reset();
   const main: { channel: string; action: Bag }[] = [];
   const workers = new Map<string, Worker>();
@@ -131,6 +137,7 @@ async function replay(name: string, frames: Record<string, unknown>[] = fixture(
     emit: (channel, action) => { main.push({ channel, action: action as Bag }); },
     subagent,
     ...(tools.length > 0 ? { tools } : {}),
+    ...(preset === undefined ? {} : { preset }),
   });
   await settle();
   // The turn the frames answer.
@@ -227,6 +234,52 @@ it('keeps a background worker running until its task notification', async () => 
   // Its frames after the lead turn ended are still its own.
   const actions = drew(worker as Worker);
   expect(actions.some((one) => one.type === 'chat/toolCallStart' && one.toolName === 'Bash')).toBe(true);
+});
+
+/*
+ * The hold is bounded as VS Code's host bounds it: a worker whose spawning
+ * call has not come within 30 s is failed, its held frames dropped, and the
+ * call that comes later announces no chat for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L144-L175
+ */
+it('drops a worker whose spawning call never came within the hold\'s 30 s', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const lines = fixture('claude-subagent.jsonl');
+    const { asked } = await replay('none', [
+      lines[0] as Record<string, unknown>,
+      lines[4] as Record<string, unknown>,
+    ]);
+    expect(asked).toEqual([]);
+    vi.advanceTimersByTime(30_000);
+
+    sdk.push(...[lines[1], lines[2], lines[3], ...lines.slice(5)] as Record<string, unknown>[]);
+    await settle();
+    expect(asked).toEqual([]);
+  }
+  finally {
+    vi.useRealTimers();
+  }
+});
+
+it('drops a worker whose spawning call never came within the record\'s subagentStartTimeoutMs', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const lines = fixture('claude-subagent.jsonl');
+    const { asked } = await replay('none', [
+      lines[0] as Record<string, unknown>,
+      lines[4] as Record<string, unknown>,
+    ], [], { subagentStartTimeoutMs: 1000 });
+    expect(asked).toEqual([]);
+    vi.advanceTimersByTime(1000);
+
+    sdk.push(...[lines[1], lines[2], lines[3], ...lines.slice(5)] as Record<string, unknown>[]);
+    await settle();
+    expect(asked).toEqual([]);
+  }
+  finally {
+    vi.useRealTimers();
+  }
 });
 
 it('waits for the spawning call when the worker speaks first', async () => {
@@ -359,6 +412,10 @@ it('names a worker chat by its task, cut to sixty characters', () => {
   expect(titleOf('Rewrite refs: host 49, 50', 'Explore')).toBe('Rewrite refs: host 49, 50');
 });
 
+it('cuts a worker chat\'s title to the record\'s subagentTitleMax', () => {
+  expect(titleOf('x'.repeat(80), 'Explore', 20)).toBe(`${'x'.repeat(20)}…`);
+});
+
 it('says nothing for a subagent when the host has no seam', async () => {
   // The same fixture, without `subagent`: a worker's frames stay in the turn
   // that spawned them.
@@ -477,26 +534,29 @@ it('ends a cancelled turn\'s worker once, and a late frame does not reopen it', 
 });
 
 /*
- * A stop closes the CLI, as the reference stop aborts its query, and a
- * background worker an earlier turn spawned runs in that CLI, so it ends with
- * the stop; what the closed CLI says after is read by nobody.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+ * A stop interrupts the turn and keeps the CLI, so a background worker an
+ * earlier turn spawned is not the stopped turn's: it keeps running in that CLI
+ * and ends on its own notification.
+ * https://code.claude.com/docs/en/agent-sdk/typescript#query-object
  */
-it('ends a background worker from an earlier turn when a later turn is stopped, with the CLI that runs it', async () => {
+it('leaves a background worker from an earlier turn running when a later turn is stopped', async () => {
   const lines = fixture('claude-subagent-background.jsonl');
   // Through the lead turn's result and the worker's first frame after it, so
-  // the worker is open when the next turn begins.
+  // the worker is open when the next turn begins; its CLI reads its prompts, so
+  // that result ends the lead turn.
+  sdk.reads = true;
   const { workers, session } = await replay('claude-subagent-background.jsonl', lines.slice(0, 7));
+  sdk.reads = false;
   const call = 'toolu_01Riysq5EgQZGcUE9kDMp6AB';
   expect(workers.has(call)).toBe(true);
   session.sendMessage('t2', 'and another thing');
   await settle();
   session.abort();
   await settle();
-  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+  expect(workers.get(call)?.ended ?? []).toEqual([]);
   sdk.push(...lines.slice(7));
   await settle();
-  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
 });
 
 it('ends a foreground worker on its notification, and its result ends nothing more', async () => {
@@ -559,7 +619,7 @@ it('stops one foreground worker with its task id, and leaves the lead turn runni
   session.stopWorker?.(call);
   await settle();
   expect(sdk.stopped).toEqual(['a39214c163af9a96a']);
-  expect(sdk.interrupted).toBe(0);
+  expect(sdk.closed).toBe(0);
   expect(main.some((one) => one.action.type === 'chat/turnCancelled')).toBe(false);
   // Ended by the harness's own word that it stopped, once.
   expect(workers.get(call)?.ended).toEqual([]);
@@ -575,7 +635,7 @@ it('stops one background worker with its task id', async () => {
   session.stopWorker?.(call);
   await settle();
   expect(sdk.stopped).toEqual(['af279e8136cb23ae9']);
-  expect(sdk.interrupted).toBe(0);
+  expect(sdk.closed).toBe(0);
   sdk.push(stoppedNotice(call, 'af279e8136cb23ae9'));
   await settle();
   expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
@@ -610,9 +670,18 @@ it('stops nothing for a worker the CLI named no task for, and leaves the lead tu
   expect(main.some((one) => one.action.type === 'chat/turnCancelled')).toBe(false);
 });
 
-/** A session with a lead turn open, and the asks and frames a test drives it with. */
+/**
+ * A session with a lead turn open, and the asks and frames a test drives it with.
+ *
+ * Its CLI reads its prompts as the SDK reads its input, so a result answers the
+ * turn's prompt: a turn ends once a result has settled every prompt of it, as
+ * VS Code's pipeline completes a turn only when its queue has drained.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L678-L695
+ */
 async function leadTurn() {
   const { main, workers, session } = await replay('none', []);
+  const prompt = sdk.prompt;
+  if (prompt !== undefined) void (async () => { for await (const _ of prompt) { /* read, as the SDK reads its input */ } })();
   session.sendMessage('t1', 'hi');
   await settle();
   return { main, workers, session };

@@ -44,9 +44,11 @@ const sdk = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  query: (given: { prompt: AsyncIterable<{ message: { content: unknown } }> }) => {
+  query: (given: { prompt: AsyncIterable<{ message: { content: unknown } }>; options: { mcpServers?: Record<string, { tools?: unknown[] }> } }) => {
+    // The servers a CLI starts with, as it is handed them.
+    sdk.landed = { ...(given.options.mcpServers ?? {}) };
     let closed = false;
     const textOf = (content: unknown): string => typeof content === 'string'
       ? content
@@ -103,7 +105,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 const { createSession } = await import('../src/session.js');
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** A tool the client `c1` offers, as the host names it to the session. */

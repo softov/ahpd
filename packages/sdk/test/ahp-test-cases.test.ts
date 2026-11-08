@@ -26,7 +26,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   annotationsReducer, automationReducer, automationRunReducer, canvasReducer, changesetReducer, chatReducer,
   IS_CLIENT_DISPATCHABLE, resourceWatchReducer, rootReducer, sessionReducer, SUPPORTED_PROTOCOL_VERSIONS,
@@ -37,7 +37,7 @@ import type { Peer } from '../src/types/rpc.js';
 
 const sdk = vi.hoisted(() => ({ queries: [] as { frames: Record<string, unknown>[]; wake: (() => void) | undefined; closed: boolean }[] }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/warmed.js')).warmed({
   listSessions: async () => [],
   getSessionMessages: async () => [],
   query: ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
@@ -70,7 +70,6 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
-const { chatUriFor } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 
 function peer(): Peer & { notes: { method: string; params: unknown }[]; closed: boolean } {
@@ -102,14 +101,40 @@ const quiet = async (p: { notes: unknown[] }): Promise<void> => {
 
 beforeEach(() => { sdk.queries.length = 0; });
 
-/** A host, with nothing asked of it yet, and the one channel that opens with a state given it. */
-const aHost = (seeded?: { channel: string; initial: Record<string, unknown> }) => createHost({
-  path: '/home/softov',
-  agents: [claude({ paths: ['/home/softov'] })],
-  ...(seeded === undefined ? {} : {
-    opening: (opened: string) => (opened === seeded.channel ? structuredClone(seeded.initial) : undefined),
-  }),
+/*
+ * Every host a case made, closed after it. A host left open keeps its session,
+ * the CLI it started and that session's watchers for the rest of the file, so
+ * each case ran beside every one before it.
+ */
+const made: ReturnType<typeof createHost>[] = [];
+afterEach(async () => {
+  await Promise.all(made.splice(0).map((host) => host.close()));
 });
+
+/** A host, with nothing asked of it yet, and the one channel that opens with a state given it. */
+/**
+ * A host that opens one channel with a case's `initial`: the one named, or
+ * the first chat it opens, which is the default chat it mints for the case's
+ * session.
+ */
+const aHost = (seeded?: { channel?: string; initial: Record<string, unknown> }) => {
+  let taken = false;
+  const host = createHost({
+    path: '/home/softov',
+    // A CLI started by a send, so a case's session holds what its case gave it.
+    agents: [claude({ paths: ['/home/softov'], preset: { cliStart: 'send' } })],
+    ...(seeded === undefined ? {} : {
+      opening: (opened: string, kind: 'root' | 'session' | 'chat') => {
+        const wanted = seeded.channel === undefined ? kind === 'chat' && !taken : opened === seeded.channel;
+        if (!wanted) return undefined;
+        taken = true;
+        return structuredClone(seeded.initial);
+      },
+    }),
+  });
+  made.push(host);
+  return host;
+};
 
 const CASES = join(import.meta.dirname, 'fixtures/ahp-test-cases');
 const filesIn = (where: string): string[] => readdirSync(join(CASES, where)).filter((one) => one.endsWith('.json')).sort();
@@ -259,10 +284,10 @@ const BROKEN = {
     row: 'H1-0025',
     by: 'none, VS Code\'s host drains an idle chat\'s queue on every change to its pending messages and starts the head (queueDrainContribution.ts L71-L90 and L245-L326 at 6b68d3fe)',
   },
-  removalUnserved: {
-    breaks: 'types/channels-session/actions.ts: session/activeClientRemoved is @clientDispatchable and "a no-op when no entry matches"',
-    row: 'A11',
-    by: '10',
+  chatFolders: {
+    breaks: 'types/channels-chat/actions.ts: chat/workingDirectorySet and chat/workingDirectoryRemoved are @clientDispatchable and reduce into the chat\'s workingDirectories',
+    row: 'A-0034',
+    by: 'none, VS Code\'s host refuses both: "Unsupported action: <type>" (protocolServerHandler.ts L139-L142 and L2813-L2815 at 6b68d3fe)',
   },
 } satisfies Record<string, Broken>;
 
@@ -336,6 +361,13 @@ interface Differs {
 
 const rootPerConnection: (Differs & Broken)[] = [{ start: ['_meta', 'config'], ...BROKEN.rootPerConnection }];
 const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROKEN.rootPerConnection }];
+/*
+ * A root opened with no config keeps none through a push, as the protocol's
+ * reducer leaves it, while each connection is served config values of its
+ * own: a client that watched holds the push it was told of, and one that
+ * subscribes after is served the values a connection opens with.
+ */
+const rootConfigPerConnection: (Differs & Broken)[] = [{ start: ['_meta', 'config'], served: ['config'], ...BROKEN.rootPerConnection }];
 
 /**
  * Where this host answers a case otherwise than the protocol.
@@ -362,21 +394,25 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '071-root-terminalschanged': rootPerConnection,
   '087-root-unknown-action-type-is-no-op': rootPerConnection,
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
-  '128-root-configchanged-noops-when-config-undefined': rootPerConnection,
+  '128-root-configchanged-noops-when-config-undefined': rootConfigPerConnection,
   '130-root-configchanged-replace-replaces-all-values': rootMetaPerConnection,
-  '221-session-activeclientremoved-removes-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
-  '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
+  '247-chat-workingdirectoryset-adds-to-empty-set': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
+  '248-chat-workingdirectoryset-appends-to-existing-set': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
+  '249-chat-workingdirectoryset-no-op-when-already-present': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
+  '250-chat-workingdirectoryremoved-removes-existing': [{ refused: ['Unsupported action: chat/workingDirectoryRemoved'], ...BROKEN.chatFolders }],
+  '251-chat-workingdirectoryremoved-no-op-when-not-in-set': [{ refused: ['Unsupported action: chat/workingDirectoryRemoved'], ...BROKEN.chatFolders }],
+  '252-chat-workingdirectoryremoved-no-op-when-set-absent': [{ refused: ['Unsupported action: chat/workingDirectoryRemoved'], ...BROKEN.chatFolders }],
 };
 
 const CUSTOMIZED = 'types/channels-session/actions.ts, session/customizationsChanged: "The session\'s customizations have changed. Full-replacement semantics: the `customizations` array replaces the previous `customizations` entirely."';
-const READY = 'types/channels-session/actions.ts, session/ready: "Session backend initialized successfully."';
 const RETAINED = 'types/common/commands.ts, SubscribeView.turns: "When omitted, the host MUST return all retained turns."; types/channels-chat/state.ts, turnsNextCursor: "Absence means the state contains all retained turns."';
 const DRAINED = 'queueDrainContribution.ts L29 at 6b68d3fe: "Owns pending-message synchronization and decides when a queued turn can be admitted."; a client\'s reorder, L87 and L146, drains the queue of a chat that runs nothing, so its head starts as a turn';
 const RERUN = 'types/channels-chat/actions.ts, chat/turnResume: "The host then resumes the provider\'s execution for that turn."; the backend here holds no such turn, and the host ends it again in an error that can be resumed, as VS Code\'s host ends a resume its agent rejects';
+const ARCHIVED_READ = 'VS Code chatArchiveContribution.ts L50-L52 at 6b68d3fe: "if (dispatched.action.isArchived && !isSessionStatusRead(status)) { this._stateManager.dispatchServerAction(dispatched.channel, { type: ActionType.ChatIsReadChanged, isRead: true }); }"; the host marks an unread chat it archives read, in a read action of its own';
 
 /**
- * Where a case's answer differs because the host did what the protocol has it
- * do on its own: each with the sentence that says so.
+ * Where a case's answer differs because the host did what the protocol or VS
+ * Code's host has it do on its own: each with the sentence that says so.
  */
 const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '135-session-metachanged-sets-meta': [{
@@ -390,20 +426,14 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '232-chat-turnsloaded-prepends-older-turns': [{ start: ['turnsNextCursor'], because: RETAINED }],
   '233-chat-turnsloaded-dedupes-overlap-and-clears-cursor': [{ start: ['turnsNextCursor'], because: RETAINED }],
   '234-chat-truncated-clears-turns-next-cursor-when-clearing-all': [{ start: ['turnsNextCursor'], because: RETAINED }],
+  // A client's announcement is answered with the session's whole list, the
+  // backend's own, which replaces the case's.
+  '035-session-activeclientset-adds-client': [{ reduced: ['customizations'], because: CUSTOMIZED }],
+  '036-session-activeclientset-replaces-client': [{ reduced: ['customizations'], because: CUSTOMIZED }],
   '263-chat-turn-resume-reopens-turn': [{ reduced: ['activeTurn', 'status', 'turns'], because: RERUN }],
   '269-chat-turn-resume-completes-one-turn': [{ reduced: ['activeTurn', 'status', 'turns'], because: RERUN }],
+  '272-chat-isarchivedchanged-archives-chat': [{ reduced: ['status'], because: ARCHIVED_READ }],
 };
-
-/**
- * What a session the driver creates says as it comes up, after its state
- * opened with the case's `initial` and before the case's first action: the
- * customizations its backend offers, in place of the case's, and
- * `session/ready` for a session that starts `creating`.
- */
-const cameUp = (one: HostCase): (Differs & { because: string })[] => (one.reducer !== 'session' ? [] : [
-  { start: ['customizations'], because: CUSTOMIZED },
-  ...(one.initial.lifecycle === 'ready' ? [] : [{ start: ['lifecycle'], because: READY }]),
-]);
 
 /** Where a refusal happened, in the terms the host's words use. */
 interface Where {
@@ -463,17 +493,13 @@ const REFUSALS: Record<string, {
       && (part.toolCall as { status?: unknown }).status === 'pending-confirmation'),
   }],
   'chat/turnResume': [{
-    said: () => 'A turn is running in this chat',
+    said: () => 'Cannot resume while a turn is active.',
     source: RESUMED,
     holds: (state) => state.activeTurn !== undefined && state.activeTurn !== null,
   }, {
-    said: (action) => `${String(action.turnId)} is not the latest turn`,
+    said: () => 'The requested turn is not the latest resumable errored turn.',
     source: RESUMED,
-    holds: (state, action) => ((state.turns ?? []) as Record<string, unknown>[]).at(-1)?.id !== action.turnId,
-  }, {
-    said: (action) => `${String(action.turnId)} did not end with an error that can be resumed`,
-    source: RESUMED,
-    holds: (state, action) => !resumable(state, action.turnId),
+    holds: (state, action) => ((state.turns ?? []) as Record<string, unknown>[]).at(-1)?.id !== action.turnId || !resumable(state, action.turnId),
   }],
   'chat/inputAnswerChanged': [{
     said: (action) => `${String(action.requestId)} is not a question this chat is waiting on`,
@@ -501,33 +527,23 @@ const REFUSALS: Record<string, {
     source: `types/channels-chat/actions.ts, chat/toolCallContentChanged: ${CONTRIBUTOR}`,
     holds: (state, action) => clientOf(state, action.toolCallId) === undefined,
   }],
-  'chat/workingDirectorySet': [{
-    said: (action, where) => `${localPath(String(action.directory))} is not a working directory of ${where.session}`,
-    source: 'types/channels-chat/actions.ts, chat/workingDirectorySet: "`directory` MUST be one of the owning session\'s SessionState.workingDirectories; a host MUST reject a directory that is not."',
-  }],
   'session/configChanged': [{
     said: (action) => `${Object.keys(action.config as object)[0] ?? ''} is not a config key this backend takes`,
     source: 'types/channels-session/actions.ts, session/configChanged: "Only properties with `sessionMutable: true` in the config schema may be changed."',
   }],
-  'root/nonExistentAction': [{ said: (action) => `${String(action.type)} names nothing here`, source: MAY_NOT_ORIGINATE }],
-  'session/nonExistentAction': [{ said: (action) => `${String(action.type)} is not served yet`, source: MAY_NOT_ORIGINATE }],
-  'root/configChanged': [{
-    said: (action) => `root config does not declare ${Object.keys(action.config as object)[0] ?? ''}`,
-    source: 'host policy, host/actions.ts: a root config push writes only keys the root config schema declares',
-  }],
+  'root/nonExistentAction': [{ said: (action) => `Server-only action: ${String(action.type)}`, source: MAY_NOT_ORIGINATE }],
+  'session/nonExistentAction': [{ said: (action) => `Server-only action: ${String(action.type)}`, source: MAY_NOT_ORIGINATE }],
   'session/workingDirectorySet': [{
+    said: () => 'Session working-directory actions require an Editor Window client.',
+    source: 'VS Code host, agentService.ts L13634-L13640 at 6b68d3fe: a session working-directory action is taken only from an editor window',
+  }, {
     // The folder as it resolves, which on Windows is on the daemon's drive.
     said: (action) => `Workspace trust was not granted for '${resolve(localPath(String(action.directory)))}'`,
     source: 'host policy, host/chatactions.ts: a folder joins a session only once the window trusts it',
   }],
-  'chat/truncated': [{
-    said: (action, where) => `${String(action.turnId)} is not a completed turn in ${where.channel}`,
-    source: 'host policy, host/chatactions.ts: a truncation names a turn this chat holds completed',
-    holds: (state, action) => !((state.turns ?? []) as { id?: unknown }[]).some((one) => one.id === action.turnId),
-  }],
-  'chat/toolCallResultConfirmed': [{
-    said: () => 'No tool call here asks for its result to be confirmed',
-    source: 'host policy, host/chatactions.ts: no call on this host asks for its result to be confirmed',
+  'session/workingDirectoryRemoved': [{
+    said: () => 'Session working-directory actions require an Editor Window client.',
+    source: 'VS Code host, agentService.ts L13634-L13640 at 6b68d3fe: a session working-directory action is taken only from an editor window',
   }],
 };
 
@@ -593,8 +609,10 @@ async function driven(one: HostCase): Promise<Driven & { channel: string; sessio
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     const uri = `ahp-session:/${one.name}`;
     const peerChat = PEER_CHATS.has(one.name) ? String(one.initial.resource) : undefined;
-    const channel = one.reducer === 'root' ? 'ahp-root://' : one.reducer === 'session' ? uri : peerChat ?? chatUriFor(uri);
-    const host = aHost({ channel, initial: one.initial });
+    // The channel the case drives, named where the case names it: a chat case's
+    // default chat is the one the host mints for the session, read off its state.
+    const named = one.reducer === 'root' ? 'ahp-root://' : one.reducer === 'session' ? uri : peerChat;
+    const host = aHost({ ...(named === undefined ? {} : { channel: named }), initial: one.initial });
     const asked = peer();
     const client = host.accept(asked);
     await client.handle({
@@ -602,6 +620,7 @@ async function driven(one: HostCase): Promise<Driven & { channel: string; sessio
       params: { channel: 'ahp-root://', clientId: `cases-${one.name}`, protocolVersions: ['0.9.0'] },
     });
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    const channel = named ?? String((await stateOf(client, uri)).state.defaultChat);
     if (peerChat !== undefined) await client.handle({ method: 'createChat', params: { channel: uri, chat: peerChat } });
     await stateOf(client, channel);
     await quiet(asked);
@@ -688,7 +707,7 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
     it(one.name, async () => {
       const outcome = await driven(one);
       const departs = DIVERGES[one.name] ?? [];
-      const keys = (check: 'start' | 'reduced' | 'served'): string[] => [...departs, ...(ALLOWED[one.name] ?? []), ...cameUp(one)]
+      const keys = (check: 'start' | 'reduced' | 'served'): string[] => [...departs, ...(ALLOWED[one.name] ?? [])]
         .flatMap((entry) => entry[check] ?? []).sort();
       expect(outcome.answers.map((list) => list.length), `${one.name}: each action answered once, echoed or refused`)
         .toEqual(one.actions.map(() => 1));
@@ -714,7 +733,7 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
         }
         if (listed.includes(reason)) continue;
         if (hostOnly(action)) {
-          expect(reason, `${one.name}: ${type} refused by the protocol's rule`).toBe(`${type} is this host's to say, not a client's`);
+          expect(reason, `${one.name}: ${type} refused by the protocol's rule`).toBe(`Server-only action: ${type}`);
           continue;
         }
         const rule = (REFUSALS[type] ?? []).find((one) => one.said(action, where) === reason);

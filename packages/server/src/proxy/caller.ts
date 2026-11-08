@@ -66,7 +66,11 @@ export type Called = { caller: ProxyCaller } | { refusal: Refusal };
 /** The header a scope is named in. */
 export const SCOPE_HEADER = 'x-ahp-scope';
 
-/** The header a call adds meta to its key's in: `k=v,k=v`. */
+/**
+ * The header a call adds meta to its key's in: a JSON object of string values,
+ * as LiteLLM's `x-litellm-spend-logs-metadata` carries a call's
+ * `spend_logs_metadata` (https://docs.litellm.ai/docs/proxy/cost_tracking).
+ */
 export const META_HEADER = 'x-ahp-meta';
 
 /** The credential a request presented, `Bearer` first; `false` when it presented two different ones. */

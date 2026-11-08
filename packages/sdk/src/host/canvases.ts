@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { canvasResource } from './channels.js';
 import { isWebUrl } from '../weburl.js';
 import type { CanvasReference, CanvasState } from '@microsoft/agent-host-protocol';
@@ -30,6 +31,12 @@ export interface CanvasHost {
    */
   holds(chat: string): boolean;
   /**
+   * Bring the session that holds a chat back where it sleeps, with the chat,
+   * as the reference host restores a session's chat before a canvas
+   * operation. Rejects for a chat no session holds.
+   */
+  restore(chat: string): Promise<void>;
+  /**
    * Whether a chat's canvases are its backend's, which lists and serves them:
    * the chat of a session in a machine, whose host there runs the session.
    */
@@ -49,11 +56,12 @@ export interface Canvases {
   /**
    * Open a canvas on a chat, or draw an open one again.
    *
-   * Answers the channel. A canvas already open on the chat under the same
-   * `instanceId` keeps its channel and is drawn again; any other gets a new
+   * Answers the channel, once the chat is back where its session slept. A
+   * canvas already open on the chat under the same `instanceId` keeps its
+   * channel and is drawn again where its state moved; any other gets a new
    * one, and the chat's list is said whole after it.
    */
-  open(chat: string, state: CanvasState, by: string): string;
+  open(chat: string, state: CanvasState, by: string): Promise<string>;
   /** Replace the state of a canvas this plugin opened, whole. */
   update(resource: string, state: CanvasState, by: string): void;
   /** Take a canvas off its chat. A canvas that is already gone stays gone. */
@@ -154,17 +162,24 @@ export function createCanvases(ctx: CanvasHost): Canvases {
     }
   };
 
-  const open = (chat: string, state: CanvasState, by: string): string => {
+  /*
+   * Whether canvases are served, then the chat brought back, as the reference
+   * asks both before its provider opens anything.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6601-L6604
+   */
+  const open = async (chat: string, state: CanvasState, by: string): Promise<string> => {
     callable();
-    if (!ctx.holds(chat)) {
-      throw new Error(`plugin ${by}: openCanvas needs a chat this host has live, and ${chat} is not one`);
-    }
+    check('openCanvas', by, state);
+    await ctx.restore(chat);
     if (ctx.relays?.(chat) === true) {
       throw new Error(`plugin ${by}: openCanvas needs a chat whose canvases this host lists, and ${chat}'s are listed by the host its session runs in`);
     }
-    check('openCanvas', by, state);
     const resources = chats.get(chat) ?? [];
     const same = resources.find((resource) => held.get(resource)?.state.instanceId === state.instanceId);
+    // An instance opened again as it is says nothing, as the reference's
+    // projection keeps one it already shows.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L5196-L5210
+    if (same !== undefined && isDeepStrictEqual(held.get(same)?.state, state)) return same;
     const resource = same ?? canvasResource(chat, crypto.randomUUID());
     if (same === undefined) {
       resources.push(resource);
@@ -199,17 +214,23 @@ export function createCanvases(ctx: CanvasHost): Canvases {
     callable();
     check('updateCanvas', by, state);
     if (one.by !== by) throw new Error(`plugin ${by}: ${resource} was opened by ${one.by}`);
+    // A state the canvas holds already says nothing, as the reference installs
+    // and says a state only when it is not the one it holds.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1192-L1197
+    if (isDeepStrictEqual(one.state, state)) return;
     one.state = structuredClone(state);
     ctx.dispatch(resource, { type: 'canvas/stateChanged', canvas: one.state });
   };
 
   const close = (resource: string, by: string): void => {
+    // Whether canvases are served at all, asked first, as the reference asks
+    // before it looks for anything to close.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6615-L6621
+    callable();
     const one = held.get(resource);
     // Gone, and so nothing to do: two closes may meet, and the second is the
-    // one that says nothing - even while the key is off, because a call with
-    // nothing to close is not a call the store takes.
+    // one that says nothing.
     if (one === undefined) return;
-    callable();
     if (one.by !== by) throw new Error(`plugin ${by}: ${resource} was opened by ${one.by}`);
     drop(one);
     // The list whole, or absent when this was the last one: the protocol's

@@ -79,9 +79,8 @@ const limitsParam = (command: string, params: Record<string, unknown>): PolicyLi
  * The meta a key carries, checked by the bounds the proxy's header is.
  *
  * `checkMeta` is the same check the mint and the tokens file make, and its
- * sentence is the one a bad one is refused with: a name of 1 to 64 characters
- * of `[A-Za-z0-9_.-]`, a value of at most 256 characters with no comma and no
- * line break, and at most 32 entries.
+ * sentence is the one a bad one is refused with: a name of 1 to 64 characters,
+ * a string value of at most 256 characters, and at most 32 entries.
  */
 const metaParam = (command: string, params: Record<string, unknown>): Record<string, string> | undefined => {
   const value = params['meta'];

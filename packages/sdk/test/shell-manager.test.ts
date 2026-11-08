@@ -4,6 +4,7 @@ import { createTerminals } from '../src/host/terminals.js';
 import { createShells } from '../src/host/shells.js';
 import { DEFAULT_SHELL_COMMAND_TIMEOUT_MS, SHELL_COMMAND_MAX_OUTPUT_BYTES } from '../src/host/shellcommand.js';
 import { shellTerminals } from '../src/machines/terminals.js';
+import { buildNonPtyShellTerminalUri } from '../src/vscode/nonptyshellterminaluri.js';
 import type { HostContext } from '../src/host/context.js';
 import type { Bag } from '../src/types/common.js';
 import type { ComputerPort, Spawn } from '../src/types/computers.js';
@@ -146,6 +147,8 @@ const host = (over: { computers?: ComputerPort; sessions?: Map<string, unknown>;
     dirOfFile: () => undefined,
     refreshWatched: async () => {},
     keepExited: (chat: string, key: string, session: string) => { kept.push({ chat, key, session }); },
+    // A session with no folder names its terminals under the session itself.
+    nonPtyShellTerminalUri: (session: string, chat: string, key: string) => buildNonPtyShellTerminalUri(session, session, chat, key),
   } as unknown as HostContext;
   Object.assign(ctx, createTerminals(ctx));
   ctx.shells = createShells(ctx);

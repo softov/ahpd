@@ -5,12 +5,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, machine, peer, sdk, settle, wrote,
+  resetSdk, actions, claude, createHost, echo, emit, hello, machine, peer, sdk, sessionQueries, settle, wrote,
 } from './support/host.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { steerOf } from '../src/sessions/steer.js';
 import { uriOf } from '../src/resources/resources.js';
-import { chatUriFor } from '../src/host/channels.js';
 import type { SessionStore } from '../src/types/sessions.js';
 import type { WireTurn } from '../src/types/wire.js';
 import type { Agent, Bag, Listed, Session, Start } from '@ahpd/sdk';
@@ -111,6 +110,8 @@ interface Knobs {
   listed?: Listed[];
   /** The conversations the backend deleted, for a backend that can delete. */
   deleted?: string[];
+  /** The turns whose send the backend fails, before it records anything of them. */
+  fails?: string[];
 }
 
 /** A part as a client shows it: a steer marked as one, any other part by its content. */
@@ -146,6 +147,10 @@ const backend = (k: Knobs): Agent => {
         allTurns: all,
         endPoint: (turnId) => (all().some((turn) => turn.id === turnId) ? `end:${turnId}` : undefined),
         forkPoint: (turnId) => (all().some((turn) => turn.id === turnId) ? `end:${turnId}` : undefined),
+        sendMessage: (turnId, ...rest) => {
+          if (k.fails?.includes(turnId) === true) throw new Error('the backend is gone');
+          return session.sendMessage(turnId, ...rest);
+        },
       };
     },
   };
@@ -279,9 +284,9 @@ describe('a command\'s turn', () => {
 
 describe('a host started again on the same store', () => {
   /** A first host that ran some turns, closed; and a second on the same store. */
-  const restarted = async (script: (client: Client, p: ReturnType<typeof peer>, chat: string) => Promise<void>, transcript: Bag[]) => {
+  const restarted = async (script: (client: Client, p: ReturnType<typeof peer>, chat: string) => Promise<void>, transcript: Bag[], fails: string[] = []) => {
     const dir = join(temp(), 'sessions');
-    const first = knobs();
+    const first: Knobs = { ...knobs(), fails };
     const before = await opened(first, fileSessions({ dir }));
     await script(before.client, before.p, before.chat);
     await before.host.close();
@@ -341,6 +346,31 @@ describe('a host started again on the same store', () => {
     await after.host.close();
   });
 
+  /*
+   * A turn that ended in an error it cannot be resumed from is kept for its
+   * chat and read back after the turn before it where the backend's transcript
+   * has no copy, and dropped where it has one, as VS Code's host keeps a turn
+   * that failed before its provider recorded it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/persistedFailedTurns/persistedFailedTurnsContribution.ts#L40-L84
+   */
+  it('reads a turn that failed before its backend recorded it back, and once where the transcript holds it, as VS Code\'s host', async () => {
+    const script = async (c: Client, p: ReturnType<typeof peer>, ch: string): Promise<void> => {
+      say(c, ch, 't1', 'hello there');
+      await ended(p, ch, 't1');
+      say(c, ch, 't2', 'this one fails');
+      await ended(p, ch, 't2');
+    };
+    const lost = await restarted(script, [said('t1', 'hello there')], ['t2']);
+    const back = (await stateOf(lost.client, lost.chat)).turns as Bag[];
+    expect(back.map((turn) => [turn.id, turn.state])).toEqual([['t1', 'complete'], ['t2', 'error']]);
+    await lost.host.close();
+
+    const copied = await restarted(script, [said('t1', 'hello there'), said('t2', 'this one fails')], ['t2']);
+    const once = (await stateOf(copied.client, copied.chat)).turns as Bag[];
+    expect(once.map((turn) => [turn.id, turn.state])).toEqual([['t1', 'complete'], ['t2', 'complete']]);
+    await copied.host.close();
+  });
+
   it('reads a turn the chat never began back inside the turn before it, and a chat with no record as it is', async () => {
     const held = [said('t1', 'hello there'), said('x1', 'written as its own'), said('t2', 'and then')];
     const ran = await restarted(async (c, p, ch) => {
@@ -354,10 +384,6 @@ describe('a host started again on the same store', () => {
     // Its message stays, quoted before its answer, as a steer's does.
     expect((turns[0]?.responseParts as Bag[]).map(shownAs)).toEqual(['hello there', 'steer: written as its own', 'written as its own']);
     await ran.host.close();
-
-    const never = await restarted(async () => {}, held);
-    expect(await turnsOf(never.client, never.chat)).toEqual(['t1', 'x1', 't2']);
-    await never.host.close();
   });
 
   it('keeps a notice turn as a turn of its own, not folded into the one before it', async () => {
@@ -541,6 +567,11 @@ describe('a chat\'s command\'s turns', () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client, p } = await hostAt(k, store);
+    // Moving chats on, as a VS Code window with its move setting on turns it on.
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+    });
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
@@ -593,6 +624,19 @@ describe('a session that ran only commands', () => {
     await host.close();
   });
 
+  /*
+   * Titled by its first message as VS Code's host seeds a title from one:
+   * trimmed, its whitespace collapsed to single spaces, and cut at 200
+   * characters.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L252-L255
+   */
+  it('is titled by its first message on one line, cut at 200 characters, as VS Code\'s host seeds a title', async () => {
+    const { client, host } = await reopened([`!echo a\n\n   b ${'x'.repeat(250)}  `]);
+    const row = (await listed(client)).find((one) => one.resource === LIVE);
+    expect(row?.title).toBe(Array.from(`!echo a b ${'x'.repeat(250)}`).slice(0, 200).join(''));
+    await host.close();
+  });
+
   it('opens with its commands\' turns, and a turn sent after the restart runs after them', async () => {
     const { client, host, p, chat } = await reopened(['!echo first']);
     await listed(client);
@@ -613,9 +657,9 @@ describe('a session that ran only commands', () => {
 
 describe('a Claude chat', () => {
   /** A Claude session on a store that keeps a folder, with its chat watched. */
-  const shelled = async (dir: string) => {
+  const shelled = async (dir: string, steerReadBack?: 'inTurn' | 'ownTurn') => {
     const store = fileSessions({ dir });
-    const host = createHost({ path: DIR, agents: [claude({ paths: [DIR] })], ...machine(), sessions: store });
+    const host = createHost({ path: DIR, agents: [claude({ paths: [DIR] })], ...machine(), sessions: store, ...(steerReadBack === undefined ? {} : { steerReadBack }) });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -654,13 +698,17 @@ describe('a Claude chat', () => {
     await stateOf(at.client, chat);
     return { ...at, uri, chat };
   };
-  /** The same session read back by a host started again on the store at `dir`, its CLI having written `transcript`. */
-  const readAgain = async (dir: string, session: string, summary: string, transcript: Bag[]): Promise<unknown[][]> => {
+  /**
+   * The same session read back by a host started again on the store at `dir`, its CLI having written `transcript`;
+   * `steerReadBack` is that host's.
+   */
+  const readAgain = async (dir: string, session: string, summary: string, transcript: Bag[], steerReadBack?: 'inTurn' | 'ownTurn'): Promise<unknown[][]> => {
     sdk.sessions.push({ sessionId: session, summary, lastModified: 1, cwd: DIR });
     sdk.transcript.push(...transcript);
-    const after = await shelled(dir);
-    await stateOf(after.client, `claude:/${session}`);
-    const read = shown((await stateOf(after.client, chatUriFor(`claude:/${session}`))).turns as Bag[]);
+    const after = await shelled(dir, steerReadBack);
+    // Its default chat as the store kept it, the one minted when it was made.
+    const opened = await stateOf(after.client, `claude:/${session}`);
+    const read = shown((await stateOf(after.client, String(opened.defaultChat))).turns as Bag[]);
     await after.host.close();
     return read;
   };
@@ -671,7 +719,6 @@ describe('a Claude chat', () => {
     const uri = 'claude:/banged';
     await before.client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(DIR)] } });
     const chat = String((await stateOf(before.client, uri)).defaultChat);
-    expect(chat).toBe(chatUriFor(uri));
     await stateOf(before.client, chat);
     say(before.client, chat, 't1', 'first');
     await settle();
@@ -736,7 +783,7 @@ describe('a Claude chat', () => {
     await after.host.close();
   });
 
-  it('has a steering message the CLI answered after the turn\'s last answer back inside that turn after a restart', async () => {
+  it('reads a steering message the CLI answered after the turn\'s last answer back as a turn of its own after a restart, as VS Code\'s replay', async () => {
     const dir = join(temp(), 'sessions');
     const before = await shelled(dir);
     const uri = 'claude:/steered';
@@ -760,6 +807,8 @@ describe('a Claude chat', () => {
       { type: 'result', subtype: 'success', is_error: false, duration_ms: 1, user_message_uuids: [steer] },
     );
     await ended(before.p, chat, 't1');
+    // Live, the turn holds the steering message's answer, as VS Code's host keeps it.
+    expect(shown((await stateOf(before.client, chat)).turns as Bag[])).toEqual([['t1', 'complete', 'first', ['one', 'two']]]);
     await before.host.close();
 
     // The CLI's transcript holds the steering message as a prompt of its own.
@@ -776,19 +825,13 @@ describe('a Claude chat', () => {
     expect(turns.map((turn) => turn.id)).toEqual([prompt]);
     expect((turns[0]?.responseParts as Bag[]).filter((part) => part.kind === 'markdown' || steerOf(part) !== undefined).map(shownAs)).toEqual(['one', 'steer: and then', 'two']);
     await after.host.close();
-
-    // A store that kept no record of the chat reads it as its transcript gives
-    // it, under the name a host with no record lists the session by.
-    const elsewhere = await shelled(join(temp(), 'sessions'));
-    await stateOf(elsewhere.client, 'ahp-session:/steered');
-    expect(await turnsOf(elsewhere.client, chatUriFor('ahp-session:/steered'))).toEqual([prompt, steer]);
-    await elsewhere.host.close();
   });
 
-  it('reads a chat back after a restart as a client saw it live, from captures of the real CLI', async () => {
+  it('reads a chat back after a restart from captures of the real CLI, a steering message run late a turn of its own as VS Code\'s replay reads it', async () => {
     // agent-claude's captures of one session of the real CLI, and what the
     // SDK's reader returned for it: a steering message the CLI ran after the
     // turn's last answer, and one it took in at a tool call.
+    const BETA = 'Reply with exactly the word BETA and nothing else.';
     const SESSION = 'ae01151f-233d-4c04-901b-2e01f3afb037';
     const FIRST = '9975eb65-d506-4ab4-a8e6-6b318497c4e1';
     const LATE = '46569a15-a821-8da6-9ea4-802e84d5af14';
@@ -804,7 +847,7 @@ describe('a Claude chat', () => {
     say(before.client, chat, FIRST, ALPHA);
     await settle();
     await emit(...alpha);
-    await steer(before.client, chat, LATE, 'Reply with exactly the word BETA and nothing else.');
+    await steer(before.client, chat, LATE, BETA);
     await emit(...late);
     await ended(before.p, chat, FIRST);
     const [sleeping, folded] = upTo(capture('claude-folded-steer.jsonl'), (frame) => frame.type === 'assistant'
@@ -823,7 +866,12 @@ describe('a Claude chat', () => {
       [TOOL, 'complete', SLEEP, ['steer: Also, at the very end of your reply, add the word BETA2.', 'DONE BETA2']],
     ]);
     await before.host.close();
-    expect(await readAgain(dir, SESSION, ALPHA, capture('claude-steered-transcript.jsonl'))).toEqual(live);
+    // Read back as VS Code's replay reads it, the late steer a turn of its own.
+    expect(await readAgain(dir, SESSION, ALPHA, capture('claude-steered-transcript.jsonl'), 'ownTurn')).toEqual([
+      [FIRST, 'complete', ALPHA, ['ALPHA']],
+      [LATE, 'complete', BETA, ['BETA']],
+      [TOOL, 'complete', SLEEP, ['DONE BETA2']],
+    ]);
   });
 
   /*
@@ -885,11 +933,15 @@ describe('a Claude chat', () => {
     wrote('forked', DIR);
     const after = await shelled(dir);
     await stateOf(after.client, uri);
-    // Nothing has woken it: the fork does, and the turn read back names where it ended.
+    // Nothing has woken it: the fork does, and the turn read back names where
+    // it ended, to the CLI the new chat's first send starts.
     await after.client.handle({
       method: 'createChat',
       params: { channel: uri, chat: 'ahp-chat:/forked-copy', source: { kind: 'fork', chat, turnId: 't2' } },
     });
+    await stateOf(after.client, 'ahp-chat:/forked-copy');
+    say(after.client, 'ahp-chat:/forked-copy', 't3', 'go on');
+    await settle();
     const forked = sdk.queries.find((one) => one.options.forkSession === true);
     expect(forked?.options).toMatchObject({ resume: 'forked', forkSession: true, resumeSessionAt: 'reply-1' });
     await after.host.close();

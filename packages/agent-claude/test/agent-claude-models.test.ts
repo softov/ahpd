@@ -28,7 +28,7 @@ const OFFERED = [{ id: 'opus', name: 'Opus' }, { id: 'sonnet', name: 'Sonnet' }]
  */
 const sdk = vi.hoisted(() => ({ built: [] as (string | undefined)[] }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: (given: { options: { model?: string } }) => {
     sdk.built.push(given.options.model);
@@ -56,7 +56,7 @@ const REPO = join(import.meta.dirname, '../../..');
 const SOURCE = './packages/agent-claude/src/index.ts';
 
 const settle = async (times = 8): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+  for (let i = 0; i < times; i++) await new Promise((done) => { setImmediate(done); });
 };
 
 /** The `claude` engine one load registered. */

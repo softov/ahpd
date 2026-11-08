@@ -1,5 +1,6 @@
 import { reason } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
+import type { TurnHandle } from './chat.js';
 import type { Answering } from './wake.js';
 
 /**
@@ -94,6 +95,18 @@ const textOf = (value: unknown): string | undefined => (
 );
 
 /**
+ * Where a back session's request is shown, as the option `askIn` says.
+ *
+ * `main` copies it into the main turn, where the person answers it and the
+ * answer is sent back to the chat that asked. `own` leaves it in the back
+ * session's chat and lists it among the main chat's blockers, its
+ * `inputNeeded`, where a client answers it in the back chat it names, as VS
+ * Code's host aggregates a subagent's requests on the session its clients read.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L19-L25
+ */
+export type AskIn = 'main' | 'own';
+
+/**
  * The asking over one daemon: its copies, and the answers that go back.
  *
  * One copy per request, by the main chat it is shown in and each id an answer
@@ -101,10 +114,15 @@ const textOf = (value: unknown): string | undefined => (
  * copy is made, so a confirmation the main chat takes is sent to the chat that
  * asked rather than to the main chat, and a request this plugin never copied is
  * refused - `answer` false - rather than echoed as an answer to nothing.
+ *
+ * With `askIn` at `own` nothing is copied: the request is listed on the main
+ * chat by the handle that listed it, until the back session lets it go.
  */
-export function botAsk(seams: AskSeams): Ask {
+export function botAsk(seams: AskSeams, askIn: AskIn = 'main'): Ask {
   /** Every copy shown, by main chat and by each id that names it. */
   const copies = new Map<string, Copy>();
+  /** The handle each listed request was listed on, by its back session and id. */
+  const listings = new Map<string, TurnHandle>();
 
   const key = (session: string, id: string): string => `${session}\n${id}`;
 
@@ -153,6 +171,11 @@ export function botAsk(seams: AskSeams): Ask {
       const chat = textOf(entry['chat']);
       if (chat === undefined) return;
       if (kind !== 'chatInput' && kind !== 'toolConfirmation') return;
+      if (askIn === 'own') {
+        listings.set(key(back, id), held.handle);
+        held.handle.listed?.(entry);
+        return;
+      }
       const turnId = textOf(entry['turnId']);
       const copy: Copy = { session: held.session, back, chat, id, kind, ...(turnId === undefined ? {} : { turnId }) };
       // Every id an answer may name it with: the entry's own, and the request
@@ -197,6 +220,14 @@ export function botAsk(seams: AskSeams): Ask {
     },
 
     withdrawn: (back, id) => {
+      // A listed request comes off the chat it was listed on, whether or not
+      // its turn is still the one the main chat waits on.
+      const listing = listings.get(key(back, id));
+      if (listing !== undefined) {
+        listings.delete(key(back, id));
+        listing.unlisted?.(id);
+        return;
+      }
       // Every alias goes: they are one copy, and the entry's removal names one
       // of them.
       for (const [at, copy] of copies) {

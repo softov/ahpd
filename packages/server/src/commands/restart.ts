@@ -18,7 +18,7 @@ import type { Command, Registry } from '@cofold/commands';
 import { INTERNAL_ERROR, RpcError } from '@ahpd/sdk';
 import type { PluginMethod } from '@ahpd/sdk';
 import { daemonLog } from '../config.js';
-import { READY_TIMEOUT_MS, deliver, logSince, running, throughPipe } from '../daemon.js';
+import { READY_TIMEOUT_MS, configuredMs, deliver, logSince, running, throughPipe } from '../daemon.js';
 import type { ControlledSignal, Running } from '../daemon.js';
 import { realManager } from '../service.js';
 import type { Manager, Service } from '../service.js';
@@ -28,20 +28,39 @@ import type { ServedFacts } from './served.js';
 
 /**
  * How long the terminal waits for the successor, counted from the daemon's
- * `STARTING` line: the daemon's own start gives up after `READY_TIMEOUT_MS`
- * and says so in the log, so a wait longer by a margin always hears that
- * answer. Before that line the old daemon is still stopping, and the terminal
- * waits for as long as it lives, since `stopping` handlers have no limit.
+ * `STARTING` line: the daemon's own start gives up after the configuration's
+ * `readyTimeoutMs`, `READY_TIMEOUT_MS` unless it says otherwise, and says so in
+ * the log, so a wait longer by a margin always hears that answer. A start that
+ * waits for ever is waited for as long. Before that line the old daemon is
+ * still stopping, and the terminal waits for as long as it lives, since
+ * `stopping` handlers have no limit.
  */
-export const SUCCESSOR_WAIT_MS = READY_TIMEOUT_MS + 5_000;
+export const successorWaitMs = (readyMs: number = configuredMs('readyTimeoutMs', READY_TIMEOUT_MS)): number =>
+  (readyMs === 0 ? Number.POSITIVE_INFINITY : readyMs + 5_000);
 
 /*
- * The two signals a recorded daemon restarts on: SIGHUP for a restart, refused
+ * The two signals a recorded daemon restarts on: SIGHUP for a restart, parked
  * while a turn runs, and SIGUSR2 for a forced one. SIGUSR1 is Node's inspector,
  * so it is not one of them.
  */
 export const RESTART_SIGNAL = 'SIGHUP';
 export const FORCED_SIGNAL = 'SIGUSR2';
+
+/**
+ * How long a restart waits between its answer and going down, VS Code's
+ * upgrade kill delay: the answer hops back through a tunnel or a proxy and
+ * reaches the client that asked before the transport drops, and the answer
+ * says it, as VS Code's `restart_delay_ms` does, so the client knows when to
+ * reconnect.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/cli/src/tunnels/agent_host.rs#L114-L118
+ */
+export const RESTART_DELAY_MS = 3_000;
+
+/**
+ * What a restart that was asked for did: began, going down `restartDelayMs`
+ * after its answer, or parked until the turns running in `parked` end.
+ */
+export type RestartOutcome = { restartDelayMs: number } | { parked: string[] };
 
 /**
  * How long the terminal waits for the daemon to answer its signal at all. The
@@ -71,6 +90,8 @@ const cameBy = (piped: boolean, forced: boolean): string => {
  * came, the signal or the control pipe; the terminal reads the rest of the line.
  */
 const refusedTo = (came: string): string => `restart refused (${came}): `;
+/** What the daemon writes when it parks a restart until the turns end, named the same way. */
+const parkedTo = (came: string): string => `restart parked (${came}): `;
 /**
  * What the daemon writes once it has read its line and token and begins to
  * stop. How the request came is named because a request carries no sender: a
@@ -103,11 +124,18 @@ const notRecorded = (pid: number): string =>
   `The record names pid ${String(pid)}, not this daemon; restart this one where it runs.`;
 const OLDER = 'This daemon was started by an older ahpd, which did not record its line; run ahpd stop and ahpd start.';
 /**
- * The refusal while a turn runs, naming how the caller forces the restart: the
- * terminal's flag unless the caller is a client of the API or of AHP, which
- * force it in the request.
+ * An update's refusal while a turn runs, naming how the caller forces it: an
+ * install replaces the code under a daemon that would run on until its turns
+ * end.
  */
 export const busy = (turning: readonly string[], forces = '--force'): string => `A turn is running in ${turning.join(', ')}; pass ${forces} to restart anyway.`;
+
+/** What a restart parked until the turns end says, naming how to ask for it at once. */
+export const parkedWords = (turning: readonly string[]): string =>
+  `A turn is running in ${turning.join(', ')}; it restarts once the turns end, or at once with --force.`;
+
+/** What the daemon writes when a parked restart begins, once the last turn has ended. */
+const RESUMED = 'restart: the turns have ended, stopping';
 
 /**
  * Why the daemon `self`, with that record, is not one a restart may start
@@ -259,7 +287,7 @@ export interface LifecycleSteps extends Omit<InPlace, 'close' | 'stopped' | 'sta
   start(argv: string[], token?: string): Promise<Running>;
   /** The stopping event, then the API's own listener, then the daemon's, each awaited. */
   down(): Promise<void>;
-  /** Run that after the answer in hand has gone. */
+  /** Run that once the answer in hand has had `RESTART_DELAY_MS` to reach whoever asked. */
   later(step: () => void): void;
   /**
    * Ask the service manager that holds this daemon to stop it and start it
@@ -430,8 +458,46 @@ export async function successorTakes(argv: readonly string[]): Promise<void> {
     : `it exited with ${String(answer.code)} and said nothing`));
 }
 
+/** A restart parked until the turns end, and what tells it they may have. */
+export interface Parking {
+  /** Hold that step until no turn runs, in place of one held already; it runs at once when none does. */
+  park(step: () => void): void;
+  /** A turn ended, or a session did: run the step held once no turn runs. */
+  ended(): void;
+  /** Let go of the step held, as the way down does. */
+  drop(): void;
+}
+
 /**
- * A restart that reads its line before anything goes down.
+ * One restart held until no turn runs, as VS Code parks a restart of its
+ * runtime until the last in-flight turn ends: a later request is the one held,
+ * and the step runs off the stack of the event that ended the last turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L2051-L2148
+ */
+export const parking = (turning: () => string[], soon: (step: () => void) => void): Parking => {
+  let held: (() => void) | undefined;
+  const ended = (): void => {
+    soon(() => {
+      if (held === undefined || turning().length > 0) return;
+      const step = held;
+      held = undefined;
+      step();
+    });
+  };
+  return {
+    park: (step) => {
+      held = step;
+      // A turn may have ended while the restart read its line.
+      ended();
+    },
+    ended,
+    drop: () => { held = undefined; },
+  };
+};
+
+/**
+ * A restart that reads its line before anything goes down, and that a running
+ * turn parks.
  *
  * `read` is the recorded line read over the configuration as it is now, and
  * answers the connection token the successor will have; when it throws, the
@@ -443,40 +509,56 @@ export async function successorTakes(argv: readonly string[]): Promise<void> {
  * `hold` stops the host taking new turns, and is asked *before* the line is
  * read: a turn that begins anywhere between this and the close at the end of
  * the way down is a turn that close ends, and a check a turn can slip past is
- * no check. The running turns are read again after it, so a turn that began
- * during the read refuses a restart that is not forced. A restart that does
- * not run - an unreadable line, a running turn, a lifecycle that refuses it -
- * lets turns go again, because this daemon carries on. Otherwise the lifecycle
- * restarts with that line and token, and turns stay held until the process
- * ends.
+ * no check. The running turns are read after it. While one runs, a restart
+ * that is not forced is parked until the turns end, as VS Code's runtime
+ * restart waits for its turns: it is never paid for with a running turn, and
+ * turns go on meanwhile. Once they end it runs again from the top, with the
+ * line read again, and what it could not do then is the log's. A forced one
+ * runs at once, as VS Code's CLI replaces a running agent host. A restart that
+ * does not run lets turns go again, because this daemon carries on; otherwise
+ * the lifecycle restarts with that line and token, and turns stay held until
+ * the process ends.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/cli/src/commands/args.rs#L271-L277
  */
 export const checkedRestart = (
   read: (argv: string[] | undefined) => Promise<string | undefined>,
   turning: () => string[],
   way: Pick<Lifecycle, 'restart'>,
   hold: (why: string | undefined) => void,
-) => async (argv: string[], force: boolean): Promise<void> => {
-  hold(RESTARTING);
-  let token: string | undefined;
-  try {
-    token = await read(argv);
-  }
-  catch (error) {
-    hold(undefined);
-    conflict(`${UNRUNNABLE}${wordsOf(error)}`);
-  }
-  const now = turning();
-  if (now.length > 0 && !force) {
-    hold(undefined);
-    conflict(busy(now));
-  }
-  try {
-    way.restart(argv, token);
-  }
-  catch (error) {
-    hold(undefined);
-    throw error;
-  }
+  parked: Pick<Parking, 'park'>,
+  log: (line: string) => void,
+): ((argv: string[], force: boolean) => Promise<RestartOutcome>) => {
+  const restart = async (argv: string[], force: boolean): Promise<RestartOutcome> => {
+    hold(RESTARTING);
+    let token: string | undefined;
+    try {
+      token = await read(argv);
+    }
+    catch (error) {
+      hold(undefined);
+      conflict(`${UNRUNNABLE}${wordsOf(error)}`);
+    }
+    const now = turning();
+    if (now.length > 0 && !force) {
+      hold(undefined);
+      parked.park(() => {
+        void restart(argv, false).then(
+          (outcome) => { if ('restartDelayMs' in outcome) log(RESUMED); },
+          (error: unknown) => { log(`${COULD_NOT}${wordsOf(error)}`); },
+        );
+      });
+      return { parked: now };
+    }
+    try {
+      way.restart(argv, token);
+    }
+    catch (error) {
+      hold(undefined);
+      throw error;
+    }
+    return { restartDelayMs: RESTART_DELAY_MS };
+  };
+  return restart;
 };
 
 /** What the daemon reads when a restart signal arrives. */
@@ -484,18 +566,21 @@ export interface SignalFacts {
   /** This process's pid, which the record must name. */
   self: number;
   recorded(): Running | undefined;
-  turning(): string[];
   log(line: string): void;
-  /** Read that line and begin the restart, forced or not; throws, or rejects, with why it will not, and the daemon runs on. */
-  restart(argv: string[], force: boolean): void | Promise<void>;
+  /**
+   * Read that line and begin the restart, forced or not, or park it until the
+   * turns end; throws, or rejects, with why it will not, and the daemon runs on.
+   */
+  restart(argv: string[], force: boolean): RestartOutcome | Promise<RestartOutcome>;
 }
 
 /**
  * A restart signal, answered by the daemon it reached.
  *
- * One line in the log either way, which the terminal that sent the signal is
- * reading: a refusal, and the daemon keeps running, or the receipt, written
- * before the restart, which is the served one, begins.
+ * One line in the log, which the terminal that sent the signal is reading: a
+ * refusal, and the daemon keeps running; the restart parked until the turns
+ * end, which says so again once it begins; or the receipt, written before the
+ * restart, which is the served one, begins.
  */
 export async function answerRestartSignal(forced: boolean, facts: SignalFacts, piped = false): Promise<void> {
   const came = cameBy(piped, forced);
@@ -506,19 +591,15 @@ export async function answerRestartSignal(forced: boolean, facts: SignalFacts, p
     refuse(refused);
     return;
   }
-  const turning = facts.turning();
-  if (turning.length > 0 && !forced) {
-    refuse(busy(turning));
-    return;
-  }
+  let outcome: RestartOutcome;
   try {
-    await facts.restart((record as Running).argv as string[], forced);
+    outcome = await facts.restart((record as Running).argv as string[], forced);
   }
   catch (error) {
     refuse(wordsOf(error));
     return;
   }
-  facts.log(receiptOf(came));
+  facts.log('parked' in outcome ? `${parkedTo(came)}${parkedWords(outcome.parked)}` : receiptOf(came));
 }
 
 /** What the terminal's restart is done with, so it can be driven without a process. */
@@ -568,7 +649,7 @@ const realTerminal = (): AtTerminal => ({
   read: logSince,
   wait: () => new Promise((done) => { setTimeout(done, 100); }),
   receiptMs: RECEIPT_WAIT_MS,
-  timeoutMs: SUCCESSOR_WAIT_MS,
+  timeoutMs: successorWaitMs(),
   now: () => Date.now(),
   piped: throughPipe(),
   manager: realManager(),
@@ -611,21 +692,29 @@ const restartedUnderService = async (record: Running, service: Service, steps: A
   return conflict(`It did not come back within ${String(steps.timeoutMs / 1000)} seconds; run ahpd status.`);
 };
 
+/** A restart the daemon parked until its turns end, in the daemon's words. */
+export interface ParkedRestart {
+  parked: string;
+}
+
 /**
- * Signal the recorded daemon and wait for its answer in the log: a refusal, a
- * successor that did not start, or the successor's record.
+ * Signal the recorded daemon and wait for its answer in the log: a refusal,
+ * the restart parked until the turns end, a successor that did not start, or
+ * the successor's record.
  *
  * Three waits, one after another. `receiptMs` for the daemon to answer the
  * signal at all; then no limit while it stops, as there is none on its
  * `stopping` handlers; then `timeoutMs` from its `STARTING` line. Only this
  * signal's kind of answer is read, and once its receipt is in, a refusal is
- * another terminal's. A daemon that went without an answer ends the wait.
+ * another terminal's. A parked restart is the answer: the daemon restarts once
+ * its turns end, and says so in its log. A daemon that went without an answer
+ * ends the wait.
  *
  * A record that names a service manager is not one of these: that daemon is
  * restarted through the manager, since a signal to it is a crash the manager
  * answers by starting it again.
  */
-export async function restartAtTerminal(force: boolean, steps: AtTerminal): Promise<Running> {
+export async function restartAtTerminal(force: boolean, steps: AtTerminal): Promise<Running | ParkedRestart> {
   const record = steps.running();
   if (record === undefined) conflict('None running in the background; a daemon run in the foreground is restarted where it runs.');
   const service = record.service;
@@ -635,6 +724,7 @@ export async function restartAtTerminal(force: boolean, steps: AtTerminal): Prom
   const came = cameBy(steps.piped, force);
   const receipt = receiptOf(came);
   const refusal = refusedTo(came);
+  const parking = parkedTo(came);
   const from = steps.mark();
   try {
     await steps.signal(record, signal);
@@ -650,13 +740,17 @@ export async function restartAtTerminal(force: boolean, steps: AtTerminal): Prom
   /** The pid the daemon said it restarted as, once it has. */
   let successor: string | undefined;
   /** The daemon's answer in the log so far, or nothing yet. */
-  const answered = (): Running | undefined => {
+  const answered = (): Running | ParkedRestart | undefined => {
     log = steps.read(from);
     if (received === undefined) {
       const took = log.indexOf(receipt);
       const refused = log.indexOf(refusal);
       if (refused !== -1 && (took === -1 || refused < took)) {
         conflict(log.slice(refused + refusal.length).split('\n')[0] as string);
+      }
+      const waits = log.indexOf(parking);
+      if (waits !== -1 && (took === -1 || waits < took)) {
+        return { parked: log.slice(waits + parking.length).split('\n')[0] as string };
       }
       if (took === -1) return undefined;
       received = took;
@@ -701,34 +795,43 @@ export async function restartAtTerminal(force: boolean, steps: AtTerminal): Prom
  * the signal, the answer read in the log and the successor it names are one
  * path, not two that would have to agree.
  */
-export const restartFromTerminal = (force: boolean): Promise<Running> => restartAtTerminal(force, realTerminal());
+export const restartFromTerminal = (force: boolean): Promise<Running | ParkedRestart> => restartAtTerminal(force, realTerminal());
 
-/** What a restart asked of the daemon serving it answers, over the API and over AHP. */
+/**
+ * What a restart asked of the daemon serving it answers, over the API and over
+ * AHP: restarting, going down `restartDelayMs` after this answer as VS Code's
+ * upgrade answer says, or parked until the turns running in `parked` end.
+ */
 export interface ServedRestartAnswer {
-  restarting: true;
+  restarting: boolean;
   pid: number;
+  restartDelayMs?: number;
+  parked?: string[];
 }
 
 /**
  * The restart the daemon runs when the caller is the one that reaches it.
  *
- * The checks are `ahpd restart`'s own: the record must name this daemon, and a
- * turn running refuses the restart unless the caller forces it. The refusal
- * names `force: true`, because a client of the API or of AHP forces it in the
- * request rather than on a command line. The restart itself is
- * `served.restart`, which defers it until the answer in hand has gone, as it
- * does for an update.
+ * The checks are `ahpd restart`'s own: the record must name this daemon. The
+ * restart itself is `served.restart`, which parks it while a turn runs unless
+ * the caller forces it, and otherwise defers it until the answer in hand has
+ * gone, as it does for an update.
  */
 export const servedRestart = async (served: ServedFacts, force: boolean): Promise<ServedRestartAnswer> => {
   const self = served.running();
   const record = running();
   const refused = notRestartable(record, self.pid);
   if (refused !== undefined) conflict(refused);
-  const turning = served.turning();
-  if (turning.length > 0 && !force) conflict(busy(turning, 'force: true'));
-  await served.restart((record as Running).argv as string[], force);
-  return { restarting: true, pid: self.pid };
+  const outcome = await served.restart((record as Running).argv as string[], force);
+  return 'parked' in outcome
+    ? { restarting: false, pid: self.pid, parked: outcome.parked }
+    : { restarting: true, pid: self.pid, restartDelayMs: outcome.restartDelayMs };
 };
+
+/** What a served restart answer says, in the words of the terminal that asked through `--remote`. */
+const servedWords = (answer: ServedRestartAnswer, url: string): string => (answer.parked === undefined
+  ? `Restarting ${url} (pid ${String(answer.pid)}) in ${String((answer.restartDelayMs ?? 0) / 1000)} seconds.\n`
+  : `${parkedWords(answer.parked)}\n`);
 
 /** The code this host refuses a caller with, as `updateMethod` and the usage methods do. */
 const REFUSED = -32009;
@@ -743,8 +846,9 @@ const REFUSED = -32009;
  * itself, so only an owner that names somebody else is refused - with the words
  * the API refuses the same person with.
  *
- * The answer is `{ restarting, pid }`, as the API answers, because
- * `served.restart` defers the restart until the answer has gone.
+ * The answer is the API's: `{ restarting, pid, restartDelayMs }` for a restart
+ * that goes down once the answer has gone, or `{ restarting: false, pid,
+ * parked }` for one that waits for the turns running in `parked` to end.
  */
 export const restartMethod = (served: ServedFacts): PluginMethod => ({
   grant: 'config:write',
@@ -766,12 +870,12 @@ export const restartMethod = (served: ServedFacts): PluginMethod => ({
 export const declareRestart = (registry: Registry<object>, served?: ServedFacts): Command => registry.action({
   id: 'daemon.restart',
   summary: 'Stop it and start it again with the line it was started with',
-  description: 'Refused while a turn is running, naming the sessions, unless --force; sessions resume from the store.',
+  description: 'Waits for the running turns to end, naming the sessions, unless --force; sessions resume from the store.',
   surfaces: { cli: { pattern: ['restart'] }, http: { method: 'POST', path: '/restart' } },
   // The process is the thing changed, and it is not a row any list returns.
   effect: 'change',
   input: {
-    force: { type: 'boolean', description: 'Restart even while a turn is running.' },
+    force: { type: 'boolean', description: 'Restart at once, ending the running turns.' },
   },
   scopes: ['config:write'],
   // A restart runs the plugins' code again in a new process, as an install
@@ -781,6 +885,7 @@ export const declareRestart = (registry: Registry<object>, served?: ServedFacts)
     if (served === undefined) {
       const before = running();
       const begun = await restartAtTerminal(context.flag('force'), realTerminal());
+      if ('parked' in begun) return output({ parked: begun.parked }, `${begun.parked}\n`);
       // The successor's own skips, from the record it wrote of its own start, in
       // the terminal that asked for it and above the line that says it is up.
       let text = '';
@@ -791,6 +896,6 @@ export const declareRestart = (registry: Registry<object>, served?: ServedFacts)
       );
     }
     const answer = await servedRestart(served, context.flag('force'));
-    return output(answer, `Restarting ${served.running().url} (pid ${String(answer.pid)}).\n`);
+    return output(answer, servedWords(answer, served.running().url));
   },
 });

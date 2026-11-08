@@ -1,5 +1,7 @@
 /** The session catalogue, as the root channel reports it. */
 
+import type { ChangesSummary } from './changes.js';
+
 /** One row of the session list. */
 export interface Summary {
   /** The session's channel URI, `ahp-session:/<id>`. */
@@ -44,8 +46,14 @@ export interface SummaryChat {
   title: string;
   /** What it was made from, when it was made out of something. */
   origin?: Record<string, unknown>;
-  /** `full` for a chat somebody talks in, `read-only` for a worker's. */
+  /** The agent the chat runs on, where it is not its session's. */
+  provider?: string;
+  /** `full` for a chat somebody talks in. */
   interactivity?: string;
   /** `SessionStatus` bits, which for a chat are its activity and its own flags. */
   status?: number;
+  /** Set on an archived chat, for a client of AHP 0.9, which reads the flag here and not in `status`. */
+  archived?: true;
+  /** What the chat changed, as its catalogue entry carries it. */
+  changes?: ChangesSummary;
 }

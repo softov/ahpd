@@ -10,6 +10,8 @@ export interface PullRequest {
   state: 'open' | 'closed' | 'merged';
   /** Its title, when the answer carried one; a port is not required to. */
   title?: string;
+  /** When it was opened, ISO 8601, when the answer carried it. */
+  createdAt?: string;
 }
 
 /**

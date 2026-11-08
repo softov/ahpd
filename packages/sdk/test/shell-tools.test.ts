@@ -6,7 +6,7 @@ import { WAIT_MS } from '../../../tools/wait.ts';
 import { posix } from '../../../tools/posix.ts';
 import { pty } from '../../server/src/pty.js';
 import { screen } from '../../server/src/screen.js';
-import { shellIntegration } from '../../server/src/shellintegration.js';
+import { shellIntegrationOf } from '../../server/src/shellintegration.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { shellTools, SHELL_TOOL_NAMES } from '../src/tools/shell.js';
 import { ROOT } from '../src/host.js';
@@ -504,7 +504,7 @@ describe('the agent terminal tool in a real shell', () => {
     vi.stubEnv('ZDOTDIR', home);
     // The daemon's own integration and screen, which is what makes a real
     // shell's marks and alternate buffer readable.
-    return await hosted(true, shellTerminals(realPty === undefined ? {} : { pty: realPty, shellIntegration, screen }));
+    return await hosted(true, shellTerminals(realPty === undefined ? {} : { pty: realPty, shellIntegration: shellIntegrationOf('owned'), screen }));
   };
 
   for (const { name, history, kept } of shells) {

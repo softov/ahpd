@@ -5,9 +5,8 @@ import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
 import { uriOf } from '../src/resources/fileuri.js';
-import { echo } from '../../../examples/echo/agent.js';
+import { questionOf, questioning } from './support/questions.js';
 import type { CommandSplit, CommandSplitter } from '../src/access/commandautoapprover.js';
-import type { Agent, Start } from '../src/types/agent.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { LoaderContext } from '../src/types/plugin.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -65,32 +64,33 @@ const settle = async (): Promise<void> => {
   for (let i = 0; i < 20; i++) await new Promise((done) => { setTimeout(done, 0); });
 };
 
-/** The example backend, keeping the last start it was asked to make. */
-function backend() {
-  const base = echo({ path: DIR, pace: 0 });
-  let start: Start | undefined;
-  const agent: Agent = {
-    ...base,
-    provider: 'echo',
-    displayName: 'Echo backend',
-    create: (given: Start) => {
-      start = given;
-      return base.create(given);
-    },
-  };
-  return { agent, start: (): Start | undefined => start };
-}
-
-/** What the last start's check says about a command line. */
-const approval = (start: Start | undefined, line: string): string | undefined =>
-  start?.getAutoApproval?.('shell', line, 'bash');
-
-/** A host with a people directory and one signed-in window, given some options of its own. */
+/**
+ * A host with a people directory and one signed-in window, given some options
+ * of its own, and whether the host's approval chain approved a command line a
+ * question of its backend put, which it reads with the parser.
+ */
 function serving(extra: Partial<HostOptions> = {}) {
-  const { agent, start } = backend();
-  const host = createHost({ path: DIR, agents: [agent], users: directory(), terminalAutoApproveDefaults: 'vscode', ...extra });
+  const backend = questioning(DIR);
+  const host = createHost({ path: DIR, agents: [backend.agent], users: directory(), terminalAutoApproveDefaults: 'vscode', ...extra });
+  const p = peer();
+  const client: Client = host.accept(p);
+  const uri = 'ahp-session:/ana-one';
+  // The default chat the host mints for the session, read once it is made.
+  let chat = '';
+  let turns = 0;
+  /** Whether the host answered a question about the line with nobody asked. */
+  const approved = async (line: string): Promise<boolean> => {
+    turns += 1;
+    const turnId = `q${turns}`;
+    backend.ask('bash', { permissionKind: 'shell', shellCommand: line, shellLanguage: 'bash' });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+    });
+    await settle();
+    return questionOf(p.notes, turnId) === undefined && backend.answerOf(turnId) === true;
+  };
   const opening = async (): Promise<void> => {
-    const client: Client = host.accept(peer());
     await client.handle({
       method: 'initialize',
       params: { clientId: 'ana', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
@@ -102,15 +102,15 @@ function serving(extra: Partial<HostOptions> = {}) {
       method: 'dispatchAction',
       params: { channel: ROOT, action: { type: 'root/configChanged', config: { terminalAutoApproveRules: { 'ls -la': true, 'make test': true } } } },
     });
-    const uri = 'ahp-session:/ana-one';
     await client.handle({
       method: 'createSession',
       params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(DIR)] },
     });
-    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    chat = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
     await settle();
   };
-  return { start, opening };
+  return { approved, opening };
 }
 
 /** The reading a parser answers for one line. */
@@ -133,35 +133,35 @@ it('reads a line with the parser the options name, not the sdk\'s splitter', asy
     seen.push({ line, shell });
     return line === 'make test' ? split(['make test']) : undefined;
   };
-  const { start, opening } = serving({ commandParser: parser });
+  const { approved, opening } = serving({ commandParser: parser });
   await opening();
 
   // The table approves both, and the parser reads only one of them: a line it
   // refuses is a line that asks, though the default splitter would have read it.
-  expect(approval(start(), 'make test')).toBe('not-needed');
-  expect(approval(start(), 'ls -la')).toBeUndefined();
-  expect(seen).toEqual([
-    { line: 'make test', shell: 'bash' },
-    { line: 'ls -la', shell: 'bash' },
-  ]);
+  expect(await approved('make test')).toBe(true);
+  expect(await approved('ls -la')).toBe(false);
+  expect(new Set(seen.map((one) => JSON.stringify(one)))).toEqual(new Set([
+    JSON.stringify({ line: 'make test', shell: 'bash' }),
+    JSON.stringify({ line: 'ls -la', shell: 'bash' }),
+  ]));
 });
 
 it('asks when the parser throws, though the table approves the line', async () => {
   const parser: CommandSplitter = () => {
     throw new Error('no reading today');
   };
-  const { start, opening } = serving({ commandParser: parser });
+  const { approved, opening } = serving({ commandParser: parser });
   await opening();
 
-  expect(approval(start(), 'make test')).toBeUndefined();
+  expect(await approved('make test')).toBe(false);
 });
 
 it('asks when the parser answers something that is not a CommandSplit', async () => {
   const parser = ((): unknown => ({ subCommands: ['make test'] })) as CommandSplitter;
-  const { start, opening } = serving({ commandParser: parser });
+  const { approved, opening } = serving({ commandParser: parser });
   await opening();
 
-  expect(approval(start(), 'make test')).toBeUndefined();
+  expect(await approved('make test')).toBe(false);
 });
 
 it('reads with the parser a plugin registered, once the fold has named the port', async () => {
@@ -175,11 +175,11 @@ it('reads with the parser a plugin registered, once the fold has named the port'
   const read = folded.options.commandParser;
   if (read === undefined) throw new Error('the fold dropped the parser');
 
-  const { start, opening } = serving({ commandParser: read });
+  const { approved, opening } = serving({ commandParser: read });
   await opening();
-  expect(approval(start(), 'make test')).toBe('not-needed');
+  expect(await approved('make test')).toBe(true);
   // The default splitter would have read this one, and the plugin's refuses it.
-  expect(approval(start(), 'ls -la')).toBeUndefined();
+  expect(await approved('ls -la')).toBe(false);
 });
 
 it('refuses a parser that is not a function, naming the plugin and the method', () => {

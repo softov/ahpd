@@ -1,11 +1,10 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { computersFor } from '../../sdk/src/machines/computers.js';
 import { createHost, ROOT } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { memoryPolicies } from '../../sdk/src/access/policies.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { fileUsers } from '../../sdk/src/access/users.js';
@@ -147,7 +146,7 @@ async function probe(options: {
     const secret = await options.users.mint('ana');
     await client.handle({ method: 'authenticate', params: { channel: ROOT, resource: 'ahpd://users', token: secret } });
   }
-  return { host, client, peer: p, sessions, uri: 'ahp-session:/in', chatUri: chatUriFor('ahp-session:/in') };
+  return { host, client, peer: p, sessions, uri: 'ahp-session:/in' };
 }
 
 /** `probe`, with the session made on the machine its settings named. */
@@ -170,9 +169,11 @@ async function talking(options: {
       ...(options.computer === undefined ? {} : { config: { computer: options.computer } }),
     },
   });
-  await room.client.handle({ method: 'subscribe', params: { channel: room.chatUri } });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await room.client.handle({ method: 'subscribe', params: { channel: room.uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+  await room.client.handle({ method: 'subscribe', params: { channel: chatUri } });
   opened.push({ client: room.client, uri: room.uri });
-  return room;
+  return { ...room, chatUri };
 }
 
 /**
@@ -259,6 +260,35 @@ it('spawns the server through the machine the session named', async () => {
 
   expect(asked).toEqual([{ id: 'box', command: process.execPath }]);
   expect(types(p, chatUri)).toContain('chat/turnComplete');
+});
+
+it('deletes a session in the machine it ran in, rather than on this host', async () => {
+  const asked: string[] = [];
+  const log = join(mkdtempSync(join(tmpdir(), 'ahpd-machine-delete-')), 'requests.jsonl');
+  const computers: ComputerPort = {
+    how: async (id) => {
+      asked.push(id);
+      return id === 'box' ? { command: process.execPath, args: [FIXTURE], env: { ACP_LOG: log } } : undefined;
+    },
+  };
+  // The backend's own command exits before the handshake, so a delete sent to
+  // this host would fail the dispose.
+  const { client, peer: p, chatUri, uri } = await talking({
+    command: process.execPath, args: FAILS, computers, computer: 'computer://box',
+  });
+  begin(client, chatUri);
+  await until(() => settled(p, chatUri));
+  opened.splice(0);
+
+  await client.handle({ method: 'disposeSession', params: { channel: uri } });
+
+  // Every server was the machine's: the session's, then one per delete - the
+  // row's and its chat's, whose id is the conversation the session held.
+  expect(asked).toEqual(['box', 'box', 'box']);
+  const sent = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { method?: string; params?: { sessionId?: string } });
+  const conversation = sent.find((one) => one.method === 'session/prompt')?.params?.sessionId;
+  expect(conversation).toBeDefined();
+  expect(sent.filter((one) => one.method === 'session/delete').map((one) => one.params?.sessionId)).toContain(conversation);
 });
 
 it('refuses a machine that is not there rather than running on the host', async () => {

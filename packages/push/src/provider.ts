@@ -13,10 +13,12 @@ import type { Vapid } from './vapid.js';
  * token; a browser registers the subscription its push service gave it, an
  * endpoint and the two keys a message to it is encrypted with.
  *
- * What a record holds is the platform it belongs to, the person it was
- * registered by, and, when a device asked for a language, that language. The
- * person is the host's, as the connection is signed in, and the body cannot
- * name it: a device hears the sessions of its person.
+ * What a record holds is the platform it belongs to, the person and client it
+ * was registered by, which sessions it hears about, and, when a device asked
+ * for a language, that language. The person and the client are the host's, as
+ * the connection is signed in and introduced itself, and the body cannot name
+ * them: a device hears the sessions of its person, or with `audience` `device`
+ * only the ones its own client created or opened.
  *
  * The devices are one JSON file under the daemon's own configuration folder,
  * written whole and read at load, because a token and a subscription are
@@ -64,7 +66,25 @@ interface Kept {
    * whose device has no person's sessions to hear.
    */
   owner?: Owner;
+  /**
+   * The client that registered it, as it gave its id at `initialize`.
+   *
+   * Absent when the connection that wrote it never introduced itself. What a
+   * `device` audience hears is the sessions of this client.
+   */
+  client?: string;
+  /**
+   * Which sessions it hears about. Absent means `person`.
+   *
+   * `person` is every session of its person, and every session its own client
+   * created or opened; `device` is only the ones its own client created or
+   * opened (Softov 2026-10-31: "A setting per device").
+   */
+  audience?: Audience;
 }
+
+/** Which sessions a device hears about, as its registration chose. */
+export type Audience = 'person' | 'device';
 
 /** A phone or a tablet, which Expo reaches through its token. */
 export interface ExpoDevice extends Kept {
@@ -103,6 +123,7 @@ const EXPO_BODY = {
     token: { type: 'string', description: 'The Expo push token this device answers to.' },
     platform: { type: 'string', enum: ['ios', 'android'], description: 'Which service the token belongs to.' },
     lang: { type: 'string', description: 'The language the device asked for, a BCP 47 tag, which its notifications are worded in.' },
+    audience: { type: 'string', enum: ['person', 'device'], description: 'Which sessions the device hears about: every session of its person unless this says device, the ones its own client created or opened.' },
   },
   additionalProperties: false,
 } as const;
@@ -123,6 +144,7 @@ const WEB_BODY = {
       additionalProperties: false,
     },
     lang: { type: 'string', description: 'The language the device asked for, a BCP 47 tag, which its notifications are worded in.' },
+    audience: { type: 'string', enum: ['person', 'device'], description: 'Which sessions the device hears about: every session of its person unless this says device, the ones its own client created or opened.' },
   },
   additionalProperties: false,
 } as const;
@@ -234,9 +256,13 @@ const keysOf = (said: unknown): SubscriptionKeys | undefined => {
 const keptCommon = (one: Record<string, unknown>): Kept => {
   const lang = one['lang'];
   const owner = one['owner'];
+  const client = one['client'];
+  const audience = one['audience'];
   return {
     ...(typeof lang === 'string' ? { lang } : {}),
     ...(typeof owner === 'string' && owner !== '' ? { owner: owner as Owner } : {}),
+    ...(typeof client === 'string' && client !== '' ? { client } : {}),
+    ...(audience === 'person' || audience === 'device' ? { audience } : {}),
   };
 };
 
@@ -333,7 +359,7 @@ export interface PushProvider extends ResourceProvider {
   resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   read(uri: string, wanted?: string): Promise<Read>;
   write(uri: string, content: Write, owner?: Owner, client?: string, reader?: Principal): Promise<void>;
-  remove(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
+  delete(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
   describe(): SchemeDescription;
 }
 
@@ -365,7 +391,14 @@ const deviceOf = (uri: string, content: Write, webPushHosts: readonly string[]):
   if (lang !== undefined && (typeof lang !== 'string' || lang.trim() === '')) {
     throw new RpcError(-32602, `${uri} has a lang that is not a language`);
   }
-  const common: Kept = typeof lang === 'string' ? { lang } : {};
+  const audience = body['audience'];
+  if (audience !== undefined && audience !== 'person' && audience !== 'device') {
+    throw new RpcError(-32602, `${uri} has an audience that is not person or device`);
+  }
+  const common: Kept = {
+    ...(typeof lang === 'string' ? { lang } : {}),
+    ...(audience === 'person' || audience === 'device' ? { audience } : {}),
+  };
 
   const platform = body['platform'];
   if (platform === 'ios' || platform === 'android') {
@@ -479,8 +512,9 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      * A device is registered here, and re-registered here.
      *
      * The body is the token and the platform, or a browser's endpoint and keys;
-     * the person is not the body's to name but the connection's, which is what
-     * makes a device hear that person's sessions. `createOnly`
+     * the person and the client are not the body's to name but the
+     * connection's, which is what makes a device hear that person's sessions
+     * and its own client's. `createOnly`
      * is the protocol's own word for refusing a device that is already there,
      * and it is honoured because a client that asked for it is a client that
      * did not mean to overwrite a sibling's registration. `ifMatch` is the
@@ -492,7 +526,7 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      * https://github.com/microsoft/agent-host-protocol/blob/spec/v1.0.0/types/common/commands.ts#L724-L726
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/fileSystemResources.ts#L201-L207
      */
-    write: async (uri, content, owner) => {
+    write: async (uri, content, owner, client) => {
       const place = placeOf(uri);
       if (place.at !== 'device') throw new RpcError(-32009, `Permission denied: ${uri}`);
       const held = store.get(place.id);
@@ -503,7 +537,11 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
         throw new RpcError(-32011, `ifMatch precondition failed for: ${uri}`);
       }
       const device = deviceOf(uri, content, webPushHosts);
-      store.put(place.id, { ...device, ...(owner === undefined ? {} : { owner }) });
+      store.put(place.id, {
+        ...device,
+        ...(owner === undefined ? {} : { owner }),
+        ...(client === undefined || client === '' ? {} : { client }),
+      });
     },
 
     /**
@@ -514,7 +552,7 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      * or nothing: there are no children to take with a flag. The public key
      * and the two directories are `PermissionDenied`, as a write to them is.
      */
-    remove: async (uri) => {
+    delete: async (uri) => {
       const place = placeOf(uri);
       if (place.at !== 'device') throw new RpcError(-32009, `Permission denied: ${uri}`);
       if (!store.remove(place.id)) throw absentResource(SCHEME, uri);

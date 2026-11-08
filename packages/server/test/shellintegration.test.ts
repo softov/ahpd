@@ -12,14 +12,17 @@
  * Bun, and skips everywhere else.
  */
 
-import { existsSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { runtime, shellTerminals } from '@ahpd/sdk';
 import type { SpawnPty } from '@ahpd/sdk';
-import { getShellIntegrationInjection, shellIntegration } from '../src/shellintegration.js';
+import { getShellIntegrationInjection, shellIntegrationOf } from '../src/shellintegration.js';
+
+/** The port as the daemon builds it under its default `zshFolder`. */
+const shellIntegration = shellIntegrationOf('owned');
 import { pty } from '../src/pty.js';
 
 /** The folder the scripts are in: this package's root, from `test` and from `dist` alike. */
@@ -83,6 +86,27 @@ describe('the injection a shell is given', () => {
       expect(injectionOf('/bin/zsh')).toEqual({ type: 'failure', reason: 'FailedToCreateTmpDir' });
       expect(shellIntegration('/bin/zsh', [], {}, nonce)).toBeUndefined();
       expect(readdirSync(target)).toEqual([]);
+    }
+    finally {
+      if (was === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = was;
+      rmSync(shared, { recursive: true, force: true });
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  // zshFolder asFound: VS Code chmods the folder at the name as it finds it
+  // (src/vs/platform/terminal/node/terminalEnvironment.ts L219-L250 at 6b68d3fe).
+  it.skipIf(process.platform === 'win32')('takes a zsh folder as it finds it under zshFolder asFound', () => {
+    const shared = mkdtempSync(join(tmpdir(), 'ahpd-zsh-shared-'));
+    const target = mkdtempSync(join(tmpdir(), 'ahpd-zsh-target-'));
+    const folder = join(shared, `${userInfo().username}-ahpd-zsh`);
+    symlinkSync(target, folder);
+    const was = process.env.TMPDIR;
+    process.env.TMPDIR = shared;
+    try {
+      const asked = getShellIntegrationInjection('/bin/zsh', [], nonce, {}, { platform: 'linux', windowsBuild: () => 0 }, 'asFound');
+      expect(asked).toMatchObject({ type: 'injection', envMixin: { ZDOTDIR: join(realpathSync(shared), `${userInfo().username}-ahpd-zsh`) } });
     }
     finally {
       if (was === undefined) delete process.env.TMPDIR;

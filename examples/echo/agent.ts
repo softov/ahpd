@@ -230,7 +230,12 @@ export function echo(options: EchoOptions): Agent<Session> {
         }
         if (closed || active !== turn) return;
         turn.duration = Date.now() - began;
-        // A finished turn carries its state, as the protocol's `Turn` requires.
+        /*
+         * How it ended, which the protocol's `Turn` carries: these turns are
+         * what `transcript` answers, and a chat read back from them shows
+         * each one as the chat held it when it finished.
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L710-L730
+         */
         turn.state = 'complete';
         // A turn a later one took the place of is in no history.
         if (!replaced.delete(turnId)) turns.push(turn);
@@ -352,9 +357,12 @@ export function echo(options: EchoOptions): Agent<Session> {
       confirm: () => false,
       answer: () => false,
 
-      // Nothing here has a runtime switch and there are no MCP servers, so
-      // all three refuse. False is a real answer: a control that reported
-      // success and changed nothing would be worse than one that says no.
+      // Nothing here has a runtime switch and there are no MCP servers, so all
+      // three answer false, and the host says no in the session's own state as
+      // VS Code's does: a toggle stands as the client's decision, a listed
+      // server it could not start is in error, and the rest are logged
+      // (src/vs/platform/agentHost/node/agentSideEffects.ts L416-L428,
+      // L2026-L2065 at 6b68d3fe).
       setCustomizationEnabled: async () => false,
       startMcpServer: async () => false,
       stopMcpServer: async () => false,

@@ -86,7 +86,7 @@ A person needs `proxy:call` to call and `proxy:models` to list the models; a tea
 
 A person's call is charged to a team and project, named in an `X-AHP-Scope` header or a `?scope=` query (`backend` or `backend:billing`), and to their primary otherwise. Neither the header nor the query goes to the provider.
 
-A call adds meta to what its key holds with an `X-AHP-Meta` header, written `k=v,k=v` such as `env=dev,client=pi`. The record carries the key's meta and the header's entries together, and a name the key holds keeps the key's value. A header that does not parse is refused with 400, and the call is not sent. No `X-AHP-*` header goes to the provider.
+A call adds meta to what its key holds as LiteLLM takes a call's `spend_logs_metadata`: an `X-AHP-Meta` header whose value is a JSON object of string values, such as `{"env":"dev","client":"pi"}`, and the same object as the body's `metadata.spend_logs_metadata`. The record carries the key's meta, the header's entries and the body's together; a name the key holds keeps the key's value, and a name the header holds keeps the header's over the body's. A header or a body meta that is not such an object is refused with 400, and the call is not sent. No `X-AHP-*` header goes to the provider, and neither does `spend_logs_metadata`.
 
 A key can carry its own scope, so a client that is handed nothing but a base URL and a key is charged where the key says. That is what pi needs:
 
@@ -206,7 +206,7 @@ Every refusal is the dialect's own error body, so the tool shows the message: An
 | 404 | `not_found_error` | `model <name> is not served here`, or it is served only in the other dialect, and the message names the path to call |
 | 405 | `invalid_request_error` | A method other than `POST` (or `GET` on `/v1/models`) |
 | 413 | `request_too_large` | A body over 128 MiB, the request size Anthropic documents for its Messages API |
-| 502 | `api_error` | The provider could not be reached |
+| 502 | `api_error` | The provider could not be reached, or it refused this host's key with a 401 or 403 (see [Key refusals](#key-refusals)) |
 | 503 | `api_error` | No open connector serves any entry for this caller; the message names each provider it looked for, never a value |
 | 504 | `timeout_error` | The provider sent no status in time; the next entry is not tried |
 
@@ -261,6 +261,16 @@ A session whose harness calls the proxy is recorded twice: once by the session m
 ```
 
 `record` is the default.
+
+## Key refusals
+
+A provider's 401 or 403 is about the key this host called it with, not the caller's. By default the caller gets this host's 502, `model <name> on <provider> refused this host's key`, and the provider's status and words go to the log: a client that read a 401 would ask its person to sign in again, and the provider's body can name the host's account. `passthrough` sends the provider's status and error to the caller as they came, as VS Code's Claude proxy re-emits an upstream error:
+
+```json
+{ "modelProxy": { "keyRefusal": "passthrough" } }
+```
+
+`hostError` is the default.
 
 ## Not done yet
 

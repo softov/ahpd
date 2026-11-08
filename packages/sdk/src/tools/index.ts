@@ -33,8 +33,9 @@ export const hostTools = (): HostTool[] => [
     definition: {
       name: 'ahp_resource',
       title: 'Read a resource this host serves',
-      description: 'Read a resource by URI, including one a connected client publishes and this machine has no copy of '
-        + '- a plugin\u2019s virtual files, an editor\u2019s unsaved buffers. Addressed as <scheme>://<client>/<path>.',
+      description: 'Read a resource by URI, including one a connected client serves and this machine has no copy of '
+        + '- a plugin\u2019s virtual files, an editor\u2019s unsaved buffers. Addressed as '
+        + 'vscode-agent-client://<client>/<scheme>/<authority>/<path>, with - for an empty authority.',
       inputSchema: { type: 'object', properties: { uri: { type: 'string' } }, required: ['uri'] },
       annotations: { title: 'Read a resource this host serves', readOnlyHint: true },
     },

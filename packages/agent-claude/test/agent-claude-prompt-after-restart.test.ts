@@ -43,7 +43,7 @@ const sdk = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: (given: { prompt: AsyncIterable<{ message: { content: unknown } }> }) => {
     const query = { closed: false, got: [] as string[], dropped: [] as string[], done: false };
@@ -100,10 +100,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 const { createSession } = await import('../src/session.js');
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
-/** A session whose first CLI is up, reading its input, and has said its id. */
+/** A session whose first CLI its first turn started is up, reading its input, and has said its id, the turn over. */
 async function open() {
   sdk.reset();
   const said: Bag[] = [];
@@ -113,8 +113,9 @@ async function open() {
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-restart-')),
     emit: (_channel, action) => { said.push(action as Bag); },
   });
+  session.sendMessage('t0', 'hello');
   await settle();
-  sdk.push({ type: 'system', subtype: 'init', session_id: 'cli-1' });
+  sdk.push({ type: 'system', subtype: 'init', session_id: 'cli-1' }, { type: 'result', subtype: 'success', is_error: false, duration_ms: 1, session_id: 'cli-1' });
   await settle();
   return { session, said };
 }

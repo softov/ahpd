@@ -230,7 +230,7 @@ const completion = (chat: string): Bag => on(chat).find((one) => one.type === 'c
 describe.skipIf(!posix)('the terminal of an agent terminal tool call', () => {
   it('is on the call while its command runs, and on the call it completes with', async () => {
     const { ask, chat, terminal } = await ran({ input: { command: 'echo hello' } });
-    expect(terminal).toMatch(/^ahp-terminal:/u);
+    expect(terminal).toMatch(/^agenthost-terminal:\/\/shell\//u);
     // The store was handed no pseudoterminal, so the shell runs on pipes.
     const block = { type: 'terminal', resource: terminal, title: 'Terminal', isPty: false };
     expect(changes(chat)).toEqual([[block]]);

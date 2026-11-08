@@ -8,10 +8,10 @@ import type { Bag, Session } from '@ahpd/sdk';
 /*
  * A tool call's `toolInput`, live and read back.
  *
- * `toolInput` is the call's whole input as JSON, so a client can parse it;
- * `invocationMessage` is the short line the row draws. Bash is the one tool
- * whose `toolInput` is its command, because a terminal row reads the command
- * there.
+ * `toolInput` is the input drawn under the call's row, as VS Code's Claude
+ * makes it: a shell tool's command, a search tool's pattern, and any other
+ * input as indented JSON; `invocationMessage` is the short line the row draws.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L543-L570
  *
  * The row line is never cut JSON. It is VS Code's line for a tool VS Code
  * maps, as markdown where VS Code sends markdown, a Task or Agent call's own
@@ -30,7 +30,7 @@ const sdk = vi.hoisted(() => ({
   mcp: [] as Record<string, unknown>[],
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   // A transcript as the SDK reads it back, which leaves each entry's
   // `toolUseResult` out: its `SessionMessage` has no field for it.
@@ -70,6 +70,34 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 const { createSession } = await import('../src/session.js');
 const { turnsOf } = await import('../src/transcript.js');
 const { questionRequest } = await import('../src/input.js');
+const { toolKindOf, resultContent } = await import('../src/kinds.js');
+
+/*
+ * A result's text as the call's content, live and read back: a bare string
+ * one item, and each text block of a list its own, as VS Code's Claude
+ * projects a tool result.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L449-L463
+ */
+it('maps each text block of a result to its own content item', () => {
+  expect(resultContent([{ type: 'text', text: 'one' }, { type: 'image', data: 'x' }, { type: 'text', text: 'two' }]))
+    .toEqual([{ type: 'text', text: 'one' }, { type: 'text', text: 'two' }]);
+  expect(resultContent('plain')).toEqual([{ type: 'text', text: 'plain' }]);
+  expect(resultContent(undefined)).toEqual([]);
+});
+
+/*
+ * The kinds VS Code's Claude table stamps: the shell's three tools terminals,
+ * a file or notebook read a read, a glob and a grep searches, a worker a
+ * subagent, and a web fetch or search none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L105
+ */
+it('stamps the kinds VS Code\'s Claude table stamps', () => {
+  const names = ['Bash', 'BashOutput', 'KillBash', 'Read', 'NotebookRead', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task'];
+  expect(Object.fromEntries(names.map((name) => [name, toolKindOf(name)]))).toEqual({
+    Bash: 'terminal', BashOutput: 'terminal', KillBash: 'terminal', Read: 'read', NotebookRead: 'read',
+    Glob: 'search', Grep: 'search', WebFetch: undefined, WebSearch: undefined, Task: 'subagent',
+  });
+});
 
 /*
  * The CLI's own file for the session the reads below restore, one entry a
@@ -123,7 +151,7 @@ const rows: [string, unknown, unknown][] = [
 const textOf = (line: unknown): string => (typeof line === 'string' ? line : String((line as Bag | undefined)?.markdown));
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** The calls as a live session announces them: its snapshot calls and its ready actions. */
@@ -179,7 +207,7 @@ async function restored(content: Bag[] = calls, after: Record<string, unknown>[]
     ...after,
   ];
   written(sdk.frames);
-  const turns = await turnsOf('session', '/tmp/project') as unknown as Bag[];
+  const turns = await turnsOf('session') as unknown as Bag[];
   const out = new Map<string, Bag>();
   for (const part of (turns[0]?.responseParts ?? []) as Bag[]) {
     if (part.kind === 'toolCall') {
@@ -356,7 +384,8 @@ it('draws a live call\'s row line as its description or VS Code\'s line, and its
     expect(held.get(id)?.invocationMessage, id).toEqual(line);
     expect(held.get(id)?.pastTenseMessage, id).toEqual(past);
     const input = block.input as Bag;
-    expect(held.get(id)?.toolInput, id).toBe(block.name === 'Bash' ? input.command : JSON.stringify(input));
+    const drawn = block.name === 'Bash' ? input.command : block.name === 'Grep' || block.name === 'Glob' ? input.pattern : JSON.stringify(input, null, 2);
+    expect(held.get(id)?.toolInput, id).toBe(drawn);
   }
   expect(held.get('toolu_said')?.success).toBe(false);
 });
@@ -368,7 +397,8 @@ it('draws a restored call\'s row line and past tense as the live one does', asyn
     expect(back.get(id)?.invocationMessage, id).toEqual(line);
     expect(back.get(id)?.pastTenseMessage, id).toEqual(past);
     const input = block.input as Bag;
-    expect(back.get(id)?.toolInput, id).toBe(block.name === 'Bash' ? input.command : JSON.stringify(input));
+    const drawn = block.name === 'Bash' ? input.command : block.name === 'Grep' || block.name === 'Glob' ? input.pattern : JSON.stringify(input, null, 2);
+    expect(back.get(id)?.toolInput, id).toBe(drawn);
   }
   expect(back.get('toolu_said')?.success).toBe(false);
 });
@@ -443,10 +473,54 @@ it('names an MCP call\'s contributor by its server\'s customization, and none fo
   sdk.mcp = [{ name: 'docs', status: 'connected' }];
   const { held, sent, session } = await live();
   sdk.mcp = [];
-  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:docs' });
-  expect(held.get('toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:docs' });
+  // No file here declares it, so its row is named by its internal uri.
+  const docs = 'claude-internal:/mcp/docs#mcp=docs';
+  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: docs });
+  expect(held.get('toolu_mcp')?.contributor).toEqual({ kind: 'mcp', customizationId: docs });
   expect(actionOf(sent, 'chat/toolCallStart', 'toolu_numbers')?.contributor).toBeUndefined();
   expect(held.get('toolu_numbers')?.contributor).toBeUndefined();
+  await session.close();
+});
+
+/*
+ * A question names the server serving its call as the CLI names it, the SDK's
+ * `mcpServer` on `canUseTool`: the server's configured name, which the tool's
+ * prefix can spell otherwise, and which a name holding `__` keeps whole.
+ */
+it('names a question\'s MCP server by the server the CLI names, where the tool prefix spells it otherwise', async () => {
+  sdk.mcp = [{ name: 'my server', status: 'connected' }, { name: 'my__desk', status: 'connected' }];
+  sdk.hold = new Promise(() => {});
+  const { sent, session } = await live([], () => {
+    void sdk.canUseTool?.('mcp__my_server__move', { id: 1 }, { toolUseID: 'toolu_renamed', mcpServer: { name: 'my server', source: 'user' } });
+    void sdk.canUseTool?.('mcp__my__desk__move', { id: 2 }, { toolUseID: 'toolu_double', mcpServer: { name: 'my__desk', source: 'user' } });
+  });
+  sdk.hold = Promise.resolve();
+  sdk.mcp = [];
+  const servers = (session.customizations() as Bag[])
+    .flatMap((one) => [one, ...((one.children ?? []) as Bag[])])
+    .filter((one) => one.type === 'mcpServer');
+  const idOf = (name: string): unknown => servers.find((one) => one.name === name)?.id;
+  expect(idOf('my server')).toBeDefined();
+  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_renamed')?.contributor).toEqual({ kind: 'mcp', customizationId: idOf('my server') });
+  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_double')?.contributor).toEqual({ kind: 'mcp', customizationId: idOf('my__desk') });
+  await session.close();
+});
+
+/*
+ * A call blocked on its server's sign-in is the session's entry under the id
+ * VS Code's host gives a tool's sign-in.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L220
+ */
+it('puts a call waiting on its server\'s sign-in on the session under VS Code\'s id', async () => {
+  sdk.mcp = [{ name: 'docs', status: 'connected' }];
+  const { sent, session } = await live();
+  // A server nothing answers for, so the sign-in's metadata is the bare one.
+  sdk.mcp = [{ name: 'docs', status: 'needs-auth', config: { type: 'http', url: 'http://127.0.0.1:1/mcp' } }];
+  await session.startMcpServer?.('claude-internal:/mcp/docs#mcp=docs');
+  sdk.mcp = [];
+
+  const set = sent.find((one) => one.type === 'session/inputNeededSet' && (one.request as Bag | undefined)?.kind === 'toolAuthentication');
+  expect((set?.request as Bag | undefined)?.id).toBe('toolAuthentication:ahp-chat:/input:t1:toolu_mcp');
   await session.close();
 });
 
@@ -609,12 +683,12 @@ async function asking(accepted: boolean): Promise<{ sent: Bag[]; session: Sessio
  */
 it('completes a live answered question with its text alone, the answers on its request part', async () => {
   const { sent, held, part, decision } = await asking(true);
-  expect(await decision).toMatchObject({ behavior: 'allow', updatedInput: { questions: asked.questions, answers: picked } });
+  expect(await decision).toMatchObject({ behavior: 'allow', updatedInput: { questions: asked.questions, answers: { 'Which colour?': 'Red', 'Which sizes?': 'S, L' } } });
   expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).not.toHaveProperty('structuredContent');
   expect(held.get('toolu_ask')).not.toHaveProperty('structuredContent');
   expect(((part?.request as Bag | undefined)?.answers)).toBeDefined();
   // The input stays what the model sent, which has no answers in it.
-  expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+  expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked, null, 2));
 });
 
 it('holds a part-way answer on the request, and says nothing of the client\'s answer', async () => {
@@ -638,7 +712,7 @@ it('denies a live question nobody answered in VS Code\'s words, and carries no a
   expect(await decision).toEqual({ behavior: 'deny', message: 'The user cancelled the question' });
   expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).not.toHaveProperty('structuredContent');
   expect(held.get('toolu_ask')).not.toHaveProperty('structuredContent');
-  expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+  expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked, null, 2));
 });
 
 /*
@@ -661,13 +735,13 @@ it('reads a replayed answered question back with its text alone, as it completed
   const back = await restored([ask], [answerWith({ questions: asked.questions, answers: picked })]);
   expect(back.get('toolu_ask')).not.toHaveProperty('structuredContent');
   // The input stays what the model sent, which has no answers in it.
-  expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+  expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked, null, 2));
 });
 
 it('carries no answers for a replayed question that was never answered', async () => {
   const back = await restored([ask], [answerWith()]);
   expect(back.get('toolu_ask')).not.toHaveProperty('structuredContent');
-  expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+  expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked, null, 2));
 });
 
 /*
@@ -688,7 +762,7 @@ const partsOf = async (after: Record<string, unknown>[]): Promise<Bag[]> => {
     ...after,
   ];
   written(sdk.frames);
-  const turns = await turnsOf('session', '/tmp/project') as unknown as Bag[];
+  const turns = await turnsOf('session') as unknown as Bag[];
   return (turns[0]?.responseParts ?? []) as Bag[];
 };
 
@@ -803,10 +877,34 @@ it('records the joined answer as what the tool ran with', async () => {
     Colour: { state: 'submitted', value: { kind: 'selected', value: 'Blue', freeformValues: ['teal'] } },
     Size: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
   });
+  // Every answer one string joined with `, `, as VS Code's Claude flattens it.
   expect(await decision).toEqual({
     behavior: 'allow',
-    updatedInput: { questions: asked.questions, answers: { 'Which colour?': 'Blue, teal', 'Which sizes?': ['S', 'L'] } },
+    updatedInput: { questions: asked.questions, answers: { 'Which colour?': 'Blue, teal', 'Which sizes?': 'S, L' } },
   });
+});
+
+/*
+ * As VS Code's Claude flattens an answer: a skipped question is left out, and
+ * an answer set with nothing in it is the question cancelled.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L300-L304
+ */
+it('leaves a skipped question out, and cancels a question nothing was answered for', async () => {
+  const decided = async (answers: Bag): Promise<unknown> => {
+    let decision: Promise<unknown> | undefined;
+    const { session } = await live([
+      { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
+    ], () => {
+      decision = sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
+    });
+    session.answer('toolu_ask', true, answers);
+    return decision;
+  };
+  const skipped = { state: 'skipped', value: { kind: 'selected', value: 'Red' } };
+
+  expect(await decided({ Colour: skipped, Size: { state: 'submitted', value: { kind: 'selected-many', value: ['S'] } } }))
+    .toEqual({ behavior: 'allow', updatedInput: { questions: asked.questions, answers: { 'Which sizes?': 'S' } } });
+  expect(await decided({ Colour: skipped })).toMatchObject({ behavior: 'deny' });
 });
 
 /*

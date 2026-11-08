@@ -65,10 +65,10 @@ const keySchema = (root: RootConfigPort, key: string): Record<string, unknown> =
   ((root.schema() as { properties: Record<string, { properties: Record<string, unknown> }> }).properties[key] ?? { properties: {} }).properties;
 
 describe('the daemon keys root config carries', () => {
-  it('are the sixteen of them, and none of the others', () => {
+  it('are the twenty-three of them, and none of the others', () => {
     const { schema } = port();
     const properties = (schema() as { properties: Record<string, unknown> }).properties;
-    expect(Object.keys(properties)).toEqual(['paths', 'port', 'host', 'httpApi', 'modelApi', 'routes', 'modelProxy', 'updateCheck', 'advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers']);
+    expect(Object.keys(properties)).toEqual(['paths', 'port', 'host', 'httpApi', 'modelApi', 'routes', 'modelProxy', 'updateCheck', 'advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'unofferedModel', 'workspacelessFolder', 'rootOwner', 'turnSenders', 'steerReadBack', 'backendBackgroundWork', 'agentOrchestrationLimitsScope', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers']);
     for (const key of ['stdio', 'configFile', 'connectionToken', 'connectionTokenFile', 'requireIssuer', 'issuer', 'resource', 'users', 'automations', 'sessions']) {
       expect(Object.keys(properties)).not.toContain(key);
     }
@@ -392,6 +392,15 @@ describe('the mcpServers key', () => {
     // The env was sent back as it was answered, which says leave it as it was.
     expect((held().mcpServers as Record<string, { env?: Record<string, string> }>).search?.env).toEqual({ KEY: 'k-1' });
     expect(held().mcpServers).toHaveProperty('new');
+  });
+
+  // rootConfigWrite replaced: the protocol's reducer replaces each top-level
+  // key's value whole (types/channels-root/reducer.ts L26-L36 at spec v1.0.0).
+  it('writes the servers sent in place of the map under rootConfigWrite replaced, a <set> taken out with its credential', async () => {
+    put({ mcpServers: SERVERS, rootConfigWrite: 'replaced' });
+    const root = daemonRootConfig(optionsFrom({ configFile: config }));
+    await root.write({ mcpServers: { search: { type: 'stdio', command: 'mcp-search', env: { KEY: '<set>' } } } });
+    expect(held().mcpServers).toEqual({ search: { type: 'stdio', command: 'mcp-search' } });
   });
 
   it('hands the written servers, credentials included, to the next session', async () => {

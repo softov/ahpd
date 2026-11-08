@@ -18,26 +18,32 @@ import manifest from '../package.json' with { type: 'json' };
  * The bot target, over stub seams.
  *
  * The seams stand for the plugin's connection to its host: the chat a read of
- * the bot answers, a turn sent there, and that turn's end. What is checked is
- * the thread map the target keeps, and what each reply mode answers and posts.
+ * the bot answers, a message queued there, the turn the host takes it up as,
+ * and that turn's end. What is checked is the thread map the target keeps,
+ * and what each reply mode answers and posts.
  */
 
-/** One turn the target sent, in the order it sent them. */
-interface Sent { chat: string; turn: string; text: string }
+/** One message the target queued, in the order it queued them, and the turn the host starts for it. */
+interface Sent { chat: string; message: string; text: string; turn: string }
 
 /**
  * A target over stub seams, with what each seam was asked.
  *
- * A turn ends when the case says so with `finish`, or at once when `auto` is
- * set, with the text `echo: <what was sent>`.
+ * The host takes each message up as the turn `turn-<n>` at once, as it does in
+ * a chat that runs nothing, unless `waits` keeps every message waiting. A turn
+ * ends when the case says so with `finish`, or at once when `auto` is set,
+ * with the text `echo: <what was sent>`.
  */
-async function made(options: { auto?: boolean; sessions?: Record<string, string>; chatRefused?: boolean; timeout?: number; turnRefused?: string; unconfirmed?: boolean } = {}) {
+async function made(options: { auto?: boolean; sessions?: Record<string, string>; chatRefused?: boolean; timeout?: number; messageRefused?: string; unconfirmed?: boolean; waits?: boolean } = {}) {
   const threads = await memoryRecords().collection('webhook-threads');
   const sent: Sent[] = [];
   const posted: { url: string; id: string; body: Record<string, unknown> }[] = [];
   const problems: string[] = [];
   const opened: string[] = [];
+  /** The wait for each message's turn to end, by the message's id. */
   const waiting = new Map<string, (end: TurnEnd) => void>();
+  /** The turn the host started for each message, by the message's id. */
+  const begun = new Map<string, string>();
   const sessions = options.sessions ?? { 'bot://motion': 'bot-chat:/motion' };
   const seams: BotSeams = {
     threads,
@@ -52,24 +58,28 @@ async function made(options: { auto?: boolean; sessions?: Record<string, string>
       opened.push(session);
       return `ahp-chat:/${String(opened.length)}`;
     },
-    send: async (chat, turn, text) => {
-      sent.push({ chat, turn, text });
-      if (options.turnRefused !== undefined) return { refused: options.turnRefused };
+    send: async (chat, message, text) => {
+      const turn = `turn-${String(sent.length + 1)}`;
+      sent.push({ chat, message, text, turn });
+      if (options.messageRefused !== undefined) return { refused: options.messageRefused };
       if (options.unconfirmed === true) return { unconfirmed: true };
-      if (options.auto === true) waiting.get(turn)?.({ status: 'complete', text: `echo: ${text}` });
+      if (options.waits !== true) begun.set(message, turn);
+      if (options.auto === true) waiting.get(message)?.({ turn, status: 'complete', text: `echo: ${text}` });
       return { taken: true };
     },
-    ended: (_chat, turn) => new Promise<TurnEnd>((resolve) => { waiting.set(turn, resolve); }),
-    forget: (_chat, turn) => { waiting.delete(turn); },
+    ended: (_chat, message) => new Promise<TurnEnd>((resolve) => { waiting.set(message, resolve); }),
+    turnOf: (_chat, message) => begun.get(message),
+    forget: (_chat, message) => { waiting.delete(message); },
     post: async (_endpoint, url, id, body) => { posted.push({ url, id, body }); },
     syncTimeoutSeconds: options.timeout ?? 60,
     problem: (line) => { problems.push(line); },
   };
   const target = botTarget(seams);
-  /** End the turn the target sent `n`th, counted from 0. */
+  /** End the turn of the message the target queued `n`th, counted from 0. */
   const finish = (n: number, text: string, status: TurnEnd['status'] = 'complete', error?: string): void => {
-    const turn = sent[n]?.turn ?? '';
-    waiting.get(turn)?.({ status, text, ...(error === undefined ? {} : { error }) });
+    const one = sent[n];
+    if (one === undefined) return;
+    waiting.get(one.message)?.({ turn: one.turn, status, text, ...(error === undefined ? {} : { error }) });
   };
   return { target, threads, sent, posted, problems, finish, waiting, opened };
 }
@@ -110,7 +120,7 @@ describe('the thread map', () => {
     await target(endpoint(), call({ thread: 'pr-12', text: 'two' }));
     expect(sent.map((one) => one.chat)).toEqual(['ahp-chat:/1', 'ahp-chat:/1']);
     expect(opened).toHaveLength(1);
-    expect(sent[0]?.turn).not.toBe(sent[1]?.turn);
+    expect(sent[0]?.message).not.toBe(sent[1]?.message);
   });
 
   it('sends another thread of the bot in a chat of its own', async () => {
@@ -141,7 +151,7 @@ describe('the thread map', () => {
     expect(sent).toEqual([]);
   });
 
-  it('sends the text of a JSON body as the turn, with the thread from the body', async () => {
+  it('sends the text of a JSON body as the message, with the thread from the body', async () => {
     const { target, sent } = await made();
     await target(endpoint(), call({ thread: 'pr-12', text: 'from json' }, '?thread=other'));
     expect(sent.map((one) => one.text)).toEqual(['from json']);
@@ -192,6 +202,23 @@ describe('the reply modes', () => {
     expect(posted).toEqual([]);
   });
 
+  /*
+   * Answered as VS Code's router answers a message it queued in another
+   * session's chat: sent, with the turn the host started for it, or queued
+   * while it waits (remoteSessionMessageRouter.ts L250-L259, L299 at
+   * 6b68d3fe).
+   */
+  it('answers 202 sent with the turn the host started for the message, or queued while it waits', async () => {
+    const { target, sent } = await made();
+    const answer = await target(endpoint({ reply: 'none' }), call({ thread: 'pr-12', text: 'hello' }));
+    expect(await answer.json()).toEqual({ thread: 'pr-12', queuedMessageId: sent[0]?.message, turn: 'turn-1', status: 'sent' });
+
+    const { target: busy, sent: waited } = await made({ waits: true });
+    const queued = await busy(endpoint({ reply: 'none' }), call({ thread: 'pr-12', text: 'hello' }));
+    expect(queued.status).toBe(202);
+    expect(await queued.json()).toEqual({ thread: 'pr-12', queuedMessageId: waited[0]?.message, status: 'queued' });
+  });
+
   it('answers 202 with reply callback, and posts the text at the turn end', async () => {
     const { target, posted, sent, finish } = await made();
     const answer = await target(
@@ -199,14 +226,14 @@ describe('the reply modes', () => {
       call({ thread: 'pr-12', text: 'hello', callback: 'https://ci.example.com/hooks/pr-12' }),
     );
     expect(answer.status).toBe(202);
-    expect(await answer.json()).toMatchObject({ thread: 'pr-12', turn: sent[0]?.turn });
+    expect(await answer.json()).toEqual({ thread: 'pr-12', queuedMessageId: sent[0]?.message, turn: sent[0]?.turn, status: 'sent' });
     expect(posted).toEqual([]);
     finish(0, 'all green');
     await settle();
     expect(posted).toEqual([{
       url: 'https://ci.example.com/hooks/pr-12',
-      id: sent[0]?.turn,
-      body: { thread: 'pr-12', turn: sent[0]?.turn, status: 'complete', text: 'all green' },
+      id: sent[0]?.message,
+      body: { thread: 'pr-12', queuedMessageId: sent[0]?.message, turn: sent[0]?.turn, status: 'complete', text: 'all green' },
     }]);
   });
 
@@ -222,7 +249,7 @@ describe('the reply modes', () => {
     expect(posted.map((one) => one.url)).toEqual(['https://ci.example.com/hooks/a']);
   });
 
-  it('answers 400 and sends no turn for a callback URL outside the prefix', async () => {
+  it('answers 400 and queues nothing for a callback URL outside the prefix', async () => {
     const { target, sent } = await made();
     const answer = await target(
       endpoint({ reply: 'callback', callbackPrefix: 'https://ci.example.com/hooks/' }),
@@ -255,7 +282,7 @@ describe('the reply modes', () => {
     const { target, sent } = await made({ auto: true });
     const answer = await target(endpoint({ reply: 'sync' }), call({ thread: 'pr-12', text: 'hello' }));
     expect(answer.status).toBe(200);
-    expect(await answer.json()).toEqual({ thread: 'pr-12', turn: sent[0]?.turn, status: 'complete', text: 'echo: hello' });
+    expect(await answer.json()).toEqual({ thread: 'pr-12', queuedMessageId: sent[0]?.message, turn: sent[0]?.turn, status: 'complete', text: 'echo: hello' });
   });
 
   it('answers 502 with status error and the message when a sync turn fails', async () => {
@@ -264,7 +291,7 @@ describe('the reply modes', () => {
     setTimeout(() => { finish(0, 'half', 'error', 'the model refused'); }, 10);
     const answer = await pending;
     expect(answer.status).toBe(502);
-    expect(await answer.json()).toEqual({ thread: 'pr-12', turn: sent[0]?.turn, status: 'error', text: 'half', error: 'the model refused' });
+    expect(await answer.json()).toEqual({ thread: 'pr-12', queuedMessageId: sent[0]?.message, turn: sent[0]?.turn, status: 'error', text: 'half', error: 'the model refused' });
   });
 
   it('posts status error and the message to the callback when the turn fails', async () => {
@@ -278,8 +305,8 @@ describe('the reply modes', () => {
     await settle();
     expect(posted).toEqual([{
       url: 'https://ci.example.com/hooks/pr-12',
-      id: sent[0]?.turn,
-      body: { thread: 'pr-12', turn: sent[0]?.turn, status: 'error', text: '', error: 'the model refused' },
+      id: sent[0]?.message,
+      body: { thread: 'pr-12', queuedMessageId: sent[0]?.message, turn: sent[0]?.turn, status: 'error', text: '', error: 'the model refused' },
     }]);
   });
 
@@ -287,10 +314,16 @@ describe('the reply modes', () => {
     const { target, sent, posted } = await made({ timeout: 0.02 });
     const answer = await target(endpoint({ reply: 'sync' }), call({ thread: 'pr-12', text: 'hello' }));
     expect(answer.status).toBe(202);
-    expect(await answer.json()).toEqual({ thread: 'pr-12', turn: sent[0]?.turn, status: 'running' });
-    // Nothing more is sent: no cancel, and no second turn.
+    expect(await answer.json()).toEqual({ thread: 'pr-12', queuedMessageId: sent[0]?.message, turn: sent[0]?.turn, status: 'running' });
+    // Nothing more is sent: no cancel, and no second message.
     expect(sent).toHaveLength(1);
     expect(posted).toEqual([]);
+
+    // A message still waiting at the timeout is queued, and has no turn yet.
+    const { target: busy, sent: waited } = await made({ timeout: 0.02, waits: true });
+    const queued = await busy(endpoint({ reply: 'sync' }), call({ thread: 'pr-12', text: 'hello' }));
+    expect(queued.status).toBe(202);
+    expect(await queued.json()).toEqual({ thread: 'pr-12', queuedMessageId: waited[0]?.message, status: 'queued' });
   });
 
   it('waits for the plugin option when the endpoint names no timeout', async () => {
@@ -334,9 +367,9 @@ describe('the reply modes', () => {
   });
 });
 
-describe('a turn the host refused', () => {
+describe('a message the host refused', () => {
   it('answers 409 with the reason, and posts no callback', async () => {
-    const { target, posted, problems, finish, waiting } = await made({ turnRefused: 'the chat is busy' });
+    const { target, posted, problems, finish, waiting } = await made({ messageRefused: 'the chat is busy' });
     const answer = await target(
       endpoint({ reply: 'callback', callbackPrefix: 'https://ci.example.com/hooks/' }),
       call({ thread: 'pr-12', text: 'hello', callback: 'https://ci.example.com/hooks/pr-12' }),
@@ -352,7 +385,7 @@ describe('a turn the host refused', () => {
   });
 
   it('answers 409 to a sync call at once, without the timeout', async () => {
-    const { target, waiting } = await made({ turnRefused: 'the chat is busy', timeout: 60 });
+    const { target, waiting } = await made({ messageRefused: 'the chat is busy', timeout: 60 });
     const started = Date.now();
     const answer = await target(endpoint({ reply: 'sync' }), call({ thread: 'pr-12', text: 'hello' }));
     expect(answer.status).toBe(409);
@@ -361,21 +394,33 @@ describe('a turn the host refused', () => {
   });
 });
 
-it('forgets the wait for a turn the host refused', async () => {
+it('forgets the wait for a message the host refused', async () => {
   const ends = turnEnds();
   let settled = false;
-  void ends.wait('ahp-chat:/c1', 't1').then(() => { settled = true; });
-  ends.forget('ahp-chat:/c1', 't1');
-  ends.heard({ chat: 'ahp-chat:/c1', turn: 't1', status: 'complete' });
+  void ends.wait('ahp-chat:/c1', 'm1').then(() => { settled = true; });
+  ends.forget('ahp-chat:/c1', 'm1');
+  ends.started({ chat: 'ahp-chat:/c1', turn: 't1', queuedMessageId: 'm1' });
+  ends.heard({ channel: 'ahp-chat:/c1', turnId: 't1', reason: { kind: 'success' } });
   await settle();
   expect(settled).toBe(false);
 });
 
-it('hears a turn that ended in an error, with its message', async () => {
+/*
+ * The turn a message becomes is the one the host starts naming it as its
+ * `queuedMessageId`, as VS Code's router reads it (remoteSessionMessageRouter.ts
+ * L250-L259 at 6b68d3fe); a turn of the chat that took up nothing of the
+ * plugin's ends no wait.
+ */
+it('hears the end of the turn a message became, by the turn that named it', async () => {
   const ends = turnEnds();
-  const waited = ends.wait('ahp-chat:/c1', 't1');
-  ends.heard({ chat: 'ahp-chat:/c1', turn: 't1', status: 'error', error: 'the model refused' });
-  expect(await waited).toEqual({ status: 'error', error: 'the model refused' });
+  const waited = ends.wait('ahp-chat:/c1', 'm1');
+  ends.started({ chat: 'ahp-chat:/c1', turn: 't0' });
+  ends.heard({ channel: 'ahp-chat:/c1', turnId: 't0', reason: { kind: 'success' } });
+  expect(ends.turnOf('ahp-chat:/c1', 'm1')).toBeUndefined();
+  ends.started({ chat: 'ahp-chat:/c1', turn: 't1', queuedMessageId: 'm1' });
+  expect(ends.turnOf('ahp-chat:/c1', 'm1')).toBe('t1');
+  ends.heard({ channel: 'ahp-chat:/c1', turnId: 't1', reason: { kind: 'error', error: { errorType: 'turnFailed', message: 'the model refused' }, resumable: false } });
+  expect(await waited).toEqual({ turn: 't1', status: 'error', error: 'the model refused' });
 });
 
 it('gives the plugin option syncTimeoutSeconds GitHub\'s ten seconds by default, and maxBodyBytes 25 MiB', () => {
@@ -403,8 +448,8 @@ describe('the plugin connection', () => {
   it('resolves a dispatch with the rejectionReason of the action that carries its clientSeq', async () => {
     const { conn, notified, say } = stub();
     const sender = dispatcher(conn, 'ahpd-webhook');
-    const first = sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'one', origin: { kind: 'user' } } });
-    const second = sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { text: 'two', origin: { kind: 'user' } } });
+    const first = sender.dispatch('ahp-chat:/c1', { type: 'chat/pendingMessageSet', kind: 'queued', id: 'm1', message: { text: 'one', origin: { kind: 'agent' } } });
+    const second = sender.dispatch('ahp-chat:/c1', { type: 'chat/pendingMessageSet', kind: 'queued', id: 'm2', message: { text: 'two', origin: { kind: 'agent' } } });
     expect(notified.map((one) => one.params['clientSeq'])).toEqual([1, 2]);
     // Another client's action with the same seq is not this one's answer.
     say({ method: 'action', params: { channel: 'ahp-chat:/c1', origin: { clientId: 'other', clientSeq: 2 }, rejectionReason: 'no' } });
@@ -418,17 +463,20 @@ describe('the plugin connection', () => {
     const { conn } = stub();
     const silent: string[] = [];
     const sender = dispatcher(conn, 'ahpd-webhook', 20, (channel) => { silent.push(channel); });
-    expect(await sender.dispatch('ahp-chat:/c1', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'one', origin: { kind: 'user' } } })).toEqual({ unconfirmed: true });
+    expect(await sender.dispatch('ahp-chat:/c1', { type: 'chat/pendingMessageSet', kind: 'queued', id: 'm1', message: { text: 'one', origin: { kind: 'agent' } } })).toEqual({ unconfirmed: true });
     expect(silent).toEqual(['ahp-chat:/c1']);
   });
 });
 
 /*
- * A chat's subscription is held while a turn needs it, for the echo of its
- * start and the read of its end, and let go once that read is made, as VS
- * Code's router holds one for a delivery and releases it when it settles.
+ * A call's text is queued in the chat as VS Code's router sends a message into
+ * another session's chat: a pending message, an agent's
+ * (remoteSessionMessageRouter.ts L270-L282 at 6b68d3fe). The chat's
+ * subscription is held while the message needs it, for the echo of its set and
+ * the read of its turn's end, and let go once that read is made, as the router
+ * holds one for a delivery and releases it when it settles.
  */
-it('holds a chat\'s subscription while a turn needs it, and releases it at the turn\'s end or its refusal', async () => {
+it('queues a call\'s text as an agent\'s message, holding the chat\'s subscription until its turn ends or the host refuses it', async () => {
   const asked: string[] = [];
   const told: string[] = [];
   const handlers = new Map<string, (event: never) => void>();
@@ -447,25 +495,32 @@ it('holds a chat\'s subscription while a turn needs it, and releases it at the t
     registerClose: () => {},
   } as unknown as Parameters<typeof botSeams>[0];
   let answer: Dispatched = { taken: true };
-  const sender = { dispatch: async () => answer };
+  const dispatched: { channel: string; action: Record<string, unknown> }[] = [];
+  const sender = { dispatch: async (channel: string, action: Record<string, unknown>) => { dispatched.push({ channel, action }); return answer; } };
   const seams = botSeams(host, async () => ({ conn, sender }), 10);
 
-  const end = seams.ended('ahp-chat:/c1', 't1');
-  expect(await seams.send('ahp-chat:/c1', 't1', 'hello')).toEqual({ taken: true });
+  const end = seams.ended('ahp-chat:/c1', 'm1');
+  expect(await seams.send('ahp-chat:/c1', 'm1', 'hello')).toEqual({ taken: true });
+  expect(dispatched).toEqual([{
+    channel: 'ahp-chat:/c1',
+    action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'm1', message: { text: 'hello', origin: { kind: 'agent' } } },
+  }]);
   expect(asked).toEqual(['subscribe ahp-chat:/c1']);
   expect(told).toEqual([]);
-  (handlers.get('turn_end') as (event: unknown) => void)({ chat: 'ahp-chat:/c1', turn: 't1', status: 'complete' });
-  expect(await end).toMatchObject({ status: 'complete', text: 'done' });
+  (handlers.get('turn_start') as (event: unknown) => void)({ chat: 'ahp-chat:/c1', turn: 't1', queuedMessageId: 'm1' });
+  expect(seams.turnOf('ahp-chat:/c1', 'm1')).toBe('t1');
+  (handlers.get('turn_end') as (event: unknown) => void)({ channel: 'ahp-chat:/c1', turnId: 't1', reason: { kind: 'success' } });
+  expect(await end).toEqual({ turn: 't1', status: 'complete', text: 'done' });
   expect(told).toEqual(['unsubscribe ahp-chat:/c1']);
 
   answer = { refused: 'the chat is busy' };
-  expect(await seams.send('ahp-chat:/c2', 't2', 'again')).toEqual({ refused: 'the chat is busy' });
-  seams.forget('ahp-chat:/c2', 't2');
+  expect(await seams.send('ahp-chat:/c2', 'm2', 'again')).toEqual({ refused: 'the chat is busy' });
+  seams.forget('ahp-chat:/c2', 'm2');
   await new Promise((r) => { setTimeout(r, 5); });
   expect(told).toEqual(['unsubscribe ahp-chat:/c1', 'unsubscribe ahp-chat:/c2']);
 });
 
-it('answers 504 in VS Code\'s words to a call whose turn the host never confirmed, and posts nothing', async () => {
+it('answers 504 in VS Code\'s words to a call whose message the host never confirmed, and posts nothing', async () => {
   const { target, posted, waiting, sent } = await made({ unconfirmed: true });
   const answer = await target(
     endpoint({ reply: 'callback', callbackPrefix: 'https://ci.example.com/hooks/' }),
@@ -474,7 +529,7 @@ it('answers 504 in VS Code\'s words to a call whose turn the host never confirme
   expect(answer.status).toBe(504);
   expect(await answer.json()).toEqual({
     thread: 'pr-12',
-    turn: sent[0]?.turn,
+    queuedMessageId: sent[0]?.message,
     message: 'Remote message delivery was not confirmed. It may already be queued; do not retry automatically.',
   });
   expect(waiting.size).toBe(0);

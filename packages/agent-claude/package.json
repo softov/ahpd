@@ -70,6 +70,7 @@
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*",
+    "@cofold/yaml": "^0.3.0",
     "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "ahpd": {

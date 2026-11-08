@@ -182,9 +182,9 @@ describe('a host with no agent', () => {
     const host = createHost(empty());
     const { client } = await clientOf(host, 'start');
     await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/unnamed' } }))
-      .rejects.toMatchObject({ code: -32002, message: expect.stringMatching(/serves no agent/) });
+      .rejects.toMatchObject({ code: -32002, message: 'No agent provider registered for: (none)' });
     await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/named', provider: 'claude' } }))
-      .rejects.toMatchObject({ code: -32002 });
+      .rejects.toMatchObject({ code: -32002, message: 'No agent provider registered for: claude' });
   });
 
   it('serves the agent a fold adds, as the one a client gets by default', async () => {

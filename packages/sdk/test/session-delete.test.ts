@@ -164,14 +164,19 @@ it('deletes a running session\'s copy once its agent has stopped, so what the ag
 it('deletes a row it only listed, through the agent that owns it, and tells every client', async () => {
   const order: string[] = [];
   const deleted: Deleted[] = [];
+  // Written an hour ago, by a session this host never ran.
+  const stamp = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const row: Listed = {
     id: 'listed',
     title: 'Listed',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    modifiedAt: '2026-01-01T00:00:00.000Z',
+    createdAt: stamp,
+    modifiedAt: stamp,
     workingDirectories: [`file://${dir}`],
   };
   const { client, peer: p } = await serving(recording(order, deleted, [row]));
+  // Shown by the root's `showExternalSessions`, as a client that lists the
+  // sessions a backend keeps of its own pushes it.
+  await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { showExternalSessions: 'last30Days' } } } });
   // Listed first, which is the only thing that gives the host an owner for it.
   const listed = await listing(client);
   expect(listed).toContain('ahp-session:/listed');
@@ -219,6 +224,14 @@ it('answers a delete that failed, and the session is gone all the same', async (
   };
   const { client, peer: p } = await serving(agent, (line) => said.push(line));
   await open(client, 'ahp-session:/held');
+  // Its first message, which announces it, so its removal is said, on the chat
+  // the host minted for it.
+  const held = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/held' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: held, action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+  });
+  await settle();
 
   await expect(dispose(client, 'ahp-session:/held')).rejects.toThrow('the store would not let go of it');
 
@@ -229,7 +242,7 @@ it('answers a delete that failed, and the session is gone all the same', async (
   expect(p.notes.some((one) => one.method === 'root/sessionRemoved'
     && (one.params as { session?: string }).session === 'ahp-session:/held')).toBe(true);
   // A name in neither map: it is out of `sessions`, and out of `owners`.
-  await expect(dispose(client, 'ahp-session:/held')).rejects.toThrow('No agent for session ahp-session:/held');
+  await expect(dispose(client, 'ahp-session:/held')).rejects.toThrow('No agent for session: ahp-session:/held');
   client.close();
 });
 
@@ -278,7 +291,7 @@ it('refuses a name it has never heard of, in either map', async () => {
   const deleted: Deleted[] = [];
   const { client } = await serving(recording(order, deleted));
 
-  await expect(dispose(client, 'echo:/nobody')).rejects.toThrow('No agent for session echo:/nobody');
+  await expect(dispose(client, 'echo:/nobody')).rejects.toThrow('No agent for session: echo:/nobody');
 
   // Nothing was deleted, because nothing was found to ask about.
   expect(order).toEqual([]);

@@ -47,7 +47,7 @@ export interface ClientCall {
    * attributes it to `owner`, so a backend reports what it knows and nothing
    * about this. `toolName` is the tool's name *as the client announced it* -
    * the bare name, not the `<clientId>__<name>` the model is offered - because
-   * that is the name the failure text uses and the name `providers` answers to.
+   * that is the name a client's call carries.
    */
   toolCall: Bag;
   /** The client that must answer, and the only one that may. */
@@ -74,14 +74,6 @@ export interface ClientCallsOptions {
    * off asks for.
    */
   timeoutMs?: number;
-  /**
-   * Which clients offer a tool, by the name the client announced it under.
-   *
-   * Asked only when a client goes, to tell the model that somebody else has
-   * the tool the call was for. A backend with no way to answer returns nothing
-   * and the failure says only what happened.
-   */
-  providers?(name: string): string[];
 }
 
 /** The calls one chat has out with its clients. */
@@ -111,8 +103,6 @@ export interface ClientCalls {
   complete(toolCallId: string, clientId: string, answer: ClientCallAnswer): boolean;
   /** The client a call is out with. */
   owner(toolCallId: string): string | undefined;
-  /** Fail one client's calls, because that client is no longer here. */
-  gone(clientId: string): void;
   /** Fail every call, for a turn that was stopped or a session that is closing. */
   release(why: string): void;
   /** What is still open, as the snapshot's `inputNeeded` entries. */
@@ -121,7 +111,6 @@ export interface ClientCalls {
   methods: {
     toolCallOwner(toolCallId: string): string | undefined;
     completeToolCall(toolCallId: string, clientId: string, result: ClientCallAnswer): boolean;
-    clientGone(clientId: string): void;
   };
 }
 
@@ -304,22 +293,6 @@ export function createClientCalls(options: ClientCallsOptions): ClientCalls {
     return record === undefined || record.finished ? undefined : record.owner;
   };
 
-  const gone = (clientId: string): void => {
-    for (const record of [...held.values()]) {
-      if (record.finished || record.owner !== clientId) continue;
-      /*
-       * Somebody else may have the same tool, and the model is the one that
-       * has to know: the call it made is not one this host can finish, and
-       * the tool under that other client's name is.
-       */
-      const elsewhere = (options.providers?.(record.name) ?? [])
-        .filter((one) => one !== clientId)
-        .map((one) => `${one}__${record.name}`);
-      const hint = elsewhere.length === 0 ? '' : `. ${elsewhere.join(', ')} provides the same tool`;
-      end(record, failed(`The client ${clientId} that was running ${record.name} is no longer here${hint}`));
-    }
-  };
-
   const release = (why: string): void => {
     for (const record of [...held.values()]) {
       if (!record.finished) end(record, failed(why));
@@ -342,13 +315,11 @@ export function createClientCalls(options: ClientCallsOptions): ClientCalls {
     wait,
     complete,
     owner,
-    gone,
     release,
     entries,
     methods: {
       toolCallOwner: owner,
       completeToolCall: complete,
-      clientGone: gone,
     },
   };
 }

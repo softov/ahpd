@@ -5,14 +5,15 @@ covers:
   - packages/agent-cofold/src/**
 decisions:
   - decisions/cofold-config-reaches-a-machine-by-a-path-variable.md
-  - decisions/each-backend-offers-its-options-unless-a-rule-asks.md
+  - decisions/the-host-puts-each-tool-question-and-keeps-the-sessions-answer.md
 refs:
   - "[code://packages/agent-cofold/src/config.ts#L57-L59](../../packages/agent-cofold/src/config.ts#L57-L59) - `harnessConfigPath`, where the harness file is found"
-  - "[code://packages/agent-cofold/src/agent.ts#L104-L105](../../packages/agent-cofold/src/agent.ts#L104-L105) - `defaultStoreRoot`, the store under the data folder"
+  - "[code://packages/agent-cofold/src/agent.ts#L113](../../packages/agent-cofold/src/agent.ts#L113) - `defaultStoreRoot`, the store at cofold's home"
   - "[code://packages/agent-cofold/src/agent.ts#L218-L222](../../packages/agent-cofold/src/agent.ts#L218-L222) - `modelReferenceOf`, the order a model reference is taken in"
-  - "[code://packages/agent-cofold/src/agent.ts#L233-L268](../../packages/agent-cofold/src/agent.ts#L233-L268) - `connectionOf`, the endpoint, key and the two errors a turn can give"
+  - "[code://packages/agent-cofold/src/agent.ts#L278-L321](../../packages/agent-cofold/src/agent.ts#L278-L321) - `adapterOptionsOf`, cofold's options for a turn's model: the endpoint, key and the two errors a turn can give"
   - "[code://packages/agent-cofold/src/agent.ts#L335-L346](../../packages/agent-cofold/src/agent.ts#L335-L346) - `modelOf`, where a chosen effort becomes a request param"
-  - "[code://packages/agent-cofold/src/agent.ts#L440-L480](../../packages/agent-cofold/src/agent.ts#L440-L480) - the `permissionMode` and `effortLevel` properties"
+  - "[code://packages/agent-cofold/src/agent.ts#L589-L623](../../packages/agent-cofold/src/agent.ts#L589-L623) - the session schema and its `permissionMode` property"
+  - "[code://packages/agent-cofold/src/agent.ts#L400-L433](../../packages/agent-cofold/src/agent.ts#L400-L433) - `rowOf`, a model's own `thinkingLevel`"
   - "[code://packages/agent-cofold/src/agent.ts#L725-L740](../../packages/agent-cofold/src/agent.ts#L725-L740) - `probe`, the endpoint's models with the configured one first"
   - "[code://packages/agent-cofold/src/turnagent.ts#L31-L47](../../packages/agent-cofold/src/turnagent.ts#L31-L47) - `insideDirectory` and `memoryDirOf`"
   - "[code://packages/agent-cofold/src/turnagent.ts#L101-L108](../../packages/agent-cofold/src/turnagent.ts#L101-L108) - `modeOf`, with `auto` as the default mode"
@@ -30,8 +31,9 @@ refs:
 ---
 
 The cofold backend `@ahpd/agent-cofold` runs the cofold harness inside the daemon, as the agent `cofold` with the title "Cofold".
-It reads the harness file at `$COFOLD_CONFIG`, else `$XDG_CONFIG_HOME/cofold/config.json`, else `~/.config/cofold/config.json`.
-It keeps sessions in a cofold file store at `$XDG_DATA_HOME/ahpd/cofold`, unless the plugin options name another store.
+It reads the harness configuration as cofold's app papo reads it, with cofold's resolver under papo's name.
+The layers are `~/.config/papo/config.json`, the nearest `.papo.json` above a session's folder, and the file `$PAPO_CONFIG` names.
+It keeps sessions in cofold's own file store at cofold's home, `$COFOLD_HOME` or `~/.cofold`, unless the plugin options or a record name another store.
 The harness tools from `@cofold/tools` run in the cofold loop in the daemon process, as the Claude tools run in the Claude CLI.
 ahpd reports each call, asks for permission through the cofold policy, and reports edits through `onFileEdit`.
 The permission modes and the effort levels come from `@cofold/agents`, so the cofold library and ahpd agree on what each mode does.
@@ -115,13 +117,32 @@ THEN a call that would ask is refused.
 WHEN the plugin options give a policy
 THEN the session schema has no `permissionMode` property.
 WHEN the plugin options give a model adapter
-THEN the session schema has no `effortLevel` property.
+THEN no offered model has a `configSchema`.
+
+### Effort is a model's own
+
+WHEN the agent's `models` declares the levels a model accepts
+THEN that model's row has a `configSchema` with a `thinkingLevel` of those levels that cofold has.
+WHEN nothing declares them and the catalogue lists `reasoning` among the model's parameters
+THEN the `thinkingLevel` has `off`, `low`, `medium` and `high`.
+WHEN neither says
+THEN the model's row has no `configSchema`.
+The `thinkingLevel` takes its words, labels and descriptions from VS Code's shared reasoning helpers, `off` labelled "Off".
+
+### The session has its own reasoning
+
+WHEN a session opens
+THEN its schema has `<provider>.reasoning` with the levels `off`, `low`, `medium` and `high`
+AND its default is the person's harness `reasoning`, else `off`.
+The reason: cofold's app has a session-wide reasoning setting, as Codex has one in VS Code beside each model's picker.
 
 ### Effort is a request param
 
-WHEN a chat sets `effortLevel` to `low`, `medium` or `high`
+WHEN a turn's model selection sets `thinkingLevel` to `low`, `medium` or `high`
 THEN the backend sends it as `params.reasoning.effort` on the request
 AND it does not set the reasoning feature, so a model that cannot think stays that way.
+WHEN a turn's model selection names no level
+THEN the session's `<provider>.reasoning` decides it.
 
 ### The session gets four tool groups
 

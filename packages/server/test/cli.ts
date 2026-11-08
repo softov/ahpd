@@ -264,6 +264,23 @@ export interface Recorded {
 export const recordOf = (): Recorded =>
   JSON.parse(readFileSync(join(home, 'ahpd', 'daemon.json'), 'utf8')) as Recorded;
 
+/**
+ * The record a daemon a service manager started writes once it is up, waited
+ * for: `service install` answers once the manager has the start, before the
+ * daemon has written it, and a case that ends first would leave that daemon
+ * running past its cleanup.
+ */
+export const recordWithin = async (ms = 30_000): Promise<Recorded> => {
+  const until = Date.now() + ms;
+  for (;;) {
+    try { return recordOf(); }
+    catch (error) {
+      if (Date.now() > until) throw error;
+    }
+    await new Promise((wait) => setTimeout(wait, 100));
+  }
+};
+
 /** A daemon a service manager started: its pid, where it is, and how it ends. */
 export interface Supervised {
   pid: number;

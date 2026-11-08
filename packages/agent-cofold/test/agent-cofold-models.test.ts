@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { ModelAdapter } from '@cofold/agents';
 import type { Bag, Start } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
-import { cofoldAgent, modelOf } from '../src/index.js';
+import { EFFORT_LEVELS, cofoldAgent, modelOf } from '../src/index.js';
 import { startedNow } from '../../sdk/test/support/started.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
@@ -44,8 +44,8 @@ const CONFIG = {
 };
 
 const put = (value: unknown): void => {
-  mkdirSync(join(home, 'cofold'), { recursive: true });
-  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify(value));
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify(value));
 };
 
 /** What an OpenAI-compatible endpoint answers for a model list. */
@@ -226,6 +226,32 @@ it('gives a turn the key of the provider its reference names when two share an e
   expect(seen.authorization).toBe('Bearer k-second');
 });
 
+/*
+ * An endpoint is cofold's provider options, named by the provider id a
+ * reference names, as cofold's `providersOf` names each provider of a file:
+ * two entries on one endpoint and key are two catalogues, each under its id.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/model-openai-compat/src/config.ts#L20-L30
+ */
+it('keeps a catalogue for each provider of an endpoint two share with one key', async () => {
+  put({
+    providers: [
+      { id: 'first', baseUrl: 'https://shared.example/v1', apiKey: 'k' },
+      { id: 'second', baseUrl: 'https://shared.example/v1', apiKey: 'k' },
+    ],
+  });
+  answering({ data: [{ id: 'm', name: 'M' }] });
+  const agent = cofoldAgent({});
+  await agent.probe?.();
+  const session = startedNow(agent.create({
+    uri: 'ahp-session:/shared',
+    chatUri: 'ahp-chat:/shared',
+    settings: agent.defaults(),
+    schema: () => agent.schema(),
+    emit: () => {},
+  } as unknown as Start));
+  expect(session.models().map((one) => one.id)).toEqual(['first/m', 'second/m']);
+});
+
 it('keeps the other providers listing when one fails', async () => {
   put(TWO);
   globalThis.fetch = (async (input: unknown) => {
@@ -275,31 +301,139 @@ it('answers the configured model alone for a status or a shape that is not a cat
   }
 });
 
-it('offers the limits the endpoint published, and neither its price nor its features', async () => {
+/*
+ * A model that can be told how hard to think carries that as its own
+ * `configSchema`, cofold's four levels under `thinkingLevel`, where the catalogue
+ * lists `reasoning` among its parameters; one the catalogue says nothing of
+ * takes none, cofold's own default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L858
+ */
+it('offers the limits the endpoint published and a thinking level where it lists reasoning, and neither its price nor its features', async () => {
   put(CONFIG);
   answering(PUBLISHED);
   const offered = await cofoldAgent({}).probe?.();
 
   /*
    * `toEqual` is exact, so a row carrying a `pricing` or a `features` key would
-   * not match. Only the two limits travel beside the id and the name: a row is
-   * what a picker draws, and the price is what a turn is built from.
+   * not match. Only the two limits and the model's own form travel beside the
+   * id and the name: a row is what a picker draws, and the price is what a
+   * turn is built from.
    */
   expect(offered?.models).toEqual([
-    { id: 'open_router/deepseek/deepseek-chat', name: 'DeepSeek V3', maxContextWindow: 65536, maxOutputTokens: 8192 },
-    // A row the endpoint published neither limit for carries neither.
+    {
+      id: 'open_router/deepseek/deepseek-chat',
+      name: 'DeepSeek V3',
+      maxContextWindow: 65536,
+      maxOutputTokens: 8192,
+      configSchema: {
+        type: 'object',
+        properties: { thinkingLevel: expect.objectContaining({ type: 'string', enum: [...EFFORT_LEVELS], default: 'off' }) as unknown },
+      },
+    },
+    // A row the endpoint published neither limit nor parameters for carries none.
     { id: 'open_router/qwen/qwen3-8b', name: 'Qwen3 8B' },
   ]);
 });
 
-it('offers the configured model alone when the endpoint never answers', async () => {
+/*
+ * A model's level in the property VS Code's agent host draws, its words and
+ * each level's label and description from VS Code's shared helpers, `off`
+ * taking the helpers' label for a level they do not name, and `off`, cofold's
+ * own default, its default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L4536-L4553
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/reasoningEffort.ts#L46-L82
+ */
+it('offers a model\'s thinking level in the words of VS Code\'s shared helpers, off labelled Off', async () => {
+  put(CONFIG);
+  answering(PUBLISHED);
+  const offered = await cofoldAgent({}).probe?.();
+  const chat = offered?.models.find((one) => one.id === 'open_router/deepseek/deepseek-chat');
+  expect((chat?.configSchema?.properties as Record<string, unknown>).thinkingLevel).toEqual({
+    type: 'string',
+    title: 'Effort Level',
+    description: 'Controls how much reasoning effort the model uses.',
+    enum: ['off', 'low', 'medium', 'high'],
+    enumLabels: ['Off', 'Low', 'Medium', 'High'],
+    enumDescriptions: ['', 'Faster responses with less reasoning', 'Balanced reasoning and speed', 'Greater reasoning depth but slower'],
+    default: 'off',
+  });
+});
+
+/*
+ * The levels the operator declares for a model of the agent's own endpoint, as
+ * VS Code's Custom Endpoint models declare `supportsReasoningEffort`, whatever
+ * the catalogue says of it; a model neither names takes none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/extensions/copilot/package.json#L2043-L2049
+ */
+it('offers the levels the agent declares for a model of its endpoint, and none where nothing says', async () => {
+  answering({ data: [{ id: 'deepseek-reasoner' }, { id: 'deepseek-chat' }] });
+  const agent = cofoldAgent({
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+    // A level cofold does not have is declared as VS Code's setting takes any
+    // string, and left out when the model is offered.
+    models: [{ id: 'deepseek-reasoner', supportsReasoningEffort: ['high', 'xhigh', 'low'] }],
+  });
+  const offered = await agent.probe?.();
+
+  const reasoner = offered?.models.find((one) => one.id === 'cofold/deepseek-reasoner');
+  // In cofold's own order, and with no `off` the operator did not name, in
+  // the words of VS Code's shared helpers.
+  expect(reasoner?.configSchema).toMatchObject({
+    properties: {
+      thinkingLevel: {
+        enum: ['low', 'high'],
+        enumLabels: ['Low', 'High'],
+        enumDescriptions: ['Faster responses with less reasoning', 'Greater reasoning depth but slower'],
+      },
+    },
+  });
+  expect((reasoner?.configSchema?.properties as Record<string, Record<string, unknown>>).thinkingLevel).not.toHaveProperty('default');
+  expect(offered?.models.find((one) => one.id === 'cofold/deepseek-chat')).not.toHaveProperty('configSchema');
+});
+
+/*
+ * A probe lists the endpoint again, as VS Code's agents list their models again
+ * when their host refreshes a catalogue, and one whose listing fails answers
+ * the last good list, as VS Code's Claude agent keeps its last known-good
+ * catalogue so a failed refresh never wipes the picker.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentModelRefreshScheduler.ts#L106-L125
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L918-L924
+ */
+it('lists the endpoint again at each probe, and keeps the last good list when a listing fails', async () => {
+  put(CONFIG);
+  /*
+   * One endpoint whose answer moves: cofold's provider keeps the `fetch` it
+   * was built with, so the endpoint changes behind one function.
+   */
+  let answer: unknown = { data: LISTED.slice(0, 1) };
+  globalThis.fetch = (async () => {
+    if (answer === undefined) throw new Error('connection refused');
+    return new Response(JSON.stringify(answer), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const agent = cofoldAgent({});
+  expect((await agent.probe?.())?.models.map((one) => one.id)).toEqual(['open_router/deepseek/deepseek-chat']);
+
+  // A model the endpoint added since is offered at the next probe.
+  answer = { data: LISTED };
+  const every = LISTED.map((one) => `open_router/${one.id}`);
+  expect((await agent.probe?.())?.models.map((one) => one.id)).toEqual(every);
+
+  // A probe whose listing fails answers what the last one read.
+  answer = undefined;
+  expect((await agent.probe?.())?.models.map((one) => one.id)).toEqual(every);
+});
+
+it('offers the configured model alone once the record\'s catalogueTimeoutMs has passed with no answer', async () => {
   put(CONFIG);
   const hung = hanging();
-  const offered = await cofoldAgent({}).probe?.();
+  const began = Date.now();
+  const offered = await cofoldAgent({ catalogueTimeoutMs: 100 }).probe?.();
   expect(offered?.models).toEqual([{ id: 'open_router/deepseek/deepseek-chat', name: 'open_router/deepseek/deepseek-chat' }]);
   expect(hung.calls()).toBe(1);
-  // The catalogue limit is five seconds, and this case waits for it.
-}, 20000);
+  // Well inside the 15 s a record that names none gives the endpoint.
+  expect(Date.now() - began).toBeLessThan(2_000);
+});
 
 it('offers ids that resolve back to the endpoint they were read from', async () => {
   // The file names a provider but no model, so the prefix is the provider the
@@ -348,10 +482,15 @@ it('refuses this backend own prefix for a provider the file carries', () => {
   expect(() => modelOf({}, { model: 'cofold/qwen/qwen3-8b' })).toThrow(/configures open_router/);
 });
 
-it('resolves this backend own prefix to the local endpoint when the file has no provider', () => {
+/*
+ * A turn with nothing to name an endpoint, no `baseUrl` and no provider in the
+ * file, refused as a turn with no model is: cofold's model adapter takes its
+ * target server from configuration alone.
+ * https://www.npmjs.com/package/@cofold/model-openai-compat
+ */
+it('refuses a turn nothing names an endpoint for, as a turn with no model is', () => {
   put({ providers: [] });
-  const resolved = modelOf({}, { model: 'cofold/qwen/qwen3-8b' });
-  expect(resolved.modelId).toBe('qwen/qwen3-8b');
+  expect(() => modelOf({}, { model: 'cofold/qwen/qwen3-8b' })).toThrow(/no endpoint is configured and this backend has no default/);
 });
 
 it('refuses a named provider when the file carries none', () => {
@@ -366,6 +505,27 @@ it('never asks the network for a caller that passed an adapter', async () => {
   const offered = await cofoldAgent({ adapter, model: 'open_router/m' }).probe?.();
   expect(seen.calls).toBe(0);
   expect(offered?.models).toEqual([{ id: 'open_router/m', name: 'open_router/m' }]);
+});
+
+/*
+ * The endpoint is the agent's configuration, as VS Code keeps a provider's
+ * settings in the host's root configuration, so a session asks the agent's
+ * endpoint whatever endpoint a value it carries names.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1338
+ */
+it('asks the agent\'s own endpoint for a session\'s catalogue, whatever endpoint its values carry', async () => {
+  const { seen } = answeringEach({ 'api.deepseek.com': { data: LISTED } });
+  const agent = cofoldAgent({ baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' });
+  const session = startedNow(agent.create({
+    uri: 'ahp-session:/endpoint',
+    chatUri: 'ahp-chat:/endpoint',
+    settings: { baseUrl: 'https://elsewhere.example/v1' },
+    schema: () => agent.schema(),
+    emit: () => {},
+  } as unknown as Start));
+  session.models();
+  await untilAsync(async () => seen.length >= 1);
+  expect([...new Set(seen.map((one) => new URL(one.url).host))]).toEqual(['api.deepseek.com']);
 });
 
 it('answers a session with the same catalogue, and its own model until then', async () => {

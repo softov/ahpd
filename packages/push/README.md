@@ -68,7 +68,7 @@ A device is addressed by its install id, which is the URI path:
 | `resourceList push://devices` | The registered device ids |
 | `resourceDelete push://devices/<id>` | Unregisters. A device that is not there is refused `-32008` |
 
-The body is JSON. A phone has a non-empty `token` and a `platform` of `ios` or `android`. A browser has `platform: "web"`, an `endpoint` and `keys: { p256dh, auth }`, which are the fields of a subscription's `toJSON()`. `lang` is optional, a BCP 47 tag such as `pt-BR` that the device's notifications are worded in. A body that is neither is refused `-32602`. The person a device belongs to is the one the writing connection is signed in as, and the body cannot name one.
+The body is JSON. A phone has a non-empty `token` and a `platform` of `ios` or `android`. A browser has `platform: "web"`, an `endpoint` and `keys: { p256dh, auth }`, which are the fields of a subscription's `toJSON()`. `lang` is optional, a BCP 47 tag such as `pt-BR` that the device's notifications are worded in. `audience` is optional, `person` or `device`, which sessions the device hears about. A body that is neither is refused `-32602`. The person a device belongs to is the one the writing connection is signed in as, and its client the id that connection gave at `initialize`; the body names neither.
 
 A browser's `endpoint` must be an `https:` URL on a host that `webPushHosts` allows. A write with another endpoint is refused `-32602`. The endpoint and the keys are never read back, because an endpoint is a capability URL to the device. A write with `createOnly` against an id that is already there is refused `-32010`. A write whose `ifMatch` is not the device's `etag` is refused `-32011`, and so is one with an `ifMatch` naming an id that is not there. A URI of another scheme is refused `-32602`.
 
@@ -103,7 +103,7 @@ The plugin watches each session's status as VS Code's sessions window reads it: 
 
 ## Which devices are told
 
-The devices of the person a session is for, as VS Code's window tells its user. On a daemon where people sign in, those are the devices the session's owner registered, and a device written by a connection that is nobody hears nothing. On a daemon where nobody signs in, there is one person, and every device hears every session.
+Each device chooses with its `audience`. A `person` device, which is one that says nothing, hears every session of its person, as VS Code's window tells its user: on a daemon where people sign in, the sessions whose owner registered it, and on a daemon where nobody signs in, every session, its one person's. A `device` device hears only the sessions its own client created or opened. Every device also hears the sessions its own client created or opened, whoever's they are.
 
 ## How a notification is sent
 

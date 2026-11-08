@@ -1,9 +1,9 @@
 /*
  * What a key and a call say about themselves: one map, one set of bounds.
  *
- * The mint writes a key's meta and the proxy header writes a call's, and both
- * go through `checkMeta`, so a case here is one both doors refuse. `parseMeta`
- * is the text form the header and the flag share.
+ * The mint writes a key's meta and a proxy call writes its own, and both go
+ * through `checkMeta`, so a case here is one every door refuses. `parseMeta`
+ * reads the header's text, a JSON object as LiteLLM's.
  */
 
 import { expect, it } from 'vitest';
@@ -27,6 +27,7 @@ it('accepts a name and a value at their limits, and refuses one past each', () =
   expect(checkMeta({ [longestName]: longestValue })).toEqual({ [longestName]: longestValue });
 
   expect(refusal(() => checkMeta({ ['a'.repeat(65)]: 'x' }))).toContain('is 1 to 64 characters');
+  expect(refusal(() => checkMeta({ '': 'x' }))).toContain('is 1 to 64 characters');
   expect(refusal(() => checkMeta({ a: 'x'.repeat(257) }))).toContain('is 256 characters at most');
   // An empty value is a name with nothing after it, which is a value of zero.
   expect(checkMeta({ a: '' })).toEqual({ a: '' });
@@ -38,18 +39,11 @@ it('accepts 32 entries and refuses the thirty-third', () => {
   expect(refusal(() => checkMeta({ ...entries, k32: 'v' }))).toBe('A meta names 32 entries at most, and that body names 33');
 });
 
-it('accepts a name of letters, digits, _, . and -, and refuses any other', () => {
-  expect(checkMeta({ 'a_B-c.9': 'v' })).toEqual({ 'a_B-c.9': 'v' });
-  for (const name of ['', 'a b', 'a,b', 'é', 'a/b']) {
-    expect(refusal(() => checkMeta({ [name]: 'v' })), name).toContain('is 1 to 64 characters of A to Z');
-  }
-});
-
-it('refuses a value that is not a string, holds a comma, or holds a line break', () => {
+// A meta is LiteLLM's spend_logs_metadata, any names and string values
+// (https://docs.litellm.ai/docs/proxy/cost_tracking).
+it('takes a name and a value of any characters, and refuses a value that is not a string', () => {
+  expect(checkMeta({ 'a b/é,c': 'x, y\nz' })).toEqual({ 'a b/é,c': 'x, y\nz' });
   expect(refusal(() => checkMeta({ a: 1 }))).toBe('A meta\'s a is a string, and that body has 1');
-  expect(refusal(() => checkMeta({ a: 'x,y' }))).toBe('A meta\'s a holds no comma and no line break');
-  expect(refusal(() => checkMeta({ a: 'x\ny' }))).toBe('A meta\'s a holds no comma and no line break');
-  expect(refusal(() => checkMeta({ a: 'x\ry' }))).toBe('A meta\'s a holds no comma and no line break');
 });
 
 it('refuses a body that is not a map', () => {
@@ -58,24 +52,20 @@ it('refuses a body that is not a map', () => {
   }
 });
 
-it('reads k=v,k=v, trimming spaces, and refuses a part with no = or a name written twice', () => {
-  expect(parseMeta('a=1, b=2')).toEqual({ a: '1', b: '2' });
-  expect(parseMeta(' env = prod , client = pi ')).toEqual({ env: 'prod', client: 'pi' });
-  expect(parseMeta('a=')).toEqual({ a: '' });
+// LiteLLM's x-litellm-spend-logs-metadata header is a JSON object
+// (https://docs.litellm.ai/docs/proxy/cost_tracking).
+it('reads a JSON object of string values, and refuses text that is not JSON', () => {
+  expect(parseMeta('{"a":"1","b":"two, three"}')).toEqual({ a: '1', b: 'two, three' });
   // Nothing named is no meta at all, which is what a client sending no header means.
   expect(parseMeta('  ')).toEqual({});
 
-  expect(refusal(() => parseMeta('a'))).toBe('a is not a meta entry; write one as name=value');
-  expect(refusal(() => parseMeta('=1'))).toContain('is 1 to 64 characters of A to Z');
-  expect(refusal(() => parseMeta('a=1,a=2'))).toBe('a is named twice in one meta');
-  // A comma inside one value reads as the start of the next entry, which has
-  // no `=`, so the value is refused rather than split.
-  expect(refusal(() => parseMeta('a=x,y'))).toBe('y is not a meta entry; write one as name=value');
+  expect(refusal(() => parseMeta('a=1,b=2'))).toBe('A meta is a JSON object of string values, and a=1,b=2 is not JSON');
+  expect(refusal(() => parseMeta('["a"]'))).toContain('A meta is a map of names to values');
 });
 
-it('refuses what checkMeta refuses, so both doors agree', () => {
-  expect(refusal(() => parseMeta('a=x' + 'y'.repeat(256)))).toContain('is 256 characters at most');
-  expect(refusal(() => parseMeta('a=1,a=2'))).toContain('named twice');
-  const many = Array.from({ length: 33 }, (_one, at) => `k${String(at)}=v`).join(',');
-  expect(refusal(() => parseMeta(many))).toBe('A meta names 32 entries at most, and that body names 33');
+it('refuses what checkMeta refuses, so every door agrees', () => {
+  expect(refusal(() => parseMeta(JSON.stringify({ a: 'y'.repeat(257) })))).toContain('is 256 characters at most');
+  expect(refusal(() => parseMeta('{"a":1}'))).toBe('A meta\'s a is a string, and that body has 1');
+  const many = Object.fromEntries(Array.from({ length: 33 }, (_one, at) => [`k${String(at)}`, 'v']));
+  expect(refusal(() => parseMeta(JSON.stringify(many)))).toBe('A meta names 32 entries at most, and that body names 33');
 });

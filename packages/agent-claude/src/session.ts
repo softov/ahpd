@@ -1,24 +1,24 @@
 import { rmSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { withheldModesOf, withoutModes } from './managed.js';
 import { optionDefaults, storedSandbox } from './options.js';
-import { titleFrom, uriOf } from '@ahpd/sdk';
+import { idOf, titleFrom, uriOf } from '@ahpd/sdk';
 import type { Bag, BoundTool, Session } from '@ahpd/sdk';
 import { bag, list, str } from './session/common.js';
 import { createAsking } from './session/asking.js';
 import { createClientTools } from './session/clienttools.js';
 import { createConfig, listsOf } from './session/config.js';
-import type { ClaudeSessionOptions, Owed, SessionContext } from './session/context.js';
+import type { ClaudeSessionOptions, PendingSdkMessage, SessionContext } from './session/context.js';
 import { createLogins } from './session/logins.js';
 import { createParts } from './session/parts.js';
 import { createQuery } from './session/query.js';
-import { createSavedOutputs } from './session/savedoutput.js';
+import { createClaudeTerminalOutputs } from './session/savedoutput.js';
 import { createServers } from './session/servers.js';
 import { createStream } from './session/stream.js';
 import { createTurns } from './session/turns.js';
 import { createWorkers } from './session/workers.js';
 
-export { keptLabel } from './session/asking.js';
-export { INTERNAL_AGENT, agentNameOf, customizationsOf } from './session/customizations.js';
+export { INTERNAL_AGENT, customizationsOf, resolveClaudeAgentName } from './session/customizations.js';
 export { EFFORT_DESCRIPTIONS, EFFORT_LABELS, EFFORTS, SDK_DEFAULT_MODEL_VALUE } from './session/config.js';
 export type { ClaudeSessionOptions } from './session/context.js';
 export type { Published } from './session/customizations.js';
@@ -60,15 +60,22 @@ export function createSession(options: ClaudeSessionOptions): Session {
     ...(preset['sandbox'] === 'off' ? {} : storedSandbox(options.settings)),
   });
 
+  // The permission modes the operator's lock takes away; a session holding one runs Ask Before Edits.
+  const withheld = withheldModesOf(options.managedSettings);
+
   const ctx = {
     options,
     emit,
-    settings: { permissionMode: 'default', ...options.settings } as Record<string, unknown>,
+    config: {
+      permissionMode: 'default',
+      ...options.settings,
+      ...(withheld.has(String(options.settings?.permissionMode)) ? { permissionMode: 'default' } : {}),
+    } as Record<string, unknown>,
     allowed: listsOf(options.settings?.permissions) ?? { allow: [], deny: [] },
     chosen: undefined as string | undefined,
     appliedEffort: undefined as string | undefined,
     offering: [] as BoundTool[],
-    query: undefined as unknown as ReturnType<typeof query>,
+    query: undefined as ReturnType<typeof query> | undefined,
     active: undefined as Bag | undefined,
     title: titleFrom(str(bag(bag((options.seed ?? [])[0]).message).text) ?? '', 'New session'),
     modified: new Date().toISOString(),
@@ -76,23 +83,27 @@ export function createSession(options: ClaudeSessionOptions): Session {
     resumedFrom: undefined,
     failed: undefined as string | undefined,
     rebind: undefined as unknown,
+    interrupted: false,
+    stopAnswers: undefined as Set<string> | undefined,
     ran: undefined as string | undefined,
     streaming: undefined as string | undefined,
-    wake: undefined as (() => void) | undefined,
-    closed: false,
-    peers: [...(options.additional ?? [])] as string[],
+    pendingPromptDeferred: undefined as (() => void) | undefined,
+    disposed: false,
+    additionalDirectories: [...(options.additional ?? [])] as string[],
     steering: undefined as Bag | undefined,
-    owed: new Map<string, Owed>(),
-    answering: undefined as string | undefined,
+    yielded: new Map<string, PendingSdkMessage>(),
+    parentSdkUuid: undefined as string | undefined,
     hostInstructions: undefined as { turn: Bag; said: string[] } | undefined,
-    running: undefined as string | undefined,
-    agentId: options.resume as string | undefined,
-    handshake: undefined as Bag | undefined,
+    appliedAgent: undefined as string | undefined,
+    sdkSessionId: options.resume as string | undefined,
+    unwritten: false,
+    init: undefined as Bag | undefined,
     contextFigure: undefined,
     usageSaid: undefined as string | undefined,
     gone: undefined as string | undefined,
-    customizations: [...(options.seedCustomizations ?? [])] as Bag[],
-    offered: [] as { id: string; name: string }[],
+    customizations: [] as Bag[],
+    // The agent's own, which the host seeds a session with, until a CLI answers.
+    models: [...(options.seedModels ?? [])] as { id: string; name: string }[],
     /*
      * A preset that says the sandbox is off, which a stored `on` does not
      * override.
@@ -107,9 +118,10 @@ export function createSession(options: ClaudeSessionOptions): Session {
      */
     values: valuesOf(live()),
     valuesOf,
-    startedWith: '',
+    appliedValues: '',
     draft: undefined as Bag | undefined,
-    beginning: undefined as string | undefined,
+    preparingTurn: undefined as string | undefined,
+    opening: undefined as Promise<void> | undefined,
     // The tools the session was built with, which the first CLI is given.
     toolDiff: (options.tools ?? []) as BoundTool[] | undefined,
     turns: [...(options.seed ?? [])] as Bag[],
@@ -126,7 +138,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
   Object.assign(ctx, createParts(ctx));
   Object.assign(ctx, workers);
   Object.assign(ctx, createStream(ctx));
-  Object.assign(ctx, createSavedOutputs(ctx));
+  Object.assign(ctx, createClaudeTerminalOutputs(ctx));
   Object.assign(ctx, asking);
   Object.assign(ctx, createLogins(ctx));
   Object.assign(ctx, createQuery(ctx));
@@ -160,7 +172,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
    */
   else if (stored === undefined && typeof options.model === 'string' && options.model !== 'default'
     && (options.seedModels ?? []).some((model) => model.id === options.model)) ctx.chosen = options.model;
-  if (ctx.settings.shellInitScripts !== undefined) ctx.setShellInit(ctx.settings.shellInitScripts);
+  if (ctx.config.shellInitScripts !== undefined) ctx.setShellInit(ctx.config.shellInitScripts);
 
   /*
    * The host's own tools and the clients', as the two in-process MCP servers
@@ -173,13 +185,29 @@ export function createSession(options: ClaudeSessionOptions): Session {
    */
   ctx.buildClientMcpServers();
 
-  // ------------------------------------------------------------------ the run
-  // The login the first CLI signs in with, which the query's environment reads.
+  /*
+   * The session before its first send, which starts its CLI: VS Code's
+   * provisional session, made with no SDK contact. Until a CLI answers, its
+   * lists are the agent's own with the disk scan, and the login a CLI would
+   * sign in with is the first the record names that is ready, which each send
+   * chooses again.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1543-L1556
+   */
+  ctx.customizations = ctx.provisionalCustomizations();
   ctx.login = ctx.loginFor(ctx.values);
-  ctx.query = ctx.startQuery(ctx.running, true);
-  void ctx.describe().catch(() => {});
-
-  void ctx.consume();
+  /*
+   * Or the CLI now, where the record's `cliStart` is `open`: the session says
+   * its account, its context and its plan limits before any turn. A record
+   * whose logins are none of them ready, and a CLI that does not start, leave
+   * the session as it was, for its first send to start one.
+   */
+  if (ctx.values['cliStart'] !== 'send') {
+    ctx.opening = (async () => {
+      const unready = await ctx.rebindForSyncedState();
+      if (unready !== undefined || ctx.disposed || ctx.query !== undefined) return;
+      await ctx.startQuery(ctx.appliedAgent, true);
+    })().catch(() => {});
+  }
 
   /*
    * Everything this session is waiting on a person or a client for.
@@ -192,12 +220,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
    */
   /** The backend's part of the session's `_meta`, or nothing when it has none. */
   const meta = (): { _meta?: Bag } => {
-    const model = ctx.chosen ?? str(bag(ctx.handshake).model);
+    const model = ctx.chosen ?? str(bag(ctx.init).model);
     const said: Bag = { ...(model ? { 'ahpd.model': model } : {}), ...ctx.usageMeta() };
     return Object.keys(said).length === 0 ? {} : { _meta: said };
   };
 
-  const needed = (): Bag[] => [...ctx.pending.values()].map((one) => one.entry).concat(ctx.calls.entries());
+  const needed = (): Bag[] => [...ctx.pending.values()].map((one) => one.request).concat(ctx.calls.entries());
 
   const self: Session = {
     ...config.methods,
@@ -210,11 +238,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
     chatUri,
     status: () => ctx.status(),
 
-    models: () => ctx.offered,
-    agentId: () => ctx.agentId,
-    busy: () => ctx.working() || ctx.stopped.sessionCrons.length > 0,
-    forkPoint: (turnId) => ctx.ends.get(turnId),
-    endPoint: (turnId) => ctx.ends.get(turnId),
+    models: () => ctx.models,
+    agentId: () => ctx.sdkSessionId,
+    busy: () => ctx.hasActiveWork() || ctx.stopped.sessionCrons.length > 0,
+    forkPoint: (turnId) => ctx.forkAnchorUuids.get(turnId),
+    endPoint: (turnId) => ctx.forkAnchorUuids.get(turnId),
 
     customizations: () => ctx.customizations,
     allTurns: () => ctx.turns,
@@ -227,7 +255,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     activity: () => undefined,
     title: () => ctx.title,
     modifiedAt: () => ctx.modified,
-    workingDirectories: () => [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
+    workingDirectories: () => [uriOf(cwd), ...ctx.additionalDirectories.map((one) => uriOf(one))],
 
     sessionState: () => ({
       // No `resource`: it is declared on `SessionSummary` and not on
@@ -238,7 +266,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       lifecycle: 'ready',
       defaultChat: chatUri,
       chats: [{ resource: chatUri, title: ctx.title }],
-      workingDirectories: [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
+      workingDirectories: [uriOf(cwd), ...ctx.additionalDirectories.map((one) => uriOf(one))],
       customizations: ctx.customizations,
       /*
        * The schema *and* what is in force.
@@ -249,8 +277,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * effort control, which is what it had.
        */
       config: {
-        schema: options.schema?.() ?? { type: 'object', properties: {} },
-        values: { ...ctx.settings, ...(ctx.chosen ? { model: ctx.chosen } : {}) },
+        schema: withoutModes(options.schema?.() ?? { type: 'object', properties: {} }, withheld),
+        values: { ...ctx.config, ...(ctx.chosen ? { model: ctx.chosen } : {}) },
       },
       /*
        * The model this session is on, under `_meta` because the protocol has
@@ -280,9 +308,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
       status: ctx.status(),
       modifiedAt: ctx.modified,
       // A chat's own set, which may be narrower than its session's: the
-      // process is rooted at the same place, and which peers it was given is
-      // this chat's to say.
-      workingDirectories: [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
+      // process is rooted at the same place, and which additional directories
+      // it was given is this chat's to say.
+      workingDirectories: [uriOf(cwd), ...ctx.additionalDirectories.map((one) => uriOf(one))],
       // Every turn this chat holds. A resumed session can be seeded with
       // hundreds of them, and the host cuts the window a subscribe asks for.
       turns: ctx.turns,
@@ -318,9 +346,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
           one.settle({ behavior: 'deny', message: 'The session was stopped' });
           ctx.inputNeededRemoved(one.id);
         }
-        for (const [callId, running] of ctx.onServer) if (running.blocked) ctx.inputNeededRemoved(`auth:${callId}`);
+        for (const [callId, running] of ctx.onServer) {
+          if (running.blocked) ctx.inputNeededRemoved(`toolAuthentication:${ctx.options.chatUri}:${running.turnId}:${callId}`);
+        }
         for (const scope of [...ctx.scopes.values()]) {
-          if (scope.parent !== '' && scope.chat !== undefined) ctx.endWorker(scope.parent, 'cancelled');
+          if (scope.parent !== '' && scope.chat !== undefined) ctx.endSubagent(scope.parent, 'cancelled');
         }
         const turn = ctx.active;
         if (turn !== undefined) {
@@ -328,31 +358,29 @@ export function createSession(options: ClaudeSessionOptions): Session {
           const attempt = Date.now() - ctx.startedAt;
           turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
           ctx.resumedFrom = undefined;
-          ctx.settleOpen(turn);
+          ctx.clearPendingToolCalls(turn);
           ctx.turns.push(turn);
           ctx.active = undefined;
           ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: attempt });
         }
       }
-      ctx.closed = true;
+      ctx.disposed = true;
       servers.unwatch();
-      ctx.ended.clear();
+      ctx.completed.clear();
       ctx.pastLines.clear();
-      // The lines the shell hook kept for the questions that never came.
-      config.unprefixed.clear();
       ctx.spawning.clear();
       ctx.background.clear();
       // What was running and what each chat was told about it. A session being
       // disposed tells nobody anything.
       ctx.taskInfo.clear();
-      ctx.live.clear();
+      ctx.backgroundTasks.clear();
       ctx.told.clear();
       // And the output terminals a background shell wrote into, which go with
       // the session that made them rather than being finished without it.
       ctx.closeOutputs();
       // A worker still waiting for a spawn that will now never be recorded.
       for (const scope of ctx.scopes.values()) scope.waiting = undefined;
-      ctx.wake?.();
+      ctx.pendingPromptDeferred?.();
       for (const one of [...ctx.pending.values()]) {
         ctx.pending.delete(one.id);
         one.settle({ behavior: 'deny', message: 'The session was disposed' });
@@ -363,13 +391,28 @@ export function createSession(options: ClaudeSessionOptions): Session {
       ctx.releaseCalls('The session was disposed');
       try { rmSync(ctx.initScript, { force: true }); }
       catch { /* a script that was never written */ }
-      ctx.query.close();
+      ctx.query?.close();
       /*
        * The query's cleanup, which `close` starts and does not return: it
        * settles once the CLI's process has exited, or after the SDK's own bound.
+       * A session whose first send never came has no CLI to wait for.
        */
-      const disposed = (ctx.query as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
-      return Promise.resolve(disposed).catch(() => undefined);
+      const disposed = (ctx.query as unknown as { [Symbol.asyncDispose]?: () => Promise<void> } | undefined)?.[Symbol.asyncDispose]?.();
+      const exited = Promise.resolve(disposed).catch(() => undefined);
+      /*
+       * Kept under each conversation id this CLI could write until it has
+       * exited, so a session that starts a conversation under one of them
+       * waits for it first (`startQuery`).
+       */
+      const exits = options.exits;
+      if (exits !== undefined && ctx.query !== undefined) {
+        for (const id of new Set([ctx.sdkSessionId, options.chatId ?? idOf(options.uri)])) {
+          if (id === undefined) continue;
+          exits.set(id, exited);
+          void exited.then(() => { if (exits.get(id) === exited) exits.delete(id); });
+        }
+      }
+      return exited;
     },
   };
   ctx.self = self;

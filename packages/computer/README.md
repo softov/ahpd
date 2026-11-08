@@ -146,7 +146,7 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 
 ## Agents in a machine
 
-A machine made for an agent carries what the agent's `machine()` declares. Each agent's CLI comes from a part, an image this host builds at the version `images/versions.json` pins and mounts at `/opt/ahpd/<id>`, so any glibc image runs it with nothing installed. Each agent keeps its configuration in a state volume per provider, seeded from a few host files and never a login file; a profile with `state: "host"` mounts this host's own configuration instead. A value the vault fills for a need reaches only the agent whose need declared it, `run_in_computer` from that agent's session included. See [COMPUTERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#parts).
+A machine made for an agent carries what the agent's `machine()` declares. Each agent's CLI comes from a part, an image the release workflow builds and this host pulls at the version `images/versions.json` pins and mounts at `/opt/ahpd/<id>`, so any glibc image runs it with nothing installed. Each agent keeps its configuration in a state volume per provider, seeded from a few host files and never a login file; a profile with `state: "host"` mounts this host's own configuration instead. A value the vault fills for a need reaches only the agent whose need declared it, `run_in_computer` from that agent's session included. See [COMPUTERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#parts).
 
 ## The tools
 

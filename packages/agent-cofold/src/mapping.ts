@@ -17,7 +17,7 @@
 
 import { ZERO_USAGE, addUsage } from '@cofold/agents';
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
-import type { Bag, CommandTerminal } from '@ahpd/sdk';
+import type { Bag, CommandTerminal, PendingConfirmation } from '@ahpd/sdk';
 import { bag, str, withToolCallDuration } from '@ahpd/sdk';
 import { contributorOf, describe, intentionOf, pastTenseOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
@@ -41,8 +41,6 @@ export interface OpenRequest {
    * snapshot can repeat it; its id is what the set and the removal carry.
    */
   request: Bag;
-  /** The choices an approval offered, which the person's `selectedOptionId` names one of. */
-  options?: Bag[];
 }
 
 /** What one event means: the actions to send, and the request it opened or closed. */
@@ -86,25 +84,35 @@ export interface TurnMappingOptions {
    */
   cancelled(): boolean;
   /**
-   * Whether the operator's rule makes this tool ask every time.
-   *
-   * Read when a call is put to a person, so a matched question offers no
-   * "allow for this session". cofold keeps such a choice itself, per session
-   * and tool, and would answer the next ask for that tool with it without
-   * asking anybody. A replay passes none: the rules of now do not decide what
-   * was asked then.
+   * What the host decides a question about a call by, said beside its ready:
+   * VS Code's pending confirmation fields.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
    */
-  asksEveryTime?(name: string): boolean;
+  confirmationOf?(name: string, input: unknown): PendingConfirmation;
   /**
-   * Whether the turn can be run again, cut back to the turn before it.
+   * Whether the turn can be run again, the store truncated back to the turn
+   * before it with cofold's own `Store.sessions.truncate`.
    *
    * Read when the run fails, so the error part says a resume is possible only
-   * when there is a point to cut back to - or no turn before, for a
+   * when there is a point to truncate to - or no turn before, for a
    * conversation's first turn, which starts over under its id. A replay passes
-   * none: it rebuilds a paused run rather than a failed one, and a failure read
-   * back is not one this process can put on the store.
+   * none: it rebuilds a paused run.
    */
-  canCut?(): boolean;
+  canTruncate?(): boolean;
+  /**
+   * Whether this turn is a failed one run again.
+   *
+   * A resume whose send fails can be asked for again, as VS Code's host ends
+   * a failed resume resumable, where a new turn's failed send never reached
+   * the runtime and cannot.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1854-L1872
+   */
+  resumed?: boolean;
+  /**
+   * The reference the host answered for an image a reply carried, by the
+   * message's id and the image's place in it, once the host has kept it.
+   */
+  keptOf?(key: string): Bag | undefined;
 }
 
 /** One turn's event translation. */
@@ -155,37 +163,51 @@ const usageOf = (usage: Usage, model: string | undefined, cost?: number): Bag =>
 };
 
 /**
- * What a compaction is said as, in a live turn and in a transcript alike.
- *
- * The Claude backend words its own compaction this way, and a person reading
- * two hosts should read one sentence for one thing. The numbers are cofold's
- * own estimate of the history before the summary and after it, and a call with
- * neither says the compaction happened rather than nothing about it.
- *
- * `asked` is for a compaction a runtime command ran, such as a typed
- * `/compact`: the person asked for it, so the sentence does not call it
- * automatic.
+ * What a compaction is said as, in a live turn and in a transcript alike, in
+ * cofold's own app's words, papo's `compactedNotice`: the tokens before the
+ * summary and after it where cofold estimated them, and else what the summary
+ * is.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/blocks.ts#L50-L55
  */
-export const compactionNotice = (
-  tokens?: { before: number; after: number },
-  { asked = false }: { asked?: boolean } = {},
-): string => {
-  const said = asked ? 'Context compacted' : 'Context compacted automatically';
-  return tokens === undefined
-    ? `${said}.`
-    : `${said}: ${String(tokens.before)} tokens to ${String(tokens.after)}.`;
-};
+export const compactionNotification = (tokens?: { before: number; after: number }): string =>
+  tokens === undefined
+    ? 'Context compacted: the conversation so far was folded into this summary; the model continues from it.'
+    : `Context compacted: ${String(tokens.before)} tokens to ${String(tokens.after)}.`;
 
 /**
- * The part that ends a turn which failed, in the shape `chat/error` carries.
+ * The spec's reference for an image a reply carries: the one the host answered
+ * for the bytes it keeps, else the image's own URL where it names one. Nothing
+ * for bytes the host keeps nothing of, which no client is shown, as VS Code's
+ * host leaves out content it could not keep.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L148-L183
+ */
+export const imageRefOf = (image: { mimeType: string; url?: string }, kept: Bag | undefined): Bag | undefined =>
+  kept ?? (image.url !== undefined && image.url !== '' ? { uri: image.url, contentType: image.mimeType } : undefined);
+
+/**
+ * The stages a turn's send fails at before the runtime runs it, by the error
+ * types VS Code's host gives them: a model nothing resolves, and every other
+ * failure to send.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2574
+ */
+export const SEND_FAILURES = ['modelSelectionFailed', 'sendFailed'] as const;
+
+/** A stage a turn's send fails at. */
+export type SendFailure = typeof SEND_FAILURES[number];
+
+/**
+ * The part that ends a turn which failed, in the shape `chat/error` carries:
+ * the spec's error part.
  *
  * `resumable` says a client may ask for the turn again. It is set only for a
- * failure the session can put back: a model call, cut back to the turn before,
- * or a conversation's first turn, which is started over.
+ * failure the session can put back: a model call, the store truncated back to
+ * the turn before, or a conversation's first turn, which is started over.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1133-L1146
  */
-const failurePart = (message: string, resumable = false): Bag => ({
+const errorPart = (errorType: string, message: string, resumable = false): Bag => ({
   kind: 'error',
-  error: { errorType: 'turnFailed', message },
+  error: { errorType, message },
   ...(resumable ? { resumable: true } : {}),
 });
 
@@ -208,8 +230,8 @@ interface OpenCall {
    * and the row is titled by the tool's name.
    */
   subject: string | undefined;
-  /** The client that runs it, when one does; undefined for a host tool. */
-  owner: string | undefined;
+  /** The client that runs it, by its id, when one does: the spec's `contributor` of a client's call; undefined for a host tool. */
+  contributor: string | undefined;
   /** Whether `chat/toolCallReady` has gone out yet. */
   readied: boolean;
   /**
@@ -323,7 +345,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
       shown,
       input: undefined,
       subject: undefined,
-      owner,
+      contributor: owner,
       readied: false,
       awaited: false,
       invocation: undefined,
@@ -349,18 +371,25 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
    * text rather than its answer, and cofold says so one event later with
    * `context.compacted`. Holding the writes for one event is what lets the two
    * be told apart without guessing. Nothing is held for a step that streamed,
-   * because its deltas are already on the wire.
+   * because its deltas are already on the wire. An image the reply carries is
+   * held as the reference it is said by, which no step streams.
    */
-  let held: { kind: 'reasoning' | 'text'; text: string }[] = [];
+  let held: ({ kind: 'reasoning' | 'text'; text: string } | { kind: 'ref'; ref: Bag })[] = [];
   /** How many compactions this turn has reported, after which a command's own output says nothing new. */
   let compactions = 0;
-  /** Whether a runtime command started this turn, which words its compaction as asked for. */
-  let commanded = false;
 
   /** Write what the last step's reply was held for, if anything. */
   const flush = (): Bag[] => {
     const actions: Bag[] = [];
-    for (const piece of held) actions.push(...write(piece.kind, piece.text));
+    for (const piece of held) {
+      if (piece.kind !== 'ref') {
+        actions.push(...write(piece.kind, piece.text));
+        continue;
+      }
+      const part: Bag = { kind: 'contentRef', ...piece.ref };
+      parts.push(part);
+      actions.push({ type: 'chat/responsePart', turnId, part: { ...part } });
+    }
     held = [];
     return actions;
   };
@@ -477,13 +506,17 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          * that streamed wrote its parts as deltas and holds nothing.
          */
         case 'model.completed': {
-          const pieces: { kind: 'reasoning' | 'text'; text: string }[] = [];
-          for (const piece of event.message.parts) {
+          const pieces: typeof held = [];
+          for (const [index, piece] of event.message.parts.entries()) {
             if (piece.type === 'reasoning' && !reasoningStreamed && piece.text !== '') {
               pieces.push({ kind: 'reasoning', text: piece.text });
             }
             else if (piece.type === 'text' && !textStreamed && piece.text !== '') {
               pieces.push({ kind: 'text', text: piece.text });
+            }
+            else if (piece.type === 'image') {
+              const ref = imageRefOf(piece, options.keptOf?.(`${event.message.id}:${String(index)}`));
+              if (ref !== undefined) pieces.push({ kind: 'ref', ref });
             }
           }
           held = pieces;
@@ -509,10 +542,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           compactions += 1;
           const part: Bag = {
             kind: 'systemNotification',
-            content: compactionNotice(
-              { before: event.estimatedTokens, after: event.afterTokens },
-              { asked: commanded },
-            ),
+            content: compactionNotification({ before: event.estimatedTokens, after: event.afterTokens }),
           };
           parts.push(part);
           return only([{ type: 'chat/responsePart', turnId, part: { ...part } }]);
@@ -527,7 +557,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          * own output would say again.
          */
         case 'command.started':
-          commanded = true;
           return only([]);
         case 'command.finished': {
           if (event.output === undefined || event.output === '' || compactions > 0) return only([]);
@@ -570,7 +599,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             shown,
             input: event.input,
             subject: event.subject,
-            owner,
+            contributor: owner,
             readied: false,
             awaited: false,
             invocation: undefined,
@@ -586,14 +615,18 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          *
          * The call is moved to `pending-confirmation` and said back with a
          * ready action that carries no `confirmed`, which is the reducer's
-         * word for "waiting on somebody". The entry beside it is what a
-         * client that is not watching this chat answers from.
+         * word for "waiting on somebody", and what the host decides it by
+         * beside it, with no options of its own: the host puts VS Code's, as
+         * VS Code's agents raise a pending confirmation for their host's chain.
+         * The entry beside it is what a client that is not watching this chat
+         * answers from.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L167-L178
          */
         case 'approval.requested': {
           const displayName = options.displayNameOf(event.name);
           const prompt = event.prompt ?? `Run ${displayName}?`;
           const held = open.get(event.callId);
-          const owner = held?.owner ?? options.ownerOf(event.name);
+          const owner = held?.contributor ?? options.ownerOf(event.name);
           const shown = held?.shown ?? shownName(event.name, owner);
           const meta = toolMetaOf(event.name);
           // The ask carries the input but not the subject, so the one the
@@ -610,24 +643,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
                 ...contributorOf(owner),
               }
             : held.part.toolCall as Bag;
-          /*
-           * Allow once, allow this tool for the rest of the session, or deny.
-           * The session choice is one cofold keeps itself, per session and
-           * tool, and answers the next ask for that tool with. A tool the
-           * operator's rule names is offered no such choice: cofold would skip
-           * a question the host cannot see.
-           */
-          const choices: Bag[] = [
-            { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
-            ...(options.asksEveryTime?.(event.name) === true
-              ? []
-              : [{ id: 'allow-session', label: `Allow ${displayName} for this session`, kind: 'approve', group: 1 }]),
-            { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
-          ];
+          const confirmation = options.confirmationOf?.(event.name, event.input) ?? {};
           call.status = 'pending-confirmation';
           call.confirmationTitle = prompt;
           call.invocationMessage = prompt;
-          call.options = choices;
           delete call.confirmed;
           const written = toolInputOf(event.name, event.input, subject);
           if (written !== undefined) call.toolInput = written;
@@ -652,7 +671,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             confirmationTitle: prompt,
             ...contributorOf(owner),
             ...(written !== undefined ? { toolInput: written } : {}),
-            options: choices,
+            ...confirmation,
           });
 
           const request: Bag = { id: `approval:${event.requestId}`, chat: options.chatUri, kind: 'toolConfirmation', turnId, toolCall: call };
@@ -661,7 +680,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             kind: 'approval',
             callId: event.callId,
             request,
-            options: choices,
           };
           requests.set(event.requestId, opened);
           actions.push({ type: 'session/inputNeededSet', request });
@@ -673,13 +691,15 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          * confirms but about what somebody types. The request goes on the
          * chat, where the reducer inserts the part a client answers, and the
          * entry carries the questions and their options, so a composer draws
-         * the form from the session channel alone.
+         * the form from the session channel alone. The questions say what is
+         * asked, as VS Code's Claude agent puts a model's questions with no
+         * message of its own.
          * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/elicitation.md#L25-L33
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L292-L295
          */
         case 'input.requested': {
           const chatRequest: Bag = {
             id: event.requestId,
-            message: 'The agent has a question',
             questions: event.questions.map(questionOf),
           };
           const request: Bag = { id: `input:${event.requestId}`, chat: options.chatUri, kind: 'chatInput', request: chatRequest };
@@ -717,7 +737,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           held.readied = true;
           const call = held.part.toolCall as Bag;
           call.status = 'running';
-          call.invocationMessage = held.invocation ?? describe(held.shown, held.subject);
+          // A client's call reads as its row is titled, by the title its tool
+          // was offered under, as the entry asking its client to run it reads.
+          const line = held.invocation ?? describe(held.contributor === undefined ? held.shown : options.displayNameOf(held.name), held.subject);
+          call.invocationMessage = line;
           call.confirmed = held.awaited ? 'user-action' : 'not-needed';
           const written = toolInputOf(held.name, held.input, held.subject);
           if (written !== undefined) call.toolInput = written;
@@ -731,9 +754,9 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             type: 'chat/toolCallReady',
             turnId,
             toolCallId: event.callId,
-            invocationMessage: held.invocation ?? describe(held.shown, held.subject),
+            invocationMessage: line,
             confirmed: held.awaited ? 'user-action' : 'not-needed',
-            ...contributorOf(held.owner),
+            ...contributorOf(held.contributor),
             ...(written !== undefined ? { toolInput: written } : {}),
             ...(call._meta === undefined ? {} : { _meta: bag(call._meta) }),
           }]);
@@ -785,7 +808,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           // ready action is what moves it there so the completion applies.
           const actions: Bag[] = held.readied
             ? []
-            : [toolReadyAction(turnId, event.callId, held.shown, held.input, held.owner, held.subject)];
+            : [toolReadyAction(turnId, event.callId, held.shown, held.input, held.contributor, held.subject)];
           actions.push(toolCompleteAction(turnId, event.callId, held.name, held.shown, event.reason, true, held.subject));
           return only(actions);
         }
@@ -820,12 +843,19 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
              * client draws; reporting it as complete would leave the failure
              * in the snapshot and nowhere on the stream.
              *
-             * A failure the turn never ran on - an agent that could not be
-             * built, a prompt with nothing to run on - is not one a resume can
-             * put back, and neither is one with no point to cut to.
+             * Its type is the stage a send failed at, for a turn the runtime
+             * never ran, as VS Code's host types a failed send, and the
+             * runtime's own code for a run that failed, as VS Code's Copilot
+             * agent carries its SDK's error type.
+             * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSdkChatError.ts#L54-L64
+             *
+             * A new turn's failed send - an agent that could not be built, a
+             * prompt with nothing to run on - is not one a resume can put
+             * back, and neither is a failure with no point to truncate to.
              */
-            const resumable = outcome.error.code !== 'start_failed' && options.canCut?.() === true;
-            actions.push({ type: 'chat/error', turnId, duration, part: failurePart(outcome.error.message, resumable) });
+            const sent = (SEND_FAILURES as readonly string[]).includes(outcome.error.code);
+            const resumable = (!sent || options.resumed === true) && options.canTruncate?.() === true;
+            actions.push({ type: 'chat/error', turnId, duration, part: errorPart(outcome.error.code, outcome.error.message, resumable) });
             return only(actions);
           }
           /*
@@ -839,11 +869,15 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
 
         default: {
           /*
-           * A new cofold event is a compile error here rather than a silent
-           * drop, which is the property this file exists to keep.
+           * An event cofold's types name and this file does not map is a
+           * compile error here, which is the property this file exists to
+           * keep. One a newer cofold sends at run time that the types do not
+           * name maps to nothing, as VS Code's Claude mapper maps a message
+           * type it does not know.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L292-L298
            */
-          const unhandled: never = event;
-          throw new Error(`cofold event is not mapped: ${(unhandled as { type?: string }).type ?? 'unknown'}`);
+          event satisfies never;
+          return only([]);
         }
       }
   };

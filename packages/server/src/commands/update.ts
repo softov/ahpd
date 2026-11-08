@@ -26,7 +26,7 @@ import { checkPlugins, handOffToHelper, installServer, movePlugins, planUpdate }
 import type { HelperOptions, PlaceFacts } from '../selfupdate.js';
 import type { Fetch } from '../update.js';
 import { conflict } from './options.js';
-import { restartFromTerminal, successorTakes } from './restart.js';
+import { RESTART_DELAY_MS, parkedWords, restartFromTerminal, successorTakes } from './restart.js';
 import { deploymentOnly } from './scopes.js';
 import type { ServedFacts } from './served.js';
 
@@ -175,13 +175,14 @@ export async function runUpdate(ask: UpdateAsk, served?: ServedFacts, facts: Upd
       platform,
       ...(facts.npmVersion === undefined ? {} : { npmVersion: facts.npmVersion }),
     });
+    // Down once the answer has had VS Code's upgrade kill delay to reach the caller.
     setTimeout(() => {
       void Promise.resolve()
         .then(() => down())
         .catch((error: unknown) => { process.stderr.write(`${words(error)}\n`); });
-    }, 0);
+    }, RESTART_DELAY_MS);
     return {
-      data: { from: plan.current, to: plan.latest, restarting: true },
+      data: { from: plan.current, to: plan.latest, restarting: true, restartDelayMs: RESTART_DELAY_MS },
       text: `${said.length === 0 ? '' : `${said.join('\n')}\n`}${plan.current} to ${plan.latest}; restarting the daemon\n`,
     };
   }
@@ -206,24 +207,32 @@ export async function runUpdate(ask: UpdateAsk, served?: ServedFacts, facts: Upd
   }
   /*
    * The restart, after the answer. A served daemon's own restart defers
-   * itself until the response in hand has gone, which is why it is awaited
-   * here: what it throws is a refusal the caller gets instead of
-   * `restarting`. A terminal's restart waits for the successor, so it runs on
-   * the next turn of the loop, after this answer has been printed.
+   * itself until the response in hand has gone, or parks itself until the
+   * turns end when one began during the install, which is why it is awaited
+   * here: the caller is told which, and what it throws is a refusal the caller
+   * gets instead. A terminal's restart waits for the successor, so it runs on
+   * the next turn of the loop, after this answer has been printed, and says a
+   * park when the daemon answers with one.
    */
+  const before = `${said.length === 0 ? '' : `${said.join('\n')}\n`}${plan.current} to ${plan.latest}`;
+  const kept = { from: plan.current, to: plan.latest, plugins: moved, left: checked.left };
   if (served !== undefined) {
-    await served.restart([...(daemon.argv ?? facts.ownArgv ?? process.argv.slice(2))], ask.force);
+    const outcome = await served.restart([...(daemon.argv ?? facts.ownArgv ?? process.argv.slice(2))], ask.force);
+    if ('parked' in outcome) {
+      return { data: { ...kept, restarting: false, parked: outcome.parked }, text: `${before}\n${parkedWords(outcome.parked)}\n` };
+    }
+    return { data: { ...kept, restarting: true, restartDelayMs: outcome.restartDelayMs }, text: `${before}; restarting the daemon\n` };
   }
-  else {
-    const restart = facts.restart ?? ((wanted: boolean) => restartFromTerminal(wanted));
-    setTimeout(() => {
-      void Promise.resolve()
-        .then(() => restart(ask.force))
-        .catch((error: unknown) => { process.stderr.write(`${words(error)}\n`); });
-    }, 0);
-  }
-  const text = `${said.length === 0 ? '' : `${said.join('\n')}\n`}${plan.current} to ${plan.latest}; restarting the daemon\n`;
-  return { data: { from: plan.current, to: plan.latest, restarting: true, plugins: moved, left: checked.left }, text };
+  const restart = facts.restart ?? (async (wanted: boolean): Promise<void> => {
+    const answer = await restartFromTerminal(wanted);
+    if ('parked' in answer) process.stdout.write(`${answer.parked}\n`);
+  });
+  setTimeout(() => {
+    void Promise.resolve()
+      .then(() => restart(ask.force))
+      .catch((error: unknown) => { process.stderr.write(`${words(error)}\n`); });
+  }, 0);
+  return { data: { ...kept, restarting: true }, text: `${before}; restarting the daemon\n` };
 }
 
 export const declareUpdate = (registry: Registry<object>, served?: ServedFacts, facts: UpdateFacts = {}): Command => registry.action({

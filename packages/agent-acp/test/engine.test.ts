@@ -7,7 +7,6 @@ import { afterEach, expect, it } from 'vitest';
 import { echo } from '../../../examples/echo/agent.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
-import { startedNow } from '../../sdk/test/support/started.js';
 import type { Engine, AgentView, Bag, Session, Start } from '@ahpd/sdk';
 
 /*
@@ -101,13 +100,13 @@ const viewOf = (id: string, held: () => Bag, name = id): AgentView => ({
 });
 
 /** One record's backend, and a session of it recording what it puts on the wire. */
-function opened(
+async function opened(
   engine: Engine,
   id: string,
   live: () => Bag,
   folder: string,
   name = id,
-): { agent: ReturnType<Engine['open']>; session: Session; actions: Bag[] } {
+): Promise<{ agent: ReturnType<Engine['open']>; session: Session; actions: Bag[] }> {
   const agent = engine.open(viewOf(id, live, name));
   const actions: Bag[] = [];
   const start: Start = {
@@ -122,7 +121,7 @@ function opened(
     // that keeps an ACP agent out of an unread folder is not what is tested.
     trusted: () => true,
   };
-  const session = startedNow(agent.create(start));
+  const session = await agent.create(start);
   started.push(session);
   return { agent, session, actions };
 }
@@ -160,7 +159,7 @@ it('registers the acp engine, its templates, host-only fields and key variables'
   // spells.
   const fields = Object.keys((engine?.schema.properties ?? {}) as Bag).sort();
   expect(fields).toEqual([
-    'args', 'authenticate', 'base', 'command', 'cwd', 'env', 'honoursTrust', 'hostTools', 'install', 'machine', 'page', 'toolsChanged',
+    'args', 'authenticate', 'base', 'closeGraceMs', 'command', 'cutTurns', 'cwd', 'env', 'exitGraceMs', 'findFreshMs', 'honoursTrust', 'hostTools', 'install', 'killGraceMs', 'listingIdleMs', 'machine', 'modes', 'page', 'sessionListMaxPages', 'stderrBytes', 'stderrTail', 'toolsChanged', 'unreportedClientCalls',
   ]);
   for (const owned of ['name', 'description', 'icon', 'model', 'provider']) expect(fields).not.toContain(owned);
 
@@ -209,8 +208,8 @@ it('opens one backend per record, with the record\'s own id, name and server', a
   const two = folderOf('two');
   const firstLog = join(one, 'requests.jsonl');
   const secondLog = join(two, 'requests.jsonl');
-  const first = opened(engine, 'acp-one', () => ({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: firstLog } }), one, 'One');
-  const second = opened(engine, 'acp-two', () => ({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: secondLog } }), two, 'Two');
+  const first = await opened(engine, 'acp-one', () => ({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: firstLog } }), one, 'One');
+  const second = await opened(engine, 'acp-two', () => ({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: secondLog } }), two, 'Two');
 
   expect([first.agent.provider, first.agent.displayName]).toEqual(['acp-one', 'One']);
   expect([second.agent.provider, second.agent.displayName]).toEqual(['acp-two', 'Two']);
@@ -233,7 +232,7 @@ it('applies an edit at the next turn, spawning another server on the conversatio
   const firstLog = join(folder, 'first.jsonl');
   const secondLog = join(folder, 'second.jsonl');
   let held: Bag = { command: process.execPath, args: [FIXTURE], env: { ACP_LOG: firstLog } };
-  const { session, actions } = opened(engine, 'acp-live', () => held, folder);
+  const { session, actions } = await opened(engine, 'acp-live', () => held, folder);
 
   session.sendMessage('t1', 'first');
   await until(() => endings(actions).length === 1);

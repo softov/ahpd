@@ -117,7 +117,7 @@ describe('a chat a client opens', () => {
 
   it('puts the preamble before an initial message', async () => {
     const { started, begun, createChat } = await opened([said('You are Motion.')]);
-    await createChat({ chat: 'ahp-chat:/first', initialMessage: { text: 'hello' } });
+    await createChat({ chat: 'ahp-chat:/first', initialMessage: { text: 'hello', origin: { kind: 'user' } } });
     expect(started.get('ahp-chat:/first')?.context).toBe('You are Motion.');
     expect(begun.filter((one) => one.chat === 'ahp-chat:/first').map((one) => one.text)).toEqual(['hello']);
   });

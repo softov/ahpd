@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { uriOf } from '../src/resources/fileuri.js';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { nestedAgent } from '../src/sessions/nested.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import type { NestedHost } from '../src/sessions/nested.js';
@@ -151,11 +150,12 @@ const manyDirectories = (open: () => ChildProcessWithoutNullStreams | Promise<Ch
  *
  * `computers` replaces the port and `agentPlugins` is the plugin this host
  * records for the agent, for a case whose machine is a host the port starts
- * rather than one a proxy starts itself.
+ * rather than one a proxy starts itself. `folders` are the folders the session
+ * is made in.
  */
 const outer = async (
   agent: Agent,
-  options: { store?: string; create?: boolean; computers?: HostOptions['computers']; agentPlugins?: Record<string, string> } = {},
+  options: { store?: string; create?: boolean; computers?: HostOptions['computers']; agentPlugins?: Record<string, string>; folders?: string[] } = {},
 ) => {
   const host = createHost({
     path: REPO,
@@ -180,11 +180,17 @@ const outer = async (
   const client = host.accept(peer);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   const uri = 'ahp-session:/nested-outer';
-  const chatUri = chatUriFor(uri);
   if (options.create !== false) {
-    await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: PROVIDER, config: { computer: 'computer://box' },
+        ...(options.folders === undefined ? {} : { workingDirectories: options.folders.map((one) => uriOf(one)) }),
+      },
+    });
   }
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   let seq = 0;
   return {
@@ -291,7 +297,7 @@ it('a restart waits for the inner host it replaces, and resumes its conversation
     if (started.length > 1 && !firstGone) replacedTooEarly = true;
     one.once('exit', () => { if (one === started[0]) firstGone = true; });
     return one;
-  }));
+  }), { folders: [REPO] });
 
   served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first words' } });
   await until(() => served.on(served.chatUri).some(({ action }) => action.type === 'chat/turnComplete'));
@@ -309,10 +315,11 @@ it('a restart waits for the inner host it replaces, and resumes its conversation
 
   const elsewhere = mkdtempSync(join(tmpdir(), 'ahpd-nested-elsewhere-'));
   made.push(elsewhere);
-  served.dispatch(served.uri, { type: 'session/workingDirectorySet', directory: uriOf(elsewhere) });
+  // Another folder in the first one's place, which starts the inner host again.
+  served.dispatch(served.uri, { type: 'session/workingDirectoryReplaced', directory: uriOf(REPO), replacement: uriOf(elsewhere) });
   // The host hands the action back once the restart behind it is over, so this
   // is the moment both processes have had their say.
-  await until(() => served.on(served.uri).some(({ action }) => action.type === 'session/workingDirectorySet'));
+  await until(() => served.on(served.uri).some(({ action, origin }) => action.type === 'session/workingDirectoryReplaced' && origin !== undefined));
 
   expect(started).toHaveLength(2);
   // The one it replaces is gone before the one that replaces it is started:
@@ -333,12 +340,14 @@ it('a restart before the first turn starts a session the inner host does not hol
     const one = ahpd(env);
     started.push(one);
     return one;
-  }));
+  }), { folders: [REPO] });
 
   const elsewhere = mkdtempSync(join(tmpdir(), 'ahpd-nested-elsewhere-'));
   made.push(elsewhere);
-  served.dispatch(served.uri, { type: 'session/workingDirectorySet', directory: uriOf(elsewhere) });
-  await until(() => served.on(served.uri).some(({ action }) => action.type === 'session/workingDirectorySet'));
+  // Another folder in the first one's place, which starts the inner host again
+  // there before any turn has run.
+  served.dispatch(served.uri, { type: 'session/workingDirectoryReplaced', directory: uriOf(REPO), replacement: uriOf(elsewhere) });
+  await until(() => served.on(served.uri).some(({ action, origin }) => action.type === 'session/workingDirectoryReplaced' && origin !== undefined));
   expect(started).toHaveLength(2);
 
   served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first words' } });

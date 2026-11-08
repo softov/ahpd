@@ -17,7 +17,7 @@ import type { AddressInfo } from 'node:net';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRegistry } from '@cofold/commands';
 import type { Output } from '@cofold/commands';
 import { manifestFrom } from '@cofold/remote';
@@ -185,7 +185,7 @@ const servedFacts = (turning: string[] = []): ServedFacts => ({
   configFile: join(home, 'config.json'),
   running: () => ({ pid: RECORD.pid, url: RECORD.url, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
   turning: () => turning,
-  restart: () => {},
+  restart: () => ({ restartDelayMs: 3000 }),
 });
 
 /**
@@ -465,7 +465,10 @@ describe('the install and the restart', () => {
     };
     const facts: ServedFacts = {
       ...servedFacts(),
-      restart: (argv) => { restarted.push([...argv]); },
+      restart: (argv) => {
+        restarted.push([...argv]);
+        return { restartDelayMs: 3000 };
+      },
     };
     const registry = createRegistry({ authorize: checkScopes });
     const command = declareUpdate(registry, facts, {
@@ -478,10 +481,29 @@ describe('the install and the restart', () => {
     const answer = await registry.execute(command, { surface: 'cli', input: { version: LATEST } });
     // The daemon's own line, not the record's (it has none) and not `update`'s.
     expect(restarted).toEqual([['--port', '9350']]);
-    expect(answer?.data).toMatchObject({ restarting: true });
+    expect(answer?.data).toMatchObject({ restarting: true, restartDelayMs: 3000 });
   });
 
-  it('on Windows hands the install to a helper and stops, rather than installing here', async () => {
+  it('answers the restart parked until the turns end when a turn began during the install', async () => {
+    const facts: ServedFacts = {
+      ...servedFacts(),
+      // The daemon's own restart, a turn having begun while npm ran.
+      restart: () => ({ parked: ['ahp-session:/a'] }),
+    };
+    const registry = createRegistry({ authorize: checkScopes });
+    const command = declareUpdate(registry, facts, {
+      record: () => RECORD,
+      place: install(),
+      configDir: plugins({}),
+      run: fakeNpm().runner,
+    });
+    const answer = await registry.execute(command, { surface: 'cli', input: { version: LATEST } });
+    expect(answer?.data).toMatchObject({ from: CURRENT, to: LATEST, restarting: false, parked: ['ahp-session:/a'] });
+    const plain = typeof answer?.plain === 'function' ? answer.plain() : answer?.plain;
+    expect(plain).toContain(`${CURRENT} to ${LATEST}\nA turn is running in ahp-session:/a; it restarts once the turns end, or at once with --force.\n`);
+  });
+
+  it('on Windows hands the install to a helper and stops once the answer has had VS Code\'s upgrade delay, rather than installing here', async () => {
     // The layout npm leaves on Windows, which is a global prefix there.
     const windows: PlaceFacts = {
       root: 'C:\\npm-prefix\\node_modules\\@ahpd\\server',
@@ -492,20 +514,33 @@ describe('the install and the restart', () => {
     const handed: HelperOptions[] = [];
     const went: string[] = [];
     const npm = fakeNpm();
-    const answer = await update({ version: LATEST }, {
-      record: () => ({ ...RECORD, startFolder: join(home, 'work') }),
-      place: windows,
-      configDir: plugins({}),
-      run: npm.runner,
-      npmVersion: async () => '11.16.0',
-      // Nothing in this process may install or check a successor: the new
-      // files are written by the helper, after this process has gone.
-      takes: async () => { throw new Error('the successor was checked before the install'); },
-      handOff: (options) => { handed.push(options); },
-      down: () => { went.push('down'); },
-    });
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const answer = await update({ version: LATEST }, {
+        record: () => ({ ...RECORD, startFolder: join(home, 'work') }),
+        place: windows,
+        configDir: plugins({}),
+        run: npm.runner,
+        npmVersion: async () => '11.16.0',
+        // Nothing in this process may install or check a successor: the new
+        // files are written by the helper, after this process has gone.
+        takes: async () => { throw new Error('the successor was checked before the install'); },
+        handOff: (options) => { handed.push(options); },
+        down: () => { went.push('down'); },
+      });
 
-    expect(answer?.data).toEqual({ from: CURRENT, to: LATEST, restarting: true });
+      expect(answer?.data).toEqual({ from: CURRENT, to: LATEST, restarting: true, restartDelayMs: 3000 });
+      // The answer is in hand before the daemon goes, and has VS Code's three
+      // seconds to reach the caller first.
+      expect(went).toEqual([]);
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(went).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(went).toEqual(['down']);
+    }
+    finally {
+      vi.useRealTimers();
+    }
     expect(npm.calls).toEqual([]);
     expect(handed).toHaveLength(1);
     expect(handed[0]).toMatchObject({
@@ -518,10 +553,6 @@ describe('the install and the restart', () => {
       log: join(home, 'ahpd', 'daemon.log'),
       platform: 'win32',
     });
-    // The answer is in hand before the daemon goes.
-    expect(went).toEqual([]);
-    await tick();
-    expect(went).toEqual(['down']);
   });
 });
 

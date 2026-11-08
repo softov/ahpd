@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
-import { backSessions, chatsOf, sessionsOf } from '../src/names.js';
 import { botProvider } from '../src/provider.js';
 import { botStore } from '../src/store.js';
 import type { BotProvider } from '../src/provider.js';
@@ -85,30 +84,12 @@ async function made() {
   const bots: RecordCollection = await records.collection('bots');
   const graves: RecordCollection = await records.collection('bots-gone');
   const store: BotStore = botStore(bots, graves, (line) => problems.push(line), { yaml, agents });
-  /*
-   * One collection per bot, opened up front because the provider's seams are
-   * synchronous: every slug these cases use is named here.
-   */
-  const chatRows = new Map<string, RecordCollection>();
-  const sessionRows = new Map<string, RecordCollection>();
-  for (const slug of ['flame', 'motion', 'other']) {
-    chatRows.set(slug, await records.collection(chatsOf(slug)));
-    sessionRows.set(slug, await records.collection(sessionsOf(slug)));
-  }
-  const rowsOf = (held: Map<string, RecordCollection>, slug: string): RecordCollection => {
-    const one = held.get(slug);
-    if (one === undefined) throw new Error(`this case opened no collection for ${slug}`);
-    return one;
-  };
   const provider = botProvider({
     root: folder,
     botsDir: join(config, 'bots'),
     store,
-    sessions: { owner: async () => undefined, start: async () => 'echo:/one' },
-    chats: (bot) => rowsOf(chatRows, bot),
-    backSessions: backSessions((bot) => rowsOf(sessionRows, bot)),
     hostName: 'test',
-    templates: { text: async () => undefined, lastChats: 10 },
+    templates: { text: async () => undefined },
     yaml,
     agents,
   });
@@ -148,7 +129,7 @@ it('leaves a tombstone where a bot is deleted, and refuses to make it again', as
   const { graves, store, provider } = await made();
   await provider.write('bot://motion', said({ name: 'Motion' }));
 
-  await provider.remove('bot://motion');
+  await provider.delete('bot://motion');
 
   expect(store.get('motion')).toBeUndefined();
   expect(store.tombstoned('motion')).toBe(true);
@@ -161,7 +142,7 @@ it('leaves a tombstone where a bot is deleted, and refuses to make it again', as
 it('reads the collections back, as a daemon that started again does', async () => {
   const { records, provider } = await made();
   await provider.write('bot://motion', said({ name: 'Motion' }));
-  await provider.remove('bot://motion');
+  await provider.delete('bot://motion');
   await provider.write('bot://other', said({ name: 'Other' }));
 
   // A second store over the same collections, which is what a restart is.

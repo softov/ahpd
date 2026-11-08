@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { memoryAutomations, RUN_HISTORY_LIMIT } from '../src/automations/automations.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { clientPluginsIn } from '../src/plugins/clientplugins.js';
@@ -17,6 +16,7 @@ import type { AgentOwner } from '../src/types/agents.js';
 import type { AutomationRun, AutomationStore, StartSession } from '../src/types/automations.js';
 import type { Principal, Users } from '../src/types/users.js';
 import type { Chosen, Session } from '../src/types/session.js';
+import type { Worktrees } from '../src/types/worktrees.js';
 
 /*
  * Automations, on a host that holds no clock.
@@ -152,6 +152,52 @@ it('answers the trigger list on the root channel, and refuses another', async ()
   })).resolves.toBeTruthy();
 });
 
+/*
+ * A host with no store refuses the catalogue -32001 in VS Code's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1294
+ */
+it('refuses the catalogue on a host with no store, in VS Code\'s words', async () => {
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })] });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'a', protocolVersions: ['0.9.0'] } });
+  await expect(client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } }))
+    .rejects.toMatchObject({ code: -32001, message: `Automation catalogue is unavailable: ${AUTOMATIONS}` });
+});
+
+/*
+ * The session a run starts has a default chat like any other, which VS Code's
+ * host marks the user's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L678-L692
+ */
+it('lists the default chat of a session a run started as the user\'s', async () => {
+  const { client } = await connected();
+  await write(client, DEFINITION);
+  const run = await client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'origin' },
+  }) as { resource: string };
+  await new Promise((resolve) => { setTimeout(resolve, 50); });
+  const session = (await runState(client, run.resource)).primarySession;
+  expect(session).toBeDefined();
+  const opened = await client.handle({ method: 'subscribe', params: { channel: String(session) } }) as {
+    snapshot: { state: { chats: { origin?: unknown }[] } };
+  };
+  expect(opened.snapshot.state.chats.map((one) => one.origin)).toEqual([{ kind: 'user' }]);
+});
+
+/*
+ * The session a run started is announced with the automation that started it,
+ * as VS Code's host carries a session's origin on the summary it adds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L660-L680
+ */
+it('announces the session a run started with the automation that started it', async () => {
+  const { client, peer: p } = await connected();
+  await write(client, DEFINITION);
+  await client.handle({ method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'announced' } });
+  await until(() => p.notes.some((n) => n.method === 'root/sessionAdded'));
+  const added = p.notes.find((n) => n.method === 'root/sessionAdded')?.params as { summary: { origin?: Record<string, unknown> } };
+  expect(added.summary.origin).toMatchObject({ kind: 'automation', automation: ONE });
+});
+
 it('answers a run on the automations channel, which is the one it declares', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);
@@ -173,22 +219,29 @@ it('answers a run on the automations channel, which is the one it declares', asy
 describe('the catalogue under its old spelling', () => {
   const OLD = 'ahp-automations://catalog';
 
-  it('is subscribed, and answered under the name the client used', async () => {
+  /*
+   * VS Code's host answers the catalogue's snapshot under the resource it was
+   * asked for and sends every action under its own channel, which its client
+   * matches by scheme.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1088-L1097
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L1458-L1482
+   */
+  it('is subscribed and answered under the name the client used, and its actions go under the host\'s own', async () => {
     const { client, peer: p } = await connected();
     const opened = await client.handle({ method: 'subscribe', params: { channel: OLD } }) as {
       snapshot: { resource: string; state: { entries: unknown[] } };
     };
     expect(opened.snapshot.resource).toBe(OLD);
     expect(opened.snapshot.state.entries).toEqual([]);
-    // Written under the old spelling too, and the action comes back under it:
-    // a client that asked about one URI is watching that URI, not another.
+    // Written under the old spelling too, and the action comes back under the
+    // catalogue's own channel.
     await client.handle({
       method: 'dispatchAction',
       params: { channel: OLD, action: { type: 'automation/createRequested', resource: ONE, definition: DEFINITION } },
     });
     await settle();
-    expect(actions(p, OLD).map((one) => one.type)).toContain('automation/set');
-    expect(actions(p, AUTOMATIONS)).toEqual([]);
+    expect(actions(p, AUTOMATIONS).map((one) => one.type)).toContain('automation/set');
+    expect(actions(p, OLD)).toEqual([]);
   });
 
   it('is what the two automation commands may name', async () => {
@@ -201,8 +254,8 @@ describe('the catalogue under its old spelling', () => {
 
   it('is resumed under it on reconnect, and replayed', async () => {
     const { host, client } = await connected();
-    await client.handle({ method: 'subscribe', params: { channel: OLD } });
-    // Dropped and back, having seen nothing since it connected. The one
+    const read = await client.handle({ method: 'subscribe', params: { channel: OLD } }) as { snapshot: { fromSeq: number } };
+    // Dropped and back, having seen nothing since it subscribed. The one
     // action in the gap is the catalogue's, dispatched under the name this
     // host holds it by - which is what the replay is keyed on.
     await write(client, DEFINITION);
@@ -211,7 +264,7 @@ describe('the catalogue under its old spelling', () => {
     const again = host.accept(back);
     const answer = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'a', lastSeenServerSeq: 0, subscriptions: [OLD] },
+      params: { channel: 'ahp-root://', clientId: 'a', lastSeenServerSeq: read.snapshot.fromSeq, subscriptions: [OLD] },
     }) as { type: string; actions?: { channel: string }[]; missing?: string[] };
     expect(answer.type).toBe('replay');
     expect(answer.missing).toEqual([]);
@@ -290,6 +343,67 @@ it('answers a create, an update and a removal of nothing by the client\'s own ac
   ]);
   const types = heard.map((n) => n.action.type);
   expect(types.indexOf('automation/set')).toBeLessThan(types.indexOf('automation/createRequested'));
+});
+
+/*
+ * A create where an automation is already kept says the same definition
+ * again as it is held and refuses another, and an update of none is refused,
+ * each in the words of VS Code's automation service.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L318-L363
+ */
+it('says a create of what it holds again, and refuses another create there and an update of none', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+  const send = (clientSeq: number, action: Record<string, unknown>) =>
+    client.handle({ method: 'dispatchAction', params: { channel: AUTOMATIONS, clientSeq, action } });
+  await send(1, { type: 'automation/createRequested', resource: ONE, definition: DEFINITION });
+  await send(2, { type: 'automation/createRequested', resource: ONE, definition: DEFINITION });
+  await send(3, { type: 'automation/createRequested', resource: ONE, definition: { ...DEFINITION, title: 'Another' } });
+  await send(4, { type: 'automation/updateRequested', resource: 'ahp-automation:/none', changes: { title: 'Nothing' } });
+  await settle();
+
+  const own = p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { channel: string; action: Record<string, unknown>; origin?: { clientSeq: number }; rejectionReason?: string })
+    .filter((n) => n.channel === AUTOMATIONS && n.origin !== undefined);
+  expect(own.map((n) => [n.origin?.clientSeq, n.rejectionReason])).toEqual([
+    [1, undefined],
+    [2, undefined],
+    [3, `Automation already exists: ${ONE}`],
+    [4, 'Automation not found: ahp-automation:/none'],
+  ]);
+  expect(((await entries(client))[0] as { definition: { title: string } }).definition.title).toBe(DEFINITION.title);
+});
+
+/*
+ * An automation's resource is any URI in the `ahp-automation` scheme, and a
+ * create at a URI in another is refused in the words of VS Code's automation
+ * service.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1513-L1517
+ */
+it('takes a create at any URI in the ahp-automation scheme, and refuses one in another scheme in VS Code\'s words', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+  const send = (clientSeq: number, resource: string) => client.handle({
+    method: 'dispatchAction',
+    params: { channel: AUTOMATIONS, clientSeq, action: { type: 'automation/createRequested', resource, definition: DEFINITION } },
+  });
+  await send(1, 'ahp-automation:nightly');
+  await send(2, 'ahp-automation://catalog/weekly');
+  await send(3, 'ahp-automations://nightly');
+  await settle();
+
+  const own = p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { channel: string; origin?: { clientSeq: number }; rejectionReason?: string })
+    .filter((n) => n.channel === AUTOMATIONS && n.origin !== undefined);
+  expect(own.map((n) => [n.origin?.clientSeq, n.rejectionReason])).toEqual([
+    [1, undefined],
+    [2, undefined],
+    [3, 'Automation resource must use the ahp-automation scheme: ahp-automations://nightly'],
+  ]);
+  expect((await entries(client)).map((one) => (one as { resource: string }).resource).sort())
+    .toEqual(['ahp-automation://catalog/weekly', 'ahp-automation:nightly']);
 });
 
 it('patches rather than overwrites, so one client does not revert another', async () => {
@@ -468,6 +582,21 @@ describe('a template that names client plugins', () => {
       params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: [] },
     }) as { _meta?: Record<string, unknown> };
     expect('vscode.autonomousAutomations' in (answer._meta ?? {})).toBe(false);
+    expect('ahpd.automations' in (answer._meta ?? {})).toBe(false);
+  });
+
+  /*
+   * The catalogue narrowed to one owner is a template the client expands, as
+   * the protocol advertises the logs channel's.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/common/commands.ts#L281-L290
+   */
+  it('advertises the catalogue narrowed to one owner as a template a client expands', async () => {
+    const host = createHost({ path: DIR, agents: [echo({ path: DIR })], automations: memoryAutomations() });
+    const answer = await host.accept(peer()).handle({
+      method: 'initialize',
+      params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: [] },
+    }) as { _meta?: Record<string, unknown> };
+    expect(answer._meta?.['ahpd.automations']).toBe('ahp-automations://{?owner}');
   });
 });
 
@@ -670,12 +799,31 @@ describe('a host that keeps client plugins', () => {
     expect(await kept(client)).toEqual([]);
   });
 
-  it('refuses a template whose plugins share an id, which nothing could read', async () => {
+  it('refuses a template whose plugins share an id or name none, in VS Code\'s words', async () => {
     const { client, peer: p } = await serving();
     await write(client, naming([...ONE_PLUGIN, { id: 'p1', type: 'plugin', uri: PLUGIN, nonce: 'n2' }]));
     await settle();
-    expect(refusals(p, AUTOMATIONS).at(-1)).toContain('an id of its own');
+    expect(refusals(p, AUTOMATIONS).at(-1)).toBe('Automation customization ids must be non-empty and unique.');
+    await write(client, naming([{ id: ' ', type: 'plugin', uri: PLUGIN, nonce: 'n1' }]));
+    await settle();
+    expect(refusals(p, AUTOMATIONS).at(-1)).toBe('Automation customization ids must be non-empty and unique.');
     expect(await entries(client)).toEqual([]);
+  });
+
+  it('captures the plugins again for a patch that carries the session, and none for one naming none', async () => {
+    const { client, asked } = await serving();
+    await write(client, naming(ONE_PLUGIN));
+    await settle();
+    const [copy] = await kept(client);
+    const before = asked.length;
+
+    // The session again, with no list: a template whose session names no
+    // plugin, which leaves the automation none, as VS Code's host has it.
+    await patch(client, { ...DEFINITION.session });
+    await settle();
+    expect(existsSync(copy?.path ?? '')).toBe(false);
+    expect(await kept(client)).toEqual([]);
+    expect(asked.length).toBe(before);
   });
 
   it('starts a run with the copies, as an active client of the run\'s own session', async () => {
@@ -700,9 +848,14 @@ describe('a host that keeps client plugins', () => {
     const state = await runState(client, run.resource);
     const opened = await client.handle({
       method: 'subscribe', params: { channel: state.sessions[0] ?? '' },
-    }) as { snapshot: { state: { activeClients?: { clientId: string; customizations?: { uri?: string }[] }[] } } };
-    const mine = (opened.snapshot.state.activeClients ?? []).find((one) => one.clientId === 'Automation');
+    }) as { snapshot: { state: { activeClients?: { clientId: string; displayName?: string; customizations?: { uri?: string; clientId?: string }[] }[] } } };
+    // Under VS Code's automation client id, which each captured plugin names
+    // as its client too.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationCustomizations.ts#L101-L108
+    const mine = (opened.snapshot.state.activeClients ?? []).find((one) => one.clientId === 'vscode.automation');
+    expect(mine?.displayName).toBe('Automation');
     expect(mine?.customizations).toHaveLength(1);
+    expect(mine?.customizations?.[0]?.clientId).toBe('vscode.automation');
     expect(localPath(mine?.customizations?.[0]?.uri ?? '')).toBe(given[0]?.path);
     expect(asked.length).toBe(before);
   });
@@ -1011,7 +1164,8 @@ it('starts a session and says the first message, which is the whole point', asyn
 
   // A session created and never spoken to does nothing, and nobody is at the
   // keyboard to speak to it - so the turn has to have been started here.
-  const chat = chatUriFor(state.primarySession ?? '');
+  // Its chat, the default the host minted for the session the automation made.
+  const chat = ((await client.handle({ method: 'subscribe', params: { channel: state.primarySession ?? '' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   const opened = await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
     snapshot: { state: { turns?: { message?: { text?: string; origin?: { kind?: string } } }[] } };
   };
@@ -1056,6 +1210,49 @@ it('starts the first turn on the model the session template names', async () => 
   expect(models[0]).toEqual({ id: 'echo/fast', config: { effort: 'low' } });
 });
 
+it('answers a press with its run once the run is recorded, and makes the session after, as VS Code\'s host', async () => {
+  /*
+   * A folder whose repository is asked about until told, which holds the
+   * session's making where a client can see it: VS Code's host answers with
+   * the run it recorded and starts the run after (agentHostAutomationService.ts
+   * L707-L713), so the answer does not wait on what making a session takes.
+   */
+  let open = (): void => {};
+  const asked = new Promise<void>((done) => { open = done; });
+  const worktrees: Worktrees = {
+    repository: async () => { await asked; return undefined; },
+    branches: async () => [],
+    create: async () => {},
+    dirty: async () => false,
+    remove: async () => {},
+  };
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], automations: memoryAutomations(), worktrees });
+  const client = host.accept(peer());
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  await write(client, DEFINITION);
+  try {
+    let answer: { resource: string } | undefined;
+    void (client.handle({
+      method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
+    }) as Promise<{ resource: string }>).then((one) => { answer = one; });
+    await until(() => answer !== undefined, 100);
+    const resource = answer?.resource ?? '';
+    expect(resource.startsWith('ahp-automation-run:/')).toBe(true);
+    expect((await runState(client, resource)).sessions).toEqual([]);
+
+    open();
+    await until(async () => (await runState(client, resource)).sessions.length === 1);
+    const made = await runState(client, resource);
+    expect(made.primarySession).toBe(made.sessions[0]);
+  }
+  finally {
+    open();
+  }
+});
+
 it('reads running while the session it started is still working', async () => {
   // A paced backend keeps the turn open, which is the one moment the protocol
   // says the run is `running` rather than terminal.
@@ -1098,6 +1295,8 @@ it('settles a run cancelled when its session is disposed mid-turn', async () => 
   const run = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
+  // The run is answered once it is recorded, and its session is made after.
+  await until(async () => (await runState(client, run.resource)).sessions.length > 0);
 
   const before = await runState(client, run.resource);
   expect(before.lifecycle.status).toBe('running');
@@ -1124,6 +1323,8 @@ it('stops a running run, and keeps the session it was running in', async () => {
   const run = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
+  // The run is answered once it is recorded, and its session is made after.
+  await until(async () => (await runState(client, run.resource)).sessions.length > 0);
 
   const before = await runState(client, run.resource);
   expect(before.lifecycle.status).toBe('running');
@@ -1154,8 +1355,9 @@ it('stops a running run, and keeps the session it was running in', async () => {
   expect(after.primarySession).toBe(before.primarySession);
 
   // And the turn is really over in the session, rather than only in the run.
+  const minted = ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   const chat = await client.handle({
-    method: 'subscribe', params: { channel: chatUriFor(session) },
+    method: 'subscribe', params: { channel: minted },
   }) as { snapshot: { state: { activeTurn?: unknown; turns?: { state?: string }[] } } };
   expect(chat.snapshot.state.activeTurn).toBeUndefined();
   expect(chat.snapshot.state.turns?.at(-1)?.state).toBe('cancelled');
@@ -1211,9 +1413,9 @@ it('settles a run by hand, and never reopens one that ended', async () => {
   // A failed ending carries the error and the protocol's `completedAt`, which
   // is the field the old failure path wrongly called `endedAt`.
   const second = await store.run('ahp-automation:/one', { kind: 'manual' }, start);
-  expect(store.settle?.(second?.resource ?? '', { status: 'failed', error: { message: 'no backend' } })).toBe(true);
+  expect(store.settle?.(second?.resource ?? '', { status: 'failed', error: { errorType: 'sendFailed', message: 'no backend' } })).toBe(true);
   expect(second?.lifecycle.status).toBe('failed');
-  expect(second?.lifecycle.error).toEqual({ message: 'no backend' });
+  expect(second?.lifecycle.error).toEqual({ errorType: 'sendFailed', message: 'no backend' });
   expect(second?.lifecycle.completedAt).toBeTypeOf('string');
   expect('endedAt' in (second?.lifecycle ?? {})).toBe(false);
 
@@ -1262,6 +1464,74 @@ const endedRuns = async (store: AutomationStore, times: number): Promise<string[
   return made;
 };
 
+/*
+ * A change to a definition is written down before the store holds it and
+ * says it, as VS Code's automation service persists a mutation before it
+ * publishes it: a write that fails fails the change, and the store is left as
+ * it was, saying nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L346-L350
+ */
+it('writes a definition down before it holds and says it, and a failed write changes nothing', () => {
+  const written: unknown[] = [];
+  let failing = false;
+  const store = memoryAutomations({
+    persist: (change) => {
+      if (failing) throw new Error('the disk is full');
+      written.push(change);
+    },
+  });
+  const said: unknown[] = [];
+  store.onChanged?.((event) => { said.push(event); });
+  store.create(ONE, {});
+  expect(written).toEqual([{ automation: expect.objectContaining({ resource: ONE }) }]);
+
+  failing = true;
+  expect(() => store.update(ONE, { enabled: false })).toThrow('the disk is full');
+  expect(store.get(ONE)?.definition.enabled).not.toBe(false);
+  expect(() => store.remove(ONE)).toThrow('the disk is full');
+  expect(store.get(ONE)).toBeDefined();
+  expect(() => store.create('ahp-automation:/two', {})).toThrow('the disk is full');
+  expect(store.get('ahp-automation:/two')).toBeUndefined();
+  expect(said).toEqual([{ automation: ONE }]);
+});
+
+/*
+ * A run's changes are written down beside the definition, every run the
+ * automation keeps, and a store reading its record back takes the runs back
+ * with the definition, a run that was not over failed as interrupted, as VS
+ * Code's automation service persists, restores and recovers its runs beside
+ * its catalogue.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L184-L201
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L779-L803
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L994-L1010
+ */
+it('writes the runs down beside the definition, and takes both back at a start', async () => {
+  const written: { runsOf?: string; runs?: AutomationRun[] }[] = [];
+  const store = memoryAutomations({ persist: (change) => { written.push(change as { runsOf?: string; runs?: AutomationRun[] }); } });
+  store.create(ONE, {});
+  const done = await store.run(ONE, { kind: 'manual' }, async () => 'ahp-session:/done');
+  await settle();
+  store.settle?.(String(done?.resource), { status: 'completed' });
+  const going = await store.run(ONE, { kind: 'manual' }, async () => 'ahp-session:/going');
+  await settle();
+
+  const last = written.filter((one) => one.runsOf === ONE).at(-1)?.runs ?? [];
+  expect(last.map((one) => [one.resource, one.lifecycle.status, one.sessions])).toEqual([
+    [going?.resource, 'running', ['ahp-session:/going']],
+    [done?.resource, 'completed', ['ahp-session:/done']],
+  ]);
+
+  // A store reading that record back holds both runs again, newest first.
+  const again = memoryAutomations();
+  again.create(ONE, {}, undefined, undefined, undefined, last);
+  expect(again.runOf(String(done?.resource))?.lifecycle.status).toBe('completed');
+  expect(again.runOf(String(going?.resource))?.lifecycle).toMatchObject({
+    status: 'failed',
+    error: { errorType: 'automationExecution', message: 'Automation execution was interrupted before its initial prompt completed.' },
+  });
+  expect((again.get(ONE)?.runs ?? []).map((one) => (one as { resource: string }).resource)).toEqual([going?.resource, done?.resource]);
+});
+
 it('keeps the newest ended runs, and only that many of them', async () => {
   const store = memoryAutomations();
   store.create(ONE, {});
@@ -1305,7 +1575,10 @@ const held = async (
   client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> },
 ): Promise<Held> => (await entries(client))[0] as Held;
 
-/** Run one automation `times` over, waiting for the store to have them all. */
+/**
+ * Run one automation `times` over, each run ended before the next press: a
+ * press while a run goes is answered with that run, as VS Code's host answers.
+ */
 const runTimes = async (
   client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> },
   times: number,
@@ -1314,6 +1587,11 @@ const runTimes = async (
     await client.handle({
       method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: `r${String(i)}` },
     });
+    for (let tries = 0; tries < 400; tries++) {
+      const runs = (await held(client)).runs;
+      if (runs.every((one) => ['completed', 'failed', 'cancelled'].includes(one.lifecycle.status))) break;
+      await settle();
+    }
   }
 };
 
@@ -1388,19 +1666,41 @@ it('moves the page for every subscriber, not only the one that asked', async () 
   expect(entry.runsNextCursor).toBeUndefined();
 });
 
-it('refuses a runs cursor it did not issue, rather than answering from the start', async () => {
+it('refuses a runs cursor that is not the entry\'s, and an automation it does not keep, in VS Code\'s words', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);
-  await runTimes(client, 3);
+  await runTimes(client, 21);
+  expect((await held(client)).runsNextCursor).toBe('20');
 
   // A cursor out of another store's history, one that is not a number, or one
   // past the end. Growing the page for any of them is a client that pages for
   // ever without noticing it is being asked about runs it has already read.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L719-L738
   for (const cursor of ['x', '-1', '999']) {
     await expect(client.handle({
       method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE, cursor },
-    })).rejects.toMatchObject({ code: -32602, message: expect.stringContaining('Unrecognised cursor') });
+    })).rejects.toMatchObject({ code: -32603, message: `Automation run-history cursor is no longer available: ${cursor}` });
   }
+  await expect(client.handle({
+    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: 'ahp-automation:/nobody' },
+  })).rejects.toMatchObject({ code: -32603, message: 'Automation not found: ahp-automation:/nobody' });
+});
+
+it('keys a manual run by its requestId, and answers a press during a run with that run, as VS Code\'s host', async () => {
+  const { client } = await connected(true, 200);
+  await write(client, DEFINITION);
+  const press = (requestId: string, automation = ONE) => client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation, requestId },
+  }) as Promise<{ resource: string }>;
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L707-L713
+  const first = await press('one');
+  expect((await press('one')).resource).toBe(first.resource);
+  expect((await press('two')).resource).toBe(first.resource);
+  await expect(press('')).rejects.toMatchObject({ code: -32603, message: 'Automation run requestId must not be empty.' });
+  await expect(press('one', 'ahp-automation:/other')).rejects
+    .toMatchObject({ code: -32603, message: 'Automation run requestId is already used for another automation: one' });
+  await expect(press('three', 'ahp-automation:/nobody')).rejects
+    .toMatchObject({ code: -32603, message: 'Automation not found: ahp-automation:/nobody' });
 });
 
 it('forgets one when the client asks and the catalogue still says it may', async () => {
@@ -1422,6 +1722,12 @@ it('forgets one when the client asks and the catalogue still says it may', async
     .toMatchObject([{ resource: ONE }]);
   // And its runs went with it: the channel one was watchable on is gone.
   await expect(client.handle({ method: 'subscribe', params: { channel: run.resource } })).rejects.toThrow();
+  // So did the request that made the run, as VS Code's host drops it with the
+  // history: asked again, it is a press on an automation nobody keeps.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L637-L638
+  await expect(client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'r' },
+  })).rejects.toMatchObject({ code: -32603, message: `Automation not found: ${ONE}` });
 });
 
 it('offers remove for one that is switched off, and removes only what it holds', async () => {
@@ -1481,6 +1787,42 @@ const controllable = () => {
   };
 };
 
+/*
+ * A removal of an automation that does not offer it, and a stop of a run none
+ * of whose sessions runs a turn, are refused in the words of VS Code's
+ * automation service; a run with no session yet is settled cancelled at once.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L740-L762
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1538-L1542
+ */
+it('refuses a removal not offered and a stop that stopped no turn, in VS Code\'s words', async () => {
+  const driven = controllable();
+  const settled: string[] = [];
+  const store = {
+    ...driven.store,
+    get: (resource: string) => (resource === ONE ? { resource: ONE, definition: {}, runs: [], operations: ['update'], createdAt: '', modifiedAt: '' } : undefined),
+    settle: (run: string) => { settled.push(run); return true; },
+  };
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], automations: store as never });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+  await client.handle({ method: 'subscribe', params: { channel: driven.run.resource } });
+
+  await client.handle({ method: 'dispatchAction', params: { channel: AUTOMATIONS, action: { type: 'automation/removed', resource: ONE } } });
+  driven.run.sessions = ['ahp-session:/between-turns'];
+  await client.handle({ method: 'dispatchAction', params: { channel: driven.run.resource, action: { type: 'automationRun/cancelRequested' } } });
+  await settle();
+  expect(refusals(p, AUTOMATIONS)).toEqual([`Automation operation 'remove' is not available: ${ONE}`]);
+  expect(refusals(p, driven.run.resource)).toEqual([`Automation run cancellation was not accepted: ${driven.run.resource}`]);
+  expect(settled).toEqual([]);
+
+  driven.run.sessions = [];
+  await client.handle({ method: 'dispatchAction', params: { channel: driven.run.resource, action: { type: 'automationRun/cancelRequested' } } });
+  await settle();
+  expect(settled).toEqual([driven.run.resource]);
+});
+
 it('says which sessions a run has, one action per session', async () => {
   const driven = controllable();
   const host = createHost({
@@ -1524,6 +1866,47 @@ it('says which sessions a run has, one action per session', async () => {
     .filter((one) => one.type === 'automationRun/sessionRemoved')
     .map((one) => one.session))
     .toEqual(['ahp-session:/one']);
+});
+
+/*
+ * A run's lifecycle and its primary session are each said on their own change,
+ * as VS Code's host commits a run's change with the actions of that change.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1143-L1184
+ */
+it('says a run\'s lifecycle and primary session only as each changes, as VS Code\'s host', async () => {
+  const driven = controllable();
+  const host = createHost({
+    path: DIR,
+    agents: [echo({ path: DIR, pace: 0 })],
+    automations: driven.store as never,
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  await client.handle({ method: 'subscribe', params: { channel: driven.run.resource } });
+  const said = (type: string) => actions(p, driven.run.resource).filter((one) => one.type === type);
+
+  driven.run.sessions = ['ahp-session:/one'];
+  driven.run.primarySession = 'ahp-session:/one';
+  driven.moved();
+  expect(said('automationRun/lifecycleChanged')).toHaveLength(1);
+  expect(said('automationRun/primarySessionChanged')).toHaveLength(1);
+
+  // A move that changed neither says neither.
+  driven.moved();
+  expect(said('automationRun/lifecycleChanged')).toHaveLength(1);
+  expect(said('automationRun/primarySessionChanged')).toHaveLength(1);
+
+  // The run ends in the same session: its lifecycle is said, and its primary
+  // session, which is the one it had, is not.
+  driven.run.lifecycle = { status: 'completed' };
+  driven.moved();
+  expect(said('automationRun/lifecycleChanged').map((one) => (one.lifecycle as { status: string }).status))
+    .toEqual(['running', 'completed']);
+  expect(said('automationRun/primarySessionChanged')).toHaveLength(1);
 });
 
 it('lets go of a session a run was holding when the session is disposed', async () => {
@@ -1649,6 +2032,8 @@ it('takes the owner from the connection that made it, and a run is that person\'
   const run = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
+  // The run is answered once it is recorded, and its session is made after.
+  await until(async () => (await runState(client, run.resource)).primarySession !== undefined);
   const state = await runState(client, run.resource);
   expect(state._meta).toEqual({ 'ahpd.owner': 'user:ana' });
   expect('owner' in state).toBe(false);
@@ -1731,8 +2116,10 @@ it('refuses a run of an automation whose agent has become somebody else\'s', asy
   const run = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
+  // The run is answered once it is recorded, and its start is tried after.
+  await until(async () => (await runState(client, run.resource)).lifecycle.status !== 'running');
   const state = await runState(client, run.resource);
-  expect(state.lifecycle).toMatchObject({ status: 'failed', error: { message: 'No provider called echo' } });
+  expect(state.lifecycle).toMatchObject({ status: 'failed', error: { message: 'No agent provider registered for: echo' } });
   expect(state.sessions).toEqual([]);
 });
 

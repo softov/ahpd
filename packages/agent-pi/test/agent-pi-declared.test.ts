@@ -2,7 +2,6 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import type { Agent, Bag, Start } from '../../sdk/src/types/index.js';
 import { createHost } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { undeclaredIn } from '../../sdk/test/support/wire.js';
@@ -11,6 +10,9 @@ import { fakePty } from '../../sdk/test/support/pty.js';
 import { piAgent } from '../src/agent.js';
 import { piSession } from '../src/session.js';
 import { fakePi, opened, root, settled as settledPi, streamed } from './fake-pi.js';
+
+/** The space a command is typed after, which keeps it out of a POSIX shell's history; PowerShell, Windows' shell here, keeps none. */
+const HISTORY_SPACE = process.platform === 'win32' ? '' : ' ';
 
 /*
  * What a pi session sends, read by the protocol's own schema.
@@ -49,9 +51,9 @@ it('sends calls as the protocol declares them, and a late client reads them the 
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/declared';
-  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'pi', workingDirectories: [`file://${root}`] } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   const ended = (): number => notes
     .filter((one) => one.method === 'action')
@@ -84,6 +86,8 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   expect(undeclaredIn([...notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, notes, chatUri)));
   client.close();
+  // And its shells, which Windows will not remove the case's folder under.
+  await host.close();
 });
 
 /*
@@ -134,9 +138,8 @@ it('runs a person\'s command as a terminal call that names its terminal while it
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/banged';
-  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'pi', workingDirectories: [`file://${root}`] } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   const sent = (type: string): Bag | undefined => notes
     .filter((one) => one.method === 'action')
@@ -146,22 +149,31 @@ it('runs a person\'s command as a terminal call that names its terminal while it
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
   });
-  await until(() => sent('chat/toolCallContentChanged') !== undefined);
+  /*
+   * The command's shell names its terminal once it has printed its prompt, the
+   * command is typed into it, and the shell integration's mark that it
+   * finished ends it, as the reference host runs its own `!` command.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L117
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L224-L285
+   */
+  await until(() => pty.started.length > 0);
+  pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
+  await until(() => sent('chat/toolCallContentChanged') !== undefined && pty.typed.at(-1) === `${HISTORY_SPACE}make preview\r`);
 
   expect(sent('chat/toolCallStart')).toMatchObject({ toolName: 'terminal', displayName: 'Terminal', intention: 'make preview' });
   expect(sent('chat/toolCallReady')).toMatchObject({ invocationMessage: 'make preview', toolInput: 'make preview' });
-  const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
+  // Named by VS Code's link for a call's terminal, which the host serves.
+  const named = { type: 'terminal', resource: expect.stringMatching(/^agenthost-terminal:\/\/shell\//), title: 'Terminal', isPty: true };
   expect(sent('chat/toolCallContentChanged')?.content).toEqual([named]);
   expect(sent('chat/toolCallContentChanged')).not.toHaveProperty('_meta');
   const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, notes, chatUri)));
 
-  pty.say('built\r\n');
-  pty.exit(0);
+  pty.say('\u001b]633;C\u0007built\r\n\u001b]633;D;0\u0007\u001b]633;A\u0007$ ');
   await until(() => sent('chat/turnComplete') !== undefined);
   expect((sent('chat/toolCallComplete')?.result as Bag).content).toEqual([
-    { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
-    { type: 'text', text: 'built\r\n' },
+    { ...named, result: { exitCode: 0, preview: 'built' } },
+    { type: 'text', text: 'built' },
   ]);
   const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, notes, chatUri)));

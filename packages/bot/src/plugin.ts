@@ -4,21 +4,21 @@ import { expandHome, mayUseAgentFor, ownershipOf, reason, Status } from '@ahpd/s
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { botAsk } from './ask.js';
 import { botCatalogue, CATALOGUE_SCHEME } from './catalogue.js';
-import { botChatAgent, turns } from './chat.js';
+import { botChatAgent } from './chat.js';
 import { prepareAgentsTemplate } from './folder.js';
-import { backSessions, BOTS_DIR, chatsOf, LEGACY_CHATS, LEGACY_SESSIONS, rowId, sessionsOf, whose } from './names.js';
+import { backSessions, BOTS_DIR, LEGACY_CHATS, LEGACY_SESSIONS, sessionsOf } from './names.js';
 import { postMessage } from './post.js';
 import { botProvider } from './provider.js';
 import { isSlug } from './record.js';
 import { botStore } from './store.js';
-import { agentsTextOf, LAST_CHATS } from './template.js';
+import { agentsTextOf } from './template.js';
 import { botWake, isMainTurnAbsence } from './wake.js';
-import type { Yaml } from './agents.js';
+import type { InstructionsIn, Yaml } from './agents.js';
+import type { AskIn } from './ask.js';
 import type { BotRecord } from './record.js';
-import type { MainTurnAbsence } from './wake.js';
-import type { Bag, MessageFrom, Owner, Plugin, PluginPeer, RecordCollection, TurnEndEvent } from '@ahpd/sdk';
-import type { TurnHandle } from './chat.js';
-import type { BotSessions } from './provider.js';
+import type { ContextIn, MainTurnAbsence } from './wake.js';
+import type { Bag, Owner, Plugin, PluginPeer, RecordCollection, TurnEndEvent } from '@ahpd/sdk';
+import type { BotSessions } from './wake.js';
 
 /**
  * The package as a plugin.
@@ -30,8 +30,8 @@ import type { BotSessions } from './provider.js';
  * to the host, and where it works is the operator's to choose.
  *
  * All the data of one bot is in `<configDir>/bots/<slug>/`: its record is
- * `bot.md`, its main chat rows are in `chats/`, its back session rows in
- * `sessions/` and its chat logs in `logs/`. A delete removes that folder, and
+ * `bot.md`, its back session rows are in `sessions/` and its chat logs in
+ * `logs/`. A delete removes that folder, and
  * the bot's work folder under the plugin root - `<root>/<slug>` by default - is
  * not in it and stays.
  *
@@ -66,8 +66,10 @@ export const title = 'Bot';
 /** What an option falls back to. */
 export const defaults = {
   root: '~/.bots',
-  lastChats: LAST_CHATS,
   mainTurnPostMessageAbsent: 'post',
+  instructionsIn: 'section',
+  contextIn: 'text',
+  askIn: 'main',
 } as const;
 
 /** What the plugin's connection to the host calls itself, which is how it knows its own frames. */
@@ -156,10 +158,11 @@ const botOfLog = (file: string): string | undefined => {
  * Move the data an older daemon kept into the folder each bot has now.
  *
  * Everything about one bot is `<configDir>/bots/<slug>/`: its record is
- * `bot.md`, its main chat rows are in `chats/`, its back session rows in
- * `sessions/` and its logs in `logs/`. Before that, the record was
- * `bots/<slug>.md`, and the rows and logs were in the two collections
- * `bot-chats/` and `bot-sessions/`.
+ * `bot.md`, its back session rows are in `sessions/` and its logs in `logs/`.
+ * Before that, the record was `bots/<slug>.md`, and the rows and logs were in
+ * the two collections `bot-chats/` and `bot-sessions/`; the rows of the chats
+ * an older daemon opened move with the bot too, into `chats/`, so a delete of
+ * the bot takes them with the rest.
  *
  * This runs at load, before anything opens one of those collections: the
  * record store reads a collection's folder when it opens it, so a file moved
@@ -276,9 +279,24 @@ export function moveData(configDir: string, yaml: Yaml, problem: (line: string) 
 
 /** Dispatches actions on the plugin's connection, and hears whether the host took each one. */
 export interface Dispatcher {
-  /** Dispatch one action, and give the host's refusal reason, or `undefined` when the host took it. */
+  /**
+   * Dispatch one action, and give the host's refusal reason, or `undefined`
+   * when the host took it; rejects with `UNCONFIRMED` when neither arrives in
+   * `ACKNOWLEDGEMENT_MS`.
+   */
   dispatch(channel: string, action: Record<string, unknown>): Promise<string | undefined>;
 }
+
+/** How long a dispatch waits for the host's answer, VS Code's ten seconds for a message sent into another session. */
+export const ACKNOWLEDGEMENT_MS = 10_000;
+
+/**
+ * What a dispatch the host did not answer in time rejects with, VS Code's
+ * words: the action may still be taken, so it is not sent again.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L208-L213
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L285-L287
+ */
+export const UNCONFIRMED = 'Remote message delivery was not confirmed. It may already be queued; do not retry automatically. Timed out waiting for remote message acknowledgement.';
 
 /**
  * The dispatcher over the plugin's connection, which sets its one `onMessage`
@@ -288,12 +306,13 @@ export interface Dispatcher {
  * applied with an `action` frame naming that `clientId` and that `clientSeq` -
  * with a `rejectionReason` when it refused it, and without one when it took it.
  * The host echoes a taken action only to the subscribers of its channel, so a
- * caller subscribes first. A dispatch is settled by that answer alone: the
- * host answers every action it is sent, and a client holds what it sent until
- * the answer comes, however long the host takes to decide.
+ * caller holds the channel while it waits. A dispatch is settled by that
+ * answer, or given up as unconfirmed after `ACKNOWLEDGEMENT_MS`, as VS Code's
+ * router gives up on a message it sent into another session; an answer after
+ * that settles nothing.
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L19-L32
  */
-export function dispatcher(conn: PluginPeer, clientId: string): Dispatcher {
+export function dispatcher(conn: PluginPeer, clientId: string, waitMs: number = ACKNOWLEDGEMENT_MS): Dispatcher {
   let seq = 0;
   const waiting = new Map<number, (refused: string | undefined) => void>();
   conn.onMessage((message) => {
@@ -310,18 +329,66 @@ export function dispatcher(conn: PluginPeer, clientId: string): Dispatcher {
     dispatch: (channel, action) => {
       seq += 1;
       const clientSeq = seq;
-      return new Promise((resolve) => {
-        waiting.set(clientSeq, resolve);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          waiting.delete(clientSeq);
+          reject(new Error(UNCONFIRMED));
+        }, waitMs);
+        // A wait should not be what keeps a daemon up.
+        timer.unref?.();
+        waiting.set(clientSeq, (refused) => {
+          clearTimeout(timer);
+          resolve(refused);
+        });
         conn.notify('dispatchAction', { channel, clientSeq, action });
       });
     },
   };
 }
 
-/** The plugin's connection to the host, and the dispatcher over it. */
+
+/** Reads and sends that hold a channel of the plugin's connection while they need it. */
+export interface Holders {
+  /** Hold `channel` for as long as `use` runs, handing it the channel's state as a subscribe answers it. */
+  hold<T>(channel: string, use: (state: Bag | undefined) => Promise<T> | T): Promise<T>;
+}
+
+/**
+ * The channels the plugin's connection subscribes to, held by count.
+ *
+ * VS Code's connection hands each holder of a subscription a counted reference
+ * and unsubscribes when the last one lets go. One unsubscribe ends the
+ * connection's whole subscription to a channel, so a read that let go of its
+ * own would end a send that is still waiting on the same channel's echo.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L1104-L1168
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L226-L233
+ */
+export function holders(conn: PluginPeer): Holders {
+  const held = new Map<string, number>();
+  return {
+    hold: async (channel, use) => {
+      held.set(channel, (held.get(channel) ?? 0) + 1);
+      try {
+        const answered = await conn.request('subscribe', { channel }) as { snapshot?: { state?: Bag } };
+        return await use(answered.snapshot?.state);
+      }
+      finally {
+        const left = (held.get(channel) ?? 1) - 1;
+        if (left > 0) held.set(channel, left);
+        else {
+          held.delete(channel);
+          conn.notify('unsubscribe', { channel });
+        }
+      }
+    },
+  };
+}
+
+/** The plugin's connection to the host, the dispatcher over it, and the channels it holds. */
 interface Opened {
   conn: PluginPeer;
   sender: Dispatcher;
+  channels: Holders;
 }
 
 /**
@@ -338,34 +405,6 @@ const textOf = (state: unknown, turn: string): string => {
   const parts = Array.isArray(found?.responseParts) ? found.responseParts as { kind?: unknown; content?: unknown }[] : [];
   return parts.filter((part) => part.kind === 'markdown').map((part) => String(part.content ?? '')).join('');
 };
-
-/**
- * The message one turn began with, read off a chat's state.
- *
- * The turn is the chat's `activeTurn` while it runs and one of its `turns` once
- * it has ended, and a turn that began and ended between the event and this read
- * is in both. Nothing where the state holds neither.
- */
-const messageOfTurn = (state: unknown, turn: string): Bag | undefined => {
-  const held = state as { activeTurn?: unknown; turns?: unknown } | undefined;
-  const seen = [held?.activeTurn, ...(Array.isArray(held?.turns) ? held.turns as unknown[] : [])];
-  for (const one of seen) {
-    if (typeof one !== 'object' || one === null) continue;
-    const line = one as Bag;
-    if (line['id'] !== turn) continue;
-    const message = line['message'];
-    return typeof message === 'object' && message !== null ? message as Bag : undefined;
-  }
-  return undefined;
-};
-
-/** One back turn whose main turn is not open yet, and how it ended where it already has. */
-interface Opening {
-  ended?: TurnEndEvent;
-}
-
-/** The key of one back turn in `opening`: its session and its id. */
-const openingKey = (session: string, turn: string): string => `${session}\n${turn}`;
 
 export const apply: Plugin['apply'] = (host, options) => {
   const asked = options.root as string | undefined;
@@ -395,8 +434,6 @@ export const apply: Plugin['apply'] = (host, options) => {
   catch (error) {
     host.problem(`${name}: the default AGENTS.md template was not written: ${reason(error)}`);
   }
-  const asked_ = options.lastChats;
-  const lastChats = typeof asked_ === 'number' && Number.isInteger(asked_) && asked_ >= 1 ? asked_ : defaults.lastChats;
   /*
    * What a main turn does when a back session's turn ends without a post.
    *
@@ -410,6 +447,24 @@ export const apply: Plugin['apply'] = (host, options) => {
   if (askedAbsent !== undefined && !isMainTurnAbsence(askedAbsent)) {
     host.problem(`${name}: mainTurnPostMessageAbsent is ${JSON.stringify(askedAbsent)}, which is not one of post, notice, silence or postNotice; using post`);
   }
+  /*
+   * Where a bot's instructions are in its `AGENTS.md`: its own section, or the
+   * whole body after the frontmatter, as VS Code reads an agent file. The
+   * schema names the two, so a value outside them never reaches here.
+   */
+  const instructionsIn: InstructionsIn = options.instructionsIn === 'body' ? 'body' : defaults.instructionsIn;
+  /*
+   * Where a woken message's context goes: a block in front of the words, or
+   * the delegation `_meta` alone, as VS Code delegates a prompt. The schema
+   * names the two.
+   */
+  const contextIn: ContextIn = options.contextIn === 'meta' ? 'meta' : defaults.contextIn;
+  /*
+   * Where a back session's request is shown: copied into the main turn, or
+   * left in the back chat and listed on the main chat's blockers, as VS Code
+   * lists a subagent's. The schema names the two.
+   */
+  const askIn: AskIn = options.askIn === 'own' ? 'own' : defaults.askIn;
   const kept = host.records('templates', { body: 'text' });
   const templates = {
     // A bot file is edited by hand too, so a name is checked again here.
@@ -418,7 +473,6 @@ export const apply: Plugin['apply'] = (host, options) => {
       const text = (await kept.get(name))?.['text'];
       return typeof text === 'string' ? text : undefined;
     },
-    lastChats,
   };
   /*
    * The `AGENTS.md` a bot with no file is given: the template record it names,
@@ -454,15 +508,15 @@ export const apply: Plugin['apply'] = (host, options) => {
     host.records(BOTS_DIR, { body: 'instructions', file: BOT_FILE }),
     host.records(GONE),
     (line) => { host.problem(`${name}: ${line}`); },
-    { yaml, agents },
+    { yaml, agents, instructionsIn },
   );
   /**
    * One collection of one bot's, opened the first time that bot's data is
    * touched.
    *
    * Opened once and kept, so a call that writes a row and a call that reads it
-   * back answer the same collection: the main chat a read of a bot writes is
-   * the one a wake of its chat finds.
+   * back answer the same collection: the back session a wake writes down is the
+   * one the next wake finds.
    */
   const byName = new Map<string, RecordCollection>();
   const collection = (which: string): RecordCollection => {
@@ -473,11 +527,6 @@ export const apply: Plugin['apply'] = (host, options) => {
     }
     return one;
   };
-  /*
-   * One row per bot and person, holding the chat they talk in. What makes a
-   * read of `bot://` answer the same chat the second time as the first.
-   */
-  const chats = (bot: string): RecordCollection => collection(chatsOf(bot));
   /*
    * One row per back session: the bot, the person and the name a message
    * addresses, and the session that name is on. What makes a name a session a
@@ -505,13 +554,13 @@ export const apply: Plugin['apply'] = (host, options) => {
       const conn = host.connect();
       const sender = dispatcher(conn, CLIENT);
       await conn.request('initialize', { clientId: CLIENT, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
-      return { conn, sender };
+      return { conn, sender, channels: holders(conn) };
     })();
     const failed = (): void => { opened = undefined; };
     opened.catch(failed);
     return opened;
   };
-  /** This host's own sessions, where a chat and a back session are started, and read for the one a bot has. */
+  /** This host's own sessions, where a back session is started, and read for whose a session is. */
   const sessions: BotSessions = {
     owner: (uri) => host.sessionOwner(uri),
     start: (wanted, named) => host.startSession(wanted, named),
@@ -520,13 +569,12 @@ export const apply: Plugin['apply'] = (host, options) => {
    * One action sent on a chat of this host, as a client sends one.
    *
    * The host echoes a taken action only to the subscribers of its channel, so
-   * the chat is subscribed first. Shared by the wake, which sends a person's
-   * message, and the asking, which sends their answer back.
+   * the chat is held until the dispatch settles. Shared by the wake, which
+   * sends a person's message, and the asking, which sends their answer back.
    */
   const send = async (chat: string, action: Bag): Promise<string | undefined> => {
-    const { conn, sender } = await connection();
-    await conn.request('subscribe', { channel: chat });
-    return await sender.dispatch(chat, action);
+    const { sender, channels } = await connection();
+    return await channels.hold(chat, () => sender.dispatch(chat, action));
   };
   const catalogue = botCatalogue(store);
   catalogue.bind(host.registerChannel(CATALOGUE_SCHEME, catalogue.channel));
@@ -560,28 +608,17 @@ export const apply: Plugin['apply'] = (host, options) => {
     hostName: host.hostName,
     templates,
     yaml,
+    instructionsIn,
     agents,
-    chats,
-    backSessions: backs,
-    sessions,
     mayUse,
     available,
   }));
   /*
-   * The one grant a bot asks for: talking to it. The provider's own entry on
-   * `ahpd.grants` takes its title, description and groups from the `bot` row
-   * of the host's table, so this says only that the operation exists.
-   */
-  host.registerGrants('bot', { operations: ['chat'] });
-  /*
-   * The wake: every turn one of those chats begins, and every message steered
-   * into an open one, goes to the back session the bot's record names. A chat
-   * this plugin did not open - one a client started by itself - names no bot
-   * in the rows and is left as it was.
+   * The wake: every turn a chat with a bot begins, and every message steered
+   * into an open one, goes to the back session the bot's record names.
    */
   const wake = botWake({
     store,
-    chats,
     backs,
     sessions,
     /*
@@ -597,25 +634,26 @@ export const apply: Plugin['apply'] = (host, options) => {
      * working means it steers the one that is running.
      */
     look: async (session) => {
-      const { conn } = await connection();
-      const answered = await conn.request('subscribe', { channel: session }) as { snapshot?: { state?: Bag } };
-      const state = answered.snapshot?.state ?? {};
-      const chat = state['defaultChat'];
-      if (typeof chat !== 'string' || chat === '') {
-        throw new Error(`${session} names no chat to say a message in`);
-      }
-      const status = typeof state['status'] === 'number' ? state['status'] : Status.Idle;
-      if ((status & Status.InProgress) === 0) return { chat };
+      const { channels } = await connection();
+      const { chat, working } = await channels.hold(session, (held) => {
+        const state = held ?? {};
+        const named = state['defaultChat'];
+        if (typeof named !== 'string' || named === '') {
+          throw new Error(`${session} names no chat to say a message in`);
+        }
+        const status = typeof state['status'] === 'number' ? state['status'] : Status.Idle;
+        return { chat: named, working: (status & Status.InProgress) !== 0 };
+      });
+      if (!working) return { chat };
       // And the turn running there, off the chat's own state, which a stop
       // of the main turn cancels by its id.
-      const opened = await conn.request('subscribe', { channel: chat }) as { snapshot?: { state?: Bag } };
-      const active = opened.snapshot?.state?.['activeTurn'] as Bag | undefined;
+      const active = await channels.hold(chat, (held) => held?.['activeTurn'] as Bag | undefined);
       return { chat, ...(typeof active?.['id'] === 'string' ? { turn: active['id'] } : {}) };
     },
     send,
     mayUse,
     problem: (line) => { host.problem(`${name}: ${line}`); },
-  }, absent);
+  }, absent, contextIn);
   /*
    * A back session's connectors, which are the bot's: the host asks this at
    * each tool list and each call, so an edit to a bot reaches a session it has
@@ -634,9 +672,8 @@ export const apply: Plugin['apply'] = (host, options) => {
   const ask = botAsk({
     main: (backSession) => wake.main(backSession),
     request: async (session, id) => {
-      const { conn } = await connection();
-      const answered = await conn.request('subscribe', { channel: session }) as { snapshot?: { state?: Bag } };
-      const list = answered.snapshot?.state?.['inputNeeded'];
+      const { channels } = await connection();
+      const list = await channels.hold(session, (state) => state?.['inputNeeded']);
       if (!Array.isArray(list)) return undefined;
       const found = list.find((one: unknown) => (
         typeof one === 'object' && one !== null && (one as Bag)['id'] === id
@@ -645,7 +682,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     },
     send,
     problem: (line) => { host.problem(`${name}: ${line}`); },
-  });
+  }, askIn);
   host.on('input_needed_set', (event) => {
     void ask.asked(event.session, event.id).catch((error: unknown) => {
       host.problem(`${name}: the request ${event.id} in ${event.session} was not shown: ${reason(error)}`);
@@ -662,103 +699,41 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   host.registerTool(postMessage(wake));
   /*
-   * The back turns `turn_start` is still reading, by `openingKey`, and the
-   * `turn_end` of each one that ended during the reads.
-   */
-  const opening = new Map<string, Opening>();
-  /*
-   * The start of a turn somebody began in a back session.
+   * A turn of a back session a main turn waits on: the message it took up,
+   * where it was one the wake sent, waits no more, and the main turn is
+   * answered by the turn the last of them becomes.
    *
-   * A person who types in the back session itself, or whatever else drives that
-   * chat, begins a turn no main chat is waiting on. The main chat shows it as a
-   * turn of its own, so the person watching there sees the work and its answer;
-   * the wake holds it from then on, as it holds a turn a message woke.
-   *
-   * A turn this wake woke opens nothing: `woken` holds the main turn it is
-   * answering already, and is told the turn began. The back session is found
-   * from its row, which names the bot and the person, and the main chat from
-   * that bot's row for the person - the one chat a person has with a bot. A
-   * chat this host is not running opens nothing, and so does one that has a
-   * turn open.
-   *
-   * The reads take time, and a back turn that fails or is stopped at once ends
-   * before the main turn opens. Its `turn_end` is kept in `opening`, and the
-   * main turn ends with it as soon as it opens.
+   * A turn no main turn waits on - one a person typed in the back session
+   * itself - stays in the back session's own chat, which the main turn that
+   * woke the session links as its subagent call, as a turn VS Code's host
+   * starts is the turn of the chat it was started on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L126-L171
    */
   host.on('turn_start', (event) => {
-    /*
-     * A turn of a back session a main turn waits on: the message it took up,
-     * where it was one the wake sent, waits no more, and the main turn is
-     * answered by the turn the last of them becomes.
-     */
-    if (wake.main(event.session) !== undefined) {
-      wake.taken(event.session, event.turn, event.queuedMessageId);
-      return;
-    }
-    const key = openingKey(event.session, event.turn);
-    const note: Opening = {};
-    opening.set(key, note);
-    void (async (): Promise<void> => {
-      try {
-        await store.ready();
-        for (const bot of store.all()) {
-          const row = await backs.of(bot.id, event.session);
-          if (row === undefined) continue;
-          const owner = whose(row.user, host.hostName);
-          const chatRow = await chats(bot.id).get(rowId([bot.id, owner]));
-          const main = chatRow?.['chat'];
-          if (typeof main !== 'string' || main === '') return;
-          let handle: TurnHandle;
-          try {
-            handle = turns(main);
-          }
-          catch {
-            return;
-          }
-          const { conn } = await connection();
-          const answered = await conn.request('subscribe', { channel: event.chat }) as { snapshot?: { state?: unknown } };
-          const message = messageOfTurn(answered.snapshot?.state, event.turn);
-          if (message === undefined) return;
-          const text = typeof message['text'] === 'string' ? message['text'] : '';
-          /*
-           * Whose message it is: a person began this turn, as every turn a person
-           * types in a chat is theirs. Nothing where the event names nobody - a
-           * turn the back session's own backend began - and the message keeps the
-           * origin a person's has.
-           */
-          const from: MessageFrom | undefined = event.sender === undefined ? undefined : { origin: { kind: 'user' } };
-          const turnId = handle.begin(text, from);
-          if (turnId === undefined) return;
-          /*
-           * Nothing waits from here to the `finally` that drops the note, so a
-           * `turn_end` that comes later finds the main turn held, as any does.
-           */
-          wake.began(event.session, main, handle, turnId, event.chat, event.turn);
-          if (note.ended !== undefined) ended(note.ended);
-          return;
-        }
-      }
-      finally {
-        if (opening.get(key) === note) opening.delete(key);
-      }
-    })().catch((error: unknown) => {
-      host.problem(`${name}: the turn ${event.turn} in ${event.session} was not shown: ${reason(error)}`);
-    });
+    if (wake.main(event.session) !== undefined) wake.taken(event.session, event.turn, event.queuedMessageId);
   });
   /*
    * The end of a turn: the words it ended with, read off the session's chat.
    *
-   * Every turn of the daemon raises the event, so one no main chat is waiting
-   * on is left alone rather than read. The session is asked again after the
-   * read, because a message that arrived meanwhile woke it again and holds a
-   * turn of its own: answering that turn with these words would answer a
-   * message nobody sent. A read that fails is reported and the main turn ends
-   * with no text, so a person waiting on it is not left waiting on an error
-   * they cannot see.
+   * Every turn of the daemon raises the event, every chat's, so one no main
+   * chat is waiting on is left alone rather than read: a turn of another
+   * session, and a turn of a worker's chat inside the back session, whose end
+   * is not the answer. The session is asked again after the read, because a
+   * message that arrived meanwhile woke it again and holds a turn of its own:
+   * answering that turn with these words would answer a message nobody sent.
+   * A turn that failed, or whose start the host refused, fails the main turn in
+   * its own words. A read that fails is reported and the main turn ends with
+   * no text, so a person waiting on it is not left waiting on an error they
+   * cannot see.
    */
-  function ended(event: TurnEndEvent): void {
+  host.on('turn_end', (event: TurnEndEvent) => {
+    // A start the host refused had no `turn_start` to say which queued message
+    // it took up, so its end says it, and the message waits no more.
+    if (event.reason.kind === 'rejected' && event.queuedMessageId !== undefined && wake.main(event.session) !== undefined) {
+      wake.taken(event.session, event.turnId, event.queuedMessageId);
+    }
     const held = wake.main(event.session);
-    if (held === undefined) return;
+    if (held === undefined || event.channel !== held.chat) return;
     /*
      * Whether this is still the main turn waiting when the read comes back: a
      * message that arrived meanwhile holds its own turn in the same chat, and
@@ -770,37 +745,30 @@ export const apply: Plugin['apply'] = (host, options) => {
       return now !== undefined && now.handle === held.handle && now.turnId === held.turnId;
     };
     const read = (async (): Promise<string> => {
-      const { conn } = await connection();
-      const answered = await conn.request('subscribe', { channel: event.chat }) as { snapshot?: { state?: unknown } };
-      return textOf(answered.snapshot?.state, event.turn);
+      const { channels } = await connection();
+      return await channels.hold(event.channel, (state) => textOf(state, event.turnId));
     })();
     read.then((text) => {
       if (!still()) return;
-      wake.finished(event.session, text, event.status === 'error' ? event.error ?? 'The turn failed' : undefined);
+      const failed = event.reason.kind === 'error' || event.reason.kind === 'rejected' ? event.reason.error.message : undefined;
+      wake.finished(event.session, text, failed);
     }, (error: unknown) => {
-      host.problem(`${name}: the end of turn ${event.turn} in ${event.chat} was not read: ${reason(error)}`);
+      host.problem(`${name}: the end of turn ${event.turnId} in ${event.channel} was not read: ${reason(error)}`);
       if (!still()) return;
       wake.finished(event.session, '');
     });
-  }
-  /* A back turn `turn_start` is still reading keeps its end for that read. */
-  host.on('turn_end', (event) => {
-    const note = opening.get(openingKey(event.session, event.turn));
-    if (note !== undefined) {
-      note.ended = event;
-      return;
-    }
-    ended(event);
   });
   /*
    * A chat with a bot: a session of its own that runs no model, one JSON line
    * per turn under the daemon's configuration folder. Every message in one,
    * new or resumed, goes to the wake, and so does a stop of one of its turns.
-   * See `chat.ts`.
+   * A steer the wake failed on is dropped, as one whose send failed is. See
+   * `chat.ts`.
    */
   host.registerAgent(botChatAgent(host.configDir, store, (message, handle) => {
     wake.woken(message, handle).catch((error: unknown) => {
       host.problem(`${name}: a message in ${message.session} was not woken: ${reason(error)}`);
+      if (message.steering !== undefined) handle.steeringConsumed?.(message.steering);
     });
   }, (session, turnId) => {
     wake.stopped(session, turnId).catch((error: unknown) => {

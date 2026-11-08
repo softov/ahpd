@@ -136,8 +136,8 @@ const from = (source: 'profile' | 'option' | 'default'): string =>
  * A part need's fallback mount, resolved as a need of its own, or nothing.
  *
  * Nothing as well when its host path is not there: a fallback is used only
- * when the part could not be built, so a missing one leaves the part's own
- * refusal standing rather than refusing a machine whose part builds.
+ * when the part could not be loaded, so a missing one leaves the part's own
+ * refusal standing rather than refusing a machine whose part loads.
  */
 const fallbackOf = (name: string, need: { fallback?: MachineNeed }, home: string, mode: StateMode): { fallback?: ResolvedNeed } => {
   if (need.fallback === undefined) return {};

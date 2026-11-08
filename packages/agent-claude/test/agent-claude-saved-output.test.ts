@@ -56,7 +56,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: () => {
     const feed = sdk.feed;
@@ -84,7 +84,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createSession } = await import('../src/session.js');
-const { restoreSavedOutputs, SAVED_BYTES } = await import('../src/session/savedoutput.js');
+const { restore, MAX_TERMINAL_OUTPUT_BYTES } = await import('../src/session/savedoutput.js');
 
 /** The whole output, longer than the preview Claude gives the model. */
 const OUTPUT = `FULL_OUTPUT_BEGIN\n${'x'.repeat(4096)}\nFULL_OUTPUT_END\n`;
@@ -127,7 +127,7 @@ const fakeOutputs = (refuses = false): TerminalOutputs & { kept: Map<string, { o
 };
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** Wait for something the session does once a read on the thread pool has come back. */
@@ -329,9 +329,14 @@ const none: {
       // Sparse, so the size is there without writing the bytes.
       const large = join(path, '..', 'large.txt');
       writeFileSync(large, '');
-      truncateSync(large, SAVED_BYTES + 1);
+      truncateSync(large, MAX_TERMINAL_OUTPUT_BYTES + 1);
       return [called('Bash'), answered(noticeFor(large), structuredFor(large))];
     },
+  },
+  {
+    name: 'a file over the record\'s maxTerminalOutputBytes, which is not read',
+    frames: (path) => [called('Bash'), answered(noticeFor(path), structuredFor(path))],
+    options: { preset: { maxTerminalOutputBytes: 1 } },
   },
   {
     name: 'a message with two results',
@@ -461,7 +466,7 @@ it('names the terminal again on a call read back whose output the host keeps', (
   const outputs = fakeOutputs();
   outputs.keep('toolu_1', OUTPUT, 0);
   const turns = restored({});
-  restoreSavedOutputs(turns, outputs);
+  restore(turns, outputs);
   expect(restoredContent(turns)).toEqual([
     { type: 'text', text: noticeFor('/tmp/b907a98.txt') },
     {
@@ -475,7 +480,7 @@ it('names the terminal again on a call read back whose output the host keeps', (
 
   // A call that failed says no code, as the live one does.
   const failed = restored({ success: false });
-  restoreSavedOutputs(failed, outputs);
+  restore(failed, outputs);
   expect(restoredContent(failed).at(-1)).toMatchObject({ type: 'terminal', result: { preview: 'FULL_OUTPUT_BEGIN', truncated: true } });
   expect(bag(restoredContent(failed).at(-1)?.result).exitCode).toBeUndefined();
 });
@@ -488,7 +493,7 @@ it.each([
   const outputs = fakeOutputs();
   if (keep) outputs.keep('toolu_1', OUTPUT, 0);
   const turns = restored(call);
-  restoreSavedOutputs(turns, outputs);
+  restore(turns, outputs);
   expect(restoredContent(turns)).toEqual([{ type: 'text', text: noticeFor('/tmp/b907a98.txt') }]);
 });
 

@@ -15,10 +15,11 @@
  * the catalogue is `catalog.ts`.
  */
 
+import { ensureWorkspacelessScratchDir } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, Offered, Session } from '@ahpd/sdk';
 import { runtimeModels } from './backend.js';
 import type { RuntimeModels } from './backend.js';
-import { catalogue, findSession, forgetSession, stateFile, watchedSession } from './catalog.js';
+import { catalogue, deleteSession, findSession, stateFile, watchedSession } from './catalog.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import { piMachine } from './machine.js';
@@ -41,7 +42,7 @@ export function piAgent(
   options: PiOptions,
   directories: readonly string[],
   models: RuntimeModels = runtimeModels,
-): Agent<Session> {
+): Agent {
   const provider = options.provider ?? 'pi';
   const displayName = options.displayName ?? 'pi';
   const paths = [...directories];
@@ -62,7 +63,6 @@ export function piAgent(
     type: 'object',
     properties: {
       projectTrust: {
-        scope: 'session',
         type: 'string',
         title: 'Project resources',
         description: "Whether this project's own pi extensions, skills and prompts are loaded.",
@@ -125,19 +125,19 @@ export function piAgent(
      */
     probe: async (): Promise<Offered> => {
       let found: Offered['models'] = [];
-      try { found = (await models()).map(({ model, levels }) => listed(model, levels)); }
+      try { found = (await models()).map(({ model, levels, startsOn }) => listed(model, levels, startsOn)); }
       catch { found = []; }
       return { models: found, customizations: [], commands: [] };
     },
 
     directories: () => [...paths],
 
-    list: (): Promise<Listed[]> => catalogue(options, provider, paths),
+    list: (): Promise<Listed[]> => catalogue(options, provider),
 
     /*
      * One session's row, read from its own file rather than by listing the
      * folder it is in: what a client opening a row the host does not hold
-     * costs, which `list` pays by reading every transcript in the directory.
+     * costs, which `list` pays by reading every transcript pi's store holds.
      * The session's recorded folder is asked before the configured paths.
      */
     find: (id, at): Promise<Listed | undefined> => findSession(options, provider, id, paths, at),
@@ -165,7 +165,7 @@ export function piAgent(
      * this process's record of the session with it, or the next listing
      * offers the row again.
      */
-    delete: (id, directory) => forgetSession(options, provider, id, directory),
+    delete: (id, directory) => deleteSession(options, provider, id, directory),
 
     /*
      * The machine half. pi is a library in this process, so no command can
@@ -180,6 +180,20 @@ export function piAgent(
      */
     machine: () => piMachine(provider),
 
-    create: (start) => piSession(options, start, options.open),
+    /*
+     * A resumed session's earlier turns are read from pi's file before the
+     * session is built, so a file pi cannot read fails the session's start, as
+     * VS Code's Copilot agent raises a failure to read a chat whose session it
+     * knows; the session is handed what was read.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7933-L7939
+     */
+    create: (start) => {
+      if (start.resume === undefined) return piSession(options, start, options.open);
+      const resume = start.resume;
+      return (async (): Promise<Session> => {
+        const earlier = await replayed(options, resume, [start.workingDirectory ?? ensureWorkspacelessScratchDir(start.uri)]);
+        return piSession(options, start, options.open, async () => earlier);
+      })();
+    },
   };
 }

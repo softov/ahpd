@@ -11,10 +11,10 @@
 
 import { expect, it, describe } from 'vitest';
 import { conversation, scenario } from './scenario.js';
-import { chatUriFor } from '../src/host/channels.js';
 
 const SESSION = 'ahp-session:/one';
-const CHAT = chatUriFor(SESSION);
+/** The session's chat, which the host mints: read off the session's state by `started`. */
+let CHAT = '';
 
 /** Say something, as a client dispatching a turn does. */
 const say = (id: string, text: string): { method: string; params: Record<string, unknown> } => ({
@@ -27,7 +27,7 @@ async function started() {
   const run = scenario();
   const first = await run.join('first');
   await first.handle({ method: 'createSession', params: { channel: SESSION, provider: 'echo' } });
-  await first.subscribe(SESSION);
+  CHAT = String((await first.subscribe(SESSION) as { defaultChat?: unknown }).defaultChat);
   await first.subscribe(CHAT);
   return { run, first };
 }

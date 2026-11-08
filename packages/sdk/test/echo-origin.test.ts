@@ -15,7 +15,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { fileResources } from '../src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
@@ -25,7 +24,8 @@ import type { Peer } from '../src/types/rpc.js';
 import type { Session } from '../src/types/session.js';
 
 const SESSION = 'ahp-session:/one';
-const CHAT = chatUriFor(SESSION);
+/** The session's chat, which the host mints: read off the session's state by `serving`. */
+let CHAT = '';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ahpd-echo-origin-')); });
@@ -90,7 +90,7 @@ const serving = async (agent: Agent, more: Partial<HostOptions> = {}, config?: B
   const client = host.accept(p);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
   await client.handle({ method: 'createSession', params: { channel: SESSION, provider: 'echo', ...(config === undefined ? {} : { config }) } });
-  await client.handle({ method: 'subscribe', params: { channel: SESSION } });
+  CHAT = ((await client.handle({ method: 'subscribe', params: { channel: SESSION } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: CHAT } });
   const dispatch = (clientSeq: number, action: Bag) =>
     client.handle({ method: 'dispatchAction', params: { channel: CHAT, clientSeq, action } });
@@ -850,5 +850,49 @@ it('starts the echo example\'s head once a client takes a message back from a st
   await dispatch(5, { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'waiting' });
   await until(() => startedFrom().length === 2, 'the head');
   expect(startedFrom()).toEqual([undefined, 'later']);
+  await host.close();
+});
+
+/*
+ * What a backend says is dropped by VS Code's host's rule alone: an action of
+ * another turn while one runs, and with none running, a completion of a turn
+ * a stop ended. A late end of a stopped turn is said, and a second result for
+ * a call the running turn completed is said, the reducer leaving both as
+ * nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L900-L918
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L944-L963
+ */
+it('drops only what VS Code\'s host drops of what a backend says', async () => {
+  let said: ((action: Bag) => void) | undefined;
+  const base = echo({ path: dir, pace: 0 });
+  const agent: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      said = (action) => { start.emit('chat', action); };
+      return { ...(base.create(start) as Session), sendMessage: () => undefined };
+    },
+  };
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } });
+  await settle();
+  said?.({ type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'call-1', toolName: 'look', displayName: 'Look' });
+  said?.({ type: 'chat/toolCallReady', turnId: 't1', toolCallId: 'call-1', invocationMessage: 'Look', toolInput: '{}', confirmed: 'not-needed' });
+  said?.({ type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true } });
+  said?.({ type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true } });
+  said?.({ type: 'chat/responsePart', turnId: 't0', part: { kind: 'markdown', id: 'p0', content: 'stale' } });
+  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+  said?.({ type: 'chat/turnComplete', turnId: 't1', duration: 1 });
+  said?.({ type: 'chat/error', turnId: 't1', duration: 1, part: { kind: 'error', error: { errorType: 'late', message: 'late' } } });
+  await settle();
+
+  const fromBackend = p.heard.filter((one) => one.channel === CHAT && one.origin === undefined && one.action.turnId !== undefined)
+    .map((one) => [one.action.type, one.action.turnId]);
+  expect(fromBackend).toEqual([
+    ['chat/toolCallStart', 't1'],
+    ['chat/toolCallReady', 't1'],
+    ['chat/toolCallComplete', 't1'],
+    ['chat/toolCallComplete', 't1'],
+    ['chat/error', 't1'],
+  ]);
   await host.close();
 });

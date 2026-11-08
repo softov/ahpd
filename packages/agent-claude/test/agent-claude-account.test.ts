@@ -9,7 +9,7 @@ import { expect, it, vi } from 'vitest';
  * answer at all - and what it offers is read back.
  */
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   query: () => ({
     initializationResult: async () => sdk.init,
     mcpServerStatus: async () => [],

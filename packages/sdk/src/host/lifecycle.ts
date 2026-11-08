@@ -1,27 +1,32 @@
-import { INVALID_PARAMS, RpcError } from '../rpc.js';
-import { computerId } from '../machines/computers.js';
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
+import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
+import { computerId, computersFor } from '../machines/computers.js';
 import { deleteNested } from '../sessions/nested.js';
 import { uriOf } from '../resources/fileuri.js';
 import { idOf, uriFor, Status } from '../sessions/catalog.js';
-import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, rm, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { isDeepStrictEqual } from 'node:util';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { worktreeFor, worktreesOf } from '../repo/worktrees.js';
-import { ROOT, chatIdFor, chatUriFor, named } from './channels.js';
+import { ROOT, chatIdFor, named } from './channels.js';
+import { mintDefaultChatUri } from '../vscode/chatminting.js';
+import { filterChatConfigValues } from '../vscode/chatconfig.js';
+import type { ConfigSchema } from '../vscode/chatconfig.js';
 import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
-import { readCreatedBy, readOrigin } from '../sessions/remotesession.js';
-import { HOSTS_OWN, bangCommand } from './common.js';
+import { readCreatedBy, readMultiRoot, readOrigin } from '../sessions/remotesession.js';
+import { HOSTS_OWN, bangCommand, noProvider } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
-import { startsRead } from './chatactions.js';
-import { autoApproved, requireTrust } from './trust.js';
+import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Chosen, Session, MessageAttachment, MessageFrom } from '../types/session.js';
 import type { MessageChatAttachment } from '@microsoft/agent-host-protocol';
 import type { Owner } from '../types/usage.js';
 import type { Principal } from '../types/users.js';
 import type { Connection } from '../types/host.js';
-import type { Agent } from '../types/agent.js';
+import type { Agent, SessionMachine } from '../types/agent.js';
 import type { StoredWorktree } from '../types/sessions.js';
 import type { Worktrees } from '../types/worktrees.js';
 import type { Held } from './state.js';
@@ -74,6 +79,16 @@ export type Attached =
   | { attachments?: MessageAttachment[] | undefined; refusal?: undefined }
   | { refusal: string; attachments?: undefined };
 
+/** Where a session ran: the machine its config named, the session, and whose it was. */
+export interface RanIn {
+  /** The machine's id: the `<id>` of the session's `computer://<id>`. */
+  id: string;
+  /** The session's URI, which the machine gate checks a delete against. */
+  session: string;
+  /** The session's owner, which the machine was prepared for. */
+  owner: Owner | undefined;
+}
+
 /**
  * What happens to a session between being opened and being gone.
  *
@@ -101,27 +116,39 @@ export interface Lifecycle {
     uri: string,
     credentials: Record<string, string>,
     keeping?: { additional?: string[]; directory?: string },
-    sender?: Connection,
     before?: BeforeWorktree,
     tokensFor?: (provider: string) => Record<string, string>,
   ): Promise<void>;
   /** The move `set_workspace` asked for, once the turn that asked is over. */
   moveSession(uri: string, move: Move): Promise<void>;
-  /** Start one chat again, in the directories it now has. */
-  restartChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void;
+  /**
+   * Relaunch one chat, in the directories it now has, as the same conversation, as VS Code relaunches a chat's
+   * provider; answered once the chat that takes its place is held.
+   */
+  relaunchChat(uri: string, chatUri: string, credentials: Record<string, string>): Promise<void>;
   /** The name a backend is handed for one chat, which is the id a restart resumes it by. */
   chatIdOf(uri: string, chatUri: string, own: string | undefined): string | undefined;
-  /** The backend's own copy of one chat's conversation, gone. */
-  deletedChat(backendId: string, agent: Agent, directory: string | undefined): Promise<unknown>;
+  /** The backend's own copy of one chat's conversation disposed, as VS Code's provider disposes a chat. */
+  disposeProviderChat(backendId: string, agent: Agent, directory: string | undefined, ran: RanIn | undefined): Promise<unknown>;
+  /** The machine a session runs in, while this host holds it; nothing for one on this host. */
+  ranIn(uri: string): RanIn | undefined;
   /**
-   * The backend that serves one chat: the chat's own, or the session's.
+   * The backend that serves one chat: the chat's own, or the session's, as
+   * VS Code resolves the provider for a chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L387
    *
    * A chat opened on a backend the session does not run on is served by that
    * one wherever it is started again, and every other chat by the session's.
    */
-  chatAgent(held: Held, chatUri: string): Agent;
-  /** The config that chat runs on: the chat's own where it has one, the session's otherwise. */
-  chatConfig(held: Held, chatUri: string): Record<string, unknown>;
+  getProviderForChat(held: Held, chatUri: string): Agent;
+  /** The config a chat of the session `uri` runs on: its backend's own where it has one, the session's with the chat's own values otherwise. */
+  chatConfig(uri: string, held: Held, chatUri: string): Record<string, unknown>;
+  /** What a chat of the session `uri` runs on for the properties a chat may set, the read-only ones left out. */
+  effectiveChatConfigValues(uri: string, held: Held, chatUri: string): Record<string, unknown>;
+  /** The values a new chat of the session `uri` starts with as its own, by what it was made from. */
+  initialChatConfig(uri: string, held: Held, chatUri: string, origin: Bag | undefined): Record<string, unknown>;
+  /** A new or moved chat's own values written down, and said where its state is already open. */
+  keepChatOwnConfigValues(uri: string, chatUri: string, values: Record<string, unknown>): void;
   /** What the backend is given: everything except what this host answered. */
   backendsOwn(config: Record<string, unknown>): Record<string, unknown>;
   /** Where a session actually runs, once isolation has been answered. */
@@ -131,15 +158,33 @@ export interface Lifecycle {
     where: string | undefined,
     before?: BeforeWorktree,
   ): Promise<string | undefined>;
+  /** A worktree session's tree, owed to its first send, which starts the session again in it. */
+  oweTree(uri: string, credentials: Record<string, string>, tokensFor: (provider: string) => Record<string, string>): void;
   /**
    * An archived session's tree taken away once the session has stopped, with
-   * its branch kept for `restore`. `after` is what has to settle first: the
+   * its branch kept for `restoreSessionWorktree`, as VS Code requests a
+   * session's worktree removal. `after` is what has to settle first: the
    * close of the agents that ran in the tree.
    */
-  shelve(uri: string, after?: Promise<unknown>): Promise<void>;
-  /** A session's tree put back at its path on its branch, where `shelve` took it. */
-  restore(uri: string): Promise<void>;
-  /** A message's turn, whichever way it arrived. */
+  requestSessionWorktreeRemoval(uri: string, after?: Promise<unknown>): Promise<void>;
+  /** A session's tree put back at its path on its branch, where `requestSessionWorktreeRemoval` took it, as VS Code restores a session's worktree. */
+  restoreSessionWorktree(uri: string): Promise<void>;
+  /**
+   * A tree of the window's own, cut for a creating session whose tree is
+   * pending and named after the handle the window holds it by.
+   */
+  createDetachedWorktree(uri: string, handle: string): Promise<StoredWorktree>;
+  /**
+   * Whether deleting an archived session keeps its work: each of its trees
+   * gone, or on its own branch and synced with its remote.
+   */
+  canAutomaticallyDeleteArchivedSession(uri: string): Promise<boolean>;
+  /**
+   * A message's turn, whichever way it arrived. `relay` carries a client's
+   * start to the session that runs it on another host, when the session the
+   * turn reaches is one; a session a relaunch brought back here takes the turn
+   * itself.
+   */
   beginOrRun(
     session: Session,
     provider: string,
@@ -151,7 +196,7 @@ export interface Lifecycle {
     attachments?: MessageAttachment[],
     said?: () => void,
     stopped?: () => boolean,
-    relay?: () => void,
+    relay?: (on: Session) => void,
   ): string | undefined | Promise<string | undefined>;
   /** A turn this host begins itself, with no client's start behind it: said, then sent. */
   startTurn(session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Promise<void> | undefined;
@@ -176,8 +221,15 @@ export interface Lifecycle {
    * out at all - and is absent where nobody sent the message.
    */
   messageAttachments(message: Record<string, unknown>, sender?: Connection): Attached;
-  /** Start a session, with what its request asked to be told, offered and shaped by. */
-  openSession(
+  /**
+   * The folder a session that names none works in under the daemon's
+   * `workspacelessFolder`: its own scratch folder, made now, for `scratch`,
+   * and nothing for `first`, which leaves it to the first folder this host
+   * serves.
+   */
+  scratchFolder(uri: string): Promise<string | undefined>;
+  /** Create a session on its provider, with what its request asked to be told, offered and shaped by. */
+  createProviderSession(
     uri: string,
     provider: string,
     config: Record<string, unknown>,
@@ -186,7 +238,7 @@ export interface Lifecycle {
     credentials?: Record<string, string>,
     additional?: string[],
     title?: string,
-    by?: { owner?: Owner; principal?: Principal; sender?: Connection },
+    by?: { owner?: Owner; principal?: Principal; sender?: Connection; legacyChatUris?: boolean },
     asked?: { instructions?: string[]; tools?: string[]; userSettings?: boolean },
   ): Promise<void>;
 }
@@ -205,23 +257,82 @@ export const symlinkFolders = (config: Record<string, unknown>): string[] => {
 };
 
 /** The message of the commit that saves a dirty tree before archive removes it. */
-const ARCHIVE_COMMIT_MESSAGE = 'Saving uncommitted changes before archiving session';
+export const ARCHIVE_COMMIT_MESSAGE = 'Saving uncommitted changes before archiving session';
+
+/**
+ * A session's scratch folder, `<home>/.copilot/chats/<session id>`, as VS Code
+ * names a workspace-less session's, or nothing for a session id that names no
+ * folder of its own under the chats folder, so what is made, made again or
+ * removed for a session is a folder under it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/workspacelessScratchDir.ts#L14-L20
+ *
+ * Both paths normalized, and the folder a strict descendant of the chats
+ * folder, as VS Code keeps a worktree inside its repository's `.worktrees`, so
+ * an equivalent spelling of the chats folder cannot slip past. VS Code joins
+ * the ids it mints itself, which never meet the case; a folder made outside
+ * the chats folder for a session is a fault, so it is refused.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/worktreePaths.ts#L35-L42
+ */
+export const workspacelessScratchDir = (uri: string): string | undefined => {
+  const chats = resolve(homedir(), '.copilot', 'chats');
+  const folder = resolve(join(chats, idOf(uri)));
+  const inside = relative(chats, folder);
+  return inside !== '' && inside !== '..' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside) ? folder : undefined;
+};
+
+/**
+ * Whether a session working in `folder` is workspace-less, as VS Code marks
+ * one: its folder is its own scratch folder, where a session that named none
+ * works under `workspacelessFolder: scratch` until `set_workspace` gives it a
+ * workspace, as VS Code's conversion takes the mark off.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10698-L10700
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L829-L832
+ */
+export const isWorkspaceless = (uri: string, folder: string | undefined): boolean => {
+  const scratch = workspacelessScratchDir(uri);
+  return scratch !== undefined && folder === scratch;
+};
 
 export function createLifecycle(ctx: HostContext): Lifecycle {
   const {
     options, sessions, byChat, subagents, owners, kept, decided, offered, worktrees, worktreeOf, origins,
-    drafts, madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside, detached,
+    madeFrom, restoredSessions, githubFacts, principals, presence, marks, lives, beside,
     dispatch, broadcast, flushDeltas, log, fire, sessionEvents, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
     sessionMachines, enteredIn, inMachine, takeOut, placedIn, followOf,
     isolating, charged, senders, sentBy, forgetSender, forgetSendersIn, forgetKeys, keepKeys,
     checked, principalFor, machineFor, ownerFor,
     contributedDefaults, rootConfig,
-    spawn, keepTitle, keepProvider, forgetChats,
-    sessionComing, sessionAdded, forgetSent, activeSessionsMoved,
+    spawn, recordSessionProvider, forgetChats,
+    markSessionProvisional, provisional, removeNotifiedSummary, activeSessionsChanged,
   } = ctx;
 
   const respawning = new Map<string, Held>();
+
+  // What a turn naming a model its agent does not offer does, from the host's
+  // own option: read here because this is where a turn is sent.
+  ctx.unofferedModel = options.unofferedModel ?? 'fail';
+  // And where a session that names no folder works, read here because this is
+  // where a session is made.
+  ctx.workspacelessFolder = options.workspacelessFolder ?? 'first';
+
+  /*
+   * A session that names no folder, given its own under `scratch`: made now,
+   * before anything reads it, as VS Code's agent ensures a workspace-less
+   * session's scratch folder when it creates the session. A session id that
+   * names no folder under the chats folder is refused: VS Code joins the ids it
+   * mints itself, which never meet the case, and a folder made outside the
+   * chats folder for a session is a fault, so it is refused.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/workspacelessScratchDir.ts#L10-L15
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1565-L1570
+   */
+  const scratchFolder = async (uri: string): Promise<string | undefined> => {
+    if (ctx.workspacelessFolder !== 'scratch') return undefined;
+    const folder = workspacelessScratchDir(uri);
+    if (folder === undefined) throw new RpcError(INVALID_PARAMS, `${uri} names no folder of its own under ${join(homedir(), '.copilot', 'chats')}`);
+    await mkdir(folder, { recursive: true });
+    return folder;
+  };
 
   /** The folders linked into a session's tree, from the config it was made with. */
   const linkedOf = (uri: string): string[] => symlinkFolders(kept.config(idOf(uri)) ?? decided.get(uri) ?? {});
@@ -247,7 +358,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * Everything a session this daemon is holding took with it.
    *
    * The part of a delete that is the host's own: the chats closed, the
-   * terminals they claimed killed, the worktree removed if clean, the run that
+   * terminals they claimed killed, its worktrees removed if clean, the run that
    * started it unlinked, and everything this host kept *about* the session
    * let go. What the backend keeps is the backend's, and `removeSession` asks
    * for it once this is done and what it answers has settled: every chat's
@@ -270,7 +381,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       // is gone from here is gone inside its machine as well.
       closing.push(Promise.resolve(chat.close('dispose')).catch(() => {}));
       byChat.delete(chatUri);
-      drafts.delete(chatUri);
+      ctx.chatRelaunches.delete(chatUri);
       madeFrom.delete(chatUri);
       ctx.links.forgetChat(chatUri);
       // The chat is gone with the session, so its canvases are too. Said
@@ -283,11 +394,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     /*
      * And the worker chats the session opened.
      *
-     * Not `held.chats`, because a worker has no `Session`; but they are chats
-     * of this session all the same, and one left behind is a channel in the
-     * catalogue that nothing will ever answer on again.
+     * Kept apart from `held.chats`, because a worker has no `Session`; but
+     * they are chats of this session all the same, and their records go with
+     * it. The session's removal stands for them on the wire, as VS Code's host
+     * lets a deleted session's chat entries go with no action of their own.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2379-L2386
      */
-    resumedSessions.delete(uri);
+    restoredSessions.delete(uri);
     for (const [chatUri, one] of [...subagents]) {
       if (one.session !== uri) continue;
       subagents.delete(chatUri);
@@ -295,7 +408,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       ctx.links.forgetChat(chatUri);
       ctx.links.forget(one.parentChat, one.toolCallId);
       ctx.sessionEvents.forget(chatUri);
-      dispatch(uri, { type: 'session/chatRemoved', chat: chatUri });
     }
     /*
      * And the shells the session was holding.
@@ -305,17 +417,20 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * too, and what is left is a channel in the root catalogue that
      * nobody can reach. `!` commands are the ordinary way these
      * accumulate - one terminal each, kept so the finished tool call
-     * points somewhere real.
+     * points somewhere real. The root's list is said as each one goes, as
+     * the reference host's terminal manager broadcasts it at each disposal.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L941-L946
      */
     for (const [terminalUri, terminal] of [...ctx.terminals]) {
       const claim = terminal.claim();
       if (claim.kind !== 'session' || claim.session !== uri) continue;
       terminal.close();
       ctx.terminals.delete(terminalUri);
+      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
     }
-    dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
     /*
-     * And the worktree, unless somebody's work is still in it.
+     * And its worktrees, the one it ran in and each one a move left it,
+     * unless somebody's work is still in one.
      *
      * The decision this feature turns on. A worktree with uncommitted
      * changes is the one thing here a daemon cannot judge the value of:
@@ -330,29 +445,33 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * killing the daemon.
      */
     const tree = worktreeOf(uri);
+    const additional = kept.additionalWorktrees?.(idOf(uri)) ?? [];
     if (tree) {
       worktrees.delete(uri);
       kept.setWorktree?.(idOf(uri), undefined);
-      const port = options.worktrees;
-      // Read now: the session's config is forgotten below, before the check runs.
-      const linked = linkedOf(uri);
+    }
+    if (additional.length > 0) kept.setAdditionalWorktrees?.(idOf(uri), []);
+    const port = options.worktrees;
+    // Read now: the session's config is forgotten below, before the check runs.
+    const linked = linkedOf(uri);
+    for (const one of [...(tree === undefined ? [] : [tree]), ...additional]) {
       void (async () => {
         if (port === undefined) return;
         // A tree made on an existing checkout has no branch of its own to
         // compare `HEAD` with, and goes on the dirty check alone.
-        const why = tree.branch === undefined ? undefined : await offBranch(port, { ...tree, branch: tree.branch });
+        const why = one.branch === undefined ? undefined : await offBranch(port, { ...one, branch: one.branch });
         if (why !== undefined) {
-          log(`kept ${tree.path}: ${why}`);
+          log(`kept ${one.path}: ${why}`);
           return;
         }
-        if (await port.dirty(tree.path, linked).catch(() => true) !== false) {
-          log(`kept ${tree.path}: it has changes nobody committed`);
+        if (await port.dirty(one.path, linked).catch(() => true) !== false) {
+          log(`kept ${one.path}: it has changes nobody committed`);
           return;
         }
-        await port.remove(tree.repository, tree.path, tree.branch, linked)
-          .then(() => { log(`removed ${tree.path}`); })
+        await port.remove(one.repository, one.path, one.branch, linked)
+          .then(() => { log(`removed ${one.path}`); })
           .catch((error: unknown) => {
-            log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
+            log(`kept ${one.path}: ${error instanceof Error ? error.message : String(error)}`);
           });
       })();
     }
@@ -362,6 +481,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     const gone = dirOf(uri);
     sessions.delete(uri);
+    // And the relaunch it owed, which no backend is left to take.
+    ctx.relaunches.delete(uri);
     // And the tools server this session opened, which stops answering with it.
     ctx.toolsServersGone(uri);
     if (gone !== undefined) stopUnwatched(gone);
@@ -450,10 +571,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     offered.delete(uri);
     owners.delete(uri);
     lives.delete(uri);
-    for (const channel of [...ctx.shown.keys()]) {
-      if (changesetOf(channel, uri)) ctx.shown.delete(channel);
-    }
-    activeSessionsMoved();
+    activeSessionsChanged();
     return Promise.all(closing).then(() => undefined);
   };
 
@@ -488,6 +606,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     uri: string,
     agent: Agent,
     directory: string | undefined,
+    ran: RanIn | undefined,
   ): Promise<unknown> => {
     if (agent.delete === undefined) {
       if (!cannotDelete.has(agent.provider)) {
@@ -497,7 +616,22 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       return undefined;
     }
     try {
-      await agent.delete(idOf(uri), directory);
+      /*
+       * A session that asked for a machine is deleted there, through the same
+       * gate its own spawn went through. A host with no computer plugin cannot
+       * reach the machine - and never started the session in one - so it says
+       * so and sends nothing: a delete sent to this host instead would succeed
+       * against a store that never held the conversation.
+       */
+      let machine: SessionMachine | undefined;
+      if (ran !== undefined) {
+        if (options.computers === undefined) {
+          log(`${ran.session} asked for computer://${ran.id}, and this host has no computer plugin, so nothing of it there was deleted`);
+          return undefined;
+        }
+        machine = { id: ran.id, computers: computersFor(options.computers, agent.provider, ran.session, ran.owner) };
+      }
+      await agent.delete(idOf(uri), directory, machine);
       return undefined;
     }
     catch (error) {
@@ -514,8 +648,19 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * same question and so the same answer, one log line and one returned
    * failure included.
    */
-  const deletedChat = (backendId: string, agent: Agent, directory: string | undefined): Promise<unknown> =>
-    deleted(uriFor(backendId), agent, directory);
+  const disposeProviderChat = (backendId: string, agent: Agent, directory: string | undefined, ran: RanIn | undefined): Promise<unknown> =>
+    deleted(uriFor(backendId), agent, directory, ran);
+
+  /**
+   * The machine a session runs in, read off what this host kept of its config.
+   *
+   * Read while the session is still held: the teardown forgets the config and
+   * the owner both, and with them the only record of where the conversation is.
+   */
+  const ranIn = (uri: string): RanIn | undefined => {
+    const id = computerId((kept.config(idOf(uri)) ?? decided.get(uri))?.computer);
+    return id === undefined ? undefined : { id, session: uri, owner: kept.owner(idOf(uri)) };
+  };
 
   /**
    * A nested session's copy inside its machine, gone.
@@ -618,7 +763,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const held = sessions.get(uri);
     const owner = owners.get(uri);
     if (!held && !owner)
-      throw new RpcError(-32001, `No agent for session ${uri}`);
+      throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
     const agent = held?.agent ?? (owner as Agent);
     /*
      * The turn's last words before the session that said them goes.
@@ -629,15 +774,30 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     flushDeltas();
     /*
+     * Each of its changesets a client watches, cleared on its own channel
+     * before anything else goes, so a client watching one sees it emptied
+     * rather than keeping the files it last saw, as VS Code's host disposes a
+     * session's changesets first when it deletes the session.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2415-L2426
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2645-L2653
+     */
+    for (const channel of [...ctx.shown.keys()]) {
+      if (!changesetOf(channel, uri)) continue;
+      dispatch(channel, { type: 'changeset/cleared' });
+      ctx.shown.delete(channel);
+    }
+    /*
      * Read before either is let go of, and before the row's directory goes
      * with it: `dirOf` answers out of `sessions` or `wheres`, and this is the
      * only moment at which both still say where the session ran.
      *
      * The chats come with the directory, and for the same reason: the teardown
-     * below drops the record they are read from.
+     * below drops the record they are read from. So does the machine, which is
+     * read off the config the teardown forgets.
      */
     const directory = dirOf(uri);
     const chats = ctx.heldChats(idOf(uri));
+    const ran = ranIn(uri);
     /*
      * And the checkpoints its turns left in that folder, which are commits
      * under a ref of the session's own: nothing else will ever point at them,
@@ -652,7 +812,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     }
     if (held !== undefined) await teardown(held, uri);
     else await deletedInside(uri);
-    let failure = await deleted(uri, agent, directory);
+    let failure = await deleted(uri, agent, directory, ran);
     /*
      * And every chat of it, each a conversation of its own that the backend
      * keeps under an id of its own. Closed ones included: their conversation
@@ -671,8 +831,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        */
       const served = chat.provider !== undefined
         ? ctx.agents.get(chat.provider) ?? agent
-        : held === undefined ? agent : chatAgent(held, chat.uri);
-      const gone = await deletedChat(chat.backendId, served, directory);
+        : held === undefined ? agent : getProviderForChat(held, chat.uri);
+      const gone = await disposeProviderChat(chat.backendId, served, directory, ran);
       if (failure === undefined) failure = gone;
     }
     if (held === undefined) {
@@ -682,6 +842,18 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       forgetChats(idOf(uri));
       kept.forget(idOf(uri));
       owners.delete(uri);
+    }
+    /*
+     * And its own scratch folder, where it worked in one, which goes with it
+     * once its backend is done with it, as VS Code's agent removes a
+     * workspace-less session's when the session is deleted. One that will not
+     * go is a line in the log: the session goes either way.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L5610-L5618
+     */
+    const scratch = workspacelessScratchDir(uri);
+    if (scratch !== undefined && directory === scratch) {
+      await rm(scratch, { recursive: true, force: true })
+        .catch((error: unknown) => log(`${uri}: its scratch folder ${scratch} was not removed: ${error instanceof Error ? error.message : String(error)}`));
     }
     // Every other client is told, because the session was theirs too.
     // `session`, which is the name the protocol gives it. Under
@@ -693,10 +865,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * store. A client told a session is gone and then handed it by the next
      * `listSessions` is the same half answer, one layer down - and the row is
      * dropped before the broadcast, so the pass behind the answer that
-     * followed it cannot bring the row back.
+     * followed it cannot bring the row back. A session never announced goes
+     * without a word, as VS Code's host removes a provisional one silently.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2403-L2440
      */
-    ctx.drop(uri);
-    forgetSent(uri);
+    const announced = !provisional(uri);
+    ctx.removeListedSession(uri);
+    removeNotifiedSummary(uri);
     /*
      * And the state each of its channels held, the session's and its chats',
      * which nothing reaches once the session is disposed, asleep or running.
@@ -704,9 +879,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     for (const [channel, open] of ctx.heldStates) {
       if (channel === uri || (open.kind === 'chat' && ctx.sessionFor(channel) === uri)) ctx.closeState(channel);
     }
-    ctx.asleep.delete(uri);
-    activeSessionsMoved();
-    broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
+    activeSessionsChanged();
+    if (announced) broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
     log(`disposed ${uri}`);
     if (failure !== undefined) throw failure;
   };
@@ -715,7 +889,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     uri: string,
     credentials: Record<string, string>,
     keeping?: { additional?: string[]; directory?: string },
-    sender?: Connection,
     before?: BeforeWorktree,
     tokensFor?: (provider: string) => Record<string, string>,
   ): Promise<void> => {
@@ -731,7 +904,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * starts the chat with none.
      */
     const credentialsOf = (chat: string): Record<string, string> => {
-      const agent = chatAgent(held, chat);
+      const agent = getProviderForChat(held, chat);
       if (agent === held.agent) return credentials;
       return tokensFor?.(agent.provider) ?? {};
     };
@@ -741,7 +914,22 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // answer put it. Or the directory a move asked for, which is neither.
     const from = keeping?.directory ?? worktreeOf(uri)?.repository ?? held.workingDirectory;
     const was = worktreeOf(uri);
-    if (was) {
+    if (was && keeping?.directory !== undefined) {
+      /*
+       * A move keeps the tree the session worked in, on disk and the
+       * session's, and the tree it moves to takes its place: the session's
+       * turns ran in this one. It is archived, put back and removed with the
+       * session, as VS Code's host retains a moved session's worktree.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L553-L560
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L600-L603
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1504-L1551
+       */
+      worktrees.delete(uri);
+      kept.setWorktree?.(idOf(uri), undefined);
+      kept.setAdditionalWorktrees?.(idOf(uri), [...(kept.additionalWorktrees?.(idOf(uri)) ?? []), was]);
+      log(`kept ${was.path} for ${uri}, which moves to ${keeping.directory}`);
+    }
+    else if (was) {
       worktrees.delete(uri);
       kept.setWorktree?.(idOf(uri), undefined);
       // Removed without asking whether it is dirty, unlike a disposed session:
@@ -767,9 +955,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * while to go, and until it has, it is still writing what it was doing.
      */
     const stopping: Promise<void>[] = [];
+    // Each chat's road, put back where the start that follows fails.
+    const roads = new Map<string, NonNullable<ReturnType<typeof byChat.get>>>();
     for (const [chatUri, chat] of held.chats) {
       stopping.push(Promise.resolve(chat.close('stopping')));
+      const road = byChat.get(chatUri);
+      if (road !== undefined) roads.set(chatUri, road);
       byChat.drop(chatUri);
+      // Started again below under this session, which is the relaunch a moved
+      // chat owed.
+      ctx.chatRelaunches.delete(chatUri);
     }
     /*
      * The conversation, when this is a restart rather than a re-creation.
@@ -791,6 +986,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const previous = dirOf(uri);
     respawning.set(uri, held);
     sessions.delete(uri);
+    // A start takes the config the session holds, which is all a relaunch it
+    // owed would have taken.
+    ctx.relaunches.delete(uri);
     if (previous !== undefined && previous !== to) stopUnwatched(previous);
     try {
       /*
@@ -833,16 +1031,18 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       // The last thing before the new backend: the old one's process is gone.
       await Promise.all(stopping);
       await spawn(
-        chatAgent(held, held.defaultChat),
+        getProviderForChat(held, held.defaultChat),
         uri,
         held.defaultChat,
         chatIdOf(uri, held.defaultChat, lead?.agentId()),
-        backendsOwn(chatConfig(held, held.defaultChat)),
+        backendsOwn(chatConfig(uri, held, held.defaultChat)),
         talking,
         to,
         credentialsOf(held.defaultChat),
         keeping?.additional ?? held.additional,
-        sender,
+        undefined,
+        undefined,
+        { agent: held.agent, config: backendsOwn(held.config) },
       );
       /*
        * And every other chat of the session, which comes back with it.
@@ -850,7 +1050,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * A peer chat is a conversation of its own, with a transcript of its own
        * the backend keeps under an id of its own - so the session coming back
        * is not the whole of what has to come back. Each is respawned the way
-       * `restartChat` respawns one: under its own URI, resumed as its own
+       * `relaunchChat` respawns one: under its own URI, resumed as its own
        * conversation, with its own turns when the backend cannot resume.
        *
        * Read from `held.chats` rather than from the store, because these are
@@ -862,48 +1062,51 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         if (chatUri === held.defaultChat) continue;
         const own = chat.agentId();
         await spawn(
-          chatAgent(held, chatUri),
+          getProviderForChat(held, chatUri),
           uri,
           chatUri,
           // The name the backend answered with, where it minted one: the record
           // is written again here, and a chat resumed by one name while
           // recorded under another is one the next start reads as missing.
           chatIdOf(uri, chatUri, own),
-          backendsOwn(chatConfig(held, chatUri)),
+          backendsOwn(chatConfig(uri, held, chatUri)),
           own === undefined ? undefined : { resume: own, seed: chat.allTurns() },
           to,
           credentialsOf(chatUri),
           beside.get(chatUri) ?? keeping?.additional ?? held.additional,
-          sender,
         );
       }
     }
     catch (error) {
       /*
        * The machine it was in, which nothing is in any more: the old backend
-       * is gone and the new one would not start, so this session is over
-       * whatever the caller does with the refusal.
+       * is gone and the new one would not start.
        */
       const left = enteredIn.get(uri);
       inMachine(left, uri, false);
       enteredIn.delete(uri);
       sessionMachines.delete(uri);
       /*
-       * A session that existed and now does not.
+       * The session held where it was, its backend stopped and its start owed
+       * to its next turn, which runs it again on the conversation it holds, as
+       * VS Code's host relaunches a runtime at the next turn boundary and keeps
+       * a session its first send could not bring up for the next send to try
+       * again. Where a chat of it started before the failure, the session is
+       * the one that start holds.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2446-L2466
        *
-       * `createSession` fails inside its own request and there is nothing to
-       * announce, but this is the other case: clients are subscribed, the old
-       * backend is gone, and the new one would not start. `creationFailed` is
-       * the action for exactly that, and saying nothing would leave every one
-       * of them watching a channel that will never speak again.
+       * The failure goes to what asked for the restart, which says it where it
+       * was needed: the turn a relaunch prepared ends in it, a client's change
+       * of folders is refused with it, and a move's continuation tells the
+       * agent. A session that was ready stays ready, as VS Code's host says a
+       * creation failed only for a session still being created.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2467-L2480
        */
-      dispatch(uri, {
-        type: 'session/creationFailed',
-        error: {
-          errorType: 'sessionStartFailed',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      });
+      if (!sessions.has(uri)) {
+        sessions.set(uri, held);
+        for (const [chatUri, road] of roads) byChat.set(chatUri, road);
+        if (!ctx.relaunches.has(uri)) ctx.relaunches.set(uri, { config: {}, folders: true, credentials, tokensFor: tokensFor ?? (() => ({})) });
+      }
       throw error;
     }
     finally {
@@ -947,40 +1150,59 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (!held) return;
     /*
      * The window that asked is asked about the folder, before anything is
-     * moved or made.
-     *
-     * The same question a client adding a folder is asked, and answered from
-     * the same value: a folder the host's `workspaceTrust` already trusts is
-     * entered without a round trip, and any other only on the asking window's
-     * yes.
+     * moved or made, the same question a client adding a folder is asked.
      */
     const effective = { ...held.agent.defaults(), ...contributedDefaults(), ...held.config };
     const auto = autoApproved(effective, rootConfig);
-    await requireTrust({ folder: move.directory, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
-    decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
-    offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
-    await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, async (repository) => {
+    try {
+      await requireTrust({ folder: move.directory, sender: move.sender, autoApproved: auto });
+      decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
+      offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
+      await restart(uri, {}, { additional: [], directory: move.directory }, (repository, path) =>
+        requireWorktreeTrust({ folder: move.directory, repository, path, sender: move.sender, autoApproved: auto }));
+    }
+    catch (error) {
       /*
-       * The repository the worktree is cut from, when it is not the folder the
-       * move asked for - a subdirectory of a repository the window may never
-       * have opened.
-       *
-       * The worktree itself is not asked about: the host makes it, and one the
-       * host made is trusted exactly when its repository is. The repository the window
-       * vouches for here is remembered on its connection, so the backend
-       * started in the worktree is told the same thing.
+       * A move that did not complete is said in the turn that continues it,
+       * in the session as it comes back, which tells the agent to say so
+       * rather than run the task, as VS Code's host continues a failed
+       * conversion's turn with the failure under its label.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1105-L1123
        */
-      if (repository !== move.directory) {
-        await requireTrust({ folder: repository, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
+      const failure = (error instanceof Error ? error.message : String(error)).replace(/\.+$/, '');
+      const back = await ctx.wake(uri, ctx.defaultChatFor(uri)).catch((unopened: unknown) => {
+        log(`${uri} did not open again after its move failed: ${unopened instanceof Error ? unopened.message : String(unopened)}`);
+        return undefined;
+      });
+      if (back !== undefined) {
+        void startTurn(
+          back.chat,
+          crypto.randomUUID(),
+          `The requested workspace setup did not complete successfully: ${failure}. Do not run the user's task. Tell the user that workspace setup failed and include this error.`,
+          undefined,
+          {
+            origin: { kind: 'systemNotification' },
+            _meta: {
+              'vscode.chat.requestHiddenFromTranscript': true,
+              'vscode.chat.systemInitiatedLabel': 'Workspace Setup Failed',
+              'vscode.chat.workspaceContinuation': true,
+            },
+          },
+        );
       }
-    });
-    const lead = byChat.get(chatUriFor(uri));
-    const now = sessions.get(uri)?.workingDirectory ?? move.directory;
+      throw error;
+    }
+    const lead = byChat.get(ctx.defaultChatFor(uri));
     if (lead === undefined) return;
+    /*
+     * The continuation in VS Code's words and under its label, the session's
+     * whole workspace moved.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1081-L1092
+     */
     void startTurn(
       lead.chat,
       crypto.randomUUID(),
-      `The workspace is now ${now}${move.isolation ? ', an isolated worktree' : ''}. Continue the task you were working on there.`,
+      'Continue in the requested workspace.',
       undefined,
       {
         origin: { kind: 'systemNotification' },
@@ -994,23 +1216,76 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   /**
+   * The relaunch a session owes, run at its next turn boundary.
+   *
+   * Its backend is started again on the config the session now holds, and a
+   * machine the change made from a source the client named is said after it
+   * as this host's own, since every client holds the source. The session is
+   * `restarting` while it runs, so an action sent meanwhile waits for the
+   * backend that comes back. Rejects with the start's failure, which ends the
+   * turn that was waiting on it, as the reference host relaunches a runtime at
+   * the next turn boundary and a failed relaunch ends that turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L1095-L1101
+   */
+  const relaunch = async (uri: string): Promise<void> => {
+    const due = ctx.relaunches.get(uri);
+    const owning = sessions.get(uri);
+    ctx.relaunches.delete(uri);
+    if (due === undefined || owning === undefined) return;
+    const work = (async (): Promise<void> => {
+      // In the folders the session now holds, its conversation resumed, where
+      // the folders are what changed.
+      await restart(uri, due.credentials, due.folders ? { additional: owning.additional ?? [] } : undefined, undefined, due.tokensFor);
+      const made = Object.entries(due.config).filter(([key, value]) => owning.config[key] !== undefined && owning.config[key] !== value);
+      if (made.length === 0) return;
+      const machine = Object.fromEntries(made.map(([key]) => [key, owning.config[key]]));
+      const id = idOf(uri);
+      for (const [key, value] of Object.entries(machine)) {
+        if (!HOSTS_OWN.includes(key)) kept.setConfig(id, { ...kept.config(id), [key]: value });
+      }
+      dispatch(uri, { type: 'session/configChanged', config: machine });
+    })();
+    const held = work.then(() => undefined, (error: unknown) => (error instanceof Error ? error.message : String(error)));
+    ctx.restarting.set(uri, held);
+    try { await work; }
+    catch (error) {
+      log(`${uri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
+      // Owed again to the next turn, which tries it again.
+      if (sessions.has(uri)) ctx.relaunches.set(uri, due);
+      throw error;
+    }
+    finally {
+      if (ctx.restarting.get(uri) === held) ctx.restarting.delete(uri);
+    }
+  };
+
+  /**
    * Start one chat again, in the directories it now has.
    *
    * The session's own `restart` rebuilds every chat; this rebuilds one, and
    * for the same reason: the SDK takes its directories when the CLI starts
    * and offers no way to add one after. Resumed, so it is the same
    * conversation - a chat that lost its history because a directory was added
-   * to it would be a worse answer than refusing.
+   * to it would be a worse answer than refusing. `directory` is the folder a
+   * moved chat worked in, which it goes on working in under the session that
+   * holds it now. The chat keeps its place among its session's chats.
+   *
+   * Answered once the start is, so a caller reads the chat that took this
+   * one's place after it is held, and a start that fails rejects, which ends
+   * the turn that waited on it.
    */
-  const restartChat = (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void => {
+  const relaunchChat = (uri: string, chatUri: string, credentials: Record<string, string>, directory?: string): Promise<void> => {
     const held = sessions.get(uri);
     const chat = held?.chats.get(chatUri);
-    if (held === undefined || chat === undefined) return;
+    if (held === undefined || chat === undefined) return Promise.resolve();
     // Read before the chat is closed, and kept: the name the backend answered
     // with is what the record is written under, and what the new process
     // resumes.
     const own = chat.agentId();
     const talking = own !== undefined ? { resume: own, seed: chat.allTurns() } : undefined;
+    const order = [...held.chats.keys()];
+    // Started again under this session, which is the relaunch a moved chat owed.
+    ctx.chatRelaunches.delete(chatUri);
     /*
      * Started again rather than removed, which is what the chat coming back
      * resumed needs: told a removal, a backend running nested in a machine
@@ -1020,23 +1295,39 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     chat.close('stopping');
     held.chats.delete(chatUri);
     byChat.drop(chatUri);
+    // The chats put back in the order they had, the one started again among
+    // them once it is held.
+    const keepPlace = (): void => {
+      const now = new Map(held.chats);
+      held.chats.clear();
+      for (const one of order) {
+        const back = now.get(one);
+        if (back !== undefined) held.chats.set(one, back);
+      }
+    };
     // A resume makes nothing first, so the chat that takes this one's place
-    // is held by the time the start returns, as the caller reads it.
-    void spawn(
-      chatAgent(held, chatUri),
+    // is held by the time the start returns, as the caller reads it. The start
+    // rejects with the backend's failure, which a caller waiting on it ends
+    // its turn in.
+    const started = spawn(
+      getProviderForChat(held, chatUri),
       uri,
       chatUri,
       chatIdOf(uri, chatUri, own),
-      backendsOwn(chatConfig(held, chatUri)),
+      backendsOwn(chatConfig(uri, held, chatUri)),
       talking,
-      held.workingDirectory,
+      directory ?? held.workingDirectory,
       credentials,
       beside.get(chatUri) ?? held.additional,
-      sender,
     ).then(
-      () => { log(`restarted ${chatUri}`); },
-      (error: unknown) => { log(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`); },
+      () => { keepPlace(); log(`restarted ${chatUri}`); },
+      (error: unknown) => {
+        log(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      },
     );
+    keepPlace();
+    return started;
   };
 
   /**
@@ -1057,11 +1348,58 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * session's own. The session keeps its own either way: what a client reads
    * as its provider and what a resume records are the session's, not a chat's.
    */
-  const chatAgent = (held: Held, chatUri: string): Agent => held.backends.get(chatUri)?.agent ?? held.agent;
+  const getProviderForChat = (held: Held, chatUri: string): Agent => held.backends.get(chatUri)?.agent ?? held.agent;
 
-  /** The config one chat runs on: its own where it has a backend of its own, the session's otherwise. */
-  const chatConfig = (held: Held, chatUri: string): Record<string, unknown> =>
-    held.backends.get(chatUri)?.config ?? held.config;
+  /**
+   * The config one chat runs on: its own where it has a backend of its own,
+   * and otherwise the session's with the values the chat set for itself laid
+   * over it, as VS Code applies a chat's own values over its session's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L255-L282
+   */
+  const chatConfig = (uri: string, held: Held, chatUri: string): Record<string, unknown> =>
+    held.backends.get(chatUri)?.config ?? { ...held.config, ...ctx.getChatOwnConfigValues(uri, chatUri) };
+
+  /**
+   * What a chat of the session `uri` runs on for the properties a chat may
+   * set, the read-only ones left out, which a chat made from it or moved out
+   * of the session takes as its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13393-L13394
+   */
+  const effectiveChatConfigValues = (uri: string, held: Held, chatUri: string): Record<string, unknown> => {
+    const schema = ctx.sessionSchema(held.agent) as ConfigSchema;
+    const effective = { ...held.agent.defaults(), ...ctx.contributedDefaults(), ...chatConfig(uri, held, chatUri) };
+    return Object.fromEntries(Object.entries(filterChatConfigValues(schema, effective))
+      .filter(([key]) => schema.properties[key]?.readOnly !== true));
+  };
+
+  /**
+   * The values a new chat of the session `uri` starts with as its own, as
+   * VS Code gives a new chat its config: a fork or a side chat copies the
+   * values its source chat set, a worker's chat and the default chat start
+   * with none, and any other chat starts with what the default chat runs on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13372-L13400
+   */
+  const initialChatConfig = (uri: string, held: Held, chatUri: string, origin: Bag | undefined): Record<string, unknown> => {
+    if ((origin?.kind === 'fork' || origin?.kind === 'sideChat') && typeof origin.chat === 'string') {
+      return ctx.getChatOwnConfigValues(uri, origin.chat);
+    }
+    if (origin?.kind === 'tool' || chatUri === held.defaultChat) return {};
+    return effectiveChatConfigValues(uri, held, held.defaultChat);
+  };
+
+  /**
+   * A new or moved chat's own values written into its row, and said on its
+   * channel where its state was seeded before they were written, as VS Code's
+   * host sets a chat's config with a `chat/configChanged` of its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9159
+   */
+  const keepChatOwnConfigValues = (uri: string, chatUri: string, values: Record<string, unknown>): void => {
+    ctx.persistChatOwnConfigValues(uri, chatUri, values);
+    const held = ctx.stateOf(chatUri)?.config as { values?: Record<string, unknown> } | undefined;
+    if (held !== undefined && !isDeepStrictEqual(held.values ?? {}, values)) {
+      dispatch(chatUri, { type: 'chat/configChanged', config: { ...values }, replace: true });
+    }
+  };
 
   /**
    * The name a backend is handed for a chat, on a start that is not the first.
@@ -1072,60 +1410,70 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * session URI and which is never handed one.
    */
   const chatIdOf = (uri: string, chatUri: string, own: string | undefined): string | undefined =>
-    chatUri === chatUriFor(uri) ? undefined : own ?? chatIdFor(uri, chatUri);
+    ctx.ownChat(uri, chatUri) ? undefined : own ?? chatIdFor(uri, chatUri);
 
   /**
-   * Where a session actually runs, once isolation has been answered.
-   *
-   * Answered here rather than in the backend because the tree is the host's:
-   * a backend is handed a directory and told to work in it, and which
-   * directory that is - the folder, or a worktree made for this session - is
-   * exactly the decision the client made with `isolation`.
+   * A worktree session's tree, owed to its first send: the start again that
+   * send runs makes the tree from the config the session holds by then and
+   * starts the session in it, and a tree git cannot make fails that send, as
+   * VS Code's host resolves a session's worktree on the first send.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
    */
-  const isolated = async (
+  const oweTree = (
     uri: string,
+    credentials: Record<string, string>,
+    tokensFor: (provider: string) => Record<string, string>,
+  ): void => {
+    if (options.worktrees === undefined || decided.get(uri)?.isolation !== 'worktree' || worktreeOf(uri) !== undefined) return;
+    ctx.relaunches.set(uri, { config: {}, credentials, tokensFor });
+  };
+
+  /**
+   * A tree cut from the repository `where` is in, as `config` asks, its new
+   * branch named after `name`.
+   */
+  const cutTree = async (
+    port: Worktrees,
+    name: string,
     config: Record<string, unknown>,
-    where: string | undefined,
+    where: string,
     before?: BeforeWorktree,
-  ): Promise<string | undefined> => {
-    const port = options.worktrees;
-    if (!port || config.isolation !== 'worktree' || where === undefined) return where;
+  ): Promise<StoredWorktree> => {
     const repository = await port.repository(where);
     if (repository === undefined) {
       throw new RpcError(INVALID_PARAMS, `${where} is not a git repository, so it has no worktrees`);
     }
     const said = (key: string): string => (typeof config[key] === 'string' ? config[key] : '');
     /*
-     * The branch this session runs on, and whether there is a new one at all.
+     * The branch the tree is on, and whether there is a new one at all.
      *
      * `agents/` is the built-in prefix the reference uses too, and a client's
      * own goes in front of it: somebody whose `git.branchPrefix` is `softov/`
      * gets `softov/agents/1a2b3c4d`, which is what their other tools already
      * sort and filter by. `worktreeCreateNewBranch: 'false'` means there is no
-     * new branch - the session continues the one that was chosen.
+     * new branch: the tree continues the one that was chosen.
      */
     const making = said('worktreeCreateNewBranch') !== 'false';
     const branch = making
-      ? `${said('worktreeBranchPrefix')}agents/${idOf(uri).slice(0, 8)}`
+      ? `${said('worktreeBranchPrefix')}agents/${name.slice(0, 8)}`
       : undefined;
     const base = typeof config.branch === 'string' ? config.branch : 'HEAD';
     const path = join(worktreesOf(repository, options.worktreesRoot), worktreeFor(branch ?? base));
-    // Read as either spelling: the array the schema declares, or a
-    // comma-separated string. A config value is `unknown` on the wire - the
-    // protocol declares the bag `Record<string, unknown>` and `permissions` is
-    // an object - so a key this host declared is narrowed where it is used
-    // rather than assumed everywhere.
+    // The files to copy, read as the array the schema declares. A config
+    // value is `unknown` - the protocol declares the bag
+    // `Record<string, unknown>` and `permissions` is an object - so a key this
+    // host declared is narrowed where it is used.
     const patterns = config.worktreeIncludeFiles;
     const include = (Array.isArray(patterns)
       ? patterns.filter((one): one is string => typeof one === 'string')
-      : typeof patterns === 'string' ? patterns.split(',') : [])
+      : [])
       .map((one) => one.trim()).filter((one) => one !== '');
     // The folders to link.
     const symlink = symlinkFolders(config);
     // Asked after the path is known and before anything exists at it, which is
     // where VS Code asks too: the window is shown the worktree it is about to
     // be given, and a folder that does not exist yet is vouched for by the
-    // repository it is cut from rather than by itself.
+    // repository it is cut from.
     await before?.(repository, path);
     await port.create({
       repository,
@@ -1136,60 +1484,149 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       ...(include.length > 0 ? { include } : {}),
       ...(symlink.length > 0 ? { symlink } : {}),
     });
-    // The branch is remembered rather than derived from the directory later:
-    // a prefix a client asked for changes the name, and guessing it wrong at
-    // removal time either deletes nothing or names somebody else's. The commit
-    // it was cut from is remembered for the same reason: the tree moves on, and
-    // what it started from is only knowable while it is still that.
+    // The branch is remembered with the tree: a prefix a client asked for
+    // changes the name, and guessing it wrong at removal time either deletes
+    // nothing or names somebody else's. The commit it was cut from is
+    // remembered for the same reason: the tree moves on, and what it started
+    // from is only knowable while it is still that.
     const commit = await port.commitOf?.(path);
-    const made = {
+    return {
       repository, path, base,
       ...(branch !== undefined ? { branch } : {}),
       ...(commit !== undefined ? { commit } : {}),
     };
+  };
+
+  /**
+   * Where a session actually runs, once isolation has been answered.
+   *
+   * Answered by the host because the tree is the host's: a backend is handed
+   * a directory and told to work in it, and which directory that is, the
+   * folder or a worktree made for this session, is exactly the decision the
+   * client made with `isolation`.
+   */
+  const isolated = async (
+    uri: string,
+    config: Record<string, unknown>,
+    where: string | undefined,
+    before?: BeforeWorktree,
+  ): Promise<string | undefined> => {
+    const port = options.worktrees;
+    if (!port || config.isolation !== 'worktree' || where === undefined) return where;
+    const made = await cutTree(port, idOf(uri), config, where, before);
     worktrees.set(uri, made);
     kept.setWorktree?.(idOf(uri), made);
-    log(`made ${path} on ${branch ?? base} for ${uri}`);
-    return path;
+    log(`made ${made.path} on ${made.branch ?? made.base} for ${uri}`);
+    return made.path;
+  };
+
+  /*
+   * A tree of its own for the window, cut as a creating session's pending
+   * tree would be, from the folder and the config that session holds, and
+   * named after the window's handle; the session's own tree stays owed to
+   * its first send. Refused, in VS Code's words, for a session that is not
+   * creating, one with no tree pending, and one with no folder.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6515-L6545
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L671-L724
+   */
+  const createDetachedWorktree = async (uri: string, handle: string): Promise<StoredWorktree> => {
+    // Creating is provisional: a session is said ready at its first message.
+    if (!provisional(uri)) {
+      throw new RpcError(INTERNAL_ERROR, `Cannot create detached worktree for non-creating session: ${uri}`);
+    }
+    const port = options.worktrees;
+    const config = decided.get(uri) ?? {};
+    if (port === undefined || config.isolation !== 'worktree' || worktreeOf(uri) !== undefined) {
+      throw new RpcError(INTERNAL_ERROR, `Session is not configured for worktree isolation: ${uri}`);
+    }
+    const where = dirOf(uri);
+    if (where === undefined) {
+      throw new RpcError(INTERNAL_ERROR, `Cannot create detached worktree without a working directory: ${uri}`);
+    }
+    const made = await cutTree(port, handle, config, where);
+    log(`made ${made.path} on ${made.branch ?? made.base} for the window's ${handle}`);
+    return made;
   };
 
   /**
    * The removal and the restore of each session's tree, by session id, as one
-   * chain: an archive and an unarchive sent together run in the order they
-   * were sent, and a wake waits for the tree the archive was taking away.
+   * chain, each step under the worktree's lock as VS Code runs them: an
+   * archive and an unarchive sent together run in the order they were sent,
+   * and a wake waits for the tree the archive was taking away.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L352
    */
-  const shelving = new Map<string, Promise<void>>();
+  const worktreeLocks = new Map<string, Promise<void>>();
 
   // What archive does with a dirty tree, from the host's own option: set here
-  // because `shelve` is where it is read.
+  // because `requestSessionWorktreeRemoval` is where it is read.
   ctx.archiveDirtyWorktree = options.archiveDirtyWorktree ?? 'keep';
 
   /** One step on a session's chain, run once the step before it has settled. */
-  const inTurn = (uri: string, step: () => Promise<void>): Promise<void> => {
+  const runExclusive = (uri: string, step: () => Promise<void>): Promise<void> => {
     const id = idOf(uri);
-    const next = (shelving.get(id) ?? Promise.resolve()).then(step).catch((error: unknown) => {
+    const next = (worktreeLocks.get(id) ?? Promise.resolve()).then(step).catch((error: unknown) => {
       log(`worktree of ${uri}: ${error instanceof Error ? error.message : String(error)}`);
     });
-    shelving.set(id, next);
-    void next.then(() => { if (shelving.get(id) === next) shelving.delete(id); });
+    worktreeLocks.set(id, next);
+    void next.then(() => { if (worktreeLocks.get(id) === next) worktreeLocks.delete(id); });
     return next;
   };
 
   /** Whether something is at a path. */
   const present = (path: string): Promise<boolean> => stat(path).then(() => true, () => false);
 
-  /** Whether the window holds a handle on the session's tree, which leaves the tree to it. */
-  const handled = (uri: string): boolean => [...detached.values()].some((one) => one.session === uri);
+  /** A session's trees: the one it runs in, then each one a move left it. */
+  const treesOf = (uri: string): StoredWorktree[] => {
+    const own = worktreeOf(uri);
+    return [...(own === undefined ? [] : [own]), ...(kept.additionalWorktrees?.(idOf(uri)) ?? [])];
+  };
 
   /** Whether a session is archived now, read when the step runs rather than when it was asked for. */
   const archivedNow = (uri: string): boolean => (kept.flags(idOf(uri)) & Status.IsArchived) !== 0;
 
   /*
-   * An archived session's tree, given back.
+   * Why a tree on its branch is not synced with its remote, or undefined when
+   * it is: nothing uncommitted, an upstream, and nothing left to push to it,
+   * as VS Code's host judges a tree it may take away by itself. A port that
+   * cannot say whether a branch is pushed keeps the tree.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1851-L1870
+   */
+  const unsynced = async (port: Worktrees, path: string, linked: readonly string[]): Promise<string | undefined> => {
+    if (await port.dirty(path, linked).catch(() => true) !== false) return 'it has changes nobody committed';
+    if (port.pushed === undefined) return 'this host cannot tell whether its branch is pushed';
+    if (!await port.pushed(path).catch(() => false)) return 'its branch has no upstream or has commits nobody pushed';
+    return undefined;
+  };
+
+  /*
+   * Whether deleting an archived session keeps its work: each of its trees,
+   * the one it ran in and each one a move left it, is gone, or is on its own
+   * branch and synced with its remote, as VS Code's host judges a session it
+   * deletes by itself.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11163-L11192
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1672-L1697
+   */
+  const canAutomaticallyDeleteArchivedSession = async (uri: string): Promise<boolean> => {
+    const port = options.worktrees;
+    const linked = linkedOf(uri);
+    for (const tree of treesOf(uri)) {
+      if (!await present(tree.path)) continue;
+      if (port === undefined || tree.branch === undefined) return false;
+      if (await offBranch(port, { ...tree, branch: tree.branch }) !== undefined) return false;
+      if (await unsynced(port, tree.path, linked) !== undefined) return false;
+    }
+    return true;
+  };
+
+  /*
+   * An archived session's trees, given back: the one it ran in and each one
+   * a move left it, as VS Code's host archives a session's additional
+   * worktrees with it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/additionalWorktreeLifecycle/additionalWorktreeLifecycleService.ts#L47-L53
    *
    * Only once the session has stopped, and only while it is still archived:
    * an unarchive sent before this step ran is the person changing their mind.
-   * The record stays, since it is what `restore` puts the tree back from.
+   * The record stays, since it is what `restoreSessionWorktree` puts the tree back from.
    *
    * Removed without its branch, which is what makes it come back: the branch
    * holds every commit the session made, and the tree is only a checkout of
@@ -1203,105 +1640,99 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * goes only once git says it is clean. The folders this host linked into
    * the tree are not work, and are neither counted nor committed.
    */
-  const shelve = (uri: string, after?: Promise<unknown>): Promise<void> => inTurn(uri, async () => {
+  const requestSessionWorktreeRemoval = (uri: string, after?: Promise<unknown>): Promise<void> => runExclusive(uri, async () => {
     await after?.catch(() => undefined);
     const port = options.worktrees;
-    const tree = worktreeOf(uri);
-    if (port === undefined || tree === undefined || !archivedNow(uri) || sessions.has(uri) || handled(uri)) return;
-    if (!await present(tree.path)) return;
-    if (tree.branch === undefined) {
-      log(`kept ${tree.path}: it has no branch of its own to come back on`);
-      return;
-    }
-    const why = await offBranch(port, { ...tree, branch: tree.branch });
-    if (why !== undefined) {
-      log(`kept ${tree.path}: ${why}`);
-      return;
-    }
+    const trees = treesOf(uri);
+    if (port === undefined || trees.length === 0 || !archivedNow(uri) || sessions.has(uri)) return;
     const linked = linkedOf(uri);
-    const clean = async (): Promise<boolean> => await port.dirty(tree.path, linked).catch(() => true) === false;
-    /*
-     * An archive the host made itself never commits and never loses a commit:
-     * the tree goes only when it is clean and its branch is on a remote as it
-     * is here, whatever `archiveDirtyWorktree` says.
-     */
-    if (kept.autoArchivedAt?.(idOf(uri)) !== undefined) {
-      if (!await clean()) {
-        log(`kept ${tree.path}: it has changes nobody committed`);
-        return;
+    for (const tree of trees) {
+      if (!await present(tree.path)) continue;
+      if (tree.branch === undefined) {
+        log(`kept ${tree.path}: it has no branch of its own to come back on`);
+        continue;
       }
-      if (port.pushed === undefined) {
-        log(`kept ${tree.path}: this host cannot tell whether its branch is pushed`);
-        return;
+      const why = await offBranch(port, { ...tree, branch: tree.branch });
+      if (why !== undefined) {
+        log(`kept ${tree.path}: ${why}`);
+        continue;
       }
-      if (!await port.pushed(tree.path).catch(() => false)) {
-        log(`kept ${tree.path}: its branch has no upstream or has commits nobody pushed`);
-        return;
+      const clean = async (): Promise<boolean> => await port.dirty(tree.path, linked).catch(() => true) === false;
+      /*
+       * An archive the host made itself never commits and never loses a
+       * commit: the tree goes only when it is synced with its remote,
+       * whatever `archiveDirtyWorktree` says.
+       */
+      if (kept.autoArchivedAt?.(idOf(uri)) !== undefined) {
+        const not = await unsynced(port, tree.path, linked);
+        if (not !== undefined) {
+          log(`kept ${tree.path}: ${not}`);
+          continue;
+        }
       }
+      else if (!await clean()) {
+        if (ctx.archiveDirtyWorktree !== 'commit') {
+          log(`kept ${tree.path}: it has changes nobody committed`);
+          continue;
+        }
+        if (port.commit === undefined) {
+          log(`kept ${tree.path}: it has changes nobody committed, and this host cannot commit them`);
+          continue;
+        }
+        if (sessions.has(uri) || !archivedNow(uri)) return;
+        const failed = await port.commit(tree.path, ARCHIVE_COMMIT_MESSAGE, linked).then(() => undefined, (error: unknown) =>
+          error instanceof Error ? error.message : String(error));
+        if (failed !== undefined) {
+          log(`kept ${tree.path}: could not commit its changes: ${failed}`);
+          continue;
+        }
+        if (!await clean()) {
+          log(`kept ${tree.path}: it still has changes after the commit`);
+          continue;
+        }
+        log(`committed the changes in ${tree.path} on ${tree.branch}`);
+      }
+      // Asked again after the check, which waited: a session started in the
+      // tree meanwhile, or an unarchive, keeps it.
+      if (sessions.has(uri) || !archivedNow(uri)) return;
+      await port.remove(tree.repository, tree.path, undefined, linked)
+        .then(() => { log(`removed ${tree.path} for the archived ${uri}, keeping ${tree.branch ?? ''}`); })
+        .catch((error: unknown) => {
+          log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
+        });
     }
-    else if (!await clean()) {
-      if (ctx.archiveDirtyWorktree !== 'commit') {
-        log(`kept ${tree.path}: it has changes nobody committed`);
-        return;
-      }
-      if (port.commit === undefined) {
-        log(`kept ${tree.path}: it has changes nobody committed, and this host cannot commit them`);
-        return;
-      }
-      if (sessions.has(uri) || !archivedNow(uri) || handled(uri)) return;
-      const failed = await port.commit(tree.path, ARCHIVE_COMMIT_MESSAGE, linked).then(() => undefined, (error: unknown) =>
-        error instanceof Error ? error.message : String(error));
-      if (failed !== undefined) {
-        log(`kept ${tree.path}: could not commit its changes: ${failed}`);
-        return;
-      }
-      if (!await clean()) {
-        log(`kept ${tree.path}: it still has changes after the commit`);
-        return;
-      }
-      log(`committed the changes in ${tree.path} on ${tree.branch}`);
-    }
-    // Asked again after the check, which waited: a session started in the
-    // tree meanwhile, or an unarchive, keeps it.
-    if (sessions.has(uri) || !archivedNow(uri) || handled(uri)) return;
-    await port.remove(tree.repository, tree.path, undefined, linked)
-      .then(() => { log(`removed ${tree.path} for the archived ${uri}, keeping ${tree.branch ?? ''}`); })
-      .catch((error: unknown) => {
-        log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
-      });
   });
 
   /*
-   * A session's tree, put back where `shelve` took it.
+   * A session's trees, put back where `requestSessionWorktreeRemoval` took them.
    *
    * At the same path on the same branch, with the folders the session asked
    * to have linked linked again. The include files are not copied again: they
    * were copies, and the branch has what the session made of them.
    *
-   * Nothing to do for a session with no record or whose tree is there, and
-   * nothing for a tree the window holds a handle on, which its own method
-   * puts back.
+   * Nothing to do for a session with no record or a tree that is there.
    */
-  const restore = (uri: string): Promise<void> => inTurn(uri, async () => {
+  const restoreSessionWorktree = (uri: string): Promise<void> => runExclusive(uri, async () => {
     const port = options.worktrees;
-    const tree = worktreeOf(uri);
-    if (port === undefined || tree === undefined || handled(uri)) return;
-    if (await present(tree.path)) return;
-    if (tree.branch === undefined) {
-      log(`could not put ${tree.path} back: it has no branch of its own`);
-      return;
-    }
+    if (port === undefined) return;
     const symlink = linkedOf(uri);
-    await port.create({
-      repository: tree.repository,
-      base: tree.branch,
-      path: tree.path,
-      ...(symlink.length > 0 ? { symlink } : {}),
-    })
-      .then(() => { log(`put ${tree.path} back on ${tree.branch ?? ''} for ${uri}`); })
-      .catch((error: unknown) => {
-        log(`could not put ${tree.path} back: ${error instanceof Error ? error.message : String(error)}`);
-      });
+    for (const tree of treesOf(uri)) {
+      if (await present(tree.path)) continue;
+      if (tree.branch === undefined) {
+        log(`could not put ${tree.path} back: it has no branch of its own`);
+        continue;
+      }
+      await port.create({
+        repository: tree.repository,
+        base: tree.branch,
+        path: tree.path,
+        ...(symlink.length > 0 ? { symlink } : {}),
+      })
+        .then(() => { log(`put ${tree.path} back on ${tree.branch ?? ''} for ${uri}`); })
+        .catch((error: unknown) => {
+          log(`could not put ${tree.path} back: ${error instanceof Error ? error.message : String(error)}`);
+        });
+    }
   });
 
   /**
@@ -1321,29 +1752,34 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   /**
    * The start of a turn this host begins itself, said as the host's with the
    * message it was given, as the reference host says the start of a turn of
-   * its own.
+   * its own, and carrying who asked where somebody did: on the wire, and in
+   * the store, which a turn read back after the in-memory entry is let go of
+   * asks.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L174-L183
    */
   const sayStart = (session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): void => {
-    dispatch(session.chatUri, {
+    const start: Bag = {
       type: 'chat/turnStarted',
       turnId,
       startedAt: new Date().toISOString(),
       message: messageOf(text, model, from, attachments),
-    });
+    };
+    const sender = senders.get(turnId);
+    if (sender !== undefined) kept.setSender(idOf(session.uri), turnId, sender);
+    dispatch(session.chatUri, sender === undefined ? start : ctx.withSenderSaid(start, sender));
   };
 
   /**
    * A turn whose start was said, handed to its backend, as the reference host
-   * sends one: the model it names where the chat's backend offers it, and its
-   * agent, then its prompt. A model the backend does not offer is logged and
-   * the chat keeps its own; a model the backend will not take ends the turn in
-   * a `modelSelectionFailed` error, an agent it will not take is logged, and a
-   * send that fails ends the turn in a `sendFailed` one. A turn `stopped`
-   * meanwhile is never sent. A backend that answers the model and the agent at
-   * once is sent the prompt in the same tick, which keeps the order its turns
-   * were said in; one that answers later is waited on.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2224-L2346
+   * sends one: the model it names, and its agent, then its prompt. A model the
+   * chat's agent does not offer is the daemon's `unofferedModel` to decide; a
+   * model the backend will not take ends the turn in a `modelSelectionFailed`
+   * error, an agent it will not take is logged, and a send that fails ends the
+   * turn in a `sendFailed` one, each with the turn's `turn_end` an `error`. A
+   * turn `stopped` meanwhile is never sent. A backend that answers the model
+   * and the agent at once is sent the prompt in the same tick, which keeps the
+   * order its turns were said in; one that answers later is waited on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2224-L2350
    */
   const sendTurn = (
     session: Session,
@@ -1360,29 +1796,46 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       forgetSender(turnId);
       forgetKeys(turnId);
       if (stopped?.() === true) return;
+      const message = error instanceof Error ? error.message : String(error);
       dispatch(session.chatUri, {
         type: 'chat/error',
         turnId,
         duration: Math.max(0, Date.now() - since),
-        part: { kind: 'error', error: { errorType, message: error instanceof Error ? error.message : String(error) } },
+        part: { kind: 'error', error: { errorType, message } },
+      });
+      ctx.raiseTurnEnd({
+        session: session.uri, channel: session.chatUri, turnId, reason: { kind: 'error', error: { errorType, message }, resumable: false },
       });
     };
     /*
-     * The model applies on the chat's own backend, and on a chat that runs on
-     * another one where that backend offers it or has said nothing of its models.
+     * A model the chat's agent does not offer, decided here where VS Code's
+     * host decides it, before the turn reaches the backend, by the daemon's
+     * `unofferedModel`. `fail`, the default, ends the turn, as upstream
+     * decided. `keep` is VS Code's: a chat whose agent is not its session's
+     * keeps its model, logged in VS Code's words, and any other chat's agent is
+     * handed the model as it is. An agent that has said nothing of its models
+     * is handed it either way.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2226-L2231
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnTelemetryContext.ts#L44-L55
      */
     const held = sessions.get(session.uri);
     const offered = session.models();
-    const applicable = model !== undefined && (held?.backends.has(session.chatUri) !== true || offered.length === 0 || offered.some((one) => one.id === model.id))
-      ? model
-      : undefined;
-    if (model !== undefined && applicable === undefined) log(`${session.chatUri} keeps its model: its backend does not offer ${model.id}`);
+    const provider = held?.backends.get(session.chatUri)?.agent.provider ?? held?.agent.provider ?? 'This agent';
+    const unoffered = model !== undefined && offered.length > 0 && !offered.some((one) => one.id === model.id);
+    if (unoffered && ctx.unofferedModel === 'fail') {
+      ended('modelSelectionFailed', new Error(`Its agent ${provider} does not offer the turn's model ${model.id}`));
+      return undefined;
+    }
+    const applicable = model !== undefined && (!unoffered || held?.backends.has(session.chatUri) !== true) ? model : undefined;
+    if (model !== undefined && applicable === undefined) log(`Chat ${session.chatUri} keeps its model: its agent ${provider} does not offer the turn's model ${model.id}`);
     const { agent, ...sent } = from ?? {};
     const unchanged = (error: unknown): void => {
       log(`${session.chatUri}: the agent was not changed: ${error instanceof Error ? error.message : String(error)}`);
     };
     const send = (): Promise<void> | undefined => {
       if (stopped?.() === true) return undefined;
+      // Handed to its backend, which brings a provisional session up.
+      ctx.materialized(session.uri);
       /*
        * The turn booked as its backend is handed it: its start, as the chat
        * holds it, said again on the chat's road, which keeps what a turn is
@@ -1410,9 +1863,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     let agentChanged: void | Promise<void> = undefined;
     try { agentChanged = session.changeAgent(agent); }
     catch (error) { unchanged(error); }
-    if (!(modelChanged instanceof Promise) && !(agentChanged instanceof Promise)) return send();
+    // After the tree the session found is written down, which the turn is measured from.
+    const baseline = ctx.baselineCheckpoints.get(session.uri);
+    const handed = baseline === undefined ? send : (): Promise<void> | undefined => baseline.then(send);
+    if (!(modelChanged instanceof Promise) && !(agentChanged instanceof Promise)) return handed();
     return Promise.all([modelChanged, agentChanged instanceof Promise ? agentChanged.catch(unchanged) : undefined])
-      .then(send, (error: unknown) => { ended('modelSelectionFailed', error); });
+      .then(handed, (error: unknown) => { ended('modelSelectionFailed', error); });
   };
 
   /**
@@ -1436,9 +1892,42 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   const startTurn =(session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): Promise<void> | undefined => {
     sayStart(session, turnId, text, model, from, attachments);
     const command = commandIn(session, text);
-    if (command === undefined) return sendTurn(session, turnId, text, model, from, attachments);
-    ctx.bang(session, session.chatUri, turnId, command);
-    return undefined;
+    if (command !== undefined) {
+      ctx.bang(session, session.chatUri, turnId, command);
+      return undefined;
+    }
+    /*
+     * A relaunch the session owes runs as the turn's preparation, as it does
+     * for a client's turn, since this is the session's next turn boundary: a
+     * worktree session's tree made at its first send among them. The turn then
+     * goes to the chat the relaunch brought back, and one that fails ends the
+     * turn as a send that failed.
+     */
+    if (ctx.relaunches.has(session.uri)) {
+      const chatUri = session.chatUri;
+      const since = Date.now();
+      const failed = (error: unknown): void => {
+        const message = error instanceof Error ? error.message : String(error);
+        dispatch(chatUri, {
+          type: 'chat/error',
+          turnId,
+          duration: Math.max(0, Date.now() - since),
+          part: { kind: 'error', error: { errorType: 'sendFailed', message } },
+        });
+        ctx.raiseTurnEnd({
+          session: session.uri, channel: chatUri, turnId, reason: { kind: 'error', error: { errorType: 'sendFailed', message }, resumable: false },
+        });
+      };
+      return relaunch(session.uri).then(() => {
+        const back = byChat.get(chatUri)?.chat;
+        if (back === undefined) {
+          failed(new Error(`${chatUri} did not start again`));
+          return undefined;
+        }
+        return sendTurn(back, turnId, text, model, from, attachments);
+      }, failed);
+    }
+    return sendTurn(session, turnId, text, model, from, attachments);
   };
 
   /**
@@ -1488,7 +1977,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     attachments?: MessageAttachment[],
     said?: () => void,
     stopped?: () => boolean,
-    relay?: () => void,
+    relay?: (on: Session) => void,
   ): string | undefined | Promise<string | undefined> => {
     /*
      * No new turn while an embedder is on its way out, a command's as much as
@@ -1501,15 +1990,55 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * stop, rather than only saying so.
      */
     if (ctx.refusing !== undefined) return ctx.refusing;
-    const command = relay === undefined ? commandIn(session, text) : undefined;
+    /*
+     * A chat moved since its runtime was launched starts again under the
+     * session that holds it now, at its next turn boundary, which this is, as
+     * the reference host relaunches a moved chat's runtime there; the turn
+     * then goes to the chat the relaunch brought back, once it holds one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L811
+     */
+    const moved = ctx.chatRelaunches.get(session.chatUri);
+    if (moved !== undefined) {
+      ctx.chatRelaunches.delete(session.chatUri);
+      const owner = byChat.get(session.chatUri)?.uri;
+      if (owner === undefined) throw new Error(`${session.chatUri} did not start again`);
+      return relaunchChat(owner, session.chatUri, moved.credentials, moved.directory).then(() => {
+        const back = byChat.get(session.chatUri)?.chat;
+        if (back === undefined) throw new Error(`${session.chatUri} did not start again`);
+        return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
+      });
+    }
+    // Carried to another host where this session runs on one, and the host
+    // there runs the command a start's text names.
+    const relayed = relay !== undefined && session.relay !== undefined;
+    const command = relayed ? undefined : commandIn(session, text);
     if (command !== undefined) {
       const by = sender === undefined ? undefined : ownerFor(sender);
       if (by !== undefined) senders.set(turnId, by);
       if (sender !== undefined) sentBy.set(turnId, sender);
       if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
-      else said();
+      else {
+        // A client's start goes out as the client sent it, and the store
+        // keeps who sent it, as `sayStart` keeps the sender of a host's.
+        said();
+        if (by !== undefined) kept.setSender(idOf(session.uri), turnId, by);
+      }
       ctx.bang(session, session.chatUri, turnId, command);
       return undefined;
+    }
+    /*
+     * A relaunch the session owes for a change of config, run here as the
+     * turn's preparation, since this is the session's next turn boundary: the
+     * turn then goes to the chat the relaunch brought back, and a relaunch
+     * that failed rejects, which ends the turn as a send that failed.
+     */
+    if (ctx.relaunches.has(session.uri)) {
+      const chatUri = session.chatUri;
+      return relaunch(session.uri).then(() => {
+        const back = byChat.get(chatUri)?.chat;
+        if (back === undefined) throw new Error(`${chatUri} did not start again`);
+        return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
+      });
     }
     /*
      * A turn with nowhere to charge.
@@ -1565,10 +2094,23 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * the same thing, and the only thing that decides it is what the
        * session holds at the moment the turn starts.
        */
-      if (relay !== undefined) relay();
+      if (relayed) {
+        // Carried to the host that runs it, which brings a provisional session up.
+        ctx.materialized(session.uri);
+        relay(session);
+      }
       else {
         if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
-        else said();
+        else {
+          // A client's start goes out as the client sent it, and the store
+          // keeps who sent it, as `sayStart` keeps the sender of a host's.
+          said();
+          if (who !== undefined) kept.setSender(idOf(session.uri), turnId, who);
+        }
+        // A person's turn going out makes an external session this host's own,
+        // as VS Code's host adopts one on its outgoing user turn.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/externalSessionAdoption/externalSessionAdoptionContribution.ts#L25-L30
+        if ((from?.origin?.kind ?? 'user') === 'user') ctx.adoptExternalSession(session.uri);
         void sendTurn(session, turnId, text, model, from, attachments, stopped);
       }
       return undefined;
@@ -1805,7 +2347,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       const owning = live === undefined ? undefined : sessions.get(live.uri);
       const link = live === undefined || owning === undefined
         ? undefined
-        : openLink(live.uri, owning.agent.provider, chatIdFor(live.uri, named));
+        : openLink(live.uri, owning.agent.provider, ctx.ownChat(live.uri, named) ? undefined : chatIdFor(live.uri, named));
 
       if (live === undefined || owning === undefined || !mayRead(sender)) {
         /*
@@ -1853,20 +2395,24 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   /**
-   * Start a session.
+   * Create a session on its provider, as VS Code's agent service creates a
+   * provider session for every road that makes one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10135
    *
-   * At host scope rather than inside a connection because there are two ways
-   * in and only one of them has a client: `createSession` is a request
-   * somebody made, and an automation coming round at nine in the morning is
-   * not. Both need the same eight steps, and a second copy of them would be a
-   * second answer to what creating a session means.
+   * At host scope, outside any connection, because there are two ways in and
+   * one of them has a client: `createSession` is a request somebody made, and
+   * an automation coming round at nine in the morning is not. Both take the
+   * same eight steps, here, as the one answer to what creating a session
+   * means.
    *
    * `by` is who asked: whose the work belongs to, and the person behind a
    * `user:` owner, which is what a later scope change is resolved against. An
    * automation carries a name rather than a connection, so it passes the first
-   * and leaves the second to the directory.
+   * and leaves the second to the directory. `legacyChatUris` says the session
+   * was made for an older VS Code window that addresses no opaque chat, read
+   * from `sender` where it is left out.
    */
-  const openSession = async (
+  const createProviderSession = async (
     uri: string,
     provider: string,
     config: Record<string, unknown>,
@@ -1875,7 +2421,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     credentials?: Record<string, string>,
     additional?: string[],
     title?: string,
-    by?: { owner?: Owner; principal?: Principal; sender?: Connection },
+    by?: { owner?: Owner; principal?: Principal; sender?: Connection; legacyChatUris?: boolean },
     asked?: { instructions?: string[]; tools?: string[]; userSettings?: boolean },
   ): Promise<void> => {
     named(uri, 'session');
@@ -1884,7 +2430,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     ctx.unheld(uri);
     const agent = ctx.agents.get(provider);
     if (!agent)
-      throw new RpcError(-32002, `No provider called ${provider}`);
+      throw new RpcError(-32002, noProvider(provider));
     /*
      * And an agent the caller may not use answers the same way, so a start it
      * is refused names no agent it was not told about. A run nobody's window
@@ -1897,7 +2443,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const allowed = by?.sender !== undefined
       ? mayUseAgent(by.principal, owned, { ...checked, root: by.sender.root === true })
       : mayUseAgentFor(by, owned, checked);
-    if (!allowed) throw new RpcError(-32002, `No provider called ${provider}`);
+    if (!allowed) throw new RpcError(-32002, noProvider(provider));
     /*
      * A binding names a connector, so a start that carries one is checked
      * here, before anything is written down: the connector has to be one this
@@ -1933,6 +2479,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (sentFrom !== undefined) kept.setRemoteOrigin?.(idOf(uri), sentFrom);
     const madeBy = readCreatedBy(config);
     if (madeBy !== undefined) kept.setCreatedBy?.(idOf(uri), madeBy);
+    // And the multi-root workspace the window made it from, which is what lets
+    // a window add and remove its folders.
+    const multiRoot = readMultiRoot(config);
+    if (multiRoot !== undefined) kept.setMultiRoot?.(idOf(uri), multiRoot);
     /*
      * The opt-in tools the request asked for, written down before the session
      * spawns: which tools are offered is read off the store while the first
@@ -1951,11 +2501,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     if (asked !== undefined) kept.setUserSettings?.(idOf(uri), asked.userSettings);
     /*
-     * What the session and its first chat open with, written down before the
-     * backend starts: the chat's state opens as `spawn` starts it, from what
-     * is kept here, and a fact written after that would be one its state never
-     * held. What started it, and that it and its chat are read: a session
-     * nobody has said anything in has nothing new in it.
+     * What the session opens with, written down before the backend starts:
+     * the chat's state opens as `spawn` starts it, from what is kept here, and
+     * a fact written after that would be one its state never held. What
+     * started it. The session and its default chat open unread, as VS Code's
+     * host makes a new session's summary `Idle` and its default chat's from
+     * it; a chat added to a session later opens read.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10705-L10711
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L685-L691
      */
     if (origin !== undefined) {
       origins.set(uri, origin);
@@ -1963,15 +2516,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       // read after a restart names what started it.
       kept.setAutomationOrigin?.(idOf(uri), origin);
     }
-    kept.setFlags(idOf(uri), kept.flags(idOf(uri)) | Status.IsRead);
-    startsRead(ctx, uri, chatUriFor(uri));
     // Named before it is announced, when the maker had a name for it: a row
     // that appears as "New session" and is renamed a moment later is two rows
     // to a client that lists once. `spawn` hands the backend the name it finds
-    // here, before the chat's state opens.
-    if (title !== undefined) kept.setChatTitle(idOf(uri), chatUriFor(uri), title);
+    // here, before the chat's state opens. The name is the session's, and its
+    // default chat holds none of its own, as VS Code's host makes a session's
+    // default chat inherit its title.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1668-L1675
+    if (title !== undefined) kept.setCustomTitle?.(idOf(uri), title);
     // Its row goes out whole once it is added, and moves from then on.
-    sessionComing(uri);
+    markSessionProvisional(uri);
     try {
       /*
        * The backend is handed everything but this host's own keys, and the
@@ -1983,50 +2537,53 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * than by each caller, so a session a tool, an automation or a client
        * starts keeps the keys the same way.
        */
-      const lead = await spawn(agent, uri, chatUriFor(uri), chatIdFor(uri, chatUriFor(uri)), backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
+      /*
+       * The session's default chat, minted as VS Code's host mints one: shaped
+       * for an older VS Code window that addresses no opaque chat, opaque for
+       * every other maker, a tool or an automation with no window among them.
+       * It is the session's own conversation, handed no name of its own.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10109-L10116
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10149-L10150
+       */
+      const legacy = by?.legacyChatUris ?? by?.sender?.legacyChatUris === true;
+      const defaultChat = mintDefaultChatUri(legacy ? 'shaped' : 'opaque', uri, undefined);
+      const lead = await spawn(agent, uri, defaultChat, undefined, backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
       // Written down for the same reason a rename is: a first name outlives a
       // restart too.
-      if (title !== undefined) keepTitle(uri, chatUriFor(uri), title);
+      if (title !== undefined) ctx.persistSessionTitle(uri, title);
       // What it was made with, so a resume after a restart starts from the
       // same place rather than from the defaults.
       if (Object.keys(config).length > 0) kept.setConfig(idOf(uri), { ...config });
       // Which harness this one runs on, so a catalogue two agents both list
       // can say whose row it is.
-      keepProvider(uri, agent, lead);
+      recordSessionProvider(uri, agent, lead);
     }
     catch (error) {
       // The session never existed, so what was written for it before its
       // backend started goes whole: its origin, and the flags and title kept.
       origins.delete(uri);
       kept.forget(idOf(uri));
-      forgetSent(uri);
+      removeNotifiedSummary(uri);
       // The backend's own words. It is the thing that knows which
       // directories it serves, and a refusal a client can read beats an
       // internal error it cannot.
       throw new RpcError(INVALID_PARAMS, error instanceof Error ? error.message : String(error));
     }
     /*
-     * The branch it started on, when that is already known.
-     *
-     * A directory whose facts have answered holds the pull requests the
-     * branch had, and this session began after that answer, so they are its
-     * baseline. Where nothing has answered yet the capture waits for the
-     * first answer, which is the same moment one turn later.
+     * The pull requests its branch already had, when the directory's facts
+     * have answered: the baseline takes the ones opened before the session
+     * began. Where nothing has answered yet the capture waits for the first
+     * answer.
      */
-    const facts = dirOf(uri) === undefined ? undefined : githubFacts.get(dirOf(uri) as string);
-    if (facts !== undefined) {
-      const urls = Array.isArray(facts.pullRequestUrls)
-        ? facts.pullRequestUrls.filter((one): one is string => typeof one === 'string')
-        : [];
-      captureBaseline(uri, urls);
-    }
+    if (dirOf(uri) !== undefined && githubFacts.has(dirOf(uri) as string)) captureBaseline(uri);
     log(`created ${uri}${where ? ` in ${where}` : ''}`);
-    // Ready, then announced. A client that hears about a session before
-    // it can be subscribed to has been told about something that is not
-    // there yet.
-    dispatch(uri, { type: 'session/ready' });
-    sessionAdded(uri);
-    activeSessionsMoved();
+    /*
+     * Provisional until its first message: its state is here for the client
+     * that made it to subscribe to, and it is announced and then said ready
+     * when its first turn starts, as VS Code's host keeps a session its
+     * provider made provisional unannounced until it materializes.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6347-L6362
+     */
     // Named and in the map, which is the moment a handler can act on it.
     // The client that asked is named where one did: an automation carries a
     // name rather than a connection, and a session found on disk was started
@@ -2041,8 +2598,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   return {
-    removeSession, respawning, restart, moveSession, restartChat, chatIdOf, deletedChat, backendsOwn,
-    chatAgent, chatConfig, isolated,
-    shelve, restore, beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, openSession,
+    removeSession, respawning, restart, moveSession, relaunchChat, chatIdOf, disposeProviderChat, ranIn, backendsOwn,
+    getProviderForChat, chatConfig, effectiveChatConfigValues, initialChatConfig, keepChatOwnConfigValues, isolated, oweTree,
+    requestSessionWorktreeRemoval, restoreSessionWorktree, canAutomaticallyDeleteArchivedSession, createDetachedWorktree,
+    beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, scratchFolder, createProviderSession,
   };
 }

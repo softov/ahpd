@@ -39,7 +39,7 @@ vi.mock('@earendil-works/pi-coding-agent', async () => {
   };
   return {
     SessionManager: {
-      list: async () => { gate.listed += 1; return []; },
+      listAll: async () => { gate.listed += 1; return []; },
       findById: (_cwd: string, id: string) => `/tmp/pi/${id}.jsonl`,
       open: () => ({}),
       create: () => ({}),

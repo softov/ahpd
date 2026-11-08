@@ -18,13 +18,18 @@ import type {
   AgentSession,
   AgentSessionEvent,
   ExtensionAPI,
+  LoadExtensionsResult,
+  PromptTemplate,
+  ResourceDiagnostic,
   SessionEntry,
   SessionManager,
+  Skill,
   ToolCallEvent,
   ToolCallEventResult,
   ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import type { ImageContent, Provider } from '@earendil-works/pi-ai';
+import type { PiResources } from './customizations.js';
 import type { PiModel } from './models.js';
 import { idOf, modelFor, THINKING_KEY } from './models.js';
 import { loadPi } from './pi.js';
@@ -75,6 +80,16 @@ export interface PiBackend {
   promptAfter(entryId: string | undefined): string | undefined;
   /** The thinking levels a model offers, which is pi's own rule. */
   levels(model: PiModel): string[];
+  /**
+   * What pi's loader found for this session, its skills, its prompt templates
+   * and its extensions, the ones switched off among them.
+   */
+  resources(): PiResources;
+  /**
+   * The level pi starts a session on for a model, as its settings name it: the
+   * model's own `modelThinkingLevels` entry, else `defaultThinkingLevel`.
+   */
+  startsOn(model: PiModel): string | undefined;
   /** The protocol's `ModelSelection` a new message would run on right now. */
   modelSelection(): { id: string; config: Record<string, unknown> } | undefined;
   /**
@@ -158,7 +173,7 @@ export interface BackendOptions {
    * included, with the source left whole.
    */
   forkAt?: string;
-  /** The id a new conversation is saved under; pi picks one when left out. */
+  /** The id a new conversation is saved under; pi picks one when left out or when its own check refuses this one. */
   id?: string;
   /** Where pi keeps its sessions; its own default when left out. */
   sessionDir?: string;
@@ -181,6 +196,11 @@ export interface BackendOptions {
    * the policy says to ask.
    */
   onToolCall?: (event: ToolCallEvent) => Promise<ToolCallEventResult | undefined>;
+  /**
+   * The files of the skills, prompt templates and extensions this session has
+   * switched off, which pi's loader leaves out through its own overrides.
+   */
+  switchedOff?: ReadonlySet<string>;
 }
 
 /**
@@ -212,6 +232,13 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
    * whatever the project trust says; it is loaded after the file extensions,
    * so its `tool_call` handler sees the input the others left.
    */
+  /*
+   * What pi's loader found, kept whole, and what this session switched off
+   * left out of what pi loads, through the loader's own overrides: each
+   * override is handed the whole list and answers the list pi keeps.
+   */
+  const switchedOff = options.switchedOff ?? new Set<string>();
+  const found: PiResources = { skills: [], prompts: [], extensions: [] };
   const loaderOptions = {
     ...(instructions.length > 0
       ? { appendSystemPromptOverride: (base: string[]) => [...base, ...instructions] }
@@ -227,22 +254,31 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
           }],
         }
       : {}),
+    skillsOverride: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
+      found.skills = base.skills;
+      return { ...base, skills: base.skills.filter((one) => !switchedOff.has(one.filePath)) };
+    },
+    promptsOverride: (base: { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] }) => {
+      found.prompts = base.prompts;
+      return { ...base, prompts: base.prompts.filter((one) => !switchedOff.has(one.filePath)) };
+    },
+    extensionsOverride: (base: LoadExtensionsResult) => {
+      found.extensions = base.extensions;
+      return { ...base, extensions: base.extensions.filter((one) => !switchedOff.has(one.path)) };
+    },
   };
   const services = await sdk.createAgentSessionServices({
     cwd: options.cwd,
     settingsManager,
-    ...(Object.keys(loaderOptions).length > 0 ? { resourceLoaderOptions: loaderOptions } : {}),
+    resourceLoaderOptions: loaderOptions,
   });
   const { session } = await sdk.createAgentSessionFromServices({
     services,
     sessionManager,
     ...(options.tools !== undefined && options.tools.length > 0 ? { customTools: options.tools } : {}),
   });
-  return wrap(sdk, session);
+  return wrap(sdk, session, found);
 }
-
-/** A UUID, the only form of id a session is saved under that pi did not pick itself. */
-export const isUuid = (id: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
 /**
  * The first user message on a branch after an entry, from its root when there
@@ -290,11 +326,23 @@ export function resumePoint(manager: Pick<SessionManager, 'getLeafEntry' | 'getE
  * copy under pi's own new id. A resumed id with a file continues that file,
  * and a resumed id nobody has is a new conversation under that id, so a client
  * that lost its file keeps its name. Anything else is a new conversation under
- * `id`, or pi's own. Only a UUID is passed to pi, so an id pi would refuse
- * becomes pi's own instead.
+ * `id`, or pi's own. An id is offered to pi as its `--session-id` takes one,
+ * opened where it exists and created where it does not, and pi's own check
+ * decides whether it is an id: one pi refuses (letters, numbers, '.', '_' and
+ * '-', starting and ending with a letter or number) becomes pi's own instead.
+ * https://www.npmjs.com/package/@earendil-works/pi-coding-agent (docs/cli.md, `--session-id`)
  */
 export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager {
   const { SessionManager } = sdk;
+  // Created under `id` where pi's own check takes it, and nothing otherwise.
+  const createdAs = (id: string): SessionManager | undefined => {
+    try {
+      return SessionManager.create(options.cwd, options.sessionDir, { id });
+    }
+    catch {
+      return undefined;
+    }
+  };
   if (options.forkAt !== undefined) {
     /*
      * Refused rather than continued empty.
@@ -323,10 +371,10 @@ export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager
     // catalogue and the files can disagree after somebody tidied up, and
     // refusing would lose the prompt that was being sent. It keeps the id, so
     // the client's name for it still answers.
-    if (isUuid(options.resume)) return SessionManager.create(options.cwd, options.sessionDir, { id: options.resume });
+    const created = createdAs(options.resume);
+    if (created !== undefined) return created;
   }
-  const id = options.id;
-  return SessionManager.create(options.cwd, options.sessionDir, id !== undefined && isUuid(id) ? { id } : undefined);
+  return (options.id === undefined ? undefined : createdAs(options.id)) ?? SessionManager.create(options.cwd, options.sessionDir);
 }
 
 /**
@@ -336,14 +384,16 @@ export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager
  * The default reads pi's agent directory; a caller may pass its own, as a
  * session may pass its own `open`.
  */
-export type RuntimeModels = () => Promise<{ model: PiModel; levels: string[] }[]>;
+export type RuntimeModels = () => Promise<{ model: PiModel; levels: string[]; startsOn?: string }[]>;
 
 /**
  * The models pi's runtime has for its agent directory.
  *
  * Built the way pi builds a session's runtime, from `auth.json` and
  * `models.json` in the agent directory, so the list is the one a session
- * opened anywhere would report, less what a project's own extensions add.
+ * opened anywhere would report, less what a project's own extensions add; the
+ * level pi starts each on from the agent directory's own settings, no
+ * project's.
  */
 export const runtimeModels: RuntimeModels = async () => {
   const sdk = await loadPi();
@@ -352,11 +402,16 @@ export const runtimeModels: RuntimeModels = async () => {
     authPath: join(agentDir, 'auth.json'),
     modelsPath: join(agentDir, 'models.json'),
   });
+  const settings = sdk.SettingsManager.create(agentDir, agentDir, { projectTrusted: false });
   const available = await runtime.getAvailable();
-  return (available as unknown as PiModel[]).map((model) => ({
-    model,
-    levels: sdk.getSupportedThinkingLevels(model as never) as string[],
-  }));
+  return (available as unknown as PiModel[]).map((model) => {
+    const startsOn = settings.getModelThinkingLevel(model.provider, model.id) ?? settings.getDefaultThinkingLevel();
+    return {
+      model,
+      levels: sdk.getSupportedThinkingLevels(model as never) as string[],
+      ...(startsOn === undefined ? {} : { startsOn }),
+    };
+  });
 };
 
 /**
@@ -377,8 +432,8 @@ const INPUT_SOURCE = 'rpc' as const;
  */
 const STILL = new AbortController().signal;
 
-/** The narrow surface, over the session pi built. */
-function wrap(sdk: Pi, session: AgentSession): PiBackend {
+/** The narrow surface, over the session pi built and what its loader found. */
+function wrap(sdk: Pi, session: AgentSession, found: PiResources): PiBackend {
   const models = async (): Promise<PiModel[]> => {
     const available = await session.modelRuntime.getAvailable();
     return available as unknown as PiModel[];
@@ -445,6 +500,10 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
      * the current model's would offer a control the other rows do not have.
      */
     levels: (model) => sdk.getSupportedThinkingLevels(model as never) as string[],
+    resources: () => found,
+    startsOn: (model) => session.settingsManager.getModelThinkingLevel(model.provider, model.id) ?? session.settingsManager.getDefaultThinkingLevel(),
+    // The model pi is on, with the level it is on in the config the model's
+    // schema puts it in, wherever pi moved it.
     modelSelection: () => {
       const model = session.model as PiModel | undefined;
       return model === undefined

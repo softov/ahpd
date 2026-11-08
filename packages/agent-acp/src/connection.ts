@@ -62,7 +62,8 @@ const REFUSED: RequestPermissionResponse = { outcome: { outcome: 'cancelled' } }
 const CLIENT_INFO = { name: 'ahpd', version: sdkVersion() };
 
 /**
- * How long a call that failed because the stream closed waits to hear why.
+ * How long a call that failed because the stream closed waits to hear why,
+ * unless the record's `exitGraceMs` says otherwise.
  *
  * The child's stdout can end a moment before its `exit` arrives, and the exit
  * code is the sentence a person needs; a server that closed its stdout and
@@ -70,9 +71,18 @@ const CLIENT_INFO = { name: 'ahpd', version: sdkVersion() };
  */
 const EXIT_GRACE_MS = 1000;
 
+/**
+ * How much of the child's stderr is kept, unless the record's `stderrBytes`
+ * says otherwise.
+ *
+ * Enough for the stack trace a server prints before it dies, and bounded so a
+ * server that talks all day costs a fixed amount per session.
+ */
+const STDERR_BYTES = 8 * 1024;
 
 /**
- * How long a server has to act on the SIGTERM before it is killed outright.
+ * How long a server has to act on the SIGTERM before it is killed outright,
+ * unless the record's `killGraceMs` says otherwise.
  *
  * A server that flushes what it wrote and unwinds its own work needs a moment;
  * one that took none of the SIGTERM must not hold the daemon's close open for
@@ -162,19 +172,16 @@ const unstarted = (command: string, cwd: string | undefined, error: NodeJS.Errno
  * an `account` names the email and the plan of the sign-in it is, and the other
  * three are sign-ins that are not an account of the operator's - a key, a
  * gateway, and a provider's own identity, which is what Bedrock and an agent's
- * own name are. None of those is a sign-out, so each is `unavailable` rather
- * than `signedOut`, and none of them names an email.
- *
- * A kind this bridge does not know is left unanswered rather than read as one
- * of the others: each state is a claim about who is billed, and a guess at one
- * is worse than saying nothing.
+ * own name are. None of those is a sign-out, so each is `unavailable`, and
+ * none of them names an email; nor does a kind this bridge does not know, as
+ * VS Code's Codex reads any account that is not a ChatGPT sign-in.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAccountState.ts#L22-L31
  */
 const accountOf = (status: unknown, at: number): Account | undefined => {
   if (!isRecord(status)) return undefined;
   const kind = str(status.kind);
   if (kind === 'none') return { status: 'signedOut', observedAt: at };
-  if (kind === 'api_key' || kind === 'gateway' || kind === 'external') return { status: 'unavailable', observedAt: at };
-  if (kind !== 'account') return undefined;
+  if (kind !== 'account') return { status: 'unavailable', observedAt: at };
   // The nested object is left out entirely by a server that names neither, so
   // an account with no email is a sign-in this host can only say it has.
   const held = isRecord(status.account) ? status.account : {};
@@ -201,6 +208,8 @@ const exited = (command: string, code: number | null, signal: NodeJS.Signals | n
  * token does not have to be repeated in a configuration.
  */
 export function connectAcp(options: AcpConnectionOptions): AcpConnection {
+  const exitGraceMs = options.exitGraceMs ?? EXIT_GRACE_MS;
+  const stderrBytes = options.stderrBytes ?? STDERR_BYTES;
   // A second early, as a process's own start time is read back to the
   // millisecond and the two clocks need not agree on the last one.
   const spawnedAt = Date.now() - 1000;
@@ -225,19 +234,31 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
    * Drained rather than inherited: a server that chatters on stderr must not
    * block on a full pipe, and it must not write into the daemon's own output.
    * Each line goes to the log as it arrives, as VS Code's agents log a
-   * runtime's stderr, so a server that dies says why where the operator reads.
+   * runtime's stderr, and the last of it is kept, because a server that dies
+   * says why on stderr and the exit code alone is rarely the sentence a person
+   * on a client needs: a failure carries it.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2716
    */
   let partial = '';
+  let stderr = Buffer.alloc(0);
+  /** Whether the ring has dropped bytes, and so may hold half a line. */
+  let stderrCut = false;
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk: string) => {
+    const held = Buffer.concat([stderr, Buffer.from(chunk, 'utf8')]);
+    stderrCut ||= held.length > stderrBytes;
+    stderr = held.length > stderrBytes ? held.subarray(held.length - stderrBytes) : held;
     const lines = `${partial}${chunk}`.split('\n');
     partial = lines.pop() ?? '';
     for (const line of lines) if (line.trim() !== '') options.log?.(`${options.command} stderr: ${line}`);
   });
+  /** Settles when the server's stderr has been read to its end. */
+  let readStderr: () => void = () => {};
+  const drained = new Promise<void>((resolve) => { readStderr = resolve; });
   child.stderr.on('end', () => {
     if (partial.trim() !== '') options.log?.(`${options.command} stderr: ${partial}`);
     partial = '';
+    readStderr();
   });
 
   /** Why the server is gone, once it is; undefined while it runs. */
@@ -397,7 +418,7 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
     if (death !== undefined) return Promise.reject(death);
     const answered = call().catch(async (why: unknown) => {
       if (death === undefined && connection.signal.aborted) {
-        await Promise.race([ended, new Promise((resolve) => { setTimeout(resolve, EXIT_GRACE_MS).unref(); })]);
+        await Promise.race([ended, new Promise((resolve) => { setTimeout(resolve, exitGraceMs).unref(); })]);
       }
       throw death ?? why;
     });
@@ -433,7 +454,29 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
     }
   };
 
+  /**
+   * What the server wrote on stderr, for a failure to say out loud.
+   *
+   * A dead server's exit can be heard before its last words have been read off
+   * the pipe, so the tail waits for the stream to end, bounded, because a
+   * grandchild that inherited the pipe keeps it open long after the server that
+   * spawned it is gone. A ring that has dropped bytes may have kept the middle
+   * of a line, so that line goes; a ring that has dropped nothing keeps every
+   * byte it was given.
+   */
+  const stderrTail = async (): Promise<string> => {
+    if (death !== undefined) {
+      await Promise.race([
+        drained,
+        new Promise((resolve) => { setTimeout(resolve, exitGraceMs).unref(); }),
+      ]);
+    }
+    const held = stderr.toString('utf8');
+    return (stderrCut ? held.slice(held.indexOf('\n') + 1) : held).trim();
+  };
+
   return {
+    stderrTail,
     initialize: (): Promise<InitializeResponse> => {
       if (initializeResponse !== undefined) return Promise.resolve(initializeResponse);
       const greeting: InitializeRequest = {
@@ -504,7 +547,7 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
       // a process id that has since been reused.
       const kill = setTimeout(() => {
         if (death === undefined) signal('SIGKILL');
-      }, KILL_GRACE_MS);
+      }, options.killGraceMs ?? KILL_GRACE_MS);
       kill.unref();
       try {
         await ended;

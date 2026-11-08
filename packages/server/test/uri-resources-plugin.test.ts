@@ -75,14 +75,19 @@ it('serves a computer: read through the real loader while file: still lists', as
   expect(listing.entries.map((one) => one.name)).toEqual(['on-disk.txt']);
 });
 
+/*
+ * An operation the scheme's provider leaves out is NotFound, in VS Code's
+ * words for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95
+ */
 it('refuses a list and a write on the scheme, which the provider does not implement', async () => {
   const { options } = await load();
   const client = await open(options);
   await expect(client.handle({
     method: 'resourceList', params: { channel: 'ahp-root://', uri: 'computer://local' },
-  })).rejects.toMatchObject({ code: -32601 });
+  })).rejects.toMatchObject({ code: -32008, message: "Resource operation 'list' is not supported for: computer://local" });
   await expect(client.handle({
     method: 'resourceWrite',
     params: { channel: 'ahp-root://', uri: 'computer://local/status', data: 'x', encoding: 'utf-8' },
-  })).rejects.toMatchObject({ code: -32601 });
+  })).rejects.toMatchObject({ code: -32008, message: "Resource operation 'write' is not supported for: computer://local/status" });
 });

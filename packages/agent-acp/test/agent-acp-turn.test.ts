@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,12 +43,18 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
 }
 
 /** Let the subprocess's work finish, up to a point; the fixture never sleeps. */
-const until = async (check: () => boolean | Promise<boolean>, times = 2000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+/*
+ * By the clock, within the case's own budget: two thousand 1 ms ticks were two
+ * seconds on Linux and forty on Windows, whose timers tick every 15 ms, which is
+ * past the 20 s a case has there.
+ */
+const until = async (check: () => boolean | Promise<boolean>, ms = WAIT_MS): Promise<void> => {
+  for (const deadline = Date.now() + ms; Date.now() < deadline;) {
     if (await check()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  if (await check()) return;
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 type Note = { channel: string; action: Record<string, unknown>; origin?: { clientId: string; clientSeq: number } };
@@ -77,11 +84,16 @@ const text = async (source: ChangesetSource, uri: string): Promise<string | unde
   (await source.read?.(uri))?.data;
 
 /** A connected client with one ACP session, watching both its channels. */
-async function talking(options: { changes?: ChangesetSource; tools?: HostTool[] } = {}) {
+async function talking(options: { changes?: ChangesetSource; tools?: HostTool[]; cutTurns?: 'error' | 'complete' } = {}) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-acp-'));
   const host = createHost({
     path,
-    agents: [acpAgent({ command: process.execPath, args: [FIXTURE], provider: 'acp' })],
+    agents: [acpAgent({
+      command: process.execPath,
+      args: [FIXTURE],
+      provider: 'acp',
+      ...(options.cutTurns === undefined ? {} : { cutTurns: options.cutTurns }),
+    })],
     // The composer's `!` prefix is the host's shell, so the host has to hold one.
     terminals: shellTerminals(),
     // And somebody for this window to be, without whom its session has no owner
@@ -154,8 +166,8 @@ const finished = (p: ReturnType<typeof peer>, chatUri: string, turns: number): b
 
 /*
  * A client's tool is a tool of the host's own MCP server, which this host calls
- * `ahp`, so an agent names a call to one the way that server spells it:
- * `mcp__ahp__<clientId>__<name>`, or the same with the prefix dropped.
+ * `host`, so an agent names a call to one the way that server spells it:
+ * `mcp__host__<clientId>__<name>`, or the same with the prefix dropped.
  */
 const OPEN_FILE = {
   name: 'openFile',
@@ -424,11 +436,11 @@ it('opens a call the agent reported for a client\'s tool with that client on the
   await providing(host, uri, chatUri, 'a');
 
   // Named the way the host's MCP server spells the tool.
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile');
   await until(() => finished(p, chatUri, 1));
   // And said about a client's tool in the title alone, which is all an agent
   // that names no `name` leaves behind for a call to be recognised by.
-  begin(client, chatUri, 't2', 'report a client tool by title ctitle=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't2', 'report a client tool by title ctitle=mcp__host__a__openFile');
   await until(() => finished(p, chatUri, 2));
 
   const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
@@ -436,6 +448,10 @@ it('opens a call the agent reported for a client\'s tool with that client on the
   for (const one of starts) {
     expect(one.action.contributor).toEqual({ kind: 'client', clientId: 'a' });
   }
+  // Each named by the tool the client announced, as VS Code's host names a
+  // client's call, so the client knows the call for its own.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L626-L638
+  expect(starts.map((e) => e.action.toolName)).toEqual(['openFile', 'openFile']);
 
   // Said again on the ready, which is where the protocol stops taking one: a
   // contributor that arrives after the start is ignored, so both carry it.
@@ -460,7 +476,7 @@ it('gives each of two clients the call it owns', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
   await providing(host, uri, chatUri, 'b');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile client=mcp__ahp__b__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile client=mcp__host__b__openFile');
   await until(() => ended(p, chatUri));
 
   // Two clients in one session may both provide `openFile`, and the model is
@@ -477,11 +493,11 @@ it('reads a name that is not a client\'s tool before a title that is', async () 
   await providing(host, uri, chatUri, 'a');
   // The agent named the tool it called, and the name is no client's. The title
   // spells one, and a title is only read when the agent named none.
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__list_sessions ctitle=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__list_sessions ctitle=mcp__host__a__openFile');
   await until(() => ended(p, chatUri));
 
   const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
-  expect(starts.map((e) => e.action.toolName)).toEqual(['mcp__ahp__list_sessions']);
+  expect(starts.map((e) => e.action.toolName)).toEqual(['mcp__host__list_sessions']);
   expect(starts[0]?.action.contributor).toBeUndefined();
 });
 
@@ -491,18 +507,18 @@ it('gives no contributor to a tool of the host\'s or the agent\'s own', async ()
   // The host's own tool, as the agent sees it beside the clients', and a tool
   // the agent has itself. Neither is a client's, so neither is a client's to
   // run.
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__list_sessions client=count_lines');
+  begin(client, chatUri, 't1', 'report client=mcp__host__list_sessions client=count_lines');
   await until(() => ended(p, chatUri));
 
   const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
-  expect(starts.map((e) => e.action.toolName)).toEqual(['mcp__ahp__list_sessions', 'count_lines']);
+  expect(starts.map((e) => e.action.toolName)).toEqual(['mcp__host__list_sessions', 'count_lines']);
   expect(starts.map((e) => e.action.contributor)).toEqual([undefined, undefined]);
 });
 
 it('keeps the contributor through the chat reducer, and the snapshot agrees', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile');
   await until(() => ended(p, chatUri));
 
   // What a client draws from the actions alone, which is the fold a contributor
@@ -526,7 +542,7 @@ it('keeps the contributor through the chat reducer, and the snapshot agrees', as
 it('raises the session entry a client reads when its call starts running', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile');
   await until(() => ended(p, chatUri));
 
   // A client that runs its tools from the session rather than from the chat
@@ -551,7 +567,7 @@ it('raises the session entry a client reads when its call starts running', async
 it('names a client\'s call in its row by the name the client announced', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile');
   await until(() => ended(p, chatUri));
 
   // The tool the client has, as VS Code's agents strip their client tool
@@ -565,7 +581,7 @@ it('names a client\'s call in its row by the name the client announced', async (
 it('opens no entry for a call the agent has not started', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile cstatus=pending');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile cstatus=pending');
   await until(() => ended(p, chatUri));
 
   // The row is drawn and attributed, and nobody is asked to run it: `pending`
@@ -577,26 +593,32 @@ it('opens no entry for a call the agent has not started', async () => {
   expect(types(p, uri)).not.toContain('session/inputNeededSet');
 });
 
-it('opens no entry for a call the agent has finished as it announced it', async () => {
+it('leaves no entry for a call the agent has finished as it announced it', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile cdone');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile cdone');
   await until(() => ended(p, chatUri));
 
-  // The row is drawn, attributed and closed at once. Nothing is asking anybody
-  // to run it: the call is already run, and an entry raised for one would wait
-  // on a client for a call whose result is in the chat.
+  /*
+   * The row is drawn, attributed and closed at once, and nothing is left asking
+   * anybody to run it: the entry its ready raised went with its completion, as
+   * VS Code's host syncs a call's entry with each action on the call.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L67-L157
+   */
   const calls = actions(p, chatUri).filter((e) => String(e.action.type).startsWith('chat/toolCall'));
   expect(calls.map((e) => e.action.type))
     .toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
   expect(calls[0]?.action.contributor).toEqual({ kind: 'client', clientId: 'a' });
-  expect(types(p, uri)).not.toContain('session/inputNeededSet');
+  const raised = actions(p, uri).filter((e) => e.action.type === 'session/inputNeededSet')
+    .map((e) => (e.action.request as Bag).id);
+  const removed = actions(p, uri).filter((e) => e.action.type === 'session/inputNeededRemoved').map((e) => e.action.id);
+  expect(removed).toEqual(raised);
 });
 
 it('asks a client to run the call once the person allows it', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a', [DROP_BRANCH]);
-  begin(client, chatUri, 't1', 'hold ctool=mcp__ahp__a__drop_branch');
+  begin(client, chatUri, 't1', 'hold ctool=mcp__host__a__drop_branch');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
 
   // The question is the row's readiness while it stands, and nobody has been
@@ -649,8 +671,9 @@ it('shows a call\'s terminal and diff content, and records the diff in the chang
 
   const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
   const content = (done?.action.result as { content: Bag[] }).content;
-  // The shell is the host's own, so the block is the one a `!command` builds.
-  expect(content[0]).toMatchObject({ type: 'terminal', title: 'Terminal', isPty: false });
+  // The shell is the host's own, so the block is the one a `!command` builds,
+  // titled by the call it belongs to.
+  expect(content[0]).toMatchObject({ type: 'terminal', title: 'Paint and preview', isPty: false });
   expect(String((content[0] as Bag).resource)).toContain('terminal');
   // The file, as the edit a client draws, from a source that holds no sides
   // of a call's own: the block names the file as it is.
@@ -950,20 +973,27 @@ it('starts the head once a client reorders a stopped turn\'s queue', async () =>
 /**
  * The status the catalogue announced as a turn ended.
  *
- * The host moves the session's row on every chat action, reading the status
- * as that action passes; the row sent right after the ending is the one a
- * client's list is left with when nothing else about the session moves.
+ * The first row carrying a status said after the action of `type` that ended
+ * turn `turnId`, or the first such action where no turn is named, once that
+ * row is said: the row a client's list is left with when nothing else about
+ * the session moves. A running session's moves are said together once they
+ * have been quiet for 100 ms, as VS Code's host flushes a session marked dirty.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L212-L330
  */
-const statusAtEnd = (p: ReturnType<typeof peer>, uri: string, chatUri: string, type: string): unknown => {
-  const at = p.notes.findIndex((n) => n.method === 'action'
-    && (n.params as Note).channel === chatUri
-    && (n.params as Note).action.type === type);
-  if (at < 0) return undefined;
-  // By id: the row is published under the provider's name, whatever the
-  // client created the session as.
-  const row = p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
-    && idOf((n.params as { session: string }).session) === idOf(uri));
-  const status = (row?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
+const statusAtEnd = async (p: ReturnType<typeof peer>, uri: string, chatUri: string, type: string, turnId?: string): Promise<unknown> => {
+  const rowAfter = () => {
+    const at = p.notes.findIndex((n) => n.method === 'action'
+      && (n.params as Note).channel === chatUri
+      && (n.params as Note).action.type === type
+      && (turnId === undefined || (n.params as Note).action.turnId === turnId));
+    // By id: the row is published under the provider's name, whatever the
+    // client created the session as.
+    return at < 0 ? undefined : p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
+      && idOf((n.params as { session: string }).session) === idOf(uri)
+      && (n.params as { changes: { status?: unknown } }).changes.status !== undefined);
+  };
+  await until(() => rowAfter() !== undefined);
+  const status = (rowAfter()?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
   // Without the read bit, which is the person's and not the turn's.
   return typeof status === 'number' ? status & ~Status.IsRead : status;
 };
@@ -972,7 +1002,7 @@ it('announces the session idle with the turnComplete that ends its turn', async 
   const { client, peer: p, uri, chatUri } = await talking();
   begin(client, chatUri, 't1', 'hi');
   await until(() => ended(p, chatUri));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
 });
 
 it('announces the session idle with the turnCancelled that ends its turn', async () => {
@@ -984,7 +1014,7 @@ it('announces the session idle with the turnCancelled that ends its turn', async
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnCancelled')).toBe(Status.Idle);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnCancelled')).toBe(Status.Idle);
 });
 
 it('announces the session failed with the chat/error that ends its turn', async () => {
@@ -992,14 +1022,36 @@ it('announces the session failed with the chat/error that ends its turn', async 
   begin(client, chatUri, 't1', 'fail');
   await until(() => types(p, chatUri).includes('chat/error'));
   expect(types(p, chatUri)).toContain('chat/error');
-  expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
 });
 
 it('announces the session idle with the turnComplete that ends a !command', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
-  begin(client, chatUri, 't1', '!echo acp-ran-it');
-  await until(() => ended(p, chatUri));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+  // A first message the agent answers, which announces the session: one made
+  // fresh is provisional until its first send, as VS Code's host keeps it.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+  begin(client, chatUri, 't1', 'hi');
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete', 't1')).toBe(Status.Idle);
+  const command = 't2';
+  begin(client, chatUri, command, '!echo acp-ran-it');
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
+  /*
+   * The status a client's list holds once the command's moves were quiet:
+   * idle, whether the command's running was said or its moves were coalesced
+   * into a row that says only what moved since the last one said. Read from
+   * the session's announcement and every row after it, as a list holds them.
+   */
+  const told = () => p.notes.filter((n) => (n.method === 'root/sessionSummaryChanged'
+    && idOf((n.params as { session: string }).session) === idOf(uri))
+    || (n.method === 'root/sessionAdded' && idOf((n.params as { summary: { resource: string } }).summary.resource) === idOf(uri)));
+  const commandEnd = p.notes.findIndex((n) => n.method === 'action' && (n.params as Note).channel === chatUri
+    && (n.params as Note).action.type === 'chat/turnComplete' && (n.params as Note).action.turnId === command);
+  await until(() => p.notes.slice(commandEnd + 1).some((n) => told().includes(n)));
+  const held = told()
+    .map((n) => (n.params as { summary?: { status?: unknown } }).summary?.status ?? (n.params as { changes?: { status?: unknown } }).changes?.status)
+    .filter((status) => typeof status === 'number')
+    .at(-1) as number;
+  expect(held & ~Status.IsRead).toBe(Status.Idle);
 });
 
 /**
@@ -1008,8 +1060,8 @@ it('announces the session idle with the turnComplete that ends a !command', asyn
  * `end_turn` is the answer and is in here as the case the others are read
  * against: one fixture case per stop reason the protocol names.
  */
-const stoppedWith = async (reason: string): Promise<{ type?: string | undefined; error?: Bag }> => {
-  const { client, peer: p, chatUri } = await talking();
+const stoppedWith = async (reason: string, cutTurns?: 'error' | 'complete'): Promise<{ type?: string | undefined; error?: Bag }> => {
+  const { client, peer: p, chatUri } = await talking(cutTurns === undefined ? {} : { cutTurns });
   begin(client, chatUri, 't1', `tell me something stop=${reason}`);
   await until(() => ended(p, chatUri) || types(p, chatUri).includes('chat/error'));
   const part = actions(p, chatUri).find((e) => e.action.type === 'chat/error')?.action.part as
@@ -1017,12 +1069,34 @@ const stoppedWith = async (reason: string): Promise<{ type?: string | undefined;
   return { type: types(p, chatUri).at(-1), ...(part === undefined ? {} : { error: part.error }) };
 };
 
-it('completes a turn the server stopped at a limit or by declining, as VS Code\'s agents complete one', async () => {
-  for (const reason of ['end_turn', 'max_tokens', 'max_turn_requests', 'refusal']) {
-    // A stop is the end of what the agent did: an error is a turn whose send
-    // or execution failed.
-    expect((await stoppedWith(reason)).type).toBe('chat/turnComplete');
+it('ends a turn the server stopped for its own reasons as an error naming the reason', async () => {
+  for (const reason of ['max_tokens', 'max_turn_requests', 'refusal']) {
+    const stopped = await stoppedWith(reason);
+    // Not a finished answer: a turn that stopped early is not what was asked
+    // for, and AHP has no field saying a completed turn was cut short.
+    expect(stopped.type).toBe('chat/error');
+    // The reason is the error's type, so a client can tell the three apart
+    // without reading the sentence.
+    expect(stopped.error?.errorType).toBe(reason);
+    expect(String(stopped.error?.message)).not.toBe('');
   }
+});
+
+/*
+ * A record whose `cutTurns` is `complete` completes them, as VS Code's agents
+ * complete a turn the model ended at a limit or by declining.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
+ */
+it('completes a turn the server stopped at a limit or by declining when the record says cutTurns complete', async () => {
+  for (const reason of ['max_tokens', 'max_turn_requests', 'refusal']) {
+    expect((await stoppedWith(reason, 'complete')).type).toBe('chat/turnComplete');
+  }
+});
+
+it('completes an end_turn, and words a refusal as the agent declining', async () => {
+  expect((await stoppedWith('end_turn')).type).toBe('chat/turnComplete');
+  // A refusal is the agent declining, and its sentence says so.
+  expect(String((await stoppedWith('refusal')).error?.message)).toContain('declined');
 });
 
 it('ends a turn whose prompt failed as a failed send, in the failure\'s own words', async () => {

@@ -20,6 +20,7 @@ import { declareNodes } from './nodes.js';
 import { declarePlugin } from './plugin.js';
 import { declareProxy } from './proxy.js';
 import { declareRestart } from './restart.js';
+import type { RestartOutcome } from './restart.js';
 import { declareStatus } from './status.js';
 import { declareUpdate } from './update.js';
 import { declareTeams } from './teams.js';
@@ -106,11 +107,11 @@ export interface ServedFacts {
   valuesMoved?(): Promise<void>;
   /**
    * Read that line over the configuration as it is now, then stop this daemon
-   * once the answer has gone and start it again with it. Throws, or rejects,
-   * with why the line cannot run or, unless forced, which turns are running,
-   * and the daemon runs on.
+   * once the answer has gone and start it again with it, or, unless forced,
+   * park that until the running turns end; answers which. Throws, or rejects,
+   * with why the line cannot run, and the daemon runs on.
    */
-  restart(argv: string[], force: boolean): void | Promise<void>;
+  restart(argv: string[], force: boolean): RestartOutcome | Promise<RestartOutcome>;
   /**
    * Take this daemon down without a successor, once the answer in hand has
    * gone: what the Windows update does, because the helper it starts runs npm

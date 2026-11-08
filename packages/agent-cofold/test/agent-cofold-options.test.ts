@@ -109,6 +109,18 @@ it('refuses a requireRead that is not a boolean', async () => {
   expect(problems).toEqual([`plugin ${NAME} skipped: plugins.${NAME}.options.tools.files.requireRead must be true or false`]);
 });
 
+/*
+ * A model's declared levels take any string, as VS Code's Custom Endpoint
+ * models setting does; the ones cofold does not have are left out when the
+ * model is offered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/extensions/copilot/package.json#L2043-L2049
+ */
+it('takes a declared level cofold does not have', async () => {
+  const { loaded, problems } = await load({ ...VALID, models: [{ id: 'm', supportsReasoningEffort: ['xhigh', 'low'] }] });
+  expect(problems).toEqual([]);
+  expect(loaded).toHaveLength(1);
+});
+
 it('takes computerConfigDir as a directory and as false', async () => {
   for (const value of ['/srv/cofold-home', false]) {
     const { loaded, problems } = await load({ ...VALID, computerConfigDir: value });

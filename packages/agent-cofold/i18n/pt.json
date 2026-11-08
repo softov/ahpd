@@ -10,6 +10,9 @@
     "baseUrl": {
       "description": "Endpoint compatível com OpenAI padrão para os agentes que não definem um."
     },
+    "models": {
+      "description": "Os modelos de baseUrl, por id, com os níveis de raciocínio que cada um aceita em supportsReasoningEffort. O Cofold oferece os níveis que suporta."
+    },
     "instructions": {
       "description": "Prompt de sistema padrão para os agentes que não definem um."
     },
@@ -17,7 +20,7 @@
       "description": "Pasta de configuração do Cofold dentro de um computador. Por padrão, '/ahpd/cofold'. Use false para manter a configuração própria da imagem."
     },
     "store": {
-      "description": "Pasta do armazenamento de arquivos de cada agente, uma subpasta por agente. Por padrão, '$XDG_DATA_HOME/ahpd/cofold'."
+      "description": "Pasta do armazenamento de arquivos do Cofold, compartilhada por todos os agentes. Por padrão, '$COFOLD_HOME' ou '~/.cofold'."
     },
     "memory": {
       "description": "Mantém o armazenamento de cada agente em memória em vez de no disco. Para testes."
@@ -42,10 +45,6 @@
     }
   },
   "session": {
-    "baseUrl": {
-      "title": "Endpoint",
-      "description": "Uma URL base compatível com a OpenAI, como https://api.deepseek.com/v1."
-    },
     "instructions": {
       "title": "Instruções",
       "description": "O prompt de sistema com que este agente roda."
@@ -60,16 +59,6 @@
         "auto": "Modo automático",
         "bypassPermissions": "Ignorar permissões",
         "dontAsk": "Não perguntar"
-      }
-    },
-    "effortLevel": {
-      "title": "Esforço",
-      "description": "Quanto ele pensa antes de responder.",
-      "enum": {
-        "off": "Desligado",
-        "low": "Baixo",
-        "medium": "Médio",
-        "high": "Alto"
       }
     }
   }

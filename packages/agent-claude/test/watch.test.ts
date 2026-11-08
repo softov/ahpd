@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { watchFolders } from '../src/session/watch.js';
+import { createClaudeCustomizationWatcher } from '../src/session/watch.js';
 
 /*
  * The watcher of a session's Claude folders, on real folders.
@@ -33,9 +33,9 @@ async function until(count: () => number, want: number): Promise<void> {
 }
 
 /** Watch `roots`, counting the calls, after the watch had time to start. */
-async function watched(roots: { configDir: string; cwd?: string }): Promise<{ calls: () => number; stop: () => void }> {
+async function watched(roots: { configDir: string; cwd?: string; waitMs?: number }): Promise<{ calls: () => number; stop: () => void }> {
   let calls = 0;
-  const stop = watchFolders(roots, () => { calls += 1; });
+  const stop = createClaudeCustomizationWatcher(roots, () => { calls += 1; });
   stops.push(stop);
   await pause(100);
   return { calls: () => calls, stop };
@@ -89,17 +89,37 @@ describe('the watcher of the Claude folders', () => {
     expect(calls()).toBe(1);
   });
 
-  it('calls for the list of installed plugins, and not for the other files the CLI writes beside it', async () => {
+  /*
+   * The plugins folder whole, as VS Code's Claude watcher triggers on it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L443-L452
+   */
+  it('calls for every change in the plugins folder, its subfolders among them', async () => {
     const root = fresh();
-    mkdirSync(join(root, 'plugins'));
+    mkdirSync(join(root, 'plugins', 'marketplaces', 'tools'), { recursive: true });
     const { calls } = await watched({ configDir: root });
     writeFileSync(join(root, 'plugins', 'known_marketplaces.json'), '{}\n');
-    mkdirSync(join(root, 'plugins', 'marketplaces'));
-    await pause(900);
-    expect(calls()).toBe(0);
-    writeFileSync(join(root, 'plugins', 'installed_plugins.json'), '{}\n');
     await until(calls, 1);
     expect(calls()).toBe(1);
+    writeFileSync(join(root, 'plugins', 'marketplaces', 'tools', 'plugin.json'), '{}\n');
+    await until(calls, 2);
+    expect(calls()).toBe(2);
+  });
+
+  it('drops a change told while it is quiet, and calls for one after', async () => {
+    const root = fresh();
+    mkdirSync(join(root, 'plugins', 'marketplaces', 'tools'), { recursive: true });
+    let quiet = true;
+    let calls = 0;
+    stops.push(createClaudeCustomizationWatcher({ configDir: root }, () => { calls += 1; }, () => quiet));
+    await pause(100);
+    writeFileSync(join(root, 'plugins', 'installed_plugins.json'), '{}\n');
+    writeFileSync(join(root, 'plugins', 'marketplaces', 'tools', 'plugin.json'), '{}\n');
+    await pause(900);
+    expect(calls).toBe(0);
+    quiet = false;
+    writeFileSync(join(root, 'plugins', 'known_marketplaces.json'), '{}\n');
+    await until(() => calls, 1);
+    expect(calls).toBe(1);
   });
 
   it('does not call for the files the CLI rewrites in a synced skills folder, and calls for a skill there', async () => {
@@ -124,6 +144,19 @@ describe('the watcher of the Claude folders', () => {
     await until(calls, 1);
     await pause(700);
     expect(calls()).toBe(1);
+  });
+
+  it('calls after the quiet the record\'s watchWaitMs names', async () => {
+    const root = fresh();
+    mkdirSync(join(root, 'commands'));
+    const { calls } = await watched({ configDir: root, waitMs: 20 });
+    writeFileSync(join(root, 'commands', 'a.md'), '# a\n');
+    await pause(200);
+    writeFileSync(join(root, 'commands', 'b.md'), '# b\n');
+    await until(calls, 2);
+    await pause(400);
+    // Two changes 200 ms apart are two bursts after a 20 ms quiet, where 300 ms makes them one.
+    expect(calls()).toBe(2);
   });
 
   it('starts to watch a folder when it appears', async () => {
@@ -170,7 +203,7 @@ describe('the watcher of the Claude folders', () => {
 
   it('throws nothing for folders it cannot watch', () => {
     const root = fresh();
-    const stop = watchFolders({ configDir: join(root, 'no', 'such'), cwd: join(root, 'missing') }, () => undefined);
+    const stop = createClaudeCustomizationWatcher({ configDir: join(root, 'no', 'such'), cwd: join(root, 'missing') }, () => undefined);
     expect(stop).not.toThrow();
   });
 });

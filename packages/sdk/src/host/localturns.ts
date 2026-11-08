@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } 
 import { join } from 'node:path';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import { idOf } from '../sessions/catalog.js';
-import { steerPart } from '../sessions/steer.js';
+import { steerOf, steerPart } from '../sessions/steer.js';
 import { readJsonObject, writeJsonAtomic } from '../utils/jsonfile.js';
 import { bag, isRecord, reason, str } from '../utils/values.js';
 import type { Agent, SessionAt } from '../types/agent.js';
@@ -26,11 +26,11 @@ import type { HostContext } from './context.js';
  * names turns its own way says so through `onTurnRecorded`.
  *
  * The same folder records the turns a chat began, by the id its transcript
- * holds each under, which is what a read needs to show a turn as it ran: a
- * backend may write one turn as several of its own, as Claude's CLI writes a
- * steering message it runs after the turn's last answer as a prompt of its
- * own, while the reference keeps that message's answer in the turn it steered.
- * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/CONTEXT.md#L1595-L1609
+ * holds each under: a live chat finds the turn an anchor names by it, a read
+ * finds the failed turn a transcript holds a copy of by it, and a turn its
+ * backend ran again and wrote down under a second id reads back by it as the
+ * one turn it is, as VS Code's host keeps a resumed turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L974
  */
 export interface LocalTurns {
   /**
@@ -54,16 +54,27 @@ export interface LocalTurns {
    */
   turnOriginOf(chat: string, turnId: string): Bag | undefined;
   /**
-   * Keep a command's turn that has ended, as the chat holds it in `turns`.
+   * Record a command's turn that has ended, as the chat holds it in `turns`,
+   * as VS Code's local turn store records one beside its anchor.
    *
    * Nothing for a turn `turns` does not hold, and nothing where the store keeps
    * no session folder.
    * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L227-L245
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostLocalTurns.ts#L86
    */
-  keepLocalTurn(session: string, chat: string, turns: readonly Bag[], turnId: string): void;
+  recordLocalTurn(session: string, chat: string, turns: readonly Bag[], turnId: string): void;
   /**
-   * One chat's transcript, read with the outputs it is handed, with each turn
-   * it holds no beginning for read back inside the turn before it, and with its
+   * Record a turn that ended in an error it cannot be resumed from, as the chat
+   * holds it in `turns`, anchored as a command's turn is: a read puts it back
+   * where the backend's transcript holds no copy of it, and drops it where it
+   * holds one, as the reference host keeps a turn that failed before its
+   * provider recorded it. A command's turn kept already stays as it is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/persistedFailedTurns/persistedFailedTurnsContribution.ts#L40-L84
+   */
+  recordFailedTurn(session: string, chat: string, turns: readonly Bag[], turnId: string): void;
+  /**
+   * One chat's transcript, read with the outputs it is handed, each turn it
+   * holds a turn of its own and a turn run twice the one turn it is, with its
    * local turns put back, or the local turns alone for a chat whose backend
    * holds no transcript.
    */
@@ -75,34 +86,53 @@ export interface LocalTurns {
     chat: string,
   ): Promise<WireTurn<Turn>[] | undefined>;
   /**
-   * A transcript's turns with the chat's local turns put back after their
-   * anchors. `joined` names the turn each transcript id a read put inside
-   * another was put in, which is where a local turn anchored to it goes.
-   * Without it the turns are a live chat's, named by this host's turn ids, and
-   * an anchor the backend recorded under its own name goes after the turn that
-   * name was recorded for.
+   * A transcript's turns with the chat's local turns interleaved after their
+   * anchors, as VS Code interleaves them. `joined` names the turn each
+   * transcript id a read put inside another was put in, which is where a local
+   * turn anchored to it goes.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostLocalTurns.ts#L202
    */
-  withLocalTurns<T>(session: string, chat: string, turns: readonly T[], joined?: ReadonlyMap<string, string>): T[];
+  interleaveLocalTurns<T>(session: string, chat: string, turns: readonly T[], joined?: ReadonlyMap<string, string>): T[];
+  /**
+   * A live chat's turns, as its backend holds them under the ids the chat began
+   * them by, with the chat's local turns put back after their anchors: an
+   * anchor kept under a transcript's own id for a turn is read as the id the
+   * chat began that turn by, as the reference reads a chat's turns with its
+   * local ones among them.
+   * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentHostLocalTurns.ts#L202-L234
+   */
+  liveTurnsOf<T>(session: string, chat: string, turns: readonly T[]): T[];
   /**
    * The id a backend cuts or forks at for the turn at `at`: that turn's, or the
-   * nearest earlier one's that is not a local turn. Nothing when every turn up
-   * to `at` is a local turn.
+   * nearest earlier one's that is not a local turn, as VS Code resolves a
+   * concrete turn id. Nothing when every turn up to `at` is a local turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostLocalTurns.ts#L76
    */
-  concreteTurnOf(session: string, chat: string, turns: readonly Bag[], at: number): string | undefined;
-  /** Forget the local turns among some dropped turns of a chat, and the transcript ids recorded for them. */
-  forgetLocalTurns(session: string, chat: string, turns: readonly Bag[]): void;
-  /** Keep a fork's copied local turns, and the transcript ids of its copied turns, for the new chat. */
-  copyLocalTurns(session: string, from: string, to: string, turns: readonly Bag[]): void;
-  /** Forget every local turn and transcript id a chat kept. */
+  resolveConcreteTurnId(session: string, chat: string, turns: readonly Bag[], at: number): string | undefined;
+  /**
+   * Delete the local turns among some dropped turns of a chat, and the
+   * transcript ids recorded for them, as VS Code deletes a truncation's locals.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostLocalTurns.ts#L125
+   */
+  deleteLocalTurns(session: string, chat: string, turns: readonly Bag[]): void;
+  /** Persist a fork's copied local turns, and the transcript ids of its copied turns, for the new chat, as VS Code persists a fork's. */
+  persistForkedLocalTurns(session: string, from: string, to: string, turns: readonly Bag[]): void;
+  /**
+   * Forget every local turn and transcript id a chat kept, as VS Code's local
+   * turn store forgets a chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostLocalTurns.ts#L139
+   */
   forgetChatLocalTurns(session: string, chat: string): void;
   /**
-   * Every turn a session's chats keep, by the session's id, in no order.
+   * Every turn a session's chats keep, by the session's id, in no order: each
+   * chat's records loaded, as VS Code loads a chat's local turns.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostLocalTurns.ts#L115
    *
    * What a session whose turns are all the host's own holds: no backend lists
    * it or holds a conversation for it, so the catalogue keeps and lists it from
    * these, and a read of it answers them.
    */
-  keptTurnsOf(id: string): Bag[];
+  loadSessionLocalTurns(id: string): Bag[];
   /** Take a chat's local turns, and the transcript ids it recorded, to the session it moved to. */
   moveChatLocalTurns(from: string, to: string, chat: string): void;
 }
@@ -114,6 +144,11 @@ interface Kept {
   anchor?: string;
   seq: number;
   turn: Bag;
+  /**
+   * A turn that ended in an error it cannot be resumed from, which its
+   * backend's transcript may hold after all: read back only where it does not.
+   */
+  failed?: true;
 }
 
 /** The folder under a session's own where its chats' local turns are. */
@@ -128,13 +163,13 @@ const hashOf = (name: string): string => createHash('sha256').update(name, 'utf8
  * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentHostLocalTurns.ts#L171-L200
  */
 const keptOf = (value: Bag): Kept | undefined => {
-  const { version, turnId, anchor, seq, turn } = value;
+  const { version, turnId, anchor, seq, turn, failed } = value;
   if (version !== 1 || typeof turnId !== 'string' || typeof seq !== 'number') return undefined;
   if (anchor !== undefined && typeof anchor !== 'string') return undefined;
   if (!isRecord(turn) || turn.id !== turnId || typeof turn.state !== 'string' || !Array.isArray(turn.responseParts)) return undefined;
   const message = bag(turn.message);
   if (typeof message.text !== 'string' || typeof bag(message.origin).kind !== 'string') return undefined;
-  return { turnId, ...(anchor === undefined ? {} : { anchor }), seq, turn };
+  return { turnId, ...(anchor === undefined ? {} : { anchor }), seq, turn, ...(failed === true ? { failed: true as const } : {}) };
 };
 
 /** One file of a chat's record: a transcript id, and the turn that began, or was written again, under it. */
@@ -166,10 +201,33 @@ const added = (a: unknown, b: unknown): number | undefined => {
 };
 
 /**
- * What a turn and one read back inside it spent, as one turn's usage: token
- * counts and costs added and the rest as the later one left it, the model that
- * answered last and the context as it ended, as agent-pi adds one call's usage
- * to its turn's.
+ * What one turn run twice spent, as VS Code merges a resumed turn's usage: the
+ * later run's counts and model over the earlier run's, and the cost of both
+ * added.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L137-L174
+ */
+const mergeLogicalTurnUsage = (previous: Bag | undefined, current: Bag | undefined): Bag | undefined => {
+  if (previous === undefined || current === undefined) return current ?? previous;
+  const paid = bag(bag(previous._meta)['ahpd.cost']);
+  const paying = bag(bag(current._meta)['ahpd.cost']);
+  let cost: Bag | undefined;
+  if (typeof paid.amount === 'number' && typeof paying.amount === 'number') {
+    cost = { ...paid, ...paying, amount: paid.amount + paying.amount };
+    for (const side of ['input', 'output']) {
+      const sum = added(paid[side], paying[side]);
+      if (sum !== undefined) cost[side] = sum;
+    }
+  }
+  const meta = previous._meta === undefined && current._meta === undefined
+    ? undefined
+    : { ...bag(previous._meta), ...bag(current._meta), ...(cost === undefined ? {} : { 'ahpd.cost': cost }) };
+  const model = current.model ?? previous.model;
+  return { ...previous, ...current, ...(model === undefined ? {} : { model }), ...(meta === undefined ? {} : { _meta: meta }) };
+};
+
+/**
+ * What two turns spent, added, for a steer read back inside the turn it
+ * steered: its counts and its cost are that turn's as well.
  */
 const spentBoth = (first: Bag | undefined, then: Bag | undefined): Bag | undefined => {
   if (first === undefined || then === undefined) return then ?? first;
@@ -200,15 +258,24 @@ const spentBoth = (first: Bag | undefined, then: Bag | undefined): Bag | undefin
 };
 
 /**
- * A turn with another read back inside it, as one turn: the first's id, start
- * and message, both answers in the order they came, and the later one's end.
+ * One turn run twice, read back as the one turn it is, as VS Code's host keeps
+ * a resumed turn: the first run's id, start and message, the parts of both in
+ * the order they came, the later run's end, both runs' durations added and
+ * their usage merged.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/protocol/channels-chat/reducer.ts#L402-L428
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L974
  */
 const joinedTurn = (first: WireTurn<Turn>, then: WireTurn<Turn>, steered = false): WireTurn<Turn> => {
-  const usage = spentBoth(first.usage as Bag | undefined, then.usage as Bag | undefined);
+  const usage = (steered ? spentBoth : mergeLogicalTurnUsage)(first.usage as Bag | undefined, then.usage as Bag | undefined);
+  // A steer is part of the turn it steered, which ran from its start to the
+  // steer's end; a turn run twice took the time of both runs.
   const began = first.startedAt === undefined ? Number.NaN : Date.parse(first.startedAt);
   const ended = then.startedAt === undefined || then.duration === undefined
     ? Number.NaN
     : Date.parse(then.startedAt) + then.duration;
+  const duration = !steered
+    ? added(first.duration, then.duration)
+    : Number.isNaN(began) || Number.isNaN(ended) ? undefined : ended - began;
   return {
     ...first,
     /*
@@ -222,8 +289,8 @@ const joinedTurn = (first: WireTurn<Turn>, then: WireTurn<Turn>, steered = false
       ...then.responseParts,
     ],
     state: then.state,
-    usage: usage as WireTurn<Turn>['usage'],
-    ...(Number.isNaN(began) || Number.isNaN(ended) ? {} : { duration: ended - began }),
+    ...(usage === undefined ? {} : { usage: usage as WireTurn<Turn>['usage'] }),
+    ...(duration === undefined ? {} : { duration }),
   };
 };
 
@@ -323,10 +390,11 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
 
   const turnOriginOf = (chat: string, turnId: string): Bag | undefined => originsAs.get(chat)?.get(turnId);
 
-  const keepLocalTurn = (session: string, chat: string, turns: readonly Bag[], turnId: string): void => {
+  const keep = (session: string, chat: string, turns: readonly Bag[], turnId: string, failed: boolean): void => {
     const at = turns.findIndex((turn) => str(turn.id) === turnId);
     const file = fileOf(session, chat, turnId);
     if (at < 0 || file === undefined) return;
+    if (failed && isLocal(session, chat, turnId)) return;
     /*
      * The turn it followed: the nearest earlier one that is no local turn of
      * its own, by the id the transcript holds it under.
@@ -349,11 +417,18 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
         ...(anchor === undefined ? {} : { anchor }),
         seq,
         turn: turns[at],
+        ...(failed ? { failed: true } : {}),
       }, { dirMode: 0o700 });
     }
     catch (error) {
       ctx.log(`could not keep the turn ${turnId} of ${chat}: ${reason(error)}`);
     }
+  };
+  const recordLocalTurn = (session: string, chat: string, turns: readonly Bag[], turnId: string): void => {
+    keep(session, chat, turns, turnId, false);
+  };
+  const recordFailedTurn = (session: string, chat: string, turns: readonly Bag[], turnId: string): void => {
+    keep(session, chat, turns, turnId, true);
   };
 
   /*
@@ -367,12 +442,29 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
    * of those stays where the transcript has it, the others of its anchor go in
    * around it by `seq`, and none goes in a second time.
    */
-  const withLocalTurns = <T>(session: string, chat: string, turns: readonly T[], joined?: ReadonlyMap<string, string>): T[] => {
-    const kept = keptIn(session, chat);
+  const interleaveLocalTurns = <T>(session: string, chat: string, turns: readonly T[], joined?: ReadonlyMap<string, string>): T[] => {
+    const all = keptIn(session, chat);
+    if (all.length === 0) return [...turns];
+    const held = new Set(turns.map((turn) => str(bag(turn).id)));
+    /*
+     * A failed turn the transcript holds after all, under its own id or one
+     * the chat recorded for it, is the transcript's: its kept copy goes, as
+     * the reference host deletes a failed turn its provider has a copy of.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/persistedFailedTurns/persistedFailedTurnsContribution.ts#L68-L84
+     */
+    const copied = new Set(recordedIn(session, chat).filter((one) => held.has(one.transcriptId)).map((one) => one.turnId));
+    const kept = all.filter((one) => {
+      if (one.failed !== true || (!held.has(one.turnId) && !copied.has(one.turnId))) return true;
+      const file = fileOf(session, chat, one.turnId);
+      if (file !== undefined) {
+        try { rmSync(file, { force: true }); }
+        catch (error) { ctx.log(`could not remove ${file}: ${reason(error)}`); }
+      }
+      return false;
+    });
     if (kept.length === 0) return [...turns];
     const named = joined ?? new Map([...recordedAs.get(chat) ?? []].map(([turnId, recorded]) => [recorded, turnId]));
     const seqOf = new Map(kept.map((one) => [one.turnId, one.seq]));
-    const held = new Set(turns.map((turn) => str(bag(turn).id)));
     // The local turns to put in, by anchor, each anchor's in `seq` order.
     const waiting = new Map<string | undefined, Kept[]>();
     for (const one of kept.filter((each) => !held.has(each.turnId)).sort((a, b) => a.seq - b.seq)) {
@@ -406,23 +498,33 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
    * A transcript's turns as the chat began them, and the turn each one read
    * back inside another went into.
    *
-   * A turn the chat's record holds no beginning for is one the backend wrote of
-   * its own inside a turn that began before it, so it is read back inside that
-   * turn, as the reference keeps a steering message's answer in the turn it
-   * steered. So is a turn recorded as the same turn as the one before it, which
-   * is that turn written down again. A local turn is the host's own and stays
-   * a turn of its own, and so does every turn before the first one the record
-   * holds: a chat from before its record reads as its transcript gives it. So
-   * does a notice turn, whose message says the system made it: it answers no
-   * one, and folding it into the turn before it would take back the line it
-   * was given a turn of its own to draw.
+   * Each turn the transcript holds is a turn of its own, except where the
+   * host's `steerReadBack` keeps a steer in its turn, which is the default.
+   *
+   * At `inTurn`, a turn the chat's record holds no beginning for is one the
+   * backend wrote of its own inside a turn that began before it, so it is read
+   * back inside that turn, as the live turn showed the steering message. A
+   * local turn is the host's own and stays a turn of its own, and so does
+   * every turn before the first one the record holds: a chat from before its
+   * record reads as its transcript gives it. So does a notice turn, whose
+   * message says the system made it: it answers no one.
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/CONTEXT.md#L1597-L1606
+   *
+   * At `ownTurn`, every prompt the transcript holds starts a turn, as VS
+   * Code's replay starts one, a steering message the backend ran as a prompt
+   * of its own included.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L282-L292
+   *
+   * Either way, a turn recorded as the same turn as the one before it is that
+   * turn run again and written down under a second id, so the two read back
+   * as the one turn it is.
    */
   const asBegun = (session: string, chat: string, turns: readonly WireTurn<Turn>[], records: readonly Recorded[] = recordedIn(session, chat), restoreIds = false): { turns: WireTurn<Turn>[]; joined: Map<string, string> } => {
     const joined = new Map<string, string>();
     const began = new Map(records.map((one) => [one.transcriptId, one.turnId]));
     if (began.size === 0) return { turns: [...turns], joined };
     const out: WireTurn<Turn>[] = [];
+    const steersInTurn = ctx.steerReadBack !== 'ownTurn';
     let recorded = false;
     // The turn the one last kept began as.
     let last: string | undefined;
@@ -434,7 +536,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
       // A notice is the system's own and stays a turn of its own, however
       // little the record says of it.
       const notice = str(bag(bag(turn.message).origin).kind) === 'systemNotification';
-      const grouped = as === undefined ? !restoreIds : as === last;
+      const grouped = as === undefined ? steersInTurn && !restoreIds : as === last;
       if (into !== undefined && recorded && grouped && !isLocal(session, chat, id) && !notice) {
         // One the chat never began is a steer; one recorded again is the same turn.
         out[out.length - 1] = joinedTurn(into, turn, as === undefined);
@@ -467,6 +569,17 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     });
   };
 
+  /**
+   * A transcript's turns without the steer parts its backend read back, for a
+   * host whose `steerReadBack` is `ownTurn`: VS Code's replay shows no
+   * `systemNotification` part for a steering message the agent took in at a
+   * tool call.
+   */
+  const withoutSteers = (turns: readonly WireTurn<Turn>[]): WireTurn<Turn>[] => turns.map((turn) => {
+    const parts = turn.responseParts.filter((part) => steerOf(part as unknown as Bag) === undefined);
+    return parts.length === turn.responseParts.length ? turn : { ...turn, responseParts: parts };
+  });
+
   const transcriptOf = async (
     agent: Agent,
     id: string,
@@ -474,16 +587,25 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     session: string,
     chat: string,
   ): Promise<WireTurn<Turn>[] | undefined> => {
-    const turns = await agent.transcript?.(id, at, ctx.outputsFor(session, chat));
+    // Handed the content this host keeps for the session, by the reference it
+    // kept each under, as it is handed the outputs it keeps for the chat.
+    const turns = await agent.transcript?.(id, at, ctx.outputsFor(session, chat), (toolCallId, ordinal) => ctx.toolResults.kept(session, toolCallId, ordinal));
     // A chat whose turns are all this host's own has no transcript, and reads
     // as the turns it keeps, as a nested session opens from its record.
-    if (turns === undefined) return keptIn(session, chat).length > 0 ? withLocalTurns(session, chat, []) : undefined;
+    if (turns === undefined) return keptIn(session, chat).length > 0 ? interleaveLocalTurns(session, chat, []) : undefined;
     const records = recordedIn(session, chat);
-    const begun = asBegun(session, chat, begunWithOrigins(turns, records), records, agent.transcriptTurnIds === 'recorded');
-    return withLocalTurns(session, chat, begun.turns, begun.joined);
+    const read = ctx.steerReadBack === 'ownTurn' ? withoutSteers(turns) : turns;
+    const begun = asBegun(session, chat, begunWithOrigins(read, records), records, agent.transcriptTurnIds === 'recorded');
+    return interleaveLocalTurns(session, chat, begun.turns, begun.joined);
   };
 
-  const concreteTurnOf = (session: string, chat: string, turns: readonly Bag[], at: number): string | undefined => {
+  const liveTurnsOf = <T>(session: string, chat: string, turns: readonly T[]): T[] => {
+    const joined = new Map(recordedIn(session, chat).map((one) => [one.transcriptId, one.turnId]));
+    for (const [turnId, transcriptId] of recordedAs.get(chat) ?? []) joined.set(transcriptId, turnId);
+    return interleaveLocalTurns(session, chat, turns, joined);
+  };
+
+  const resolveConcreteTurnId = (session: string, chat: string, turns: readonly Bag[], at: number): string | undefined => {
     for (let before = at; before >= 0; before -= 1) {
       const id = str(turns[before]?.id);
       if (id !== undefined && !isLocal(session, chat, id)) return id;
@@ -491,7 +613,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     return undefined;
   };
 
-  const forgetLocalTurns = (session: string, chat: string, turns: readonly Bag[]): void => {
+  const deleteLocalTurns = (session: string, chat: string, turns: readonly Bag[]): void => {
     const files = [
       ...turns.flatMap((turn) => {
         const id = str(turn.id);
@@ -509,7 +631,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     }
   };
 
-  const copyLocalTurns = (session: string, from: string, to: string, turns: readonly Bag[]): void => {
+  const persistForkedLocalTurns = (session: string, from: string, to: string, turns: readonly Bag[]): void => {
     const names = recordedAs.get(from);
     const copied = recordedAs.get(to) ?? new Map<string, string>();
     const folder = folderOf(session, to);
@@ -561,7 +683,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     moveFolder(recordOf(from, chat), recordOf(to, chat));
   };
 
-  const keptTurnsOf = (id: string): Bag[] => {
+  const loadSessionLocalTurns = (id: string): Bag[] => {
     const dir = ctx.kept.attachmentsDir?.(id);
     const turns = dir === undefined ? undefined : join(dir, TURNS);
     if (turns === undefined || !existsSync(turns)) return [];
@@ -575,7 +697,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
   };
 
   return {
-    turnRecordedAs, turnOriginOf, keepLocalTurn, transcriptOf, withLocalTurns, concreteTurnOf,
-    forgetLocalTurns, copyLocalTurns, forgetChatLocalTurns, moveChatLocalTurns, keptTurnsOf,
+    turnRecordedAs, turnOriginOf, recordLocalTurn, recordFailedTurn, transcriptOf, interleaveLocalTurns, liveTurnsOf, resolveConcreteTurnId,
+    deleteLocalTurns, persistForkedLocalTurns, forgetChatLocalTurns, moveChatLocalTurns, loadSessionLocalTurns,
   };
 }

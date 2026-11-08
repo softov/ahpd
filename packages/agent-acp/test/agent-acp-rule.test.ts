@@ -17,12 +17,13 @@ import type { Peer } from '../../sdk/src/types/rpc.js';
  * A tool the operator's rule makes ask every time, on an ACP session.
  *
  * Two ways a call reaches this bridge. The agent's own tool is a permission
- * request, which the bridge puts to a person itself; a tool of the host's or a
- * client's is called over the MCP server the session was handed, where the
- * bridge is out of the path - so the server asks before it runs one.
+ * request, which the bridge puts to the host, whose chain makes a question
+ * about a tool the rule names one a managed rule asks; a tool of the host's or
+ * a client's is called over the MCP server the session was handed, where the
+ * bridge is out of the path.
  *
  * The scripted subprocess in `test/fixtures/acp-server.mjs` makes both for
- * real: `perm` asks over the protocol, and `mreq` POSTs `tools/call` on the
+ * real: `execrun` asks over the protocol, and `mreq` POSTs `tools/call` on the
  * endpoint the session was given.
  */
 
@@ -178,6 +179,8 @@ async function talking(options: { rules?: Record<string, boolean> } = {}) {
     users: anyone(),
     tools: [hostTool(ran)],
     toolsServers: servers,
+    // The operator's rule, the daemon's setting.
+    ...(options.rules === undefined ? {} : { eligibleForAutoApproval: options.rules }),
   });
   const p = peer();
   const client = host.accept(p);
@@ -186,15 +189,6 @@ async function talking(options: { rules?: Record<string, boolean> } = {}) {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   await signIn(client);
-  if (options.rules !== undefined) {
-    await client.handle({
-      method: 'dispatchAction',
-      params: {
-        channel: 'ahp-root://',
-        action: { type: 'root/configChanged', config: { eligibleForAutoApproval: options.rules } },
-      },
-    });
-  }
   const uri = 'ahp-session:/rule';
   await client.handle({
     method: 'createSession',
@@ -219,94 +213,23 @@ const begin = (
   });
 };
 
-/** Answer a question the session put up, the way a client dispatches one. */
-const answer = (
-  client: Awaited<ReturnType<typeof talking>>['client'],
-  chatUri: string,
-  toolCallId: string,
-  approved: boolean,
-): void => {
-  client.handle({
-    method: 'dispatchAction',
-    params: {
-      channel: chatUri,
-      action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId, approved },
-    },
-  });
-};
-
-/** The fixture's three options, as the protocol offers them. */
-const OFFERED = [
-  { id: 'yes-once', label: 'Allow once', kind: 'approve', group: 1 },
-  { id: 'yes-always', label: 'Always allow', kind: 'approve', group: 1 },
-  { id: 'no-once', label: 'Reject once', kind: 'deny', group: 2 },
+/** VS Code's options for a question nothing may keep an answer to. */
+const ONCE = [
+  { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+  { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
 ];
 
 /** The call a question is about, in the shape the entry carries it. */
 const call = (entry: Bag | undefined): Bag => (entry?.toolCall ?? {}) as Bag;
 
-it('asks before a matched host tool runs, on the call the agent reported, and runs it when a person approves', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
-  begin(client, chatUri, 'mrep=c1=list_sessions={} mreq=list_sessions={}=-');
-  await until(() => question(p, uri) !== undefined);
-
-  const entry = question(p, uri) as Bag;
-  expect(entry.kind).toBe('toolConfirmation');
-  // The question is on the agent's own call, as VS Code's host asks.
-  expect(entry.toolCall).toMatchObject({
-    toolCallId: 'c1',
-    toolName: 'mcp__ahp__list_sessions',
-    status: 'pending-confirmation',
-  });
-  // One approval and one refusal: nothing on the card keeps an answer.
-  expect(call(entry).options).toEqual([
-    { id: 'approve', label: 'Approve', kind: 'approve', group: 1 },
-    { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
-  ]);
-  // It has not run while the question stands.
-  expect(ran).toEqual([]);
-
-  answer(client, chatUri, 'c1', true);
-  await endedTurn(p, chatUri, 1);
-  expect(ran).toEqual(['list_sessions']);
-  expect(results(p, chatUri)).toEqual([{ isError: false, content: [{ type: 'text', text: 'the sessions' }] }]);
-  // One row, the agent's, which the agent completed.
-  const calls = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart' || e.action.type === 'chat/toolCallComplete');
-  expect(calls.map((e) => [e.action.type, e.action.toolCallId])).toEqual([
-    ['chat/toolCallStart', 'c1'],
-    ['chat/toolCallComplete', 'c1'],
-  ]);
-});
-
-it('refuses a matched host tool when a person denies it', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
-  begin(client, chatUri, 'mrep=c1=list_sessions={} mreq=list_sessions={}=-');
-  await until(() => question(p, uri) !== undefined);
-
-  expect(call(question(p, uri)).toolCallId).toBe('c1');
-  answer(client, chatUri, 'c1', false);
-  await endedTurn(p, chatUri, 1);
-  expect(ran).toEqual([]);
-  const [answer_] = results(p, chatUri);
-  expect(answer_?.isError).toBe(true);
-  expect(JSON.stringify(answer_?.content)).toContain('declined');
-});
-
-it('refuses a matched host tool the agent reported no call for, asking nobody', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
-  begin(client, chatUri, 'mreq=list_sessions={}=-');
-  await endedTurn(p, chatUri, 1);
-
-  // No call to put the question on, so no client is asked and the tool does
-  // not run.
-  expect(types(p, uri)).not.toContain('session/inputNeededSet');
-  expect(ran).toEqual([]);
-  const [answer_] = results(p, chatUri);
-  expect(answer_?.isError).toBe(true);
-});
-
-it('runs a host tool the rule does not name without asking', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/another_tool': false } });
+/*
+ * A host tool the agent calls over the MCP server it was handed runs as the
+ * agent called it: no backend checks a call before its runtime asks, as no
+ * VS Code agent does.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
+ */
+it('runs a host tool the agent calls over the MCP server it was handed', async () => {
+  const { client, peer: p, uri, chatUri, ran } = await talking();
   begin(client, chatUri, 'mreq=list_sessions={}=-');
   await endedTurn(p, chatUri, 1);
 
@@ -315,23 +238,32 @@ it('runs a host tool the rule does not name without asking', async () => {
   expect(results(p, chatUri)).toEqual([{ isError: false, content: [{ type: 'text', text: 'the sessions' }] }]);
 });
 
-it('offers only the once options for a matched tool the agent asks about itself', async () => {
-  const { client, peer: p, uri, chatUri } = await talking({ rules: { remove_file: false } });
-  begin(client, chatUri, 'ask me first');
+/*
+ * A question about a tool the operator's rule names offers VS Code's Allow Once
+ * and Skip, as VS Code's host puts a question a managed policy asks; the agent
+ * is answered with its own once option of the kind picked.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L610
+ */
+it('offers the host\'s Allow Once and Skip alone for a matched tool the agent asks about itself', async () => {
+  const { client, peer: p, uri, chatUri } = await talking({ rules: { shell: false } });
+  begin(client, chatUri, 'execrun');
   await until(() => question(p, uri) !== undefined);
 
-  expect(call(question(p, uri)).options).toEqual([OFFERED[0], OFFERED[2]]);
+  expect(call(question(p, uri)).options).toEqual(ONCE);
   // The call's own ready carries the same choices, and no "always" among them.
   const ready = actions(p, chatUri)
-    .filter((e) => e.action.type === 'chat/toolCallReady' && e.action.toolCallId === 'call-perm')
+    .filter((e) => e.action.type === 'chat/toolCallReady' && e.action.toolCallId === 'call-run')
     .at(-1)?.action;
-  expect(ready?.options).toEqual([OFFERED[0], OFFERED[2]]);
+  expect(ready?.options).toEqual(ONCE);
 });
 
-it('offers every option for a tool the rule does not name', async () => {
+it('offers VS Code\'s grants of the command for a tool the rule does not name', async () => {
   const { client, peer: p, uri, chatUri } = await talking({ rules: { another_tool: false } });
-  begin(client, chatUri, 'ask me first');
+  begin(client, chatUri, 'execrun');
   await until(() => question(p, uri) !== undefined);
 
-  expect(call(question(p, uri)).options).toEqual(OFFERED);
+  const offered = call(question(p, uri)).options as Bag[];
+  expect(offered.at(0)).toEqual(ONCE[0]);
+  expect(offered.at(-1)).toEqual(ONCE[1]);
+  expect(offered.some((one) => String(one.id).startsWith('allow-session-rules:'))).toBe(true);
 });

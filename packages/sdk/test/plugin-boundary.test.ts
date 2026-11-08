@@ -121,7 +121,7 @@ function rewriting(attempt: (who: Principal) => void): { provider: ResourceProvi
       authorize: async () => false,
       read: async (_uri, _wanted, reader) => { grab(reader); return { data: 'held', encoding: 'utf-8' }; },
       write: async (_uri, _content, _owner, _client, reader) => { grab(reader); },
-      remove: async (_uri, _recursive, _owner, reader) => { grab(reader); },
+      delete: async (_uri, _recursive, _owner, reader) => { grab(reader); },
     },
   };
 }
@@ -172,7 +172,7 @@ it('refuses a provider whose write rewrites the writer it was handed', async () 
   expect(seen[0]?.id).toBe('ana');
 });
 
-it('refuses a provider whose remove rewrites the writer it was handed', async () => {
+it('refuses a provider whose delete rewrites the writer it was handed', async () => {
   const { provider, seen } = rewriting((who) => { (who as { id: string }).id = 'bob'; });
   const { client } = await served(provider);
 

@@ -1,7 +1,6 @@
 import { resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { hostTools } from '../src/tools/index.js';
@@ -39,6 +38,9 @@ const holding = (id: string, grants: readonly string[]): Principal => ({
     // `session:dispose` is one operation of the `session:write` group, which is
     // how an ordinary member reaches the command at all.
     || (grant === 'session:dispose' && grants.includes('session:write'))
+    // `session:state` is one of the `session:read` group, which is how a member
+    // reads the chat the host minted for a session it made.
+    || (grant === 'session:state' && grants.includes('session:read'))
     // And a chat's group is its session's, which is how the same member says a
     // turn - the one thing a case that wants a tool to carry a person has to be
     // able to do.
@@ -161,11 +163,12 @@ const open = (client: Client, name: string): Promise<unknown> =>
  * are still arriving. The channel is the session's default chat, the chat a
  * client says something to the session as a whole in.
  */
-const saying = (client: Client, name: string, text: string): Promise<unknown> =>
+const saying = async (client: Client, name: string, text: string): Promise<unknown> =>
   client.handle({
     method: 'dispatchAction',
     params: {
-      channel: chatUriFor(`ahp-session:/${name}`),
+      // The chat the host minted for the session, read off its state.
+      channel: ((await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${name}` } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat,
       action: { type: 'chat/turnStarted', turnId: crypto.randomUUID(), startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } },
     },
   });
@@ -200,6 +203,9 @@ it('lets a caller holding session:* delete a session that is not theirs', async 
 it('refuses a member who is neither the owner nor a session:* holder, and deletes nothing', async () => {
   const { back, clients } = await serving(['ana', 'bob']);
   await open(clients.ana!, 'theirs');
+  // Its first message, which lists it.
+  await saying(clients.ana!, 'theirs', 'hi');
+  await settle();
 
   // Bob holds `session:write`, so the gate admits him and this check is the
   // only thing standing between a colleague and a permanent delete.
@@ -230,8 +236,11 @@ it('lets the delete_session tool delete a session its own owner made', async () 
   const { back, clients } = await serving(['ana'], 40);
   // Two of Ana's sessions: one runs the tools, one is the target. The one that
   // runs them starts last, because a backend is handed the tools of the session
-  // it is starting and `delete_session` refuses to delete its own.
+  // it is starting and `delete_session` refuses to delete its own. The target
+  // has had its first message, which is when a tool can name a session.
   await open(clients.ana!, 'doomed');
+  await saying(clients.ana!, 'doomed', 'hi');
+  await settle();
   await open(clients.ana!, 'runner');
   await settle();
 
@@ -249,8 +258,11 @@ it('lets the delete_session tool delete a session its own owner made', async () 
 it('refuses the delete_session tool for a session its owner does not own', async () => {
   const { back, clients } = await serving(['ana', 'bob'], 40);
   // Ana's session is the target; Bob's is the one whose tools would run the
-  // delete, so the tool acts for Bob and the target is not his.
+  // delete, so the tool acts for Bob and the target is not his. The target
+  // has had its first message, which is when a tool can name a session.
   await open(clients.ana!, 'theirs');
+  await saying(clients.ana!, 'theirs', 'hi');
+  await settle();
   await open(clients.bob!, 'runner');
   await settle();
 

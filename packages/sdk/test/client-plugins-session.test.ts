@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { clientPluginsIn } from '../src/plugins/clientplugins.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -111,7 +110,7 @@ function peer(tree: Record<string, string>, gone: Set<string> = new Set()): Peer
  * again is a start, which is the only way a session's rules reach a backend
  * that began before they did.
  */
-function serving(withPort = true) {
+function serving(withPort = true, sessionCustomizations?: Agent['sessionCustomizations']) {
   const dir = mkdtempSync(join(tmpdir(), 'ahpd-client-plugins-'));
   dirs.push(dir);
   const toggled: { id: string; enabled: boolean }[] = [];
@@ -120,6 +119,7 @@ function serving(withPort = true) {
   const base = echo({ path: dir, pace: 0 });
   const agent: Agent = {
     ...base,
+    ...(sessionCustomizations === undefined ? {} : { sessionCustomizations }),
     create: (start) => {
       given.push(start.instructions);
       const session = base.create(start);
@@ -227,7 +227,8 @@ async function turn(
 async function withRules(tree: Record<string, string> = RULED) {
   const held = serving();
   const a = await session(held.served);
-  const chat = chatUriFor(URI);
+  // The chat the host minted for the session, read off its state.
+  const chat = ((await a.client.handle({ method: 'subscribe', params: { channel: URI } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await a.client.handle({ method: 'subscribe', params: { channel: chat } });
   const b = await joins(held.served, 'plugin', tree);
   await b.client.handle({ method: 'subscribe', params: { channel: URI } });
@@ -245,24 +246,42 @@ it('watches a client plugin load, then reports it beside the backend\'s own', as
   await announce(b.client, [{ type: 'plugin', uri: PLUGIN, nonce: 'n1', name: 'one' }]);
   await settle();
 
-  const said = actions(a.peer, URI);
-  const updated = said.filter((one) => one.type === 'session/customizationUpdated')
-    .map((one) => one.customization as Record<string, unknown>);
-  // The whole of a load: it is here before it is copied, because a copy is a
-  // client's tree read over its connection and the session must not sit empty
-  // while that happens.
-  expect(updated.map((one) => (one.load as { kind: string }).kind)).toEqual(['loading', 'loaded']);
-  expect(updated.map((one) => one.clientId)).toEqual(['plugin', 'plugin']);
-  expect(updated[1]).toMatchObject({ type: 'plugin', uri: PLUGIN, name: 'one', clientId: 'plugin', load: { kind: 'loaded' } });
-
-  // And the list, once, after the copy settled - the backend's own entries
-  // first, this host's after them.
-  const changed = said.filter((one) => one.type === 'session/customizationsChanged');
-  expect(changed).toHaveLength(1);
-  const listed = changed[0]?.customizations as Record<string, unknown>[];
+  /*
+   * The whole of a load, as VS Code's plugin controller says one: the list
+   * once, with the plugin in it `loading` before it is copied - a copy is a
+   * client's tree read over its connection and the session must not sit
+   * empty while that happens - the backend's own entries first and this
+   * host's after them, a backend that projects no order of its own; then
+   * the plugin on its own once its copy settled.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L11243-L11330
+   */
+  const said = actions(a.peer, URI).filter((one) => String(one.type).startsWith('session/customization'));
+  expect(said.map((one) => one.type)).toEqual(['session/customizationsChanged', 'session/customizationUpdated']);
+  const listed = said[0]?.customizations as Record<string, unknown>[];
   expect(listed.map(names)).toContain('plugin');
-  expect(listed[listed.length - 1]).toMatchObject({ uri: PLUGIN, clientId: 'plugin' });
+  expect(listed[listed.length - 1]).toMatchObject({ uri: PLUGIN, clientId: 'plugin', load: { kind: 'loading' } });
   expect(listed.some((one) => one.type !== 'plugin')).toBe(true);
+  expect(said[1]?.customization).toMatchObject({ type: 'plugin', uri: PLUGIN, name: 'one', clientId: 'plugin', load: { kind: 'loaded' } });
+});
+
+it('lays a client\'s plugin where the session\'s backend projects it, said and in the snapshot', async () => {
+  // A backend whose list has its clients' tier first, as VS Code's Claude agent's does.
+  const { served } = serving(true, (reported, clients) => [...clients, ...reported]);
+  const a = await session(served);
+  const b = await joins(served, 'plugin', TREE);
+  await b.client.handle({ method: 'subscribe', params: { channel: URI } });
+
+  await announce(b.client, [{ type: 'plugin', uri: PLUGIN, nonce: 'n1', name: 'one' }]);
+  await settle();
+
+  const said = actions(a.peer, URI).find((one) => one.type === 'session/customizationsChanged');
+  const listed = said?.customizations as Record<string, unknown>[];
+  expect(listed[0]).toMatchObject({ uri: PLUGIN, clientId: 'plugin' });
+  expect(listed.slice(1).some((one) => one.type !== 'plugin')).toBe(true);
+  const opened = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { customizations: Record<string, unknown>[] } };
+  };
+  expect(opened.snapshot.state.customizations[0]).toMatchObject({ uri: PLUGIN, clientId: 'plugin' });
 });
 
 it('lists what a plugin holds, each part named by the file it was read from', async () => {
@@ -272,9 +291,10 @@ it('lists what a plugin holds, each part named by the file it was read from', as
   // Nothing while the copy is on its way: the protocol reads `children`
   // absent as a container nobody has parsed, and an empty list as one that
   // was parsed and holds nothing. These are not the same answer.
-  expect(entries[0]?.children).toBeUndefined();
+  const listed = actions(a.peer, URI).find((one) => one.type === 'session/customizationsChanged')?.customizations as Record<string, unknown>[];
+  expect(listed.find((one) => one.uri === PLUGIN)?.children).toBeUndefined();
 
-  const children = entries[1]?.children as Record<string, unknown>[];
+  const children = entries[0]?.children as Record<string, unknown>[];
   expect(children.map((one) => [one.type, one.name])).toEqual([
     ['agent', 'reviewer'],
     ['mcpServer', 'one'],
@@ -295,8 +315,8 @@ it('lists no parts for a plugin whose format this host does not read', async () 
 
   // The plugin loaded, and what it holds was never read - so there is nothing
   // to claim about it, which is the absent field rather than an empty list.
-  expect(entries[1]?.load).toEqual({ kind: 'loaded' });
-  expect(entries[1]?.children).toBeUndefined();
+  expect(entries[0]?.load).toEqual({ kind: 'loaded' });
+  expect(entries[0]?.children).toBeUndefined();
 });
 
 it('carries a client\'s decision about a server, most specific first', async () => {
@@ -308,7 +328,7 @@ it('carries a client\'s decision about a server, most specific first', async () 
       two: [{ kind: 'global', enabled: true }, { kind: 'workspace', uri: 'file:///work', enabled: false }],
     },
   });
-  const children = published(a.peer)[1]?.children as Record<string, unknown>[];
+  const children = published(a.peer)[0]?.children as Record<string, unknown>[];
   const server = (name: string) => children.find((one) => one.name === name);
 
   expect(server('two')?.enablement).toEqual([
@@ -391,6 +411,7 @@ it('answers a toggle on a client plugin itself, and never asks the backend', asy
   await announce(b.client, [{ type: 'plugin', uri: PLUGIN, nonce: 'n1' }]);
   await settle();
 
+  const before = actions(a.peer, URI).length;
   b.client.handle({
     method: 'dispatchAction',
     params: {
@@ -400,13 +421,17 @@ it('answers a toggle on a client plugin itself, and never asks the backend', asy
   });
   await settle();
 
+  // The switch as it was sent and nothing after it, as VS Code's host records
+  // a client's enablement whole and says the list again only where resolving
+  // it moved it: the decision kept resolves to the entry the switch put there.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L609-L647
+  expect(actions(a.peer, URI).slice(before).map((one) => one.type)).toEqual(['session/customizationToggled']);
   // Still on the list, with the decision on it: switching one off is not
   // throwing it away, and a client that did it has to be able to undo it.
-  const last = actions(a.peer, URI)
-    .filter((one) => one.type === 'session/customizationUpdated')
-    .map((one) => one.customization as Record<string, unknown>)
-    .findLast((one) => one.uri === PLUGIN);
-  expect(last?.enablement).toEqual([{ kind: 'session', enabled: false }]);
+  const held = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { customizations?: Record<string, unknown>[] } };
+  };
+  expect(held.snapshot.state.customizations?.find((one) => one.uri === PLUGIN)?.enablement).toEqual([{ kind: 'session', enabled: false }]);
   // The backend has never heard of this customization, so it is not asked
   // about one - and answering a toggle itself is the whole of the difference.
   expect(toggled).toEqual([]);

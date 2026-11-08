@@ -5,7 +5,6 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createFakeModel } from '@cofold/agents/testing';
 import type { ModelAdapter, ModelStreamEvent } from '@cofold/agents';
 import { createHost } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { cofoldAgent } from '../src/index.js';
 import { metaKeys } from '../../../tools/wire.mjs';
 import type { Peer } from '../../sdk/src/types/rpc.js';
@@ -53,8 +52,8 @@ const CONFIG = {
 };
 
 const put = (value: unknown): void => {
-  mkdirSync(join(home, 'cofold'), { recursive: true });
-  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify(value));
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify(value));
 };
 
 /** OpenRouter's price for `deepseek/deepseek-chat`, per token as it publishes it. */
@@ -140,9 +139,10 @@ async function watching(host: ReturnType<typeof createHost>) {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
-  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // The chat the host minted for the session, read off its state.
+  const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { defaultChat: string } } };
+  const chatUri = opened.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return { client, peer: p, uri, chatUri };
 }
@@ -305,7 +305,10 @@ it('prices a real endpoint\'s turn from the price its catalogue published', asyn
   begin(client, chatUri, 't1', 'hello');
   await until(() => ended(p, chatUri));
 
+  // A listing at each probe, this case's own and the host's as it starts, and
+  // the turn's request after them.
   expect(endpoint.calls).toEqual([
+    'https://openrouter.ai/api/v1/models',
     'https://openrouter.ai/api/v1/models',
     'https://openrouter.ai/api/v1/chat/completions',
   ]);

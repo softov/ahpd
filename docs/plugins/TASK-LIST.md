@@ -58,11 +58,11 @@ A Claude session writes a whole list with `TodoWrite`, and one change with `Task
 
 The list reaches a client on three surfaces, and all three are views of the same records: nothing a client reads is written anywhere else.
 
-### The Plan call
+### The todo list call
 
-A turn shows one Plan call, drawn by the host from the session's plan: the plan whose scope is `{"kind":"session","session":"one"}`, plus the tasks whose `session` field names it. The call's content is one line per task, `- [x] <title>` for `done` and `- [ ] <title>` for every other status. The host opens the call on the first change to the plan in the turn, rewrites its content on each later change, and completes it as the turn ends.
+A turn shows one todo list call, drawn by the host from the session's plan: the plan whose scope is `{"kind":"session","session":"one"}`, plus the tasks whose `session` field names it. The call is named as VS Code shows an agent's task list, `TodoWrite` shown as "Update todo list", with that line as its invocation and its completion. Its content is one line per task, `- [x] <title>` for `done` and `- [ ] <title>` for every other status. The host opens the call on the first change to the plan in the turn, rewrites its content on each later change, and completes it as the turn ends.
 
-When a plugin gives the host lines, the host tells the backend with `Start.plan`, so a Claude session writes no `TodoWrite` row: one turn, one call. An ACP bridge draws no call for a plan update in any case, since a plan update is no tool call its agent made.
+When a plugin gives the host lines, the host tells the backend with `Start.plan`, so a Claude session writes no `TodoWrite` row of its own: one turn, one call. An ACP bridge draws no call for a plan update in any case, since a plan update is no tool call its agent made.
 
 ### The open count
 

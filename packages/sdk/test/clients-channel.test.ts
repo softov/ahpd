@@ -151,7 +151,7 @@ it('lists one row for each connection, with the address and the claim the listen
     address: '127.0.0.1',
     forwardedFor: '203.0.113.9',
     principal: 'ana',
-    watching: [ROOT],
+    subscriptions: [ROOT],
   });
   expect(typeof rows['7']?.['connectedAt']).toBe('number');
   expect(rows['8']).toMatchObject({ id: '8', socket: 8, clientId: 'bo-window' });

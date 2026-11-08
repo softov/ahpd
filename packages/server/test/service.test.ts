@@ -248,9 +248,21 @@ describe('unitOf', () => {
     expect(unitOf(facts)).toContain('Environment=PATH=/usr/local/bin:/usr/bin:/bin');
   });
 
-  it('starts it again after a crash, and holds no secret', () => {
+  // service.path manager: VS Code's CLI's unit sets no PATH
+  // (cli/src/tunnels/service_linux.rs L192-L219 at 6b68d3fe).
+  it('gives the daemon no PATH of its own under the manager\'s, unit and agent alike', () => {
+    const { path: _path, ...managers } = facts;
+    expect(unitOf(managers)).not.toContain('PATH');
+    expect(plistOf(managers)).not.toContain('PATH');
+    expect(unitOf(managers)).toContain('Environment=AHPD_SERVICE=systemd\n');
+  });
+
+  // VS Code's CLI's unit (cli/src/tunnels/service_linux.rs L192-L219 at 6b68d3fe).
+  it('starts it after the network and again ten seconds after it ends, never giving up, and holds no secret', () => {
     const unit = unitOf(facts);
-    expect(unit).toContain('Restart=on-failure');
+    expect(unit).toContain('[Unit]\nDescription=ahpd, the agent host\nAfter=network.target\nStartLimitIntervalSec=0\n');
+    expect(unit).toContain('\nRestart=always\nRestartSec=10\n');
+    expect(unit).not.toContain('on-failure');
     // The token is the daemon's own, out of the configuration file or the token
     // file it names: nothing written into a unit is a credential.
     expect(unit).not.toMatch(/token|tkn=/iu);
@@ -308,10 +320,12 @@ describe('plistOf', () => {
     expect(plistOf(facts)).toContain('\t<key>WorkingDirectory</key>\n\t<string>/Users/x</string>');
   });
 
-  it('starts it at login, and again after a crash and not after a managed restart', () => {
+  // VS Code's CLI's agent (cli/src/tunnels/service_macos.rs L127-L165 at 6b68d3fe).
+  it('loads it in the graphical login, and starts it when it loads and again whenever it ends', () => {
     const plist = plistOf(facts);
-    expect(plist).toContain('\t<key>RunAtLoad</key>\n\t<true/>');
-    expect(plist).toContain('\t<key>KeepAlive</key>\n\t<dict>\n\t\t<key>SuccessfulExit</key>\n\t\t<false/>\n\t</dict>');
+    expect(plist).toContain('\t<key>LimitLoadToSessionType</key>\n\t<string>Aqua</string>');
+    expect(plist).toContain('\t<key>KeepAlive</key>\n\t<true/>');
+    expect(plist).not.toContain('SuccessfulExit');
   });
 
   it('sets the variable a supervised daemon records itself from, and the PATH of the shell', () => {

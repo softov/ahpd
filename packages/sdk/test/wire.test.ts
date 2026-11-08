@@ -55,7 +55,7 @@ const sdk = vi.hoisted(() => {
 
 const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== undefined);
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   listSessions: async () => [],
   getSessionMessages: async () => [],
@@ -93,7 +93,6 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
-const { chatUriFor } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 const { echo } = await import('../../../examples/echo/agent.js');
 const { shellTerminals } = await import('../src/machines/terminals.js');
@@ -255,6 +254,11 @@ const REFERENCE: { key: string; at: string; from: string }[] = [
   { key: 'description', at: 'attachment/_meta', from: 'docs/sdk/AHP.md' },
   // The ghost text a menu shows after an accepted command.
   { key: 'argumentHint', at: 'attachment/_meta', from: 'docs/sdk/AHP.md' },
+  // What keeps a skill in an automation's text in the reference client's editor.
+  { key: 'isSkill', at: 'attachment/_meta', from: 'docs/sdk/AHP.md' },
+  // A question's purpose, which VS Code's agents mark the request they raise
+  // for one with, and its window reads.
+  { key: 'purpose', at: 'request/_meta', from: 'docs/sdk/AHP.md' },
   // The version the reference client writes in its Output channel, and the key
   // it reads to decide this host is a native one - its own name, un-prefixed,
   // and not the protocol's - decision `ahpd-says-it-is-a-native-host`.
@@ -305,7 +309,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   const automations = memoryAutomations();
   const host = createHost({
     path: '/home/softov',
-    agents: [claude({ paths: ['/home/softov'] }), echo({ path: '/home/softov', pace: 0 })],
+    agents: [claude({ paths: ['/home/softov'], preset: { cliStart: 'send' } }), echo({ path: '/home/softov', pace: 0 })],
     resources: fileResources(),
     terminals: shellTerminals(),
     automations,
@@ -337,7 +341,6 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   await ask('listSessions', { channel: 'ahp-root://' });
 
   const uri = 'ahp-session:/wire';
-  const chatUri = chatUriFor(uri);
   await ask('createSession', { channel: uri, provider: 'claude' });
 
   /*
@@ -361,30 +364,30 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   /*
    * The echo, which is every frame of this action the host sent back.
    *
-   * One action, one echo: the keys this host declares go through, and the four
-   * 1.140 dropped are refused by name, so a client older than this host loses
-   * the keys that no longer exist and nothing else.
+   * One action, one echo, every key in it: the host applies a root patch
+   * whatever keys it carries, as VS Code's host does, the four 1.140 dropped
+   * among them.
    */
   const echoed = wire.slice(before)
     .filter((one) => one.method === 'action' && (one.params as { action?: { type?: string } }).action?.type === 'root/configChanged')
     .map((one) => (one.params as { action: { config: Record<string, unknown> } }).action.config);
   expect(echoed).toHaveLength(1);
-  expect(Object.keys(echoed[0] ?? {}).sort()).toEqual([...declared].sort());
-  expect(Object.keys(echoed[0] ?? {}).length).toBe(43);
+  expect(Object.keys(echoed[0] ?? {}).sort()).toEqual(Object.keys(patch).sort());
+  expect(declared.length).toBe(43);
 
   const rootState = await ask('subscribe', { channel: 'ahp-root://' }) as {
     snapshot: { state: { config: { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> } } };
   };
   const held = rootState.snapshot.state.config;
-  // Every value this host holds has a property a client can draw it from. A
-  // value with no property is a setting nobody can see and nobody can read
-  // back, which is what this file exists to catch.
-  expect(Object.keys(held.values).filter((key) => !(key in held.schema.properties))).toEqual([]);
-  // The 43 are held, the four the client no longer has are not, and the
-  // daemon's own keys are beside them.
+  // Every value this host holds has a property a client can draw it from but
+  // the four keys VS Code dropped, kept as pushed, which no client draws a
+  // control for.
+  expect(Object.keys(held.values).filter((key) => !(key in held.schema.properties)).sort()).toEqual([...OLD].sort());
+  // The 43 are held, and the four beside them, with the daemon's own keys.
   expect(declared.filter((key) => !(key in held.values))).toEqual([]);
-  expect(OLD.filter((key) => key in held.values)).toEqual([]);
-  await ask('subscribe', { channel: uri });
+  expect(OLD.filter((key) => !(key in held.values))).toEqual([]);
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await ask('subscribe', { channel: uri })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await ask('subscribe', { channel: chatUri });
 
   // A second session, on the other backend: the two are separately asked for
@@ -421,6 +424,11 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
       type: 'assistant',
       message: { id: 'm1', model: 'claude-opus-5', content: [{ type: 'tool_use', id: 'tc1', name: 'Read', input: { file_path: '/home/softov/a' } }] },
     },
+  );
+  // Past the catalogue's 100 ms debounce, so the row says the tool it is on
+  // and then, once the turn ends, that it is on none.
+  await new Promise((r) => { setTimeout(r, 120); });
+  await said(
     { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'ok' }] } },
     { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: 'Done.' }] } },
     {
@@ -435,6 +443,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
       modelUsage: { 'claude-opus-5': { costUSD: 0.25, costBasis: 'exact' } },
     },
   );
+  await new Promise((r) => { setTimeout(r, 120); });
 
   // The rest of the session channel: a title, the flags a client keeps, a
   // config value, and a client saying it is watching.
@@ -527,8 +536,10 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
    * announcements reach nobody - what the capture keeps is the entry holding
    * them.
    */
+  // Each ended, as a press during a run that is going is answered with that run.
   for (let i = 0; i < 19; i++) {
-    await automations.run(nightly, { kind: 'manual' }, async () => `ahp-session:/seeded-${String(i)}`);
+    const seeded = await automations.run(nightly, { kind: 'manual' }, async () => `ahp-session:/seeded-${String(i)}`);
+    if (seeded !== undefined) automations.settle?.(seeded.resource, { status: 'completed' });
   }
   await settle();
 
@@ -586,15 +597,17 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   /*
    * And the one departure that is refused rather than answered.
    *
-   * `shutdown` stops the daemon, and this host was built with no way to stop,
-   * so it answers `-32601`. Which makes it the only frame in the capture that
-   * is not an answer, and the only exercise the recorder's refusal branch
-   * gets - a branch nothing goes down is a branch that does not hold.
+   * A chunk read of an artifact this host never made is refused, which makes
+   * it the only frame in the capture that is not an answer, and the only
+   * exercise the recorder's refusal branch gets - a branch nothing goes down
+   * is a branch that does not hold.
    */
-  await ask('shutdown', {});
+  await ask('vscode/readAgentHostDebugLogsChunk', { resource: 'file:///nowhere.zip', position: 0 });
 
   await ask('disposeSession', { channel: uri });
   await ask('disposeSession', { channel: echoUri });
+  // The window's shutdown last, since it closes the host.
+  await ask('shutdown', {});
   await settle();
   rmSync(home, { recursive: true, force: true });
 
@@ -677,8 +690,9 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
 
   /*
    * Everything this host serves that no map in the package names, keyed by
-   * the method `skipped()` reports it under, plus the one value it sends that
-   * no declaration allows.
+   * the method `skipped()` reports it under, plus the values it sends that no
+   * declaration allows and the action VS Code's window sends beside the
+   * protocol's.
    *
    * A method in no map is either a departure somebody decided on or a hole in
    * the checker, and the only thing that tells them apart is being written
@@ -701,6 +715,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     'vscode/stopBackgroundWork': 'What the window asks a host about itself',
     'vscode/getAgentHostSessionStateFile': 'What the window asks a host about itself',
     'vscode/collectAgentHostDebugLogs': 'What the window asks a host about itself',
+    'vscode/cancelAgentHostDebugLogs': 'What the window asks a host about itself',
     'vscode/readAgentHostDebugLogsChunk': 'What the window asks a host about itself',
     'vscode/devContainers/isDockerAvailable': 'CONTAINERS.md',
     'vscode/devContainers/connect': 'CONTAINERS.md',
@@ -712,6 +727,9 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     'vscode/devContainers/output': 'CONTAINERS.md',
     'vscode/devContainers/relayClose': 'CONTAINERS.md',
     'vscode/devContainers/closeConnection': 'CONTAINERS.md',
+    chatMutable: 'SESSIONS.md',
+    config: 'SESSIONS.md',
+    'chat/configChanged': 'SESSIONS.md',
   };
 
   /*
@@ -734,15 +752,29 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   };
 
   /*
-   * The one declaration this host widens on purpose, keyed by the finding.
+   * The declarations this host widens on purpose, keyed by the finding.
    *
    * A partial is spread over the row a client holds, so a key left off is a
    * field that did not move and an idled row would keep saying what its last
    * tool was doing. The reference host sends `null` for that and its client
    * reads it as cleared, so this one does too.
+   *
+   * A property a chat may set for itself says `chatMutable`, wherever a schema
+   * is served, and a chat's state carries the values it set as `config`: VS
+   * Code's per-chat config, which its window reads.
    */
   const WIDENED: Record<string, string> = {
-    'SessionSummaryChangedParams /changes/activity type must be string': 'Server notifications',
+    // A question's request, marked with its purpose as VS Code's agents mark it,
+    // wherever the request rides.
+    'ActionEnvelope /action/request undeclared key `_meta`': 'Being asked',
+    'ActionEnvelope /action/request/request undeclared key `_meta`': 'Being asked',
+    'ChatInputRequestedAction /request undeclared key `_meta`': 'Being asked',
+    'ChatState /activeTurn/responseParts/N/request undeclared key `_meta`': 'Being asked',
+    'SessionInputNeededSetAction /request/request undeclared key `_meta`': 'Being asked',
+    'SessionState /inputNeeded/N/request undeclared key `_meta`': 'Being asked',
+    'ChatState / undeclared key `config`': 'SESSIONS.md',
+    'ResolveSessionConfigResult /schema/properties/effortLevel undeclared key `chatMutable`': 'SESSIONS.md',
+    'SessionState /config/schema/properties/effortLevel undeclared key `chatMutable`': 'SESSIONS.md',
   };
 
   /*
@@ -767,7 +799,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   // And exactly one request in the capture is refused, which is the departure
   // that refuses by design. Anything else here is a request that stopped
   // working, recorded as an error frame rather than as an answer.
-  expect(refused).toEqual(['shutdown']);
+  expect(refused).toEqual(['vscode/readAgentHostDebugLogsChunk']);
 
   /*
    * The other half of everything this host sends: the names it invents.
@@ -793,12 +825,13 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
    *
    * A capture nothing recognised would pass this test saying nothing, which is
    * the failure mode of a check whose subject is a list of things that could
-   * not be checked. 233 payloads go through a declaration today, against the
-   * 60 this file checked before the traffic above was widened; the floor is
-   * there to catch the capture quietly narrowing again, not to pin the count.
+   * not be checked. About 200 payloads go through a declaration today, against
+   * the 60 this file checked before the traffic above was widened, a Claude
+   * turn running a tool saying no activity; the floor is there to catch the
+   * capture quietly narrowing again, not to pin the count.
    */
-  expect(check.checked()).toBeGreaterThan(200);
-});
+  expect(check.checked()).toBeGreaterThan(190);
+}, 20_000);
 
 describe('the `_meta` census', () => {
   const onItem = (meta: Record<string, unknown>): Record<string, unknown> => ({

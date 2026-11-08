@@ -4,7 +4,8 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { configDir } from '../src/config.js';
-import { denoMessage, entryOf, hasScheme, resolvePlugin } from '../src/plugins.js';
+import { denoMessage, entryOf, hasScheme, loadPlugins, resolvePlugin } from '../src/plugins.js';
+import { echo } from '../../../examples/echo/agent.js';
 
 /*
  * Turning a spec into something importable, without importing it.
@@ -202,6 +203,30 @@ describe('resolvePlugin', () => {
       '../outside.js': '',
     });
     expect(() => entryOf(escape)).toThrow(/points outside the package/);
+  });
+
+  // pluginEntryOutside warn: VS Code warns of an extension whose main is
+  // outside its folder and loads it
+  // (src/vs/platform/extensions/common/extensionValidator.ts L297-L300 at 6b68d3fe).
+  it('follows a manifest entry outside its own package under pluginEntryOutside warn, and the load says so on the row', async () => {
+    const escape = directory('escape', {
+      'package.json': JSON.stringify({ name: 'escape', type: 'module', ahpd: { entry: '../outside.mjs' } }),
+      '../outside.mjs': 'export const name = \'escape\';\nexport function apply() {}\n',
+    });
+    const outside = resolve(escape, '../outside.mjs');
+    expect(entryOf(escape, 'warn')).toBe(outside);
+    const { loaded, alerts } = await loadPlugins([escape], {
+      base: { path: home, agents: [echo({ path: home })] },
+      configDir: configDir(),
+      cwd: home,
+      log: () => {},
+      entryOutside: 'warn',
+    });
+    expect(loaded.map((one) => one.name)).toEqual(['escape']);
+    expect(alerts['escape']).toEqual([{
+      level: 'warning',
+      text: `Expected the entry (${outside}) to be included inside the plugin's folder (${escape}). This might make the plugin non-portable.`,
+    }]);
   });
 
   it('falls back to index.js when the manifest cannot be read, so the loader can name the file', () => {

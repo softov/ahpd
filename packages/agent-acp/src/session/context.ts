@@ -3,7 +3,7 @@ import type { Bag, BoundTool, Chosen, Emit, MessageAttachment, MessageFrom, Open
 import type { TypedAnswer } from '../mapping.js';
 import type { AcpConnection, AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, WatchedSession, WatchedTurn } from '../types.js';
 import type { ClientCalls } from './clientcalls.js';
-import type { Config } from './config.js';
+import type { Choice, Config } from './config.js';
 import type { Handlers } from './handlers.js';
 import type { Opening } from './opening.js';
 import type { Turn } from './turn.js';
@@ -59,6 +59,23 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
   options: AcpOptions;
   /** What this particular session was told. */
   start: Start;
+  /**
+   * How this session tells its agent the modes the server named.
+   *
+   * The agent's schema lists a preset's modes until a session of it hears the
+   * server's own, so this is where the next session a client sets up for the
+   * same agent reads the list the server last gave.
+   */
+  heardModes: ((modes: { id: string; name: string }[]) => void) | undefined;
+  /**
+   * The thinking levels each model offers, by model id, as the sessions of
+   * this agent heard them from their servers.
+   *
+   * The agent's, shared by its sessions: a server names the levels of the model
+   * in force, so the levels of a model are known once a session has run on it,
+   * and every session lists them on that model from then on.
+   */
+  levels: Map<string, Choice[]>;
   /** The provider id this session reports, the backend's own or `acp`. */
   provider: string;
   /**
@@ -117,6 +134,17 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
   /** The running turn's mapping, so an update knows what it belongs to. */
   mapping: AcpTurn | undefined;
   /**
+   * The server's updates waiting behind content the host is keeping, in the
+   * order they came, and how many wait: a chunk that carries bytes is kept
+   * through the host's port before its part is said, and every update after
+   * it waits its turn. A turn ends, and a load's record is made, once it has
+   * settled.
+   */
+  keeping: Promise<void>;
+  waiting: number;
+  /** How many contents this session has had the host keep, which names each. */
+  keptCount: number;
+  /**
    * The session's cumulative cost as of the last `usage_update` read, which is
    * what the next turn counts from.
    *
@@ -173,9 +201,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * What the record said when this session's server was last spawned, as one
    * string to compare.
    *
-   * Empty until the first turn, which settles it: a record can be edited
-   * between the open and the turn that first uses it, and the values read then
-   * are the ones the first server is built with.
+   * Read as the session is created, which is when its first server is built,
+   * and empty for a backend that has no record behind it.
    */
   startedWith: string;
   /** Whether a client asked to stop, read when the prompt settles. */
@@ -212,8 +239,12 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
     allow?: string;
     /** The option a refusal with no option picked selects, when it offered a once option. */
     reject?: string;
-    /** Every option the server offered, as the call offers them to a person. */
+    /** The options the call offers of its own, a mode switch's buttons. */
     offered: ConfirmationOption[];
+    /** Whether the call was said running before its question, which a refusal puts back. */
+    readied: boolean;
+    /** The input-needed entry said for it, which the session's state lists while it stands. */
+    entry?: Bag;
     settle(answer: PermissionAnswer): void;
   }>;
   /**
@@ -233,6 +264,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
     fields: Set<string>;
     /** Where each question open to an answer of its own takes a typed one, and whether it offers `None of the above`. */
     typed: Map<string, TypedAnswer>;
+    /** The input-needed entry said for it, which the session's state lists while it stands. */
+    entry?: Bag;
     settle(answer: CreateElicitationResponse): void;
   }>;
 }

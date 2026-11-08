@@ -52,7 +52,8 @@ const DOCKER = answers();
 const tool = (tools: HostTool[], name: string): HostTool =>
   tools.find((one) => one.definition.name === name) as HostTool;
 
-const at = {} as ToolCall;
+/** A call the host's own turn makes, which may use every machine. */
+const at = { person: () => 'host', may: () => true, refusal: () => '' } as unknown as ToolCall;
 
 let loose: string | undefined;
 afterEach(() => {

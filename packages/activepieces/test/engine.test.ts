@@ -249,6 +249,16 @@ describe('a call carries a file', () => {
 
     expect(JSON.parse(said)).toEqual({ file: ['Expected file url or base64 with mimeType, received: notes.txt'] });
   });
+
+  // Plan plugin/70, Softov 2026-10-26: "A refusal names a URL's host, never its
+  // path or query", where a signed URL carries its token.
+  it('refuses a FILE URL it could not read naming its host alone, never its path or query', async () => {
+    const said = failed(await ask(start(), run('read', { file: 'https://127.0.0.1:1/bucket/report.pdf?sig=secret-sig&se=2026' })));
+
+    expect(JSON.parse(said)).toEqual({ file: ['Expected file url or base64 with mimeType, received: 127.0.0.1:1'] });
+    expect(said).not.toContain('secret-sig');
+    expect(said).not.toContain('report.pdf');
+  });
 });
 
 describe('a call\'s input is made as Activepieces makes an action run\'s', () => {

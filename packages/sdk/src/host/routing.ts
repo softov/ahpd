@@ -1,10 +1,11 @@
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { RpcError } from '../rpc.js';
 import { idOf, uriFor } from '../sessions/catalog.js';
 import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import {
-  ROOT, isRootChannel, isAutomations, automationsChannel, schemeOf, spaceOf, baseOf,
-  chatOfCanvas, chatUriFor, subagentChatUri, toolCallOfSubagentChat, shapedSession,
+  ROOT, isRootChannel, isAutomations, automationsChannel, schemeOf, spaceOf, ownerUriOf,
+  chatOfCanvas, chatUriFor, nonPtyShellTerminalOf, toolCallOfSubagentChat, shapedSession,
 } from './channels.js';
 import type { ChannelKind, Space } from './channels.js';
 import type { Home } from './gate.js';
@@ -17,13 +18,21 @@ export interface Routing {
   nameOf(id: string): string;
   keepName(id: string): void;
   sessionOfChat(uri: string): string | undefined;
+  /**
+   * A session's default chat: the running session's, or the one its record
+   * marks, or for a session that records none, the default derived from its
+   * URI, as VS Code's host derives one for a session that records none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostLegacyDefaultChat.ts#L10-L28
+   */
+  defaultChatFor(session: string): string;
   sessionFor(channel: string): string;
+  resolveChatOwner(chat: string): Promise<string | undefined>;
   meantBy(channel: string): string;
   sessionHolding(chat: string): string | undefined;
   channelKind(channel: string): ChannelKind;
   sessionChannel(channel: string): boolean;
   homeOf(channel: string): Home | undefined;
-  answeredAs(connection: Connection, channel: string, snapshot: Record<string, unknown>): string;
+  projectSnapshot(connection: Connection, channel: string, snapshot: Record<string, unknown>): string;
   visible(connection: Connection, channel: string): boolean;
   sessionVisible(connection: Connection, session: string, defaultChat?: string): boolean;
   chatShown(connection: Connection, chat: unknown, session: string): boolean;
@@ -49,8 +58,8 @@ export function createRouting(ctx: HostContext): Routing {
    * kept for it before anything here listed it, or `ahp-session:/<id>` for an
    * id nothing has named. One name per session, which is the `resource` its
    * row and every notification about it carry; a client that names the
-   * session another way is answered under the name it used, through
-   * `meantBy` and the alias `answeredAs` keeps.
+   * session another way watches it through `meantBy`, and its subscribe is
+   * answered under the name it used, through `projectSnapshot`.
    */
   const nameOf = (id: string): string => names.get(id) ?? ctx.kept.uri?.(id) ?? uriFor(id);
 
@@ -75,30 +84,38 @@ export function createRouting(ctx: HostContext): Routing {
    */
   const defaultChatOf = (session: string): string | undefined =>
     sessions.get(session)?.defaultChat
-      ?? (owners.has(session) ? ctx.recordedChats(idOf(session)).find((one) => one.default === true)?.uri : undefined);
+      ?? (owners.has(session) && ctx.kept.nested?.(idOf(session)) === undefined
+        ? ctx.recordedChats(idOf(session)).find((one) => one.default === true)?.uri
+        : undefined);
 
   /**
    * The session a default or a worker chat's URI belongs to, under the name
-   * this host publishes that session by.
+   * this host publishes that session by, from the records.
    *
-   * A chat URI carries the session it was minted for, and a session has a name
-   * for every scheme it answers to: the reference host derives a chat from
-   * each identity of a session - its registered URI, `ahp-session:/<id>` and
-   * `<provider>:/<id>` - and gives that chat the session it was derived for,
-   * while the session's record agrees about its default chat. So the session
-   * is read by the id inside the URI, and the spelling is a name rather than a
-   * second session. A worker's chat belongs to the session it was opened in,
-   * by the same id.
-   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242
-   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
+   * A session registered here, running, listed or kept in the store, answers
+   * for the default chat derived from each identity it has - its registered
+   * URI, `ahp-session:/<id>` and `<provider>:/<id>` - while its record agrees
+   * about its default chat, as the reference host's index maps the derived
+   * default chats of its registered sessions. So the session is read by the id
+   * inside the URI, and the spelling is a name for one session. A session no
+   * record here holds owns no chat, and `resolveChatOwner` reads the catalogue
+   * for one first. A worker's chat belongs to the session its records name.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L267-L291
    */
   const sessionOfChat = (uri: string): string | undefined => {
+    // A worker's chat by the records of the call that spawned it, whatever its
+    // name's shape: a worker name no record holds has no session.
+    const worker = ctx.workerOf(uri);
+    if (worker !== undefined) return worker.session;
     const minted = shapedSession(uri);
-    if (minted === undefined) return undefined;
-    const session = nameOf(idOf(minted));
-    const callId = toolCallOfSubagentChat(uri);
-    if (callId !== undefined) return subagentChatUri(minted, callId) === uri ? session : undefined;
+    if (minted === undefined || toolCallOfSubagentChat(uri) !== undefined) return undefined;
+    const id = idOf(minted);
+    const session = nameOf(id);
     if (chatUriFor(minted) !== uri) return undefined;
+    const registered = sessions.has(session) || owners.has(session) || names.has(id)
+      || ctx.kept.uri?.(id) !== undefined || ctx.kept.provider(id) !== undefined;
+    if (!registered) return undefined;
     // The session's record agrees while its default chat is the one derived
     // from a spelling of its own id; a session that moved its default to a
     // chat of its own owns no derived chat.
@@ -111,12 +128,35 @@ export function createRouting(ctx: HostContext): Routing {
 
   /**
    * The session a chat belongs to: the one the store records it under, or the
-   * one its URI was built for. A channel that is no chat of a session here
-   * comes back as it is.
+   * one the records name for a default or a worker chat (`sessionOfChat`). A
+   * channel that is no chat of a session here comes back as it is.
    */
   const sessionFor = (channel: string): string => {
     const home = homeId(channel);
     return home === undefined ? sessionOfChat(channel) ?? channel : nameOf(home);
+  };
+
+  /**
+   * The session a chat belongs to, once the catalogue has been read for it.
+   *
+   * The reference host's registry holds every session its backends list
+   * before any client names one, and answers a chat's owner from it. This
+   * host reads a backend's listing for a session when the session is first
+   * asked for, so a default chat derived from a session no record here holds
+   * has the catalogue read for the id it was derived from, and is answered
+   * from the records that read leaves: the session the catalogue found, or
+   * none. Any other chat no record holds has nothing read for it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L173-L194
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L4536-L4540
+   */
+  const resolveChatOwner = async (chat: string): Promise<string | undefined> => {
+    const recorded = sessionFor(chat);
+    if (recorded !== chat) return recorded;
+    const minted = shapedSession(chat);
+    if (minted === undefined || toolCallOfSubagentChat(chat) !== undefined || chatUriFor(minted) !== chat) return undefined;
+    await ctx.catalogueRow(idOf(minted));
+    const found = sessionFor(chat);
+    return found === chat ? undefined : found;
   };
 
   /**
@@ -129,8 +169,8 @@ export function createRouting(ctx: HostContext): Routing {
    * A session is one channel under every spelling of its id, and so is a chat
    * derived from one: the reference host answers a session under each identity
    * it has and derives that session's chat from each of them, so a spelling is
-   * a name for the channel rather than a second channel. The name the client
-   * used is remembered as an alias, so it is also what the client is told.
+   * a name for the channel rather than a second channel. A connection watches
+   * the channel this answers, and is sent every action under it.
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/state/sessionState.ts#L894-L898
    */
@@ -138,15 +178,15 @@ export function createRouting(ctx: HostContext): Routing {
     if (isAutomations(channel)) return automationsChannel(channel);
     if (isRootChannel(channel)) return ROOT;
     // A session channel, and its marks and changesets with it, by the id in it.
-    const base = baseOf(channel);
-    if (spaceHere(base) === 'session') {
-      const published = names.get(idOf(base)) ?? ctx.kept.uri?.(idOf(base));
-      return published === undefined ? channel : `${published}${channel.slice(base.length)}`;
+    const owner = ownerUriOf(channel);
+    if (spaceHere(owner) === 'session') {
+      const published = names.get(idOf(owner)) ?? ctx.kept.uri?.(idOf(owner));
+      return published === undefined ? channel : `${published}${channel.slice(owner.length)}`;
     }
+    // A worker's chat is the name its records hold.
+    if (ctx.workerOf(channel) !== undefined) return channel;
     const session = sessionOfChat(channel);
     if (session === undefined || session === shapedSession(channel)) return channel;
-    const callId = toolCallOfSubagentChat(channel);
-    if (callId !== undefined) return subagentChatUri(session, callId);
     return defaultChatOf(session) ?? chatUriFor(session);
   };
 
@@ -206,26 +246,24 @@ export function createRouting(ctx: HostContext): Routing {
     connection.legacyChatUris !== true || shownToOlder(chat, session);
 
   /**
-   * A snapshot taken for a channel a client named, answered to that client.
+   * A snapshot taken for a channel a client named, projected for that client,
+   * as VS Code's host projects a snapshot and its chats for the client it
+   * answers.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3102-L3103
    *
    * The channel the snapshot was taken of is the one this host dispatches
-   * under. A host channel the client named in another spelling is recorded
-   * as its alias on this connection and the snapshot is answered in that
-   * spelling. A session's chats are the ones this connection may see. What
-   * comes back is the held name, which is what a replay is keyed by. The
-   * client now holds the state this host holds for the channel, which a replay
-   * to it later builds on.
+   * under, and the one the connection watches. The snapshot names the channel
+   * the client subscribed to, as VS Code's host answers the automations
+   * catalogue under the resource it was asked for, and the root as
+   * `ahp-root://` whatever spelling asked for it. A session's chats are the
+   * ones this connection may see. What comes back is the held name, which is
+   * what the connection watches and a replay is keyed by.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1079-L1097
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4403-L4409
    */
-  const answeredAs = (connection: Connection, channel: string, snapshot: Record<string, unknown>): string => {
+  const projectSnapshot = (connection: Connection, channel: string, snapshot: Record<string, unknown>): string => {
     const meant = meantBy(channel);
-    ctx.heldStates.get(meant)?.baselines.add(connection.clientId);
-    const owing = ctx.lapsed.get(connection.clientId);
-    if (owing?.delete(meant) === true && owing.size === 0) ctx.lapsed.delete(connection.clientId);
-    if (meant !== channel) {
-      connection.aliases.set(meant, channel);
-      snapshot.resource = channel;
-    }
+    if (meant !== ROOT) snapshot.resource = channel;
     const state = snapshot.state;
     if (connection.legacyChatUris === true && typeof state === 'object' && state !== null && Array.isArray((state as Bag).chats)) {
       const bag = state as Bag;
@@ -243,7 +281,7 @@ export function createRouting(ctx: HostContext): Routing {
    * something else.
    *
    * Read from `claims` for a name this host holds, or whose session channel
-   * (`baseOf`) it holds, and otherwise from the name's space (`spaceOf`).
+   * (`ownerUriOf`) it holds, and otherwise from the name's space (`spaceOf`).
    * Every other channel is a session's: a session may be held under its
    * provider's scheme, `claude:/<id>`, which says nothing about it being one,
    * and a session a backend keeps on disk is named before anything here has
@@ -260,7 +298,9 @@ export function createRouting(ctx: HostContext): Routing {
      */
     const canvasChat = chatOfCanvas(channel);
     if (canvasChat !== undefined) return channelKind(canvasChat);
-    const held = claims.get(channel) ?? claims.get(baseOf(channel));
+    // A retained terminal link is a terminal's, live or rebuilt from what was kept.
+    if (nonPtyShellTerminalOf(channel) !== undefined) return 'terminal';
+    const held = claims.get(channel) ?? claims.get(ownerUriOf(channel));
     if (held !== undefined) return held.kind === 'terminal' ? 'terminal' : held.kind === 'watch' ? 'other' : 'session';
     const space = spaceHere(channel);
     return space === 'terminal' ? 'terminal' : space === 'own' || space === 'plugin' ? 'other' : 'session';
@@ -293,9 +333,9 @@ export function createRouting(ctx: HostContext): Routing {
   const openedBy = (channel: string, client: string): void => {
     if (client === '') return;
     // A session's own channel, or the session a chat, an annotation or a
-    // changeset of it belongs to. `baseOf` is what keeps a session's marks
+    // changeset of it belongs to. `ownerUriOf` is what keeps a session's marks
     // from being raised as a session of their own.
-    const session = spaceOf(channel) === 'chat' ? sessionFor(channel) : baseOf(channel);
+    const session = spaceOf(channel) === 'chat' ? sessionFor(channel) : ownerUriOf(channel);
     if (spaceOf(session) === 'chat' || !sessionChannel(session)) return;
     const key = `${session}\u0000${client}`;
     if (opened.has(key)) return;
@@ -312,18 +352,17 @@ export function createRouting(ctx: HostContext): Routing {
   };
 
   /**
-   * Refuse a name for a new session, chat, terminal or relayed watch that
-   * `claims` already holds, as it is or as the session channel it hangs off
-   * (`baseOf`), that is a session running or listed here, or that falls in a
-   * space (`spaceOf`) this host keeps for another kind. A relayed watch may be
-   * named in `ahp-resource-watch:`, as this host's own are.
+   * Refuse a name for a new session, chat or terminal that `claims` already
+   * holds, as it is or as the session channel it hangs off (`ownerUriOf`), that is
+   * a session running or listed here, or that falls in a space (`spaceOf`)
+   * this host keeps for another kind.
    */
   const claimable = (name: string, kind: NameKind): void => {
     const space = spaceHere(name);
-    const fits = space === undefined || space === kind || (kind === 'watch' && schemeOf(name) === 'ahp-resource-watch');
+    const fits = space === undefined || space === kind;
     if (!fits)
       throw new RpcError(-32003, `${name} is a name this host keeps for ${space === 'own' ? 'its own channels' : space === 'plugin' ? 'plugin channels' : `${space}s`}`);
-    for (const one of new Set([name, baseOf(name)])) {
+    for (const one of new Set([name, ownerUriOf(name)])) {
       const held = claims.get(one);
       if (held !== undefined) throw new RpcError(-32003, `${name} is already a ${held.kind} here`);
       if (sessions.has(one) || owners.has(one)) throw new RpcError(-32003, `${name} names the session ${one}`);
@@ -339,21 +378,23 @@ export function createRouting(ctx: HostContext): Routing {
    * leaves nothing behind.
    *
    * A session recorded for an agent this host is not serving is refused the
-   * same way it is refused to open: it is a conversation of its own, and one
+   * same way it is refused to open, as the reference host's restore refuses a
+   * session it finds no agent for: it is a conversation of its own, and one
    * made over its id here would write this host's harness over the record of
    * which harness it is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
    */
   const unheld = (uri: string): void => {
     const name = nameOf(idOf(uri));
     if (sessions.has(name) || owners.has(name))
       throw new RpcError(-32003, `${idOf(uri)} is already held as ${name}`);
-    const waiting = ctx.waitingFor(idOf(uri));
-    if (waiting !== undefined) throw new RpcError(-32002, `${waiting} is not loaded on this host`);
+    if (ctx.unavailableProvider(idOf(uri)) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${name}`);
     for (const one of new Set([name, uri])) claimable(one, 'session');
   };
 
   return {
-    spaceHere, nameOf, keepName, sessionOfChat, sessionFor, meantBy, sessionHolding, channelKind, sessionChannel, homeOf,
-    answeredAs, visible, sessionVisible, chatShown, claimable, unheld, openedBy,
+    spaceHere, nameOf, keepName, sessionOfChat, sessionFor, resolveChatOwner, meantBy, sessionHolding, channelKind,
+    sessionChannel, homeOf, projectSnapshot, visible, sessionVisible, chatShown, claimable, unheld, openedBy,
+    defaultChatFor: (session) => defaultChatOf(session) ?? chatUriFor(session),
   };
 }

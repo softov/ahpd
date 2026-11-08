@@ -12,18 +12,17 @@ import type { BotStore } from './store.js';
  *
  * A bot is a record on `bot://` and the work it does runs in a session of its
  * own, so what a person says *to* it needs a place to be said. That place is a
- * chat: one session of this provider per bot and person, started by a read of
- * the bot (see `provider.ts`), titled with the bot's name, working in the bot's
- * folder.
+ * chat: a session of this provider a client makes with `createSession`, naming
+ * the bot in its config, as a session of any agent is made.
  *
  * No model runs here either, but something answers: a turn this chat begins
- * stays open until whoever started the chat ends it, through the handle
- * `turns` answers with. The answer is the bot's own - a markdown part when its
- * session posts one, a notice when there is nothing to say, and a cancelled
- * turn when somebody stops it - and until then the turn is the chat's
- * `activeTurn`. A chat nobody is listening to is a chat with no bot behind it,
- * and its turn ends the moment it begins, which is what this backend did before
- * there was a handle.
+ * stays open until the chat's listener ends it, through the handle each
+ * message hands it with the message. The answer is the bot's own - a markdown
+ * part when its session posts one, a notice when there is nothing to say, and
+ * a cancelled turn when somebody stops it - and until then the turn is the
+ * chat's `activeTurn`. A chat nobody is listening to is a chat with no bot
+ * behind it, and its turn ends the moment it begins, in VS Code's words for a
+ * turn it has no agent for.
  *
  * One turn at a time, then. A turn sent while one is open is said at once and
  * handed on when that one ends; a message a client queues is the host's, which
@@ -68,7 +67,7 @@ interface OpenTurn {
   calls: WorkingCall[];
   /** The questions and approvals it shows while another session waits on a person. */
   asked: AskedCopy[];
-  /** How many answers `say` and `reply` have given it, which numbers the next one's id. */
+  /** How many answers `responsePart` and `complete` have given it, which numbers the next one's id. */
   answers: number;
 }
 
@@ -115,23 +114,35 @@ export interface ChatMessage {
   session: string;
   /** The URI of the chat it was said in. */
   chat: string;
+  /** The bot the chat is with, by slug, as the chat's config names it. */
+  bot: string;
   /** The turn that began, or the open turn the message was steered into. */
   turnId: string;
   /** What was said. */
   text: string;
-  /** True for a message steered into the open turn, rather than one that began a turn. */
-  steered?: boolean;
+  /**
+   * The id of the client's steering message this is, where it is one. Whoever
+   * answers says with `steeringSent` that it is sending the message on, and
+   * with `steeringConsumed` that the work behind the turn took it in or never
+   * will; the chat holds it pending until then.
+   */
+  steering?: string;
 }
 
 /**
  * The handle over one chat's open turn: what ends it, and what hears about it.
  *
- * Held by whoever started the chat, which is the plugin: nothing in this
- * package knows what a bot's answer is, and nothing here would ever end a turn
- * by itself. `reply` is that answer, `notice` is something that happened
- * instead of one, and `end` is a turn that gets neither - each ends the turn it
- * finds open, and does nothing at all when there is none. `say` adds an answer
- * and leaves the turn open.
+ * Held by the chat's listener, which is the plugin, handed over with each
+ * message: nothing in this package knows what a bot's answer is, and nothing
+ * here would ever end a turn by itself. The verbs are the protocol's words for what each says:
+ * `complete` ends the turn, with that answer where it is given one, `notice`
+ * ends it with something that happened instead of an answer, and `fail` ends
+ * it in an error - each ends the turn it finds open, and does nothing at all
+ * when there is none. `responsePart` adds an answer and leaves the turn open,
+ * `subagent` shows the chat of another session it waits on, and `onCancel`
+ * hears a client's `chat/turnCancelled`. `steeringSent` and `steeringConsumed`
+ * are the two answers VS Code's agents give a steering message: its hand-off,
+ * and `steering_consumed`.
  *
  * `onMessage` is the other direction: each turn this chat begins, and each
  * message steered into the open one, is handed to it. That is how what a person
@@ -139,53 +150,81 @@ export interface ChatMessage {
  */
 export interface TurnHandle {
   /**
-   * Begin a turn nobody in this chat said, and answer with the turn's id.
-   *
-   * What a turn somebody began in a back session is shown as here: the person
-   * typed there, and this chat shows a turn of its own waiting on that work.
-   * Nobody is told about it the way `onMessage` is told - nothing here woke a
-   * session, and the work the turn waits on is already running.
-   *
-   * Nothing where a turn is open: a chat runs one turn at a time, and a back
-   * turn with no turn to be shown in is one this chat does not show.
+   * Complete the open turn, the protocol's `chat/turnComplete`: with this as its
+   * answer where one is given, and with what `responsePart` gave it otherwise.
    */
-  begin(text: string, from?: MessageFrom): string | undefined;
-  /** End the open turn with this as its answer. */
-  reply(text: string): void;
+  complete(text?: string): void;
   /**
-   * Add this answer to the open turn, and keep the turn open.
+   * Add this answer to the open turn, the protocol's `chat/responsePart`, and
+   * keep the turn open.
    *
    * What a back session posts while its own turn runs: the main turn waits on
-   * that turn as on a subagent, and ends when it ends. `end` after it completes
-   * the turn as answered.
+   * that turn as on a subagent, and ends when it ends. `complete` after it
+   * completes the turn as answered.
    */
-  say(text: string): void;
+  responsePart(text: string): void;
   /** End the open turn with a notice rather than an answer. */
   notice(text: string): void;
-  /** End the open turn with no response at all. */
-  end(): void;
   /** End the open turn as failed, in the words of what failed. */
   fail?(message: string): void;
   /**
    * Say the open turn is waiting on a chat of another session, and link it.
    *
-   * The turn shows one tool call of kind `subagent` whose content names that
-   * chat, which is how a client opens it: the back session is not a worker
-   * this chat's backend opened, so nothing else would draw it. Optional
-   * because a handle over a chat with nothing behind it has nothing to show.
+   * The turn shows one tool call of kind `subagent`, VS Code's word for a call
+   * running another chat, whose content names that chat, which is how a
+   * client opens it: the back session is not a worker this chat's backend
+   * opened, so nothing else would draw it. Optional because a handle over a
+   * chat with nothing behind it has nothing to show.
    */
-  working?(chat: string, title: string): void;
+  subagent?(chat: string, title: string): void;
   /**
    * Show a request another session is waiting on, in the open turn.
    *
    * The entry is the back session's `session/inputNeeded` entry, whole: an
    * approval is drawn as a tool call in `pending-confirmation` with the back
    * session's own title, and a question as an `inputRequest` part with its
-   * fields. Optional for the same reason `working` is.
+   * fields. Optional for the same reason `subagent` is.
    */
   asking?(entry: Bag): void;
   /** Take a request's copy out of the open turn, because the back session no longer waits on it. */
   withdrawn?(id: string): void;
+  /**
+   * List a request another session is waiting on among this chat's blockers,
+   * the session's `inputNeeded`, as it stands: the entry names the chat it was
+   * asked in, which is where a client answers it. VS Code's host aggregates
+   * every chat's blockers on its session, a subagent's among them, so a client
+   * reads them there; the turn shows no copy.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L229-L247
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L19-L25
+   */
+  listed?(entry: Bag): void;
+  /** Take a listed request off this chat's blockers, because its session no longer waits on it. */
+  unlisted?(id: string): void;
+  /**
+   * Say a steering message is being sent on to the work behind its turn, and
+   * answer whether it may be.
+   *
+   * True where the turn it was steered into is still open: the message is that
+   * turn's from here, written down against it, and its hand-off is answered
+   * `true`. False where that turn ended while the message was on its way: the
+   * hand-off is answered `false`, which hands the message back unsent, for the
+   * host to steer the turn that runs then with it or run it next, as VS Code's
+   * agents hand back a steer whose turn ended first. False too for a message
+   * the chat no longer holds, which a stop took out. Nothing is sent on a
+   * false.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1948
+   */
+  steeringSent?(id: string): boolean;
+  /**
+   * Take a steering message out of the chat's pending state, because the work
+   * behind the turn took it in, or dropped it because sending it failed: the
+   * protocol's `chat/pendingMessageRemoved`, as VS Code's host says one once
+   * its agent reports the steer consumed. A hand-off not yet answered is
+   * answered `true`, the message being done with.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L775-L782
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L218-L228
+   */
+  steeringConsumed?(id: string): void;
   /** What a client of this chat confirmed, for the plugin to send back to the back session. */
   onConfirm?: (toolCallId: string, approved: boolean, optionId?: string) => void;
   /**
@@ -198,8 +237,8 @@ export interface TurnHandle {
   onAnswer?: (requestId: string, accepted: boolean, answers: Bag, response?: 'accept' | 'decline' | 'cancel') => boolean;
   /** Who hears about each turn that begins and each message steered into one. */
   onMessage?: (message: ChatMessage) => void;
-  /** Who hears that a client stopped the open turn, to stop the work behind it. */
-  onStop?: (session: string, turnId: string) => void;
+  /** Who hears that a client cancelled the open turn, to stop the work behind it. */
+  onCancel?: (session: string, turnId: string) => void;
 }
 
 /** The provider id a chat is registered and named under. */
@@ -243,6 +282,9 @@ const idOfFile = (name: string): string | undefined => {
   catch { return undefined; }
 };
 
+/** The key of `_meta` the bot's mark is under, namespaced as VS Code's host namespaces the keys it puts there. */
+const MARK = 'ahpd.bot';
+
 /**
  * The bot's mark, as the `_meta` of a chat and of its session.
  *
@@ -250,12 +292,14 @@ const idOfFile = (name: string): string | undefined => {
  * this is: one person, one bot, nobody else in it.
  */
 const markOf = (bot: BotRecord): Bag => ({
-  bot: bot.id,
-  name: bot.name,
-  color: bot.color,
-  labels: bot.labels,
-  body: bot.body,
-  kind: 'direct',
+  [MARK]: {
+    id: bot.id,
+    name: bot.name,
+    color: bot.color,
+    labels: bot.labels,
+    body: bot.body,
+    kind: 'direct',
+  },
 });
 
 /** The `_meta` one log line or one chat state carries, where it carries one. */
@@ -274,13 +318,18 @@ const messageOf = (text: string, from?: MessageFrom, model?: Chosen, attachments
   ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
 });
 
+/** The error part a turn that began and never ended reads back with, VS Code's words for an interrupted request. */
+const INTERRUPTED: Bag = {
+  kind: 'error',
+  error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
+};
+
 /**
- * The ending a line's `state` names, or `complete` where it names none.
+ * The ending a line's `state` names: `cancelled` or `error`, and `complete` for
+ * any other.
  *
- * A line a turn *began* with carries no state, and neither does one a person
- * wrote by hand. A state is what an ending is, so anything that is not one of
- * the endings reads back as a turn that finished - which is what such a turn
- * is, as far as a chat that answers again after a restart can say.
+ * A line with no state is the one a turn began with, and a turn whose last line
+ * is that one is read back interrupted, in `logAt`.
  */
 const endingIn = (said: unknown): Ending => (
   said === 'cancelled' || said === 'error' ? said : 'complete'
@@ -335,8 +384,13 @@ const turnOf = (said: Bag): ChatTurn | undefined => {
  * A turn is two lines - the one it began with and the one it ended with - and
  * what comes back is one turn: the line an ending was written on replaces the
  * line the turn opened on, because it is the same turn said again, as it
- * finished. A chat whose daemon died mid-turn has only the first of the two,
- * and that reads as the turn it was.
+ * finished. A turn whose daemon died before it ended has only the first of the
+ * two, and reads back interrupted, as VS Code's Copilot reads back a turn its
+ * record shows started and never ended: an error, with the error part last.
+ * The part is not marked resumable, because nothing runs a bot chat's turn
+ * again.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L6962-L6967
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1152-L1155
  */
 const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | undefined => {
   let text: string;
@@ -345,6 +399,8 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
   const turns: ChatTurn[] = [];
   /** Where each turn read so far sits, so the line that ends it can replace it. */
   const at = new Map<string, number>();
+  /** The turns whose last line so far is the one they began with. */
+  const unended = new Set<string>();
   let mark: Bag | undefined;
   /** Each steering line read, by the turn it went into. */
   const steered: { turn: string; id: string; words: string }[] = [];
@@ -374,6 +430,8 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
     const one = turnOf(held);
     if (one === undefined) continue;
     mark ??= markIn(held);
+    if (held['state'] === undefined) unended.add(one.id);
+    else unended.delete(one.id);
     const known = at.get(one.id);
     if (known === undefined) {
       at.set(one.id, turns.length);
@@ -394,7 +452,12 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
     if (turn.responseParts.some((part) => steerOf(part) === one.id || part['id'] === `steer:${one.id}`)) continue;
     turn.responseParts.push(steerPart(one.id, one.words));
   }
-  return { turns, mark };
+  return {
+    turns: turns.map((turn) => (unended.has(turn.id)
+      ? { ...turn, state: 'error' as const, responseParts: [...turn.responseParts, INTERRUPTED] }
+      : turn)),
+    mark,
+  };
 };
 
 /** Add one turn to a chat's log, making the folder the first time. */
@@ -424,9 +487,11 @@ const rowOf = (dir: string, id: string, store: BotStore): Listed | undefined => 
   catch { return undefined; }
   const log = logAt(path);
   if (log === undefined) return undefined;
-  const slug = typeof log.mark?.['bot'] === 'string' ? log.mark['bot'] : '';
+  const marked = log.mark?.[MARK];
+  const held = typeof marked === 'object' && marked !== null && !Array.isArray(marked) ? marked as Bag : {};
+  const slug = typeof held['id'] === 'string' ? held['id'] : '';
   const bot = store.get(slug);
-  const named = log.mark?.['name'];
+  const named = held['name'];
   const meta = bot === undefined ? log.mark : markOf(bot);
   return {
     id,
@@ -439,31 +504,6 @@ const rowOf = (dir: string, id: string, store: BotStore): Listed | undefined => 
 };
 
 /**
- * The handles of the chats this process has open, by the URI of their session.
- *
- * A chat is started by the host, which answers with a session URI and nothing
- * else - a `Session` never leaves this package - so a URI is all the plugin
- * that started a chat has to reach the turn in it by. The URI is the one the
- * *host* made for the session, which is the one a backend is started with:
- * a client names an id and the host names the scheme, so the URI a client
- * sent is an alias of this one and not this one.
- */
-const handles = new Map<string, TurnHandle>();
-
-/**
- * The handle over one chat's open turn, by the URI of the session it is in.
- *
- * Throws for a session that is not a chat of this provider's: a URI nothing
- * here answers to names something else, which is a different thing from a chat
- * with no turn open in it.
- */
-export function turns(session: string): TurnHandle {
-  const held = handles.get(session);
-  if (held === undefined) throw new Error(`${session} is not a chat this host is running`);
-  return held;
-}
-
-/**
  * The `bot-chat` agent, over one daemon's configuration folder and its bots.
  *
  * `store` is read rather than a file of its own, because a chat is a chat
@@ -471,13 +511,13 @@ export function turns(session: string): TurnHandle {
  * has is refused there rather than opening a session nothing can answer.
  *
  * `heard` is set as the `onMessage` of every chat's handle, a new chat and a
- * resumed one alike, and `stopped` as its `onStop`.
+ * resumed one alike, and `cancelled` as its `onCancel`.
  */
 export function botChatAgent(
   configDir: string,
   store: BotStore,
   heard?: (message: ChatMessage, handle: TurnHandle) => void,
-  stopped?: (session: string, turnId: string) => void,
+  cancelled?: (session: string, turnId: string) => void,
 ): Agent<Session> {
   /**
    * One chat: the turns it holds and the bot it is a chat with.
@@ -514,8 +554,28 @@ export function botChatAgent(
     const handed: { turn: OpenTurn; text: string; from: MessageFrom | undefined; model: Chosen | undefined; attachments: MessageAttachment[] | undefined }[] = [];
     /** The turns a later one took the place of. */
     const replaced = new Set<string>();
+    /**
+     * The steering messages handed on that the chat still holds pending, by
+     * the client's id: the turn each was steered into, the message as the log
+     * keeps it, and the answer to its hand-off until `steeringSent` gives it.
+     */
+    const steers = new Map<string, { turn: string; message: ChatTurn['message']; answer?: (sent: boolean) => void }>();
+    /** Another session's requests this chat lists among its blockers, by the entry's id. */
+    const listed = new Map<string, Bag>();
 
     const touch = (): void => { modified = new Date().toISOString(); };
+
+    /**
+     * `SessionStatus`: an open turn is `InProgress`, because the chat is
+     * waiting on the bot's session, which is where the answer is being worked
+     * out; and `InputNeeded` while a request of that session listed here waits
+     * on a person, as a listed entry other than a client's execution implies.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L229-L247
+     */
+    const statusNow = (): number => {
+      if (open === undefined) return Status.Idle;
+      return [...listed.values()].some((one) => one['kind'] !== 'toolClientExecution') ? Status.InputNeeded : Status.InProgress;
+    };
 
     /**
      * Say the open turn is waiting on another session's chat, as a subagent is drawn.
@@ -727,19 +787,38 @@ export function botChatAgent(
      * line it began with did: a turn a client watched end is a turn a restart
      * can read back.
      *
-     * `answered` says the back session answered, which is the one ending its
-     * calls finish by. Any other ending leaves them unfinished, and the turn's
-     * end forces each to cancelled, `skipped`, in every reducer, this chat's
-     * own record included, as the reference host's chat draws a call its turn
-     * left behind.
+     * A turn that completes completes its subagent calls with it, as VS Code
+     * completes a subagent's call when the subagent's work completes, whether
+     * or not the back session posted an answer. A turn that is stopped or
+     * fails leaves them unfinished, and the turn's end forces each to
+     * cancelled, `skipped`, in every reducer, this chat's own record included,
+     * as the reference host's chat draws a call its turn left behind.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1051
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
      */
-    const finish = (held: OpenTurn, state: Ending, parts: Bag[], answered = false): void => {
+    const finish = (held: OpenTurn, state: Ending, parts: Bag[]): void => {
       open = undefined;
+      /*
+       * A steer the work behind the turn holds and never took in is over with
+       * the turn, and is taken out before the turn's end is said, as VS Code's
+       * agents clear a steer's pending state when its turn ends. A stop lets go
+       * of every steer of the turn, one still on its way to the work included,
+       * and the host takes them out of the chat at a stop. One still on its way
+       * at any other ending is left for `steeringSent` to hand back.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L3409-L3412
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L6852-L6854
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65
+       */
+      for (const [steering, one] of steers) {
+        if (one.turn !== held.id || (one.answer !== undefined && state !== 'cancelled')) continue;
+        steers.delete(steering);
+        if (state !== 'cancelled') start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
+        one.answer?.(true);
+      }
       const duration = Date.now() - Date.parse(held.startedAt);
       for (const call of held.calls) {
         const toolCall = call.part.toolCall as Bag;
-        if (!answered) {
+        if (state !== 'complete') {
           // What the reducer keeps of a call it forces to cancelled.
           const kept = ['toolCallId', 'toolName', 'displayName', 'intention', 'contributor', '_meta', 'invocationMessage', 'toolInput']
             .filter((key) => toolCall[key] !== undefined);
@@ -801,25 +880,17 @@ export function botChatAgent(
      * to answer has ended, and a second ending would be a second turn.
      */
     const handle: TurnHandle = {
-      begin: (text, from) => {
-        if (open !== undefined || handed.length > 0) return undefined;
-        const turnId = crypto.randomUUID();
-        const held = beginTurn(turnId, text, from);
-        // A turn of the chat's own, which no client sent, so its start is said here.
-        start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: held.startedAt, message: held.message });
-        return turnId;
-      },
-      reply: (text) => {
+      complete: (text) => {
         const held = open;
         if (held === undefined) return;
         /*
-         * One part, whole. Nothing streams into a chat that runs no model, so
-         * there are no `chat/delta`s after it - and the id is the turn's, which
-         * is what a delta would have appended to.
+         * With an answer, one part, whole. Nothing streams into a chat that runs
+         * no model, so there are no `chat/delta`s after it - and the id is the
+         * turn's, which is what a delta would have appended to.
          */
-        finish(held, 'complete', [answerPart(held, text)], true);
+        finish(held, 'complete', text === undefined ? [] : [answerPart(held, text)]);
       },
-      say: (text) => {
+      responsePart: (text) => {
         const held = open;
         if (held === undefined) return;
         const part = answerPart(held, text);
@@ -833,12 +904,6 @@ export function botChatAgent(
         // reference harness writes for a notice of its own.
         finish(held, 'complete', [{ kind: 'systemNotification', content: text }]);
       },
-      end: () => {
-        const held = open;
-        if (held === undefined) return;
-        // A turn with an answer `say` gave it was answered, and its calls complete.
-        finish(held, 'complete', [], held.answers > 0);
-      },
       /*
        * A turn whose work failed ends as failed, with an error part, as the
        * reference host ends a failed send with `chat/error`, and the part's
@@ -851,7 +916,7 @@ export function botChatAgent(
         if (held === undefined) return;
         finish(held, 'error', [{ kind: 'error', error: { errorType: 'sendFailed', message } }]);
       },
-      working: (chat, title) => {
+      subagent: (chat, title) => {
         const held = open;
         if (held === undefined) return;
         showWorking(held, chat, title);
@@ -866,21 +931,53 @@ export function botChatAgent(
         if (held === undefined) return;
         withdrawAsked(held, id);
       },
+      listed: (entry) => {
+        const entryId = entry['id'];
+        if (typeof entryId !== 'string') return;
+        listed.set(entryId, entry);
+        start.emit('session', { type: 'session/inputNeededSet', request: entry });
+      },
+      unlisted: (id) => {
+        if (!listed.delete(id)) return;
+        start.emit('session', { type: 'session/inputNeededRemoved', id });
+      },
+      steeringSent: (steering) => {
+        const one = steers.get(steering);
+        const answer = one?.answer;
+        if (one === undefined || answer === undefined) return false;
+        delete one.answer;
+        if (open?.id !== one.turn) {
+          steers.delete(steering);
+          answer(false);
+          return false;
+        }
+        // Kept, as everything said in a chat is, on a line of its own against
+        // the turn it went into, so a chat read back after a restart shows it.
+        append(dir, id, { id: one.turn, steering: true, steeringId: steering, message: one.message, _meta: mark });
+        // Into the turn it went into, where it stays.
+        const part = steerPart(steering, one.message.text);
+        open.responseParts.push(part);
+        start.emit('chat', { type: 'chat/responsePart', turnId: one.turn, part });
+        answer(true);
+        return true;
+      },
+      steeringConsumed: (steering) => {
+        const one = steers.get(steering);
+        if (one === undefined) return;
+        steers.delete(steering);
+        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
+        one.answer?.(true);
+      },
     };
     if (heard !== undefined) handle.onMessage = (message) => { heard(message, handle); };
-    if (stopped !== undefined) handle.onStop = stopped;
-    handles.set(start.uri, handle);
+    if (cancelled !== undefined) handle.onCancel = cancelled;
 
     /**
      * Open a turn in this chat with what it began with, and write it down.
      *
      * The line goes down before the turn is handed on, so a log that could not
      * be written fails the send, and every turn the chat answers is one a
-     * restart reads back.
-     *
-     * Nobody is told who answers it: `beginMessage` is a turn somebody's
-     * message starts, and `begin` on the handle is a turn another session's
-     * work is the answer to.
+     * restart reads back. Who answers it is told by `beginMessage`.
      */
     const beginTurn = (
       turnId: string,
@@ -925,9 +1022,10 @@ export function botChatAgent(
      * Open one turn, and hand it to whoever answers this chat.
      *
      * The turn is open before anybody is told about it, because what is told
-     * is what answers it - and it is over at once when nobody is. That is a
-     * chat with no bot behind it: one a person opened to read, or one this
-     * host has just restarted and not answered again.
+     * is what answers it. A chat nothing answers ends the turn at once in
+     * `chat/error`, as VS Code's host ends a turn it has no agent for, in its
+     * words.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L119-L136
      */
     const beginMessage = (
       turnId: string,
@@ -941,10 +1039,10 @@ export function botChatAgent(
       if (said !== undefined) open = said;
       const held = said ?? beginTurn(turnId, text, from, model, attachments);
       if (handle.onMessage === undefined) {
-        finish(held, 'complete', []);
+        finish(held, 'error', [{ kind: 'error', error: { errorType: 'noAgent', message: 'No agent found for session' } }]);
         return;
       }
-      handle.onMessage({ session: start.uri, chat: start.chatUri, turnId, text });
+      handle.onMessage({ session: start.uri, chat: start.chatUri, bot: bot.id, turnId, text });
     };
 
     /** The next turn sent while another was open, handed on once none is. */
@@ -967,13 +1065,7 @@ export function botChatAgent(
       // The turns that are over. One still open is not here: it is what
       // `chatState().activeTurn` is for, as it is for every other backend.
       allTurns: () => turns,
-      /*
-       * `SessionStatus`: an open turn is `InProgress`, because the chat is
-       * waiting - on the bot's session, which is where the answer is being
-       * worked out. Nothing is being waited *for* from the person, so it is not
-       * `InputNeeded`.
-       */
-      status: () => (open === undefined ? Status.Idle : Status.InProgress),
+      status: () => statusNow(),
       activity: () => undefined,
       title: () => bot.name,
       modifiedAt: () => modified,
@@ -984,7 +1076,8 @@ export function botChatAgent(
         // `SessionState`, and a client subscribed to this channel named it.
         provider: CHAT_PROVIDER,
         title: bot.name,
-        status: open === undefined ? Status.Idle : Status.InProgress,
+        status: statusNow(),
+        ...(listed.size === 0 ? {} : { inputNeeded: [...listed.values()] }),
         lifecycle: 'ready',
         defaultChat: start.chatUri,
         chats: [{ resource: start.chatUri, title: bot.name }],
@@ -1052,35 +1145,34 @@ export function botChatAgent(
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L175-L203
        *
        * The id the host names is the client's steering message, which the host
-       * said as the chat's steering message. It is taken out once it is handed
-       * on, since the back session holds it from then, and the hand-off answers
-       * `true`. The message carries who sent it, so a correction an agent sent
-       * shows as that agent's.
+       * said as the chat's steering message. The hand-off is answered as VS
+       * Code's agents answer one they send on: `true` once whoever answers is
+       * sending it on into the turn it was steered into, and `false` where that
+       * turn ended first, handing it back unsent (`steeringSent`). It stays
+       * pending until the work behind the turn takes it in, or drops it because
+       * sending it failed (`steeringConsumed`), as VS Code's host takes a steer
+       * out once its agent reports it consumed. The message carries who sent
+       * it, so a correction an agent sent shows as that agent's.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L6817-L6837
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L775-L782
        *
-       * Kept, as everything said in a chat is, on a line of its own against the
-       * turn it went into, so a chat read back after a restart still shows it.
-       *
-       * False where there is no open turn to steer: the host keeps it pending,
-       * hands it again on the turn's next action, and runs it next once the
-       * turn ends well.
+       * False where there is no open turn to steer, or nobody to hand it to:
+       * the host keeps it pending, hands it again on the turn's next action,
+       * and runs it next once the turn ends well.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1948
        */
       sendSteeringMessage: ({ id: pendingId, text, attachments, from }) => {
         const held = open;
-        if (held === undefined) return false;
+        if (held === undefined || handle.onMessage === undefined) return false;
         const message = messageOf(text, from, undefined, attachments);
-        append(dir, id, { id: held.id, steering: true, steeringId: pendingId, message, _meta: mark });
-        handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text, steered: true });
-        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: pendingId });
-        // Out of the queue and into the turn it went into, where it stays.
-        const part = steerPart(pendingId, text);
-        held.responseParts.push(part);
-        start.emit('chat', { type: 'chat/responsePart', turnId: held.id, part });
         // The modified time stays, as the protocol's reducer moves it only at
         // a turn's end and its start.
         // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L227-L232
         // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L369-L373
-        return true;
+        return new Promise<boolean>((answer) => {
+          steers.set(pendingId, { turn: held.id, message, answer });
+          handle.onMessage?.({ session: start.uri, chat: start.chatUri, bot: bot.id, turnId: held.id, text, steering: pendingId });
+        });
       },
 
       /**
@@ -1102,10 +1194,10 @@ export function botChatAgent(
        */
       abort: () => {
         const held = open;
-        for (const one of handed.splice(0)) finish(one.turn, 'cancelled', [], false);
+        for (const one of handed.splice(0)) finish(one.turn, 'cancelled', []);
         if (held === undefined) return;
-        finish(held, 'cancelled', [], false);
-        handle.onStop?.(start.uri, held.id);
+        finish(held, 'cancelled', []);
+        handle.onCancel?.(start.uri, held.id);
       },
 
       // The draft the host said, held for the chat's state.
@@ -1122,8 +1214,11 @@ export function botChatAgent(
        * this package is the chat, and the door onto another session is the
        * plugin's connection.
        *
-       * A tool confirmation is not echoed by the host, so the approval or the
-       * denial is emitted here; a question's is, on the true this returns.
+       * The host says the client's decision on a call, and a question's answer
+       * on the true this returns, as VS Code's host echoes a client's
+       * confirmation once and hands it to its agent
+       * (src/vs/platform/agentHost/node/agentSideEffects.ts L1878-L1904 at
+       * 6b68d3fe); so nothing is said again here.
        */
       confirm: (toolCallId, approved, optionId) => {
         const held = open;
@@ -1141,25 +1236,9 @@ export function botChatAgent(
             confirmed: 'user-action',
             ...(optionId === undefined ? {} : { selectedOptionId: optionId }),
           });
-          start.emit('chat', {
-            type: 'chat/toolCallConfirmed',
-            turnId: held.id,
-            toolCallId,
-            approved: true,
-            confirmed: 'user-action',
-            ...(optionId === undefined ? {} : { selectedOptionId: optionId }),
-          });
         }
         else {
           Object.assign(toolCall, { status: 'cancelled', reason: 'denied' });
-          start.emit('chat', {
-            type: 'chat/toolCallConfirmed',
-            turnId: held.id,
-            toolCallId,
-            approved: false,
-            reason: 'denied',
-            ...(optionId === undefined ? {} : { selectedOptionId: optionId }),
-          });
         }
         handle.onConfirm?.(toolCallId, approved, optionId);
         return true;
@@ -1187,24 +1266,20 @@ export function botChatAgent(
         return true;
       },
 
-      // No runtime switch and no MCP servers, so all three refuse. False is a
-      // real answer: a control that reported success and changed nothing would
-      // be worse than one that says no.
+      // No runtime switch and no MCP servers, so all three answer false, and
+      // the host says no in the session's own state as VS Code's does: a toggle
+      // stands as the client's decision, a listed server it could not start is
+      // in error, and the rest are logged
+      // (src/vs/platform/agentHost/node/agentSideEffects.ts L416-L428,
+      // L2026-L2065 at 6b68d3fe).
       setCustomizationEnabled: async () => false,
       startMcpServer: async () => false,
       stopMcpServer: async () => false,
 
       settings: () => ({ ...start.settings }),
 
-      /*
-       * Nothing runs between turns: no process to stop and no timer to clear.
-       * What there is to let go of is the handle, which is nobody's once this
-       * chat is one this host no longer runs - and a chat started again, under
-       * the same URI, registers a handle of its own.
-       */
-      close: () => {
-        if (handles.get(start.uri) === handle) handles.delete(start.uri);
-      },
+      // Nothing runs between turns: no process to stop and no timer to clear.
+      close: () => {},
     };
   }
 

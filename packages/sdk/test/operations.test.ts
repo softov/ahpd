@@ -1,8 +1,8 @@
 import { expect, it, vi } from 'vitest';
 import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
+import type { Agent } from '../src/types/agent.js';
 import type { ChangesetOperation, ChangesetOperationContext, ChangesetOperationRequest, ChangesetSource } from '../src/types/changes.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -83,8 +83,8 @@ it('spells a changeset template from the session\'s one URI', async () => {
 });
 
 /** A connected client with one session, watching the session and its changeset. */
-async function watching(source: ChangesetSource, pace = 0) {
-  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace })], changes: source });
+async function watching(source: ChangesetSource, pace = 0, agent: Agent = echo({ path: DIR, pace })) {
+  const host = createHost({ path: DIR, agents: [agent], changes: source });
   const p = peer();
   const client = host.accept(p);
   await client.handle({
@@ -93,11 +93,12 @@ async function watching(source: ChangesetSource, pace = 0) {
   });
   const uri = 'ahp-session:/one';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   const changeset = `${uri}/changeset/uncommitted`;
   const opened = await client.handle({ method: 'subscribe', params: { channel: changeset } });
   const snapshot = (opened as { snapshot: { state: Record<string, unknown> } }).snapshot;
-  return { host, client, peer: p, uri, chatUri: chatUriFor(uri), changeset, snapshot };
+  return { host, client, peer: p, uri, chatUri, changeset, snapshot };
 }
 
 // A refused envelope is left out, as a client leaves it.
@@ -119,6 +120,95 @@ const refused = async (run: Promise<unknown>): Promise<{ code: number; message: 
   }
 };
 
+/*
+ * A feature area's operations beside the source's, as VS Code registers a
+ * changeset operation contribution: advertised after the source's own, an id
+ * the source offers staying the source's, and invoked through the handler the
+ * contribution registered for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L88-L118
+ */
+it('offers a contribution\'s operations after the source\'s, and runs one through its handler', async () => {
+  const { source, invoked } = scripted();
+  const handled: ChangesetOperationRequest[] = [];
+  const host = createHost({
+    path: DIR,
+    agents: [echo({ path: DIR })],
+    changes: source,
+    changesetOperations: [{
+      operations: () => [
+        { id: 'merge-request', label: 'Open Merge Request', scopes: ['changeset'] },
+        { id: 'commit', label: 'Commit Elsewhere', scopes: ['changeset'] },
+      ],
+      handlers: { 'merge-request': async (request) => { handled.push(request); return { message: 'opened' }; } },
+    }],
+  });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  const uri = 'ahp-session:/one';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+  const changeset = `${uri}/changeset/uncommitted`;
+  const opened = await client.handle({ method: 'subscribe', params: { channel: changeset } }) as {
+    snapshot: { state: { operations?: { id: string; label: string }[] } };
+  };
+  expect(opened.snapshot.state.operations?.map((one) => `${one.id}:${one.label}`))
+    .toEqual(['commit:Commit', 'discard:Discard Changes', 'look:Look', 'merge-request:Open Merge Request']);
+
+  expect(await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'merge-request' } }))
+    .toMatchObject({ message: 'opened' });
+  expect(handled.map((one) => [one.operationId, one.session, one.scope])).toEqual([['merge-request', uri, 'uncommitted']]);
+  expect(invoked).toHaveLength(0);
+  await host.close();
+});
+
+/*
+ * What an operation undid of the agent's edits is told to the session's agent
+ * with its next turn, once, in VS Code's words, as the reference host reports
+ * the edits a discard undid to the agent that made them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostFileEditCoordinator.ts#L40-L56
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostDiscardChangesOperationHandler.ts#L496-L504
+ */
+it('tells the session\'s agent with its next turn what an operation undid of its edits, once', async () => {
+  const { source } = scripted();
+  source.invoke = async () => ({
+    message: 'Reverted',
+    discarded: [{ resource: `file://${DIR}/a.txt`, deleted: false }, { resource: `file://${DIR}/b.txt`, deleted: true }],
+  });
+  const told: string[][] = [];
+  const base = echo({ path: DIR, pace: 0 });
+  const agent: Agent = {
+    ...base,
+    create: (start) => {
+      const session = base.create(start);
+      return {
+        ...session,
+        sendMessage: (turnId, text, from, attachments, options) => {
+          told.push(options?.instructions?.() ?? []);
+          return session.sendMessage(turnId, text, from, attachments, options);
+        },
+      };
+    },
+  };
+  const { client, changeset, chatUri } = await watching(source, 0, agent);
+  await client.handle({
+    method: 'invokeChangesetOperation',
+    params: { channel: changeset, operationId: 'discard', target: { kind: 'resource', resource: `file://${DIR}/a.txt` } },
+  });
+  for (const turnId of ['t1', 't2']) {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+    });
+    await settle(20);
+  }
+  expect(told).toEqual([
+    [
+      `The user undid your changes to ${DIR}/a.txt. Read the file again before you edit it, and don't make those changes again unless the user asks you to.`,
+      `The user undid your creation of ${DIR}/b.txt, so the file no longer exists. Don't create it again unless the user asks you to.`,
+    ],
+    [],
+  ]);
+});
+
 it('puts the verbs on the changeset, idle, alongside the files', async () => {
   const { snapshot } = await watching(scripted().source);
   const state = snapshot.state as { operations?: Record<string, unknown>[] };
@@ -130,13 +220,18 @@ it('puts the verbs on the changeset, idle, alongside the files', async () => {
   expect(state.operations?.[0]?.confirmation).toBeUndefined();
 });
 
-it('refuses an operation it never offered, and one aimed at the wrong kind of thing', async () => {
+/*
+ * In VS Code's code and words: an operation the changeset does not offer, one
+ * aimed at a scope it does not take, and a changeset the host does not hold.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L378-L422
+ */
+it('refuses an operation it never offered, one aimed at the wrong kind of thing, and a changeset it does not hold, in VS Code\'s words', async () => {
   const { client, changeset } = await watching(scripted().source);
   const missing = await refused(client.handle({
     method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'rebase' },
   }));
   expect(missing.code).toBe(-32602);
-  expect(missing.message).toContain('rebase');
+  expect(missing.message).toBe(`Unknown operation 'rebase' on changeset ${changeset}`);
 
   // `commit` is changeset-scoped. A client that points it at a file is asking
   // for something the advertised operation does not accept.
@@ -149,6 +244,38 @@ it('refuses an operation it never offered, and one aimed at the wrong kind of th
     },
   }));
   expect(misaimed.code).toBe(-32602);
+  expect(misaimed.message).toBe('Operation \'commit\' does not support scope \'resource\' (allowed: changeset)');
+
+  const nowhere = await refused(client.handle({
+    method: 'invokeChangesetOperation', params: { channel: 'ahp-session:/nobody/changeset/session', operationId: 'commit' },
+  }));
+  expect(nowhere.code).toBe(-32001);
+  expect(nowhere.message).toBe('Changeset not found: ahp-session:/nobody/changeset/session');
+});
+
+/*
+ * A watched changeset is cleared on its channel before its session is said
+ * gone, as VS Code's host disposes a session's changesets first when it
+ * deletes the session.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2415-L2426
+ */
+it('clears a watched changeset on its channel before its session is said gone, as VS Code\'s', async () => {
+  const { host, client, peer: p, uri, chatUri, changeset } = await watching(scripted().source);
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+  });
+  await vi.waitFor(() => { expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true); });
+  await client.handle({ method: 'disposeSession', params: { channel: uri } });
+  const said = p.notes.map((note) => {
+    const params = note.params as { channel?: string; session?: string; action?: { type?: string } };
+    return note.method === 'action' ? `${String(params.channel)} ${String(params.action?.type)}` : `${note.method} ${String(params.session ?? '')}`;
+  });
+  const cleared = said.indexOf(`${changeset} changeset/cleared`);
+  expect(cleared).toBeGreaterThanOrEqual(0);
+  expect(said.indexOf(`root/sessionRemoved ${uri}`)).toBeGreaterThan(cleared);
+  await host.close();
 });
 
 it('runs a write with no grant, as it runs one that writes nothing', async () => {
@@ -172,21 +299,20 @@ it('lets an operation that writes nothing through without one', async () => {
   expect(source).toBeUndefined();
 });
 
-it('answers yes to any file on this machine, and mediates nothing else', async () => {
+/*
+ * As VS Code's host: every request is granted, whatever the URI, since
+ * there is nobody at a daemon to ask and the token already answered who may
+ * be here. The answer withholds nothing, because the write half is served
+ * without it, and a later operation is where a refusal comes.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2493-L2498
+ */
+it('answers yes to any resource request, a file on this machine or any other URI, as VS Code\'s host', async () => {
   const { client } = await watching(scripted().source);
-  expect(await client.handle({
-    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${DIR}/a.txt`, write: true },
-  })).toEqual({});
-  // As the reference host: there is nobody at a daemon to ask, and the
-  // token already answered who may be here. The answer withholds nothing,
-  // because the write half is served without it.
-  expect(await client.handle({
-    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: 'file:///etc/hostname', write: true },
-  })).toEqual({});
-  const denied = await refused(client.handle({
-    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: 'virtual://plugin/a.txt', write: true },
-  }));
-  expect(denied.code).toBe(-32009);
+  for (const uri of [`file://${DIR}/a.txt`, 'file:///etc/hostname', 'virtual://plugin/a.txt']) {
+    expect(await client.handle({
+      method: 'resourceRequest', params: { channel: 'ahp-root://', uri, write: true },
+    })).toEqual({});
+  }
 });
 
 it('says running then idle on the changeset', async () => {
@@ -209,6 +335,38 @@ it('says running then idle on the changeset', async () => {
   // sending a client the set it already held to tell it nothing.
   expect(said.some((one) => one.type === 'changeset/contentChanged')).toBe(false);
   expect(said.some((one) => one.type === 'changeset/fileSet')).toBe(false);
+});
+
+/*
+ * VS Code's operation lanes: an identical invocation in flight shares the one
+ * run, and another waits for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L431-L471
+ */
+it('runs an operation asked twice at once once, and one asked differently after it', async () => {
+  const { source, invoked } = scripted();
+  const order: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const invoke = source.invoke as NonNullable<typeof source.invoke>;
+  source.invoke = async (request) => {
+    order.push(`start ${JSON.stringify(request.meta ?? null)}`);
+    if (order.length === 1) await gate;
+    const result = await invoke(request);
+    order.push(`end ${JSON.stringify(request.meta ?? null)}`);
+    return result;
+  };
+  const { client, changeset } = await watching(source);
+  const ask = (meta?: Record<string, unknown>) => client.handle({
+    method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit', ...(meta === undefined ? {} : { _meta: meta }) },
+  });
+  const first = ask({ b: 2, a: 1 });
+  const again = ask({ a: 1, b: 2 });
+  const other = ask({ c: 3 });
+  await settle();
+  release();
+  expect(await Promise.all([first, again, other])).toEqual([{ message: 'did commit' }, { message: 'did commit' }, { message: 'did commit' }]);
+  expect(invoked).toHaveLength(2);
+  expect(order).toEqual(['start {"b":2,"a":1}', 'end {"b":2,"a":1}', 'start {"c":3}', 'end {"c":3}']);
 });
 
 /**
@@ -268,15 +426,21 @@ it('reduces to the same state either way, which is what makes the choice safe', 
   expect(state.files).toEqual(held.files);
 });
 
-it('says a changeset emptied with one action rather than one per file', async () => {
+/*
+ * An emptied changeset is its whole set with no files in it, as VS Code's host
+ * publishes a recompute: `changeset/cleared` is the protocol's word for a
+ * changeset going away.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L2323-L2339
+ */
+it('says a changeset emptied as one content change with no files, as VS Code\'s host', async () => {
   const { source, held } = shifting([one('a.txt'), one('b.txt'), one('c.txt')]);
   const { client, peer: p, changeset } = await watching(source);
   const start = actions(p, changeset).length;
   held.files = [];
   await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'look' } });
   const said = actions(p, changeset).slice(start);
-  expect(said.some((a) => a.type === 'changeset/cleared')).toBe(true);
-  expect(said.some((a) => a.type === 'changeset/fileRemoved')).toBe(false);
+  expect(said.filter((a) => a.type === 'changeset/contentChanged').map((a) => a.files)).toEqual([[]]);
+  expect(said.some((a) => a.type === 'changeset/cleared' || a.type === 'changeset/fileRemoved')).toBe(false);
 });
 
 it('says the status moved without re-sending a list that did not', async () => {
@@ -304,8 +468,11 @@ it('keeps the failure on the operation, and hands it to the next reader', async 
   }));
   expect(broke.message).toContain('git said no');
 
+  // Said as the protocol's ErrorInfo, named and traced, as VS Code says it.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L519-L524
   const last = actions(p, changeset).filter((one) => one.type === 'changeset/operationStatusChanged').pop();
-  expect(last).toMatchObject({ status: 'error', operationId: 'commit', error: { message: 'git said no' } });
+  expect(last).toMatchObject({ status: 'error', operationId: 'commit', error: { errorType: 'Error', message: 'git said no' } });
+  expect(typeof (last?.error as { stack?: unknown } | undefined)?.stack).toBe('string');
 
   // And the next client to look sees it, because the status is the
   // changeset's rather than the reply's.
@@ -314,6 +481,31 @@ it('keeps the failure on the operation, and hands it to the next reader', async 
   };
   const operations = again.snapshot.state.operations;
   expect(operations[0]).toMatchObject({ id: 'commit', status: 'error' });
+});
+
+/*
+ * A list said again after an invocation failed carries the operation as the
+ * source declares it, as VS Code's host builds every list from its providers:
+ * the failure is said by `changeset/operationStatusChanged`, and the next list
+ * replaces it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L206-L219
+ */
+it('says a list again with a failed operation idle, as VS Code\'s host', async () => {
+  const { source } = scripted('git said no');
+  const { client, peer: p, chatUri, changeset } = await watching(source);
+  await refused(client.handle({
+    method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' },
+  }));
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+  });
+  await vi.waitFor(() => { expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true); });
+  await vi.waitFor(() => {
+    const last = actions(p, changeset).filter((one) => one.type === 'changeset/operationsChanged').at(-1);
+    expect((last?.operations as { id: string; status: string }[] | undefined)?.find((one) => one.id === 'commit')?.status).toBe('idle');
+  });
 });
 
 it('hands the source the request\'s _meta and what the host knows, and passes a coded refusal through', async () => {
@@ -346,7 +538,7 @@ it('disables the verbs while a turn is running, and refuses one sent anyway', as
   const { source } = scripted();
   // A second between the echo's chunks, so the turn is still running through
   // every check below however busy the machine is.
-  const { host, client, peer: p, uri, chatUri, changeset } = await watching(source, 1000);
+  const { host, client, peer: p, chatUri, changeset } = await watching(source, 1000);
   await client.handle({
     method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${DIR}`, write: true },
   });
@@ -366,16 +558,64 @@ it('disables the verbs while a turn is running, and refuses one sent anyway', as
   const busy = await refused(client.handle({
     method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' },
   }));
-  // `-32004 TurnInProgress`, not `-32002 ProviderNotFound`: what the client
-  // should do is wait, and the code is the only part of a refusal it branches
-  // on.
-  expect(busy.code).toBe(-32004);
-  expect(busy.message).toContain(uri);
+  // An operation the changeset offers disabled while the turn runs, refused
+  // in VS Code's code and words.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L387-L389
+  expect(busy.code).toBe(-32602);
+  expect(busy.message).toBe(`Operation 'commit' is disabled on changeset ${changeset}`);
+  await host.close();
+});
+
+/*
+ * The verbs are asked again whenever the session's running state flips,
+ * however its turn ended, and said only where the list moved, as the reference
+ * host dispatches them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L367-L375
+ */
+it('gives the verbs back after a turn that ended in an error, and says each list once', async () => {
+  const { source } = scripted();
+  const base = echo({ path: DIR, pace: 0 });
+  const failing: Agent = {
+    ...base,
+    create: (start) => {
+      const session = base.create(start);
+      return {
+        ...session,
+        sendMessage: (turnId) => {
+          start.emit('chat', { type: 'chat/error', turnId, duration: 0, part: { kind: 'error', error: { errorType: 'turnFailed', message: 'no' } } });
+          return undefined;
+        },
+      };
+    },
+  };
+  const { host, client, peer: p, chatUri, changeset } = await watching(source, 0, failing);
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+  });
+  await vi.waitFor(() => {
+    expect(actions(p, chatUri).some((one) => one.type === 'chat/error')).toBe(true);
+  }, { timeout: 3000 });
+  await settle();
+  const lists = actions(p, changeset)
+    .filter((one) => one.type === 'changeset/operationsChanged')
+    .map((one) => (one.operations as { status: string }[]).map((op) => op.status));
+  expect(lists).toEqual([['disabled', 'disabled', 'disabled'], ['idle', 'idle', 'idle']]);
   await host.close();
 });
 
 it('lists the changesets on the session channel, and not on a catalogue row', async () => {
-  const { client, peer: p, uri } = await watching(scripted().source);
+  const { client, peer: p, uri, chatUri } = await watching(scripted().source);
+  // Listed from its first message, run to its end.
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+  });
+  await vi.waitFor(() => {
+    expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true);
+  }, { timeout: 3000 });
 
   // `SessionState.changesets` is declared, and is where a client reads the
   // scopes it may subscribe to. Both of ahpc's readers take it from here.
@@ -402,15 +642,15 @@ it('lists the changesets on the session channel, and not on a catalogue row', as
   const row = listed.items.find((one) => one.resource === 'ahp-session:/one');
   expect(row).toBeDefined();
   expect(row).not.toHaveProperty('changesets');
-  // The diff stat is a different field, is declared on a summary, and stays.
-  expect(row).toHaveProperty('changes');
 
-  // Unread, because a new session starts read and marking it read moves nothing.
+  // Read, because a turn's end left it unread and marking it unread moves nothing.
   client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/isReadChanged', isRead: false } },
+    params: { channel: uri, action: { type: 'session/isReadChanged', isRead: true } },
   });
   await settle();
+  // Past the catalogue's 100 ms debounce, which says a session's moves together.
+  await new Promise((r) => { setTimeout(r, 120); });
   const moved = p.notes
     .filter((n) => n.method === 'root/sessionSummaryChanged')
     .map((n) => n.params as { changes: Record<string, unknown> })

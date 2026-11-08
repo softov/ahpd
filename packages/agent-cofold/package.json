@@ -68,6 +68,7 @@
   "dependencies": {
     "@cofold/agents": "^0.4.0",
     "@cofold/commands": "^0.3.0",
+    "@cofold/config": "^0.3.1",
     "@cofold/model-openai-compat": "^0.2.1",
     "@cofold/store-file": "^0.2.2",
     "@cofold/tools": "^0.4.1"
@@ -91,12 +92,25 @@
       "properties": {
         "model": { "type": "string", "description": "Default model for agents that don't set one." },
         "baseUrl": { "type": "string", "description": "Default OpenAI-compatible endpoint for agents that don't set one." },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "supportsReasoningEffort": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["id"]
+          },
+          "description": "The models at baseUrl, by id, with the thinking levels each accepts in supportsReasoningEffort. Cofold offers the levels it supports."
+        },
         "instructions": { "type": "string", "description": "Default system prompt for agents that don't set one." },
         "computerConfigDir": {
           "anyOf": [{ "type": "string" }, { "const": false }],
           "description": "Cofold configuration directory inside a computer. Defaults to '/ahpd/cofold'. Set to false to keep the computer image's own configuration."
         },
-        "store": { "type": "string", "description": "Folder for each agent's file store, one subfolder per agent. Defaults to '$XDG_DATA_HOME/ahpd/cofold'." },
+        "store": { "type": "string", "description": "Folder for cofold's file store, shared by every agent. Defaults to '$COFOLD_HOME', or '~/.cofold'." },
         "memory": { "type": "boolean", "description": "Keep each agent's store in memory instead of on disk. For tests." },
         "tools": {
           "type": "object",
@@ -132,7 +146,18 @@
         "autoCompactTokens": {
           "type": "integer",
           "minimum": 1,
-          "description": "History size, in estimated tokens, at which a session compacts. Defaults to 80% of the model's context, or of 32000 when the context is unknown, and never goes above that."
+          "description": "History size, in estimated tokens, at which a session compacts. Defaults to the autoCompactAt share of the model's context, or of 32000 when the context is unknown, and never goes above that."
+        },
+        "autoCompactAt": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "The share of the model's listed context, or of 32000, a session compacts at when autoCompactTokens names no lower point, papo's 0.8 by default."
+        },
+        "catalogueTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How long, in milliseconds, the endpoint is given to publish its catalogue before the configured model stands alone, the time VS Code gives a runtime's model catalogue. 15000 by default."
         },
         "hostTools": {
           "type": "boolean",

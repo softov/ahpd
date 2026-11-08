@@ -62,12 +62,9 @@ export { uriOf };
 /**
  * Why this store cannot answer for a URI, in the terms of what it is.
  *
- * This one serves a filesystem, so anything that is not a `file:` URI is not
- * a path it got wrong - it is a URI somebody else was meant to answer. A
- * client publishes its own under `<scheme>://<clientId>/`, and a request for
- * one whose client has hung up arrives here having been routed nowhere. Told
- * as what it is, because `virtual://ahpc-6ec6cf49/hello.txt is not an
- * absolute path` sends whoever reads it looking at their path.
+ * This one serves a filesystem, so a URI of any other scheme is told as one
+ * another store was meant to answer, which is what it is, and a `file:` URI
+ * it cannot read as a path is told as that.
  */
 const why = (uri: string): string => notServedWords(uri) ?? `${uri} is not an absolute path`;
 
@@ -81,20 +78,18 @@ const why = (uri: string): string => notServedWords(uri) ?? `${uri} is not an ab
 export const notServedWords = (uri: string): string | undefined => {
   const scheme = /^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1];
   return scheme !== undefined && scheme !== 'file'
-    ? `${uri} is not this host's to read: nothing here serves ${scheme}:,`
-      + ' and no connected client publishes it'
+    ? `${uri} is not this host's to read: nothing here serves ${scheme}:`
     : undefined;
 };
 
 /**
- * The refusal for a URI no provider and no connected client serves.
- *
- * `-32601` rather than a permission code, because the host having nothing that
- * serves a scheme is not a client being refused - the same answer a provider
- * gets when it does not implement a method.
+ * The refusal for a URI no store serves: NotFound, the code the reference
+ * host answers a resource it has no provider operation for with, which its
+ * client's filesystem reads as a missing file.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95
  */
 export const notServed = (uri: string): RpcError =>
-  new RpcError(-32601, notServedWords(uri) ?? `${uri} is not served here`);
+  new RpcError(NOT_FOUND, notServedWords(uri) ?? `${uri} is not served here`);
 
 /**
  * The path a URI names, as the filesystem knows it.
@@ -372,13 +367,13 @@ async function writeAt(path: string, uri: string, content: Write): Promise<void>
 }
 
 /**
- * Remove one.
+ * Delete one: the protocol's `resourceDelete`.
  *
  * A directory needs `recursive`, and a directory without it is refused rather
  * than emptied: the protocol has the flag so that deleting a tree is
  * something a client asked for in as many words.
  */
-export async function remove(uri: string, recursive = false): Promise<void> {
+export async function erase(uri: string, recursive = false): Promise<void> {
   const path = await writable(uri);
   const found = await stat(path).catch(() => {
     throw new RpcError(NOT_FOUND, `Nothing at ${uri}`);
@@ -599,6 +594,6 @@ export async function watch(
  */
 export const fileResources = (): ResourceStore => ({
   list, read, resolve, complete,
-  write, remove, mkdir, move, copy,
+  write, delete: erase, mkdir, move, copy,
   watch,
 });

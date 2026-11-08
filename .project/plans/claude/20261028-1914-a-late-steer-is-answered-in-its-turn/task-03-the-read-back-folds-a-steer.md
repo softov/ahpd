@@ -71,3 +71,11 @@ The two that guard a chat with no record and a local turn passed before and afte
 The echo and the synthetic Claude cases of a host started again failed: a turn the chat never began read back as its own.
 On task 02's read code the four read-back cases of `agent-claude-late-steer.test.ts` failed: the folded message and each stop text were turns of their own.
 The two end cases of `agent-claude-read-ends.test.ts` failed before the seeded ends: a turn ended before the message inside it.
+
+Undone in part 2026-11-06, by the audit's rows AJ-0085 and P2AJ-0051.
+VS Code's replay starts a turn at every prompt a transcript holds.
+So a turn the record holds no beginning for reads back as its own.
+A steering message the CLI ran late reads back as a turn of its own, as the replay reads it.
+A turn recorded as the same turn as the one before still joins it, as VS Code's host keeps a resumed turn.
+Step 4 follows VS Code's resumed turn: the durations add, and the usage takes the later turn's counts and model and adds both costs.
+The seeded ends of step 8 stay, for a turn read back with its later run inside it.

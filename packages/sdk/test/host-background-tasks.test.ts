@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { actions, createHost, echo, hello, peer, settle } from './support/host.js';
-import type { Agent, BackgroundTask, Start } from '@ahpd/sdk';
+import type { Agent, BackgroundTask, HostOptions, Start } from '@ahpd/sdk';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ahpd-background-')); });
@@ -35,7 +35,7 @@ const task = (over: Partial<BackgroundTask> = {}): BackgroundTask => ({
  * the way: what is under test is the host's half, and a real backend's own
  * idea of a task would only be a second thing to keep true.
  */
-async function opened() {
+async function opened(over: Partial<HostOptions> = {}) {
   const said: string[] = [];
   let start: Start | undefined;
   const base = echo({ path: dir, pace: 0 });
@@ -46,7 +46,7 @@ async function opened() {
       return base.create(given);
     },
   };
-  const host = createHost({ path: dir, agents: [agent], onEvent: (line: string) => { said.push(line); } });
+  const host = createHost({ path: dir, agents: [agent], onEvent: (line: string) => { said.push(line); }, ...over });
   const p = peer();
   const client = host.accept(p);
   await client.handle(hello(['0.9.0']));
@@ -187,17 +187,53 @@ describe('a task a backend reports', () => {
   });
 
   /*
-   * A backend's own background action is this host's action, said as it came,
-   * as VS Code's host says what its agent reports.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
+   * The host is the one builder of a background row, so a row is one shape and
+   * a late subscriber reads it: a backend's own background action is dropped,
+   * with a line in the log, as upstream decided (plan host/115).
    */
-  it('says a background action a backend emitted as it came', async () => {
-    const { p, seam, given } = await opened();
+  it('drops a background action a backend emitted, and logs one line', async () => {
+    const { p, seam, given, said } = await opened();
     expect(seam()).toBeDefined();
-    const work = { kind: 'shell', id: 'drawn-by-the-backend', label: 'x', startedAt: task().startedAt, command: 'x' };
-    given().emit('chat', { type: 'chat/backgroundWorkSet', work });
+    given().emit('chat', {
+      type: 'chat/backgroundWorkSet',
+      work: { kind: 'shell', id: 'drawn-by-the-backend', label: 'x', startedAt: task().startedAt, command: 'x' },
+    });
+    given().emit('chat', { type: 'chat/backgroundWorkRemoved', id: 'drawn-by-the-backend' });
     await settle();
 
-    expect(workActions(p).map((one) => [one.action, one.origin])).toEqual([[{ type: 'chat/backgroundWorkSet', work }, undefined]]);
+    expect(workActions(p)).toEqual([]);
+    expect(said.filter((line) => line.startsWith('dropped chat/backgroundWorkSet'))).toHaveLength(1);
+    expect(said.filter((line) => line.startsWith('dropped chat/backgroundWorkRemoved'))).toHaveLength(1);
+  });
+
+  /*
+   * The daemon's `backendBackgroundWork` at `say`, VS Code's: a backend's own
+   * background action is said as the host's, as VS Code's host dispatches its
+   * agent's actions.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
+   */
+  it('says a background action a backend emitted, where the daemon says them', async () => {
+    const { p, given, said, chatUri } = await opened({ backendBackgroundWork: 'say' });
+    const work = { kind: 'shell', id: 'drawn-by-the-backend', label: 'x', startedAt: task().startedAt, command: 'x' };
+    given().emit('chat', { type: 'chat/backgroundWorkSet', work });
+    given().emit('chat', { type: 'chat/backgroundWorkRemoved', id: 'drawn-by-the-backend' });
+    await settle();
+
+    expect(workActions(p).filter((one) => one.channel === chatUri).map((one) => one.action.type))
+      .toEqual(['chat/backgroundWorkSet', 'chat/backgroundWorkRemoved']);
+    expect(said.filter((line) => line.startsWith('dropped chat/backgroundWork'))).toEqual([]);
+  });
+
+  /*
+   * A chat's action said on the session's channel, which holds no chat, is
+   * not said, as VS Code's host refuses to emit one there.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2942-L2945
+   */
+  it('says nothing of a chat\'s action a backend put on its session\'s channel, as VS Code\'s host', async () => {
+    const { p, uri, given } = await opened();
+    const work = { kind: 'shell', id: 'astray', label: 'x', startedAt: task().startedAt, command: 'x' };
+    given().emit('session', { type: 'chat/backgroundWorkSet', work } as never);
+    await settle();
+    expect(workActions(p).filter((one) => one.channel === uri)).toEqual([]);
   });
 });

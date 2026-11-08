@@ -518,11 +518,18 @@ describe('the session\'s agent writes the words', () => {
  * tested is the limit and not its size: the same code runs at any value, and
  * the two minutes themselves are a number in one place.
  */
+/*
+ * Long enough for the throwaway session's first turn to be handed to its
+ * model, which waits on the checkpoint of the folder it found: git is slow on
+ * Windows.
+ */
+const STUCK_MS = 1000;
+
 describe('a turn that never ends', () => {
   it('stops a model that has not answered in time, and commits under the session title', async () => {
     const dir = repository();
     const { agent, asked, stopped } = stuck(dir);
-    const { p, config, say, commit } = await studio(dir, agent, { changeWordsTimeoutMs: 50 });
+    const { p, config, say, commit } = await studio(dir, agent, { changeWordsTimeoutMs: STUCK_MS });
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');
     await say('Fix the flaky kqueue build');
     await config({ mode: 'model', provider: 'voice', model: 'fast' });
@@ -544,7 +551,7 @@ describe('a turn that never ends', () => {
   it('stops an agent that has not answered in time, and the side chat stays', async () => {
     const dir = repository();
     const { agent, asked, stopped } = stuck(dir, { chats: { sideChat: true } });
-    const { p, config, say, commit } = await studio(dir, agent, { changeWordsTimeoutMs: 50 });
+    const { p, config, say, commit } = await studio(dir, agent, { changeWordsTimeoutMs: STUCK_MS });
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');
     await say('Fix the flaky kqueue build');
     await config({ mode: 'agent' });

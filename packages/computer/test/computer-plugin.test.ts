@@ -13,9 +13,10 @@ import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { describePlugin, loadPlugins, pluginIdsOf } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { dockerRuntime } from '../src/runtime.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { NestedHost, NestedStart, NestedStarted } from '../../sdk/src/types/computers.js';
-import type { HostOptions, HostTool, NodeChange, NodeRegistry, ToolCall } from '../../sdk/src/types/host.js';
+import type { HostOptions, HostTool, NodeChange, NodeRegistry } from '../../sdk/src/types/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Usage, UsageEntry, UsageTotal } from '../../sdk/src/types/usage.js';
 
@@ -76,7 +77,7 @@ const load = async (
   return result;
 };
 
-const at = {} as ToolCall;
+const at = hostCall();
 const tool = (tools: HostTool[], name: string) => tools.find((one) => one.definition.name === name) as HostTool;
 
 it('serves computer: through the host and offers the three tools', async () => {
@@ -931,7 +932,7 @@ it('will not read, stop or destroy a container it did not make', async () => {
   const provider = options.resourceProviders?.computer as {
     read(uri: string): Promise<{ data: string }>;
     write(uri: string, content: { data: string; encoding: string }): Promise<void>;
-    remove(uri: string): Promise<void>;
+    delete(uri: string): Promise<void>;
     list(uri: string): Promise<{ name: string }[]>;
   };
 
@@ -940,7 +941,7 @@ it('will not read, stop or destroy a container it did not make', async () => {
   await expect(provider.read('computer://someone-elses/status')).rejects.toThrow(/No computer resource/);
   await expect(provider.write('computer://someone-elses/state', { data: 'stopped', encoding: 'utf-8' }))
     .rejects.toThrow(/No computer resource/);
-  await expect(provider.remove('computer://someone-elses')).rejects.toThrow(/No computer resource/);
+  await expect(provider.delete('computer://someone-elses')).rejects.toThrow(/No computer resource/);
 
   // And nothing was run at it: the refusal is this host's, not docker's.
   const held = JSON.parse(readFileSync(state, 'utf-8')) as { calls: string[][] };

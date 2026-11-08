@@ -8,7 +8,7 @@ import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import type { Bag, Emit, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
-import { cofoldSession, compactionNotice, harnessConfig, storeOf, turnsOf } from '../src/index.js';
+import { cofoldSession, compactionNotification, harnessConfig, storeOf, turnsOf } from '../src/index.js';
 import type { CofoldOptions, Held } from '../src/agent.js';
 import type { SessionContext } from '../src/context.js';
 import { AUTO_COMPACT_AT, DEFAULT_CONTEXT_TOKENS, createTurnAgent } from '../src/turnagent.js';
@@ -19,9 +19,10 @@ import { AUTO_COMPACT_AT, DEFAULT_CONTEXT_TOKENS, createTurnAgent } from '../src
  * No network and no real model: the adapter is a script, the store is in
  * memory, and the catalogue is a hand-made `Held` that says what one model's
  * window is. What this checks is the point a turn is built with - the
- * configured `autoCompactTokens`, never above 80% of the window the endpoint
- * listed - and that crossing it makes cofold write a summary into the
- * conversation rather than sending a history the model cannot take.
+ * configured `autoCompactTokens`, never above the `autoCompactAt` share of the
+ * window the endpoint listed, 80% by default - and that crossing it makes
+ * cofold write a summary into the conversation rather than sending a history
+ * the model cannot take.
  */
 
 let home: string;
@@ -45,8 +46,8 @@ const CONFIG = {
 };
 
 const put = (value: unknown): void => {
-  mkdirSync(join(home, 'cofold'), { recursive: true });
-  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify(value));
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify(value));
 };
 
 /** The window the catalogue listed for the configured model. */
@@ -195,6 +196,17 @@ it('caps a configured point at 80% of the window', async () => {
   expect(agent.context.autoCompactTokens).toBe(8000);
 });
 
+it('compacts at the share the record\'s autoCompactAt names, and caps a configured point there', async () => {
+  put(CONFIG);
+  const shared = agentOn({ ...CONFIG, memory: true, autoCompactAt: 0.5 }, holding(createFakeModel({ script: [{ text: 'hi' }] }), WINDOW));
+  expect(shared.context.autoCompactTokens).toBe(Math.floor(WINDOW * 0.5));
+  const capped = agentOn(
+    { ...CONFIG, memory: true, autoCompactAt: 0.5, autoCompactTokens: 9000 },
+    holding(createFakeModel({ script: [{ text: 'hi' }] }), WINDOW),
+  );
+  expect(capped.context.autoCompactTokens).toBe(Math.floor(WINDOW * 0.5));
+});
+
 it('holds a session with no catalogue at cofold\'s own default, capped', async () => {
   put(CONFIG);
   const plain = agentOn({ ...CONFIG, memory: true });
@@ -266,7 +278,7 @@ it('says a compaction as one notice rather than as the model\'s answer', async (
   // As the protocol declares a notice: its kind and what it says, and no id.
   expect(Object.keys(notices[0] ?? {}).sort()).toEqual(['content', 'kind']);
   expect(notices[0]?.content).toBe(
-    compactionNotice({ before: Number(compacted?.estimatedTokens), after: Number(compacted?.afterTokens) }),
+    compactionNotification({ before: Number(compacted?.estimatedTokens), after: Number(compacted?.afterTokens) }),
   );
 
   /*
@@ -294,10 +306,7 @@ it('runs /compact as a command, and reads it back as the turn drew it', async ()
   const model = createFakeModel({ script: [{ text: 'first answer' }, { text: 'the summary so far' }], stream: true });
   const { store, view } = await run({ ...CONFIG, memory: true }, holding(model, WINDOW), ['hello', '/compact']);
 
-  /*
-   * One notice, for a compaction the person asked for: the command's own
-   * "Compacted" says the same thing again, and "automatically" would be wrong.
-   */
+  // One notice: the command's own "Compacted" says the same thing again.
   const notices = drawn(view).filter((part) => part.kind === 'systemNotification').map((part) => part.content);
   expect(notices).toHaveLength(1);
   expect(notices[0]).toMatch(/^Context compacted: \d+ tokens to \d+\.$/);
@@ -317,11 +326,13 @@ it('runs /compact as a command, and reads it back as the turn drew it', async ()
   expect(noticesRead).toEqual(notices);
 });
 
-it('words the notice the way the Claude backend does', () => {
-  expect(compactionNotice({ before: 9000, after: 2000 })).toBe('Context compacted automatically: 9000 tokens to 2000.');
-  expect(compactionNotice()).toBe('Context compacted automatically.');
-  expect(compactionNotice({ before: 9000, after: 2000 }, { asked: true })).toBe('Context compacted: 9000 tokens to 2000.');
-  expect(compactionNotice(undefined, { asked: true })).toBe('Context compacted.');
+/*
+ * The notice in cofold's own app's words, papo's `compactedNotice`.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/blocks.ts#L50-L55
+ */
+it('words the notice as cofold\'s own app does', () => {
+  expect(compactionNotification({ before: 9000, after: 2000 })).toBe('Context compacted: 9000 tokens to 2000.');
+  expect(compactionNotification()).toBe('Context compacted: the conversation so far was folded into this summary; the model continues from it.');
 });
 
 it('runs no summary step for a session that stays under the point', async () => {

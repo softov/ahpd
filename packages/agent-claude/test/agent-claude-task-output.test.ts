@@ -42,7 +42,7 @@ const sdk = vi.hoisted(() => {
   return state;
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: () => {
     const feed = sdk.feed;
@@ -73,7 +73,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 const { createSession } = await import('../src/session.js');
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** A terminal that keeps what it was told, in order. */
@@ -183,6 +183,77 @@ describe('the poll', () => {
     await vi.advanceTimersByTimeAsync(5000);
 
     expect(terminal.calls).toEqual([['append', 'one']]);
+  });
+
+  /*
+   * As VS Code's output monitor polls a running command: 500 ms to the first
+   * read after the one made at once, each wait twice the last up to 10 s, and
+   * 500 ms again once output comes after two reads in a row found none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/terminalContrib/chatAgentTools/browser/tools/monitoring/outputMonitor.ts#L478-L500
+   */
+  it('waits 500 ms, then twice as long each read up to 10 s, and 500 ms again when output follows a quiet spell', async () => {
+    const terminal = fakeTerminal();
+    const start = Date.now();
+    const at: number[] = [];
+    // Five bytes at the first read, nothing more for the next four, then four more.
+    const sizes = [5, 5, 5, 5, 5, 9];
+    const poll = pollTaskOutput({
+      taskId: 't-sleep',
+      terminal,
+      read: async () => {
+        const size = sizes[Math.min(at.length, sizes.length - 1)] ?? 0;
+        at.push(Date.now() - start);
+        return { output: 'x'.repeat(size), total_bytes: size, truncated: false };
+      },
+    });
+    await vi.advanceTimersByTimeAsync(17_000);
+    poll.cancel();
+
+    expect(at).toEqual([0, 500, 1500, 3500, 7500, 15_500, 16_000, 17_000]);
+  });
+
+  it('waits the first and longest waits the record names', async () => {
+    const terminal = fakeTerminal();
+    const start = Date.now();
+    const at: number[] = [];
+    const poll = pollTaskOutput({
+      taskId: 't-sleep',
+      terminal,
+      firstWaitMs: 100,
+      longestWaitMs: 300,
+      read: async () => {
+        at.push(Date.now() - start);
+        return { output: 'x', total_bytes: 1, truncated: false };
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    poll.cancel();
+
+    // 100 first, then 200, then 300 and no longer.
+    expect(at.slice(0, 5)).toEqual([0, 100, 300, 600, 900]);
+  });
+
+  it('counts a shell quiet after the reads the record\'s taskOutputQuietReads names', async () => {
+    const terminal = fakeTerminal();
+    const start = Date.now();
+    const at: number[] = [];
+    // Five bytes, nothing more for one read, then four more.
+    const sizes = [5, 5, 9];
+    const poll = pollTaskOutput({
+      taskId: 't-sleep',
+      terminal,
+      quietReads: 1,
+      read: async () => {
+        const size = sizes[Math.min(at.length, sizes.length - 1)] ?? 0;
+        at.push(Date.now() - start);
+        return { output: 'x'.repeat(size), total_bytes: size, truncated: false };
+      },
+    });
+    await vi.advanceTimersByTimeAsync(3000);
+    poll.cancel();
+
+    // One quiet read is a quiet spell, so the output after it brings 500 ms back.
+    expect(at).toEqual([0, 500, 1500, 2000, 3000]);
   });
 });
 

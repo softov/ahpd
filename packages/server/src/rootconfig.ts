@@ -9,6 +9,12 @@
  * A write is checked before the file is touched, so a value this daemon would
  * refuse at the next start never reaches it - and is said in one message naming
  * the key, which is the `rejectionReason` the client that pushed it is given.
+ *
+ * The daemon's `rootConfigWrite` says how an object a client sends is written:
+ * `merged`, the default, over what the key holds, a `null` taking a key back
+ * and a `<set>` leaving a credential as it is; or `replaced`, each top-level
+ * key's value replaced whole, as the protocol's reducer applies a
+ * `root/configChanged` (types/channels-root/reducer.ts L26-L36 at spec v1.0.0).
  */
 
 import type { Field, JsonSchema } from '@cofold/commands';
@@ -29,7 +35,7 @@ import { optionsSchemaLoaded } from './plugins.js';
  * left out on purpose: a form that could change them would be a form that could
  * take the door off its hinges and leave nothing behind that would open it.
  */
-const DAEMON_KEYS = ['paths', 'port', 'host', 'httpApi', 'modelApi', 'routes', 'modelProxy', 'updateCheck', 'advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers'] as const;
+const DAEMON_KEYS = ['paths', 'port', 'host', 'httpApi', 'modelApi', 'routes', 'modelProxy', 'updateCheck', 'advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'unofferedModel', 'workspacelessFolder', 'rootOwner', 'turnSenders', 'steerReadBack', 'backendBackgroundWork', 'agentOrchestrationLimitsScope', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers'] as const;
 
 /**
  * The keys this daemon can apply while it runs.
@@ -37,7 +43,7 @@ const DAEMON_KEYS = ['paths', 'port', 'host', 'httpApi', 'modelApi', 'routes', '
  * Every other key is written to the file and answered `restartNeeded`, which is
  * the notice in root state that a setting is not in force yet.
  */
-const LIVE = new Set<string>(['advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers']);
+const LIVE = new Set<string>(['advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'unofferedModel', 'workspacelessFolder', 'rootOwner', 'turnSenders', 'backendBackgroundWork', 'agentOrchestrationLimitsScope', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers']);
 
 /** The keys that are `true`, `false` or a listener's `{ port, host }`. */
 const LISTENERS = new Set<string>(['httpApi', 'modelApi']);
@@ -378,9 +384,12 @@ export function daemonRootConfig(
            * or a header on one is answered as `<set>`: a client that sends the
            * map back is saying the credentials are left as they are, and
            * writing what it was shown would put the word over every one of them.
+           * Under `rootConfigWrite` `replaced` the map sent is the map, a `<set>`
+           * in it taken out, as the protocol's reducer replaces each top-level
+           * key's value whole.
            */
           if (key === 'mcpServers') {
-            const merged = mergedServers(held[key], askedOf(value));
+            const merged = options.rootConfigWrite === 'replaced' ? askedOf(value) : mergedServers(held[key], askedOf(value));
             if (merged === undefined || Object.keys(merged as Record<string, unknown>).length === 0) delete held[key];
             else held[key] = merged;
             continue;
@@ -437,8 +446,9 @@ export function daemonRootConfig(
         if (asked.options !== undefined) {
           // Over what the entry holds rather than instead of it: a client that
           // was never shown a credential sends it back as `<set>`, and an
-          // option it did not name is not one it decided to remove.
-          const merged = mergedWith(entry.options, given);
+          // option it did not name is not one it decided to remove. Under
+          // `rootConfigWrite` `replaced` what was sent is the options whole.
+          const merged = options.rootConfigWrite === 'replaced' ? mergedWith({}, given) : mergedWith(entry.options, given);
           if (merged === undefined || Object.keys(merged as Record<string, unknown>).length === 0) delete entry.options;
           else entry.options = merged;
         }

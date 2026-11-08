@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
 import { defaultStoreRoot, modelOf, modelReferenceOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
-import { cofoldTools, describe, ruleName } from './tools.js';
+import { cofoldTools, describe } from './tools.js';
 import type { ClientToolCall, ClientToolRelay } from './tools.js';
 import type { HarnessConfig } from './config.js';
 import type { SessionContext } from './context.js';
@@ -62,11 +62,13 @@ const editPathOf = (workspace: string, tool: Tool<any, any>, input: unknown): st
 };
 
 /**
- * The share of a model's window a session folds its history at.
+ * The share of a model's window a session folds its history at, unless the
+ * record's `autoCompactAt` says otherwise.
  *
  * The same 80% papo keeps. A summary is written by asking the model, so the
  * step that writes it needs room of its own, and a point at the window itself
  * would fold a history the summary step could not fit either.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/agent.ts#L11
  */
 export const AUTO_COMPACT_AT = 0.8;
 
@@ -105,9 +107,6 @@ const modeOf = (values: Record<string, unknown>): PermissionMode => {
     ? named as PermissionMode
     : 'auto';
 };
-
-/** What the model reads when a tool the rule names is refused without a question. */
-const asksEveryTime = (name: string): string => `${name} asks every time and the mode is dontAsk`;
 
 /**
  * The cofold agent id.
@@ -194,7 +193,7 @@ export interface TurnAgent {
 
 export const createTurnAgent = (
   ctx: SessionContext,
-): TurnAgent & { methods: Pick<Session, 'toolCallOwner' | 'completeToolCall' | 'clientGone'> } => {
+): TurnAgent & { methods: Pick<Session, 'toolCallOwner' | 'completeToolCall'> } => {
   const { options, start, harness, where, store } = ctx;
 
   /** A writing call is about to run: report the file as it is now. */
@@ -222,8 +221,9 @@ export const createTurnAgent = (
    *
    * Nothing on this host executes an owner-bound tool, so this is the whole of
    * its execution: a call is held here from the moment cofold reports it
-   * running until the owning client settles it through `completeToolCall`, or
-   * goes away and `clientGone` fails it. Every path that ends a call settles
+   * running until it is settled through `completeToolCall`, by the owning
+   * client or by the host failing a call a gone client owes, as VS Code's host
+   * does. Every path that ends a call settles
    * its promise, because a run waiting on one nothing can settle is a turn
    * that hangs for ever. It also raises the session entry a client reads and
    * times a call out, which is what the map this replaces did neither of - see
@@ -233,9 +233,6 @@ export const createTurnAgent = (
     chat: start.chatUri,
     emit: start.emit,
     ...(start.clientToolTimeoutMs === undefined ? {} : { timeoutMs: start.clientToolTimeoutMs }),
-    providers: (name) => ctx.offered
-      .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
-      .map((one) => String(one.owner)),
   });
 
   /** Fail every held call, and forget each one's promise. */
@@ -249,19 +246,22 @@ export const createTurnAgent = (
    *
    * The tool is named as the client announced it - `openFile`, not the
    * `probe__openFile` the model was offered - because that is the name its
-   * failure is reported under. Its row is titled by that name: a subject is
-   * the run's own tool declaring what it acts on, and a client's tool is
-   * announced to this host without one.
+   * failure is reported under, and the entry is drawn as the chat's row draws
+   * the call: by the title the tool was offered under, else that name. Its
+   * line is that too: a subject is the run's own tool declaring what it acts
+   * on, and a client's tool is announced to this host without one.
    */
   const openedCall = (call: ClientToolCall): void => {
+    const announced = bareName(call.name, call.contributor);
+    const shown = ctx.offered.find((one) => one.definition.name === call.name)?.definition.title ?? announced;
     calls.open({
       turnId: String(ctx.active?.id ?? ''),
-      owner: call.owner,
+      owner: call.contributor,
       toolCall: {
         toolCallId: call.callId,
-        toolName: bareName(call.name, call.owner),
-        displayName: call.name,
-        invocationMessage: describe(call.name),
+        toolName: announced,
+        displayName: shown,
+        invocationMessage: describe(shown),
         confirmed: 'not-needed',
         toolInput: JSON.stringify(call.input),
       },
@@ -344,14 +344,14 @@ export const createTurnAgent = (
      * How much a step may carry, and when cofold folds the history instead.
      *
      * The window is what the endpoint published for the model in force. The
-     * point is the configured one, never above `AUTO_COMPACT_AT` of that
-     * window: a session that folded at the window itself would write a summary
-     * whose own step no longer fits. Unset, the point is that share, so a
-     * session nobody configured still folds its history rather than running
-     * into the model's ceiling part-way through a turn.
+     * point is the configured one, never above the record's `autoCompactAt`
+     * share of that window: a session that folded at the window itself would
+     * write a summary whose own step no longer fits. Unset, the point is that
+     * share, so a session nobody configured still folds its history before it
+     * runs into the model's ceiling part-way through a turn.
      */
     const maxTokens = windowOf(options, values, harness, ctx.held);
-    const cap = Math.floor(maxTokens * AUTO_COMPACT_AT);
+    const cap = Math.floor(maxTokens * (options.autoCompactAt ?? AUTO_COMPACT_AT));
     const autoCompactTokens = options.autoCompactTokens === undefined
       ? cap
       : Math.min(options.autoCompactTokens, cap);
@@ -390,27 +390,10 @@ export const createTurnAgent = (
        * order, because cofold runs this hook before it announces the call.
        */
       hooks: {
-        beforeTool: async ({ call, tool, run }) => {
+        beforeTool: ({ call, tool }) => {
           const path = editPathOf(where, tool, call.input);
           if (path !== undefined) announceEdit(call.callId, path);
-          if (start.getAutoApproval?.('tool', ruleName(ctx.offered, call.name)) !== 'ask') {
-            return { decision: 'allow' };
-          }
-          /*
-           * A matched call asks in every mode. `dontAsk` is the one mode that
-           * answers a question by refusing it, so the refusal is made here
-           * rather than left to the policy, which allows a tool it sees no
-           * reason to ask about.
-           */
-          if (modeOf(values) === 'dontAsk') return { decision: 'deny', reason: asksEveryTime(call.name) };
-          /*
-           * cofold answers an ask from the approval it remembered at
-           * `approvals/<session>/<tool>`, and a hook's `approval` is skipped by
-           * one. The entry goes, so the question is put again however the tool
-           * was allowed for the session before the rule named it.
-           */
-          await run.kv.agent.delete(`approvals/${run.sessionId}/${tool.name}`);
-          return { decision: 'approval' };
+          return { decision: 'allow' };
         },
         afterTool: ({ call, output }) => {
           settleEdit(call.callId);
@@ -455,17 +438,6 @@ export const createTurnAgent = (
        * finished twice.
        */
       completeToolCall: (toolCallId, clientId, result) => calls.complete(toolCallId, clientId, result),
-
-      /**
-       * A client that was running tool calls here has gone.
-       *
-       * Its outstanding calls are failed rather than left open: the run is
-       * awaiting a promise that nothing can settle any more, and a turn that
-       * hangs for ever is worse than a tool that says the client went. The
-       * message is the tool result the model reads, which is why it names the
-       * tool as well as the client.
-       */
-      clientGone: (clientId) => { calls.gone(clientId); },
     },
   };
 };

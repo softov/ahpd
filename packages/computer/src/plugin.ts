@@ -12,7 +12,8 @@ import { scopeOf } from './reference.js';
 import { madeAgain, namedAgain, revealed, scopedTo, vaultNamed, withDefaults } from './secrets.js';
 import type { VaultRead } from './secrets.js';
 import { absoluteOnHost, manifestOf } from './manifest.js';
-import { ensureJoined, ensureParts, readParts, refusedWithout } from './parts.js';
+import { ensureJoined, ensureParts, PART_VOLUME_SWEEP_DELAY_MS, readParts, refusedWithout, requestedVolume } from './parts.js';
+import type { Part } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
 import { SequencerByKey, adoptedDevContainer, disposableOf, dockerRuntime, hostOf, isRunning, machineDirectory, madeUnderBind, profileOf, queue, sessionOf, stateVolumeOf, within } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, Machine, MachineSpec } from './runtime.js';
@@ -673,7 +674,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * than anything a machine holds, and an operator who reaches two runtimes
    * through one proxy or one agent says so once.
    */
-  const sshed = ssh === undefined ? undefined : sshRuntime({ ...ssh, ...(env === undefined ? {} : { env }) });
+  const sshed = ssh === undefined ? undefined : sshRuntime({ ...ssh, ...(env === undefined ? {} : { env }), log: noted });
 
   /*
    * One Docker for each profile that names a box, reached through Docker's own
@@ -782,7 +783,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     // A template's parts come out of the joined image on this host's Docker.
     parts: partsFromDocker(
       { command, ...(args === undefined ? {} : { args }), ...(env === undefined ? {} : { env }) },
-      async () => (await ensureJoined({ runtime: dockered })).tag,
+      async () => (await ensureJoined({ runtime: dockered, log: noted })).tag,
     ),
     log: noted,
   });
@@ -846,7 +847,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(host.hostId === undefined ? {} : { hostId: host.hostId }),
     parts: partsFromDocker(
       { command, ...(args === undefined ? {} : { args }), ...(env === undefined ? {} : { env }) },
-      async () => (await ensureJoined({ runtime: dockered })).tag,
+      async () => (await ensureJoined({ runtime: dockered, log: noted })).tag,
     ),
     log: noted,
   });
@@ -1104,6 +1105,25 @@ export const apply: Plugin['apply'] = (host, options) => {
   reconciling.unref?.();
   host.registerClose(() => { clearInterval(reconciling); });
 
+  /*
+   * The part volumes of versions the versions file does not name, removed
+   * from each Docker this plugin makes machines on once no machine has used
+   * them for a week, half a minute after the plugin starts, as VS Code cleans
+   * its SDK cache once startup's own work is out of the way. A file that
+   * cannot be read names nothing to keep, so nothing is removed.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L241-L242
+   */
+  const sweeping = setTimeout(() => {
+    let named: Part[];
+    try { named = readParts(); }
+    catch { return; }
+    for (const docker of [dockered, ...Object.values(farDockers)]) {
+      docker.removeUnusedPartVolumes?.((volume) => requestedVolume(volume, named)).catch(() => { /* the next start sweeps again */ });
+    }
+  }, PART_VOLUME_SWEEP_DELAY_MS);
+  sweeping.unref?.();
+  host.registerClose(() => { clearTimeout(sweeping); });
+
   /**
    * The runtime, with a stretch around every change of state, and the computer
    * channel refreshed after each.
@@ -1157,26 +1177,26 @@ export const apply: Plugin['apply'] = (host, options) => {
       const proxmox = key !== undefined && proxmoxProfiles[key] !== undefined;
       if (!proxmox && server !== undefined && gate !== undefined) await gate.requireOn(server, vm ? ['kvm', 'libvirt', 'libvirtAccess'] : ['docker', 'dockerAccess']);
       /*
-       * The parts the machine asks for, built before it is made. One that will
-       * not build is left out with a line naming it and the build's reason,
+       * The parts the machine asks for, loaded before it is made. One that will
+       * not load is left out with a line naming it and the load's reason,
        * and the machine is made with the rest: only a session needing the part
        * is refused, by the label that does not name it. A machine made for one
        * session whose own agent needs the part is not made at all, as
        * `refusedWithout` decides.
        *
-       * Built on the Docker that mounts them: a machine on a box's Docker
+       * Loaded on the Docker that mounts them: a machine on a box's Docker
        * mounts a part by its image there, which this host's Docker cannot give.
        */
       let spec = asked;
-      // A VM's parts are what its template carries, and none is built for one.
+      // A VM's parts are what its template carries, and none is loaded for one.
       if (!vm && asked.partsAsked !== undefined && asked.partsAsked.length > 0) {
         const far = key === undefined ? undefined : farValues[key];
         const builder = far === undefined ? dockered : computerRouter.runtimes[far] ?? dockered;
-        const built = await ensureParts(asked.partsAsked, { runtime: builder });
+        const built = await ensureParts(asked.partsAsked, { runtime: builder, log: noted });
         /*
          * A failed part whose need names a fallback has that host mount in its
-         * place, and the machine counts it as had: it is labelled `<id>@host`
-         * and no session needing it is refused.
+         * place, and the machine counts it as had: its `ahpd.parts` label names
+         * it at the version `host`, and no session needing it is refused.
          */
         const standIns = built.failed.flatMap((one) => {
           const stand = asked.partFallbacks?.find((held) => held.part === one.id);
@@ -1186,10 +1206,10 @@ export const apply: Plugin['apply'] = (host, options) => {
         const refused = refusedWithout(asked, failed.map((one) => one.id));
         if (refused.length > 0) {
           const said = failed.filter((one) => refused.includes(one.id)).map((one) => `${one.id}: ${one.reason}`).join('; ');
-          throw new Error(`${asked.name} is not made, because ${refused.length === 1 ? 'the part' : 'the parts'} ${refused.join(', ')} this session's agent needs could not be built (${said})`);
+          throw new Error(`${asked.name} is not made, because ${refused.length === 1 ? 'the part' : 'the parts'} ${refused.join(', ')} this session's agent needs could not be loaded (${said})`);
         }
         for (const one of failed) noted(`${asked.name} is made without the part ${one.id}: ${one.reason}`);
-        for (const one of standIns) noted(`${asked.name} is made with ${one.source} mounted at ${one.target} in place of the part ${one.part}, which could not be built: ${one.reason}`);
+        for (const one of standIns) noted(`${asked.name} is made with ${one.source} mounted at ${one.target} in place of the part ${one.part}, which could not be loaded: ${one.reason}`);
         spec = {
           ...asked,
           parts: built.made,

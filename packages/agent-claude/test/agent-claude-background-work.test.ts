@@ -51,9 +51,13 @@ const sdk = vi.hoisted(() => {
   return state;
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  query: ({ options }: { options: Record<string, unknown> }) => {
+  query: ({ prompt, options }: { prompt: unknown; options: Record<string, unknown> }) => {
+    // The CLI reads every prompt it is handed, which is when a turn's prompt leaves the queue.
+    if (typeof prompt === 'object' && prompt !== null && Symbol.asyncIterator in prompt) {
+      void (async () => { for await (const _ of prompt as AsyncIterable<unknown>) { /* read */ } })();
+    }
     sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
     sdk.hooks = options.hooks as typeof sdk.hooks;
     const feed = sdk.feed;
@@ -88,7 +92,7 @@ const fixture = (name: string): Record<string, unknown>[] => readFileSync(
 ).split('\n').filter((line) => line.trim() !== '').map((line) => JSON.parse(line) as Record<string, unknown>);
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** What a test reads back: the lead chat's actions and each worker chat's. */
@@ -138,7 +142,9 @@ async function open(seam = true, turn = true): Promise<Opened> {
     chatUri: 'ahp-chat:/bg',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-bg-')),
     emit: (_channel, action) => { main.push(action as Bag); },
-    ...(seam ? { subagent } : {}),
+    // The host's name for a worker's chat before it opens, beside the seam
+    // that opens it, as a host hands both.
+    ...(seam ? { subagent, subagentChatOf: (toolCallId: string) => subagentChatUri(session, toolCallId) } : {}),
     backgroundTasks: {
       set: (chat, task) => { tasks.set.push({ chat, task }); },
       remove: (chat, id) => { tasks.remove.push({ chat, id }); },
@@ -539,11 +545,8 @@ it('is busy while the Stop hook lists a session cron', async () => {
 
 it('keeps the hooks the session already had', async () => {
   await open();
-  // The shell hook, then the rule hook that every tool reaches.
-  expect(sdk.hooks?.PreToolUse).toEqual([
-    { matcher: 'Bash', hooks: [expect.any(Function)] },
-    { hooks: [expect.any(Function)], timeout: 24 * 60 * 60 },
-  ]);
+  // None before a tool runs: a call is put to a person when the CLI asks about it.
+  expect(sdk.hooks?.PreToolUse).toBeUndefined();
   expect(sdk.hooks?.UserPromptSubmit).toEqual([{ hooks: [expect.any(Function)] }]);
   expect(sdk.hooks?.Stop).toEqual([{ hooks: [expect.any(Function)] }]);
 });
@@ -574,14 +577,17 @@ const submitted = async (): Promise<unknown[]> => {
 it('gives a turn the instructions the host asked for, and nothing once it ends', async () => {
   const { session } = await open(true, false);
   const words = ['<remote_session_origin>', 'report back', '</remote_session_origin>'];
-  // Registered from the start and nothing to give: no turn has begun.
-  expect(await submitted()).toEqual([{}]);
 
-  // A turn the host said nothing about, which is every ordinary one.
+  // A turn the host said nothing about, which is every ordinary one: the hook
+  // is registered with the CLI that turn starts, and has nothing to give.
   session.sendMessage('t-plain', 'hello');
   await settle();
   expect(await submitted()).toEqual([{}]);
   await session.abort();
+  await settle();
+  // The interrupted CLI ends the stopped turn with a result of its own, as the
+  // real one does, and the next prompt goes out behind it.
+  sdk.push({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: [], duration_ms: 1 });
   await settle();
 
   let asked = 0;

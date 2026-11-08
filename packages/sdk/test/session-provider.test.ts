@@ -83,7 +83,10 @@ function late(provider = 'echo'): Agent {
 }
 
 const uri = 'ahp-session:/made';
-const chatUri = chatUriFor(uri);
+
+/** The chat the host minted for a session, read off its state as a client reads it. */
+const minted = async (client: { handle(request: unknown): Promise<unknown> }, session = uri): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 
 /**
  * The example backend, which keeps each chat under the id it was handed.
@@ -169,7 +172,7 @@ it('records the harness a session is resumed on after a restart', async () => {
   await first.client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   first.client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    params: { channel: await minted(first.client), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await first.client.handle({ method: 'disposeSession', params: { channel: uri } });
@@ -184,7 +187,7 @@ it('records the harness a session is resumed on after a restart', async () => {
   await second.client.handle({ method: 'listSessions', params: { channel: ROOT } });
   second.client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
+    params: { channel: await minted(second.client), action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
   await settle();
   expect(store.provider('made')).toBe('echo');
@@ -199,12 +202,12 @@ it('records the harness a fork was cut on, under the id the new transcript is wr
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    params: { channel: await minted(client), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await client.handle({
     method: 'createChat',
-    params: { channel: uri, chat: 'ahp-chat:/copy', source: { kind: 'fork', chat: chatUri, turnId: 't1' } },
+    params: { channel: uri, chat: 'ahp-chat:/copy', source: { kind: 'fork', chat: await minted(client), turnId: 't1' } },
   });
   await settle();
   await talk(client, 'ahp-chat:/copy', 't2');
@@ -219,10 +222,10 @@ it('records a fork under its own id once the first turn that names it ends', asy
   const { client } = serving(store, [late()]);
   await settle();
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-  await talk(client, chatUri, 't1');
+  await talk(client, await minted(client), 't1');
   await client.handle({
     method: 'createChat',
-    params: { channel: uri, chat: 'ahp-chat:/copy', source: { kind: 'fork', chat: chatUri, turnId: 't1' } },
+    params: { channel: uri, chat: 'ahp-chat:/copy', source: { kind: 'fork', chat: await minted(client), turnId: 't1' } },
   });
   await settle();
 
@@ -246,7 +249,7 @@ it('records a session the host named itself under the id its backend picks', asy
   expect(store.provider('plain')).toBe('echo');
   expect(store.provider('own-plain')).toBeUndefined();
 
-  await talk(client, chatUriFor('ahp-session:/plain'), 't1');
+  await talk(client, await minted(client, 'ahp-session:/plain'), 't1');
   expect(store.provider('own-plain')).toBe('echo');
 });
 
@@ -256,12 +259,12 @@ it('records the transcript id once, and writes nothing on the turns after', asyn
   await settle();
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/plain', provider: 'echo' } });
   await settle();
-  await talk(client, chatUriFor('ahp-session:/plain'), 't1');
+  await talk(client, await minted(client, 'ahp-session:/plain'), 't1');
   expect(store.writes).toEqual(['plain', 'own-plain']);
 
   // Every turn ends the same way, and the answer does not change: a store
   // rewritten per turn is a store being written to for nothing.
-  await talk(client, chatUriFor('ahp-session:/plain'), 't2');
+  await talk(client, await minted(client, 'ahp-session:/plain'), 't2');
   expect(store.writes).toEqual(['plain', 'own-plain']);
 });
 
@@ -272,7 +275,7 @@ it('keeps the harness a session runs on through a change of directory', async ()
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    params: { channel: await minted(client), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/second' } });
@@ -343,7 +346,17 @@ it('leaves the session\'s provider as its own when a chat of it was recorded on 
  * file.
  */
 
-const STAMP = new Date(0).toISOString();
+/** When each row was written: an hour ago, inside the window of the mode that shows it. */
+const STAMP = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+/**
+ * The root's `showExternalSessions`, pushed as a window pushes it: which of the
+ * sessions a backend lists that this host never ran a listing shows. A row no
+ * record names a harness for is one of those.
+ */
+async function showExternal(client: ReturnType<typeof serving>['client']): Promise<void> {
+  await client.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', config: { showExternalSessions: 'last30Days' } } } });
+}
 
 /** A backend over a fixed catalogue, with a record of what it was asked to start. */
 function harness(provider: string, ids: string[], started: string[]): Agent {
@@ -385,6 +398,7 @@ describe('a row two harnesses both list', () => {
       harness('two', ['shared', 'mine'], two),
     ]);
     await settle();
+    await showExternal(client);
     expect(await catalogue(client)).toEqual(['ahp-session:/shared', 'ahp-session:/mine']);
   });
 
@@ -414,11 +428,17 @@ describe('a row two harnesses both list', () => {
       harness('two', ['unrecorded'], two),
     ]);
     await settle();
+    await showExternal(client);
     // A session from before this was recorded, and one whose harness is gone,
     // both open somewhere rather than nowhere.
     expect(await catalogue(client)).toEqual(['ahp-session:/unrecorded']);
   });
 
+  /*
+   * A row whose agent is not loaded is refused as VS Code's restore refuses a
+   * session it finds no agent for: -32001, the code its client takes as final.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
+   */
   it('keeps the recorded provider when that harness is not loaded, and waits for it', async () => {
     const one: string[] = [];
     const two: string[] = [];
@@ -432,13 +452,13 @@ describe('a row two harnesses both list', () => {
     // daemon that merely failed to load one plugin.
     expect(await catalogue(client)).toEqual(['two:/shared']);
     await expect(client.handle({ method: 'subscribe', params: { channel: 'two:/shared' } }))
-      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+      .rejects.toMatchObject({ code: -32001, message: 'No agent for session: two:/shared' });
     // Nothing moved it, so it is the same conversation once `two` is back.
     expect(store.provider('shared')).toBe('two');
     expect(one).toEqual([]);
   });
 
-  it('refuses a turn to a row still waiting for its agent, naming it', async () => {
+  it('refuses a turn to a row whose agent is not loaded, as VS Code\'s restore refuses it', async () => {
     const refusals: unknown[] = [];
     const store = memorySessions();
     store.setProvider('shared', 'two');
@@ -462,7 +482,7 @@ describe('a row two harnesses both list', () => {
 
     // The turn is refused to the client rather than run on the harness that
     // happened to read the transcript, which is what would rewrite the record.
-    expect(refusals).toEqual(['two is not loaded on this host']);
+    expect(refusals).toEqual(['No agent for session: two:/shared']);
     expect(store.provider('shared')).toBe('two');
     expect(one).toEqual([]);
   });
@@ -480,7 +500,7 @@ describe('a row two harnesses both list', () => {
     expect(await catalogue(client)).toEqual(['two:/shared']);
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+      params: { channel: await minted(client, 'two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
 
@@ -488,7 +508,7 @@ describe('a row two harnesses both list', () => {
     expect(one).toEqual([]);
   });
 
-  it('refuses a session created over a row waiting for its agent, naming it', async () => {
+  it('refuses a session created over a row whose agent is not loaded, as VS Code\'s restore refuses it', async () => {
     const one: string[] = [];
     const store = memorySessions();
     store.setProvider('shared', 'two');
@@ -498,29 +518,47 @@ describe('a row two harnesses both list', () => {
 
     // The row belongs to `two`, so creating a session over `one:/shared` would
     // be a second conversation under an id that already has one, and
-    // `keepProvider` would write `one` over the record on the way out.
+    // `recordSessionProvider` would write `one` over the record on the way out.
     await expect(client.handle({ method: 'createSession', params: { channel: 'one:/shared', provider: 'one' } }))
-      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+      .rejects.toMatchObject({ code: -32001, message: 'No agent for session: two:/shared' });
     expect(store.provider('shared')).toBe('two');
     expect(one).toEqual([]);
   });
 
-  it('refuses the marks of a waiting row, naming the agent', async () => {
+  /*
+   * A session's marks are read without its agent, as VS Code reads a
+   * session's annotations without restoring its provider.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14267-L14278
+   */
+  it('serves and keeps the marks of a row whose agent is not loaded', async () => {
     const store = memorySessions();
     store.setProvider('shared', 'two');
     const one: string[] = [];
-    const { client } = serving(store, [harness('one', ['shared'], one)]);
+    const notes: Record<string, unknown>[] = [];
+    const { client } = serving(store, [harness('one', ['shared'], one)], {
+      ...peer(),
+      notify: (_method, params) => { notes.push(params as Record<string, unknown>); },
+    });
     await settle();
     await catalogue(client);
 
     // A client hydrates a session by subscribing to its turns, its config and
     // its marks.
     await expect(client.handle({ method: 'subscribe', params: { channel: 'two:/shared/annotations' } }))
-      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+      .resolves.toMatchObject({ snapshot: { resource: 'two:/shared/annotations' } });
+    const annotation = {
+      id: 'a1', origin: { session: 'two:/shared' }, resource: 'file:///x', resolved: false,
+      entries: [{ id: 'e1', text: 'one' }],
+    };
+    client.handle({ method: 'dispatchAction', params: { channel: 'two:/shared/annotations', clientSeq: 1, action: { type: 'annotations/set', annotation } } });
+    await settle();
+    const answer = notes.find((note) => (note['origin'] as { clientSeq?: number } | undefined)?.clientSeq === 1);
+    expect(answer).toMatchObject({ action: { type: 'annotations/set' } });
+    expect(answer?.['rejectionReason']).toBeUndefined();
     expect(store.provider('shared')).toBe('two');
   });
 
-  it('answers every other road to a waiting row with the agent that is missing', async () => {
+  it('answers every other road to a row whose agent is not loaded as VS Code\'s restore does', async () => {
     const refusals: string[] = [];
     const store = memorySessions();
     store.setProvider('shared', 'two');
@@ -536,20 +574,15 @@ describe('a row two harnesses both list', () => {
     await settle();
     await catalogue(client);
 
-    // The older turns, the marks, the session's config and a draft: four roads
-    // that all end at a transcript this host cannot read, and none of which may
-    // answer as though the session were nowhere, which is what it is not.
+    // The older turns, the session's config and a draft: three roads that all
+    // end at a transcript this host cannot read, each refused as the restore
+    // they need is.
+    // A page is refused as VS Code's host refuses a channel it holds no chat
+    // state for, in its words.
     await expect(client.handle({ method: 'fetchTurns', params: { channel: chatUriFor('two:/shared') } }))
-      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+      .rejects.toMatchObject({ code: -32001, message: `Session not found: ${chatUriFor('two:/shared')}` });
 
     for (const [channel, action] of [
-      ['two:/shared/annotations', {
-        type: 'annotations/set',
-        annotation: {
-          id: 'a1', origin: { session: 'two:/shared' }, resource: 'file:///x', resolved: false,
-          entries: [{ id: 'e1', text: 'one' }],
-        },
-      }],
       ['two:/shared', { type: 'session/configChanged', config: { voice: 'shouty' } }],
       [chatUriFor('two:/shared'), { type: 'chat/draftChanged', draft: { text: 'go' } }],
     ] as [string, Record<string, unknown>][]) {
@@ -557,9 +590,8 @@ describe('a row two harnesses both list', () => {
       await settle();
     }
 
-    expect(refusals).toEqual(Array<string>(3).fill('two is not loaded on this host'));
-    // Nothing of the row was written either: no config, and no mark that the
-    // next client to hydrate it would find as though it had been set.
+    expect(refusals).toEqual(Array<string>(2).fill('No agent for session: two:/shared'));
+    // Nothing of the row was written either.
     expect(store.config('shared')).toBeUndefined();
   });
 
@@ -572,6 +604,7 @@ describe('a row two harnesses both list', () => {
       harness('two', ['only-theirs'], two),
     ]);
     await settle();
+    await showExternal(client);
     expect(await catalogue(client)).toEqual(['ahp-session:/only-mine', 'ahp-session:/only-theirs']);
   });
 
@@ -589,7 +622,7 @@ describe('a row two harnesses both list', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+      params: { channel: await minted(client, 'two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
 

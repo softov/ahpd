@@ -1,3 +1,5 @@
+import type { PermissionKind } from '@ahpd/sdk';
+
 /**
  * What kind of thing a tool call is, said where the reference client reads it.
  *
@@ -10,21 +12,25 @@
  * stamped here, from the harness's own tool names, which are the one thing
  * about a tool call this backend can be sure of.
  *
- * Names only. Nothing else about the call decides the kind, and a tool this
- * table has not heard of is left unstamped rather than guessed at - the
- * generic renderer is right for a tool nobody here knows.
+ * Names only, as VS Code's Claude table stamps them: the shell's three tools
+ * are terminals, a file or a notebook read is a read, a glob and a grep are
+ * searches, and a worker is a subagent. Nothing else about the call decides
+ * the kind, and a tool the table does not name, a web fetch among them, is
+ * left unstamped: the generic renderer is right for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L105
  */
 
 export type ToolKind = 'terminal' | 'read' | 'search' | 'subagent';
 
 const KINDS: Readonly<Record<string, ToolKind>> = {
   Bash: 'terminal',
+  BashOutput: 'terminal',
+  KillBash: 'terminal',
   terminal: 'terminal',
   Read: 'read',
+  NotebookRead: 'read',
   Glob: 'search',
   Grep: 'search',
-  WebSearch: 'search',
-  WebFetch: 'search',
   Task: 'subagent',
   Agent: 'subagent',
 };
@@ -47,6 +53,57 @@ export const toolMetaOf = (name: string): Record<string, unknown> | undefined =>
 
 /** The prefix the CLI calls an MCP server's tool under, `mcp__<server>__<tool>`. */
 const MCP_TOOL_PREFIX = 'mcp__';
+
+/**
+ * What each of the CLI's tools asks to do, and the field of its input naming
+ * the path or the URL it acts on, as VS Code's Claude table rows them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L117
+ */
+const PERMISSION_ROWS: Readonly<Record<string, { kind: PermissionKind; pathField?: string }>> = {
+  Bash: { kind: 'shell' },
+  BashOutput: { kind: 'shell' },
+  KillBash: { kind: 'shell' },
+  Read: { kind: 'read', pathField: 'file_path' },
+  Glob: { kind: 'read', pathField: 'path' },
+  Grep: { kind: 'read', pathField: 'path' },
+  LS: { kind: 'read', pathField: 'path' },
+  NotebookRead: { kind: 'read', pathField: 'notebook_path' },
+  Write: { kind: 'write', pathField: 'file_path' },
+  Edit: { kind: 'write', pathField: 'file_path' },
+  MultiEdit: { kind: 'write', pathField: 'file_path' },
+  NotebookEdit: { kind: 'write', pathField: 'notebook_path' },
+  TodoWrite: { kind: 'write' },
+  WebFetch: { kind: 'url', pathField: 'url' },
+  Task: { kind: 'custom-tool' },
+  Agent: { kind: 'custom-tool' },
+  ExitPlanMode: { kind: 'custom-tool' },
+  AskUserQuestion: { kind: 'custom-tool' },
+  Skill: { kind: 'skill' },
+  TaskCreate: { kind: 'custom-tool' },
+  TaskUpdate: { kind: 'custom-tool' },
+  TaskList: { kind: 'custom-tool' },
+  TaskGet: { kind: 'custom-tool' },
+};
+
+/**
+ * What a tool call asks to do: its row's kind, an MCP server's tool `mcp`, and
+ * any other tool `custom-tool`, as VS Code's `getClaudePermissionKind`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L125-L134
+ */
+export const getClaudePermissionKind = (toolName: string): PermissionKind =>
+  PERMISSION_ROWS[toolName]?.kind ?? (toolName.startsWith(MCP_TOOL_PREFIX) ? 'mcp' : 'custom-tool');
+
+/**
+ * The path or the URL a call acts on, from the field its row names, as VS
+ * Code's `getClaudeToolPath`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L187-L194
+ */
+export const getClaudeToolPath = (toolName: string, input: unknown): string | undefined => {
+  const field = PERMISSION_ROWS[toolName]?.pathField;
+  if (field === undefined || typeof input !== 'object' || input === null) return undefined;
+  const value = (input as Record<string, unknown>)[field];
+  return typeof value === 'string' ? value : undefined;
+};
 
 /** VS Code's Claude display table, by the CLI's own tool names. */
 const DISPLAY_NAMES: Readonly<Record<string, string>> = {
@@ -132,3 +189,17 @@ export const CLAUDE_QUESTION_CANCELLED_MESSAGE = 'The user cancelled the questio
  */
 export const claudeToolDenialCode = (message: string): 'denied' | 'cancelled' | undefined =>
   (message === CLAUDE_USER_DECLINED_MESSAGE ? 'denied' : message === CLAUDE_QUESTION_CANCELLED_MESSAGE ? 'cancelled' : undefined);
+
+/**
+ * A tool result's text as the call's content: a bare string one item, and
+ * each text block of a list its own, as VS Code's Claude projects a result.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L449-L463
+ */
+export const resultContent = (content: unknown): { type: 'text'; text: string }[] => {
+  if (typeof content === 'string') return [{ type: 'text', text: content }];
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block: unknown) => {
+    const one = typeof block === 'object' && block !== null ? block as { type?: unknown; text?: unknown } : {};
+    return one.type === 'text' && typeof one.text === 'string' ? [{ type: 'text' as const, text: one.text }] : [];
+  });
+};

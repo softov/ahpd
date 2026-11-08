@@ -1,7 +1,8 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { describe, expect, it, vi } from 'vitest';
 import { createHost, hello, machine, peer, settle } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
@@ -24,11 +25,16 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 const DIR = '/home/softov/project';
 
+const HOUR = 60 * 60 * 1000;
+/** When a row was made and last written, inside the window of the mode that shows it. */
+const CREATED = new Date(Date.now() - 10 * HOUR).toISOString();
+const MODIFIED = new Date(Date.now() - HOUR).toISOString();
+
 const row = (id: string, title: string): Listed => ({
   id,
   title,
-  createdAt: '2026-09-27T00:00:00.000Z',
-  modifiedAt: '2026-09-27T09:00:00.000Z',
+  createdAt: CREATED,
+  modifiedAt: MODIFIED,
   workingDirectories: [`file://${DIR}`],
 });
 
@@ -103,7 +109,12 @@ describe('opening a past session', () => {
   it('asks for one id rather than listing everything, and says the row it found', async () => {
     const counted = counting();
     const here: Store = { listed: [], known: (id) => (id === 'late' ? row('late', 'Late') : undefined) };
-    const { client, notes } = await watching([backend('claude', here, counted)]);
+    // A session this host ran, written after the last listing: its record names
+    // the backend to ask.
+    const store = memorySessions();
+    store.setProvider('late', 'claude');
+    store.setUri?.('late', 'ahp-session:/late');
+    const { client, notes } = await watching([backend('claude', here, counted)], store);
     await list(client);
     await settle(4);
     const passes = counted.lists;
@@ -155,10 +166,15 @@ describe('opening a past session', () => {
     expect(counted.lists).toBe(passes + 1);
   });
 
-  it('lists nothing when an id nobody has is opened again and again, with every backend answering by id', async () => {
+  it('lists nothing when a recorded id its backend does not have is opened again and again', async () => {
     const counted = counting();
     const here: Store = { listed: [row('one', 'One')], known: () => undefined };
-    const { client } = await watching([backend('claude', here, counted)]);
+    const store = memorySessions();
+    for (let i = 0; i < 5; i++) {
+      store.setProvider(`never-${i}`, 'claude');
+      store.setUri?.(`never-${i}`, `ahp-session:/never-${i}`);
+    }
+    const { client } = await watching([backend('claude', here, counted)], store);
     await list(client);
     await settle(4);
     const passes = counted.lists;
@@ -167,14 +183,20 @@ describe('opening a past session', () => {
       await expect(client.handle({ method: 'subscribe', params: { channel: `ahp-session:/never-${i}` } }))
         .rejects.toMatchObject({ code: -32001 });
     }
-    // Every backend here can be asked about one session, so a listing is a pass
-    // over the machine for nothing - and there is now no window that keeps the
-    // fifth one from paying for it as the first did.
+    // The backend each record names can be asked about one session, so a
+    // listing is a pass over the machine for nothing - and there is no window
+    // that keeps the fifth one from paying for it as the first did.
     expect(counted.lists).toBe(passes);
     expect(counted.asked).toHaveLength(5);
   });
 
-  it('answers as today for an id nobody has', async () => {
+  /*
+   * A session no record ties to a backend is found through a backend's own
+   * listing, as VS Code's host finds one through its registry's discovery, and
+   * no backend is asked about it by id.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostProviderService.ts#L141-L152
+   */
+  it('looks for an id nobody recorded in one listing, and asks no backend about it by id', async () => {
     const counted = counting();
     const here: Store = { listed: [row('one', 'One')], known: () => undefined };
     const { client } = await watching([backend('claude', here, counted)]);
@@ -184,10 +206,8 @@ describe('opening a past session', () => {
 
     await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/never' } }))
       .rejects.toMatchObject({ code: -32001 });
-    // Nothing here has it and nothing here can be asked again, so a listing
-    // would be a pass over the machine for nothing.
-    expect(counted.lists).toBe(passes);
-    expect(counted.asked).toEqual(['claude']);
+    expect(counted.lists).toBe(passes + 1);
+    expect(counted.asked).toEqual([]);
   });
 
   it('tells the backend the folder the record names, and opens a session found only there', async () => {
@@ -230,13 +250,17 @@ describe('opening a past session', () => {
         return args[0] === 'late' ? row('late', 'Late') : undefined;
       },
     };
-    const { client } = await watching([agent]);
+    // A record naming its backend and no folder.
+    const store = memorySessions();
+    store.setProvider('late', 'claude');
+    store.setUri?.('late', 'ahp-session:/late');
+    const { client } = await watching([agent], store);
 
     expect((await opened(client, 'ahp-session:/late')).snapshot?.resource).toBe('ahp-session:/late');
     expect(asked).toEqual([['late', undefined]]);
   });
 
-  it('records the folder a found row ran in, only for a session the host keeps a record for', async () => {
+  it('records the folder a found row ran in, and nothing for a session it keeps no record for', async () => {
     const found = (id: string): Listed => ({ ...row(id, id), workingDirectories: ['file:///srv/worktrees/fix'] });
     const agent: Agent = {
       ...backend('claude', { listed: [] }, counting()),
@@ -247,30 +271,34 @@ describe('opening a past session', () => {
     const { client } = await watching([agent], store);
 
     // A row this host keeps a record for keeps its provider's scheme, as a
-    // listing names it, and a row it has none for is the protocol's URI.
+    // listing names it.
     await opened(client, 'claude:/ran');
-    await opened(client, 'ahp-session:/never-ran');
     expect(store.workingDirectory('ran')).toBe('/srv/worktrees/fix');
-    // A session this host never ran gets no record for being looked at.
+    // A session this host never ran is found through a listing alone, which has
+    // none here, and gets no record for being looked at.
+    await expect(opened(client, 'ahp-session:/never-ran')).rejects.toMatchObject({ code: -32001 });
     expect(store.rowOf('never-ran')).toBeUndefined();
   });
 
   it('writes the folder of a session it creates into the record file', async () => {
+    // Left to the run's own folder to remove: the checkpoint the session writes
+    // runs git in it, which Windows will not remove a folder under while it runs.
     const root = mkdtempSync(join(tmpdir(), 'ahpd-folder-'));
-    try {
-      const dir = join(root, 'sessions');
-      const store = fileSessions({ dir });
-      const host = createHost({ path: root, agents: [echo({ path: root, pace: 0 })], ...machine(), sessions: store });
-      const client = host.accept(peer());
-      await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
-      await client.handle({
-        method: 'createSession',
-        params: { channel: 'ahp-session:/made', provider: 'echo', workingDirectories: [`file://${root}`] },
-      });
-      await new Promise((tick) => { setTimeout(tick, 5); });
-      const saved = JSON.parse(readFileSync(join(dir, 'made.json'), 'utf8')) as { workingDirectory?: string };
-      expect(saved.workingDirectory).toBe(root);
+    const dir = join(root, 'sessions');
+    const store = fileSessions({ dir });
+    const host = createHost({ path: root, agents: [echo({ path: root, pace: 0 })], ...machine(), sessions: store });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/made', provider: 'echo', workingDirectories: [`file://${root}`] },
+    });
+    const record = join(dir, 'made.json');
+    for (const until = Date.now() + WAIT_MS; Date.now() < until && !existsSync(record);) {
+      await new Promise((tick) => { setTimeout(tick, 10); });
     }
-    finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+    const saved = JSON.parse(readFileSync(record, 'utf8')) as { workingDirectory?: string };
+    expect(saved.workingDirectory).toBe(root);
+    await host.close();
   });
 });

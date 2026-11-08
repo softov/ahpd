@@ -2,7 +2,7 @@ import { accepts } from '../utils/configvalues.js';
 import { frozenCopy } from '../utils/frozen.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import type { SessionConfigAnswerer, SessionConfigAsk } from '../types/completions.js';
-import type { Agent } from '../types/agent.js';
+import type { Agent, SchemaPolicy } from '../types/agent.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
 
@@ -14,9 +14,10 @@ export interface SessionConfig {
   ) => Promise<{ schema: Bag; defaults: Record<string, unknown>; repository?: string }>;
   mergedConfig(uri: string, theirs: unknown, mine: Record<string, unknown>): Bag;
   formOrdered(properties: Bag, hosts: string[]): Bag;
-  propertyOf(agent: Agent | undefined, key: string): { sessionMutable?: boolean; scope?: string } | undefined;
+  propertyOf(agent: Agent | undefined, key: string): { sessionMutable?: boolean; chatMutable?: boolean } | undefined;
   sessionSchema(agent: Agent): Bag;
   runningSchema(agent: Agent): Bag;
+  schemaPolicy(): SchemaPolicy;
   seeded(
     properties: Bag,
     ask: Omit<SessionConfigAsk, 'property' | 'query'>,
@@ -24,15 +25,13 @@ export interface SessionConfig {
   ): Promise<Bag>;
   contributedDefaults(): Record<string, unknown>;
   storedConfig(owner: Agent, id: string): Record<string, unknown>;
-  mineOf(config: Record<string, unknown>): Record<string, unknown>;
+  hostOwnedSessionConfig(config: Record<string, unknown>, offered: Bag): Record<string, unknown>;
+  omitHostOwnedSessionConfig(config: Bag): Bag;
 }
 
 /**
- * How many branches ride along in the schema before a client has to ask.
- *
- * The list is ordered by most recent commit, so the first few are the ones
- * somebody means. The rest arrive through `sessionConfigCompletions` as they
- * are typed for.
+ * How many branches a completion of the branch answers with, the most
+ * recent first: the first few are the ones somebody means.
  */
 export const SEEDS = 20;
 
@@ -47,12 +46,40 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     const port = options.worktrees;
     if (!port || where === undefined) return { schema: {}, defaults: {} };
     const repository = await port.repository(where).catch(() => undefined);
-    if (repository === undefined) return { schema: {}, defaults: {} };
-    // Most useful first, which the port defines: the checked-out branch is
-    // what "work from here" means, and it is what somebody who does not open
-    // the picker gets.
-    const offered = await port.branches(repository).catch(() => [] as string[]);
-    const base = offered[0];
+    /*
+     * A folder outside a repository is offered folder isolation alone, and
+     * read-only, as VS Code's host offers it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L979-L1003
+     */
+    if (repository === undefined) {
+      return {
+        defaults: { isolation: 'folder' },
+        schema: {
+          properties: {
+            isolation: {
+              type: 'string',
+              title: 'Isolation',
+              description: 'Where the agent should make changes',
+              enum: ['folder'],
+              enumLabels: ['Folder'],
+              enumDescriptions: ['Work directly in the folder'],
+              default: 'folder',
+              readOnly: true,
+              sessionMutable: false,
+            },
+          },
+        },
+      };
+    }
+    /*
+     * The branch a session starts from, one seed and the rest asked for as
+     * they are typed, as VS Code's host seeds it: a worktree from the
+     * repository's default branch, and a folder on the branch checked out,
+     * which the port lists first.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1035-L1063
+     */
+    const head = (await port.branches(repository).catch(() => [] as string[]))[0];
+    const base = chosen === 'worktree' ? await port.defaultBranch?.(repository).catch(() => undefined) ?? head : head;
     return {
       repository,
       defaults: {
@@ -63,9 +90,9 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
         // being asked.
         isolation: 'folder',
         ...(base !== undefined ? { branch: base } : {}),
+        worktreeBranchPrefix: '',
         worktreeIncludeFiles: [],
         worktreeSymlinkFolders: [],
-        worktreeBranchPrefix: '',
         worktreeCreateNewBranch: 'true',
         worktreeBranchTrack: 'false',
       },
@@ -87,34 +114,43 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
             sessionMutable: false,
           },
           /*
-           * The branches, as seeds rather than as the whole list.
+           * The branch, seeded with the one a session starts from.
            *
            * `enumDynamic` is the protocol's word for "there are more of these
-           * than a picker can hold": the `enum` becomes the rows shown before
+           * than a picker can hold": the `enum` is the row shown before
            * anybody types, and `sessionConfigCompletions` answers what they
-           * type. A repository with four hundred branches used to send four
-           * hundred, on every resolve, to fill a list nobody can read.
-           *
-           * Dynamic only while a worktree is being made, which is the one time
-           * the choice means anything - the reference host does the same, and
-           * marks the row read-only otherwise, because a folder session works
-           * on the branch that is checked out and choosing another would be a
-           * control that changes nothing.
+           * type.
            */
-          ...(offered.length > 0 ? {
+          ...(base !== undefined ? {
             branch: {
               type: 'string',
               title: 'Branch',
-              description: 'Base branch the worktree starts from',
-              enum: offered.slice(0, SEEDS),
-              enumLabels: offered.slice(0, SEEDS),
-              ...(base !== undefined ? { default: base } : {}),
-              ...(chosen === 'worktree'
-                ? { enumDynamic: true }
-                : { enumDynamic: false, readOnly: true }),
+              description: 'Base branch to work from',
+              enum: [base],
+              enumLabels: [base],
+              default: base,
+              enumDynamic: true,
+              readOnly: false,
               sessionMutable: false,
             },
           } : {}),
+          /*
+           * A preference a client seeds rather than a person picks.
+           *
+           * `readOnly` in the reference too: it carries somebody's
+           * `git.branchPrefix`, which the client already holds, rather than a
+           * question to put in front of them. Declared so the value rides in
+           * the config bag at all; a key a host does not advertise is one a
+           * client has no reason to send.
+           */
+          worktreeBranchPrefix: {
+            type: 'string',
+            title: 'Branch prefix',
+            description: 'Prepended to the branch created for the worktree.',
+            default: '',
+            readOnly: true,
+            sessionMutable: false,
+          },
           /*
            * The files a checkout does not carry, and the session needs.
            *
@@ -147,8 +183,8 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
            * with the checkout's; a link is one directory the agent can build
            * against immediately. What it costs is that a write into it is a
            * write into the checkout too, which is why only git-ignored folders
-           * are eligible - and why the control is `readOnly`, like the three
-           * below it: it carries a preference the client already holds rather
+           * are eligible, and why the control is `readOnly`, as the branch
+           * prefix is: it carries a preference the client already holds rather
            * than a question to put in front of somebody.
            *
            * Two passes rather than one, as the reference runs two: a folder
@@ -164,22 +200,10 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
             sessionMutable: false,
           },
           /*
-           * Three a client seeds rather than a person picks.
-           *
-           * `readOnly` in the reference too: they carry a preference the
-           * client already holds - somebody's `git.branchPrefix`, and how they
-           * want a branch made - rather than a question to put in front of
-           * them. Declared so the value rides in the config bag at all; a key
-           * a host does not advertise is one a client has no reason to send.
+           * Two more a client seeds rather than a person picks: how somebody
+           * wants a branch made, which the client already holds. `readOnly`
+           * and declared for the reason the branch prefix is.
            */
-          worktreeBranchPrefix: {
-            type: 'string',
-            title: 'Branch prefix',
-            description: 'Prepended to the branch created for the worktree.',
-            default: '',
-            readOnly: true,
-            sessionMutable: false,
-          },
           worktreeCreateNewBranch: {
             type: 'string',
             title: 'Create a branch',
@@ -206,25 +230,38 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   };
 
   /**
-   * A form's properties, in the order a person fills them in.
-   *
-   * `computer` comes first: it is the machine the session runs on, and every
-   * other answer is about a session on it. This host's own keys come next, in
-   * the order `hosts` gives them, and everything else keeps the order it
-   * arrived in - another plugin's keys, then the backend's own.
+   * A config schema's properties, in the order the reference host composes
+   * them: the isolation key first, then the agent's own and every plugin's in
+   * the order they arrived, then this host's other keys (the branch, its
+   * prefix, the files and folders a worktree takes) in the order `hosts`
+   * gives them, which is the order `isolating` declares them in. `computer`
+   * leads with the isolation key: it is the machine the session runs on, and
+   * every other answer is about a session on it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11018-L11034
    *
    * `hosts` is the caller's because only it knows which keys this host
    * declared: the isolation keys come from the worktree port and are absent on
    * a host without one.
    */
   const formOrdered = (properties: Bag, hosts: string[]): Bag => {
-    const head = [...new Set(['computer', ...hosts])].filter((key) => Object.hasOwn(properties, key));
-    const moved = new Set(head);
+    const head = ['computer', 'isolation'].filter((key) => Object.hasOwn(properties, key));
+    const tail = hosts.filter((key) => !head.includes(key) && Object.hasOwn(properties, key));
+    const placed = new Set([...head, ...tail]);
     return Object.fromEntries([
       ...head.map((key) => [key, properties[key]] as const),
-      ...Object.entries(properties).filter(([key]) => !moved.has(key)),
+      ...Object.entries(properties).filter(([key]) => !placed.has(key)),
+      ...tail.map((key) => [key, properties[key]] as const),
     ]);
   };
+
+  /**
+   * A config's properties or values with every key this host owns taken out,
+   * as VS Code's `omitHostOwnedSessionConfig` takes them out of a provider's
+   * config before its host lays its own over it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
+   */
+  const omitHostOwnedSessionConfig = (config: Bag): Bag =>
+    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
 
   /**
    * A session's config with this host's own answers folded in.
@@ -233,7 +270,10 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
    * schema, so reporting `isolation: 'worktree'` against a schema that never
    * mentions `isolation` is a value with nothing to draw it. Every one of them
    * is `sessionMutable: false`, which is what stops the control once the
-   * session has started rather than before it has.
+   * session has started rather than before it has. The backend's half has
+   * every key this host owns taken out before this host's half is laid over
+   * it, as VS Code's host composes a session's config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11010-L11057
    */
   const mergedConfig = (uri: string, theirs: unknown, mine: Record<string, unknown>): Bag => {
     const held = (typeof theirs === 'object' && theirs !== null ? theirs : {}) as Bag;
@@ -247,9 +287,9 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
       ...held,
       schema: {
         ...schema,
-        properties: formOrdered({ ...properties, ...hostProperties }, Object.keys(hostProperties)),
+        properties: formOrdered({ ...omitHostOwnedSessionConfig(properties), ...hostProperties }, Object.keys(hostProperties)),
       },
-      values: { ...values, ...mine },
+      values: { ...omitHostOwnedSessionConfig(values), ...mine },
     };
   };
 
@@ -307,64 +347,52 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   };
 
   /**
+   * What the operator's policy says now, as a start and a schema asked for
+   * before any session exists are both handed it: the daemon's managed
+   * settings and per-tool eligibility, and the auto-approval restriction a
+   * VS Code window forwards into the root config, as VS Code's agents read
+   * that restriction and their managed settings at launch and when they
+   * resolve a chat's config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7407-L7411
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1579
+   */
+  const schemaPolicy = (): SchemaPolicy => ({
+    ...(options.managedSettingsPermissions === undefined && options.eligibleForAutoApproval === undefined ? {} : {
+      managedSettings: {
+        ...(options.managedSettingsPermissions === undefined ? {} : { permissions: options.managedSettingsPermissions }),
+        ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
+      },
+    }),
+    ...(ctx.rootConfig.autoApprovePolicyRestricted === true ? { autoApprovePolicyRestricted: true } : {}),
+  });
+
+  /**
    * One property of a backend's config schema, as this host reads it.
    *
-   * Two fields and no more: `sessionMutable`, which the protocol already
-   * declares, and `scope`, which it does not - the protocol's schema is
-   * deliberately generic and says nothing about whether a key belongs to a
-   * session or to one chat inside it. A key that says neither stays as the
-   * session started it, since only `sessionMutable: true` lets a key move
-   * after the session is created, and is the session's.
+   * Two fields: `sessionMutable`, which the protocol declares, and
+   * `chatMutable`, VS Code's, which says a chat may hold its own value of the
+   * key, set with `chat/configChanged` on the chat and reaching that chat
+   * alone. A key that says neither stays as the session started it, since only
+   * `sessionMutable: true` lets a key move after the session is created, and
+   * is the session's.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L622-L623
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/protocol/channels-session/state.ts#L612-L618
    *
    * A key a plugin contributed is found here too, which is what makes a
-   * key like `computer` obey the schema it was declared with. The backend's
-   * own property wins where both declare one, the same way `sessionSchema`
-   * folds them. Read from the raw schemas rather than from `sessionSchema`,
-   * because `published` drops `scope` on the way out and this is the one
-   * reader that needs it.
+   * key like `computer` obey the schema it was declared with. The contributed
+   * property wins where both declare one, the same way `sessionSchema` folds
+   * them.
    */
-  const propertyOf = (agent: Agent | undefined, key: string): { sessionMutable?: boolean; scope?: string } | undefined => {
+  const propertyOf = (agent: Agent | undefined, key: string): { sessionMutable?: boolean; chatMutable?: boolean } | undefined => {
     if (!agent) return undefined;
-    const own = agent.schema();
+    const own = agent.schema(schemaPolicy());
     const ownProperties = (typeof own.properties === 'object' && own.properties !== null
       ? own.properties
       : {}) as Bag;
-    const held = ownProperties[key] ?? options.sessionConfig?.[key];
+    const held = options.sessionConfig?.[key] ?? ownProperties[key];
     return typeof held === 'object' && held !== null
-      ? held as { sessionMutable?: boolean; scope?: string }
+      ? held as { sessionMutable?: boolean; chatMutable?: boolean }
       : undefined;
-  };
-
-  /**
-   * A backend's config schema, as it goes on the wire.
-   *
-   * `scope` is this host's own: it says whether a key belongs to the session
-   * or to one chat inside it, which is what decides how far a
-   * `session/configChanged` reaches - and `ConfigPropertySchema` does not
-   * declare it. A field the protocol has no place for is one a client cannot
-   * read and a strict validator calls a defect, so it is read here and left
-   * off what is published. The same rule `HOSTS_OWN` applies to values.
-   *
-   * `type` is set here rather than asked of the backend. `SessionConfigSchema`
-   * declares it as a required `object`, and a backend that lists `properties`
-   * without saying what they are properties of publishes a schema a strict
-   * client refuses.
-   */
-  const published = (schema: Bag): Bag => {
-    const properties = (typeof schema.properties === 'object' && schema.properties !== null
-      ? schema.properties
-      : undefined) as Bag | undefined;
-    if (properties === undefined) return { ...schema, type: 'object' };
-    return {
-      ...schema,
-      type: 'object',
-      properties: Object.fromEntries(Object.entries(properties).map(([key, value]) => {
-        if (typeof value !== 'object' || value === null) return [key, value];
-        const { scope: _scope, ...rest } = value as Bag & { scope?: unknown };
-        return [key, rest];
-      })),
-    };
   };
 
   /** A backend key said to be answered but not declared, so each is said once. */
@@ -409,19 +437,27 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
    * A contributed key is a control a client draws beside the backend's own,
    * and it exists only while its plugin is loaded. A key this host takes is on
    * every session, as the reference host declares it on its sessions, so a
-   * client that sends one only where the schema declares it sends it here. The
-   * backend's own property wins where it declares one, because the fold
-   * already reported that as a collision and a plugin may not quietly move a
-   * setting a backend owns.
+   * client that sends one only where the schema declares it sends it here,
+   * under the backend's own as VS Code's agents spread the platform schema
+   * under theirs. A contributed property is this host's contribution and wins
+   * a name the backend's schema also declares, and a backend's row for a key
+   * this host owns is taken out, as VS Code's host publishes its own in place
+   * of the provider's and omits the provider's for every key it owns.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L6168-L6190
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L374
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
+   *
+   * `type` is this host's to set: `SessionConfigSchema` declares it as a
+   * required `object`, and a backend that lists `properties` without saying
+   * what they are properties of publishes a schema a strict client refuses.
    */
   const sessionSchema = (agent: Agent): Bag => {
-    const schema = published(agent.schema());
+    const schema = agent.schema(schemaPolicy());
     const properties = (typeof schema.properties === 'object' && schema.properties !== null
       ? schema.properties
       : {}) as Bag;
-    const theirs = answeredKeys(agent, properties);
-    return { ...schema, type: 'object', properties: { ...HOSTS_TAKEN, ...options.sessionConfig, ...theirs } };
+    const theirs = omitHostOwnedSessionConfig(answeredKeys(agent, properties));
+    return { ...schema, type: 'object', properties: { ...HOSTS_TAKEN, ...theirs, ...options.sessionConfig } };
   };
 
   /**
@@ -502,7 +538,11 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     return out;
   };
 
-  /** The defaults a contributed key names, under the backend's own. */
+  /**
+   * The defaults a contributed key names, which every caller lays over the
+   * backend's own, as VS Code's host sets its values over the provider's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11035-L11036
+   */
   const contributedDefaults = (): Record<string, unknown> => {
     const held: Record<string, unknown> = {};
     for (const [key, schema] of Object.entries(options.sessionConfig ?? {})) {
@@ -558,21 +598,30 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     typeof value === 'object' && value !== null && !Array.isArray(value)
     && Object.values(value).every((one) => typeof one === 'string');
 
-  /** What this host answered, in the shape it answered it, for saying back on the session. */
-  const mineOf = (config: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(
-    Object.entries(config)
-      // A string, a list of strings for the two pattern keys, or the alias map
-      // `connectors` holds - each said back in the shape it was given - and a
-      // key this host takes, as it was sent.
-      .filter(([key, value]) => Object.hasOwn(HOSTS_TAKEN, key) || (HOSTS_OWN.includes(key)
-        && (typeof value === 'string'
-          || (Array.isArray(value) && value.every((one) => typeof one === 'string'))
-          || (key === 'connectors' && isAliasMap(value)))))
-      .map(([key, value]) => [key, value]),
+  /**
+   * The host-owned keys of a client's config, each where its property in
+   * `offered` (this host's offer for the session, or the declared
+   * `connectors`) takes it, for saying back on the session; a key this host
+   * takes, as it was sent. VS Code's host takes isolation only as its
+   * property validates it, the branch and its prefix as strings, and the two
+   * pattern keys only as lists of strings, keeping each from the provider's
+   * config; a value outside its property's shape leaves the default.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1016-L1018
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11037-L11055
+   */
+  const hostOwnedSessionConfig = (config: Record<string, unknown>, offered: Bag): Record<string, unknown> => Object.fromEntries(
+    Object.entries(config).filter(([key, value]) => {
+      if (Object.hasOwn(HOSTS_TAKEN, key)) return true;
+      const property = offered[key] ?? declared[key];
+      return HOSTS_OWN.includes(key) && property !== undefined && accepts(property, value)
+        && (!Array.isArray(value) || value.every((one) => typeof one === 'string'))
+        && (key !== 'connectors' || isAliasMap(value));
+    }),
   );
 
   return {
-    isolating, mergedConfig, formOrdered, propertyOf, sessionSchema, runningSchema, seeded,
-    contributedDefaults, storedConfig, mineOf,
+    isolating, mergedConfig, formOrdered, propertyOf, sessionSchema, runningSchema, schemaPolicy, seeded,
+    contributedDefaults, storedConfig, hostOwnedSessionConfig, omitHostOwnedSessionConfig,
   };
 }

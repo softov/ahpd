@@ -1,6 +1,6 @@
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { computerSource } from '../machines/computers.js';
-import { isRootChannel, methodIn, schemeOf, servedIn } from './channels.js';
+import { isRootChannel, methodIn, parseResourceWatchChannelUri, schemeOf, servedIn } from './channels.js';
 import { NEEDS, UNGATED, channelRead, ownIn, refusalReason } from './gate.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -59,11 +59,12 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
   };
 
   /**
-   * The root a resource watch channel was opened on, or `undefined` for any
-   * other channel.
+   * The root a resource watch channel names, or `undefined` for any other
+   * channel: what to watch is in the channel's own name, read before the
+   * watch it names is attached.
    */
   const watchedRoot = (channel: string): string | undefined => {
-    const root = ctx.watches.get(channel)?.state.root;
+    const root = ctx.watches.get(channel)?.state.root ?? parseResourceWatchChannelUri(channel)?.root;
     return typeof root === 'string' ? root : undefined;
   };
 

@@ -55,8 +55,8 @@ export const title = 'Agent Claude';
  *
  * `paths` defaults to the host's, which is the whole configuration in the
  * ordinary install: the directories the daemon was started on are the ones
- * this backend lists. A deployment that wants the catalogue narrower than the
- * host names its own.
+ * this backend works in, the first of them where a session goes when a client
+ * names none.
  *
  * These are the plugin's own options rather than any one agent's, and a record
  * takes them as they are: what a record may override is what the engine's schema
@@ -71,10 +71,12 @@ const defaultsOf = (host: PluginHost, values: Record<string, unknown>) => {
   const hostTools = typeof values['hostTools'] === 'boolean' ? values['hostTools'] : undefined;
   const shared = {
     log: (line: string) => host.log(line),
+    // The host's YAML, which a customization file's frontmatter is read with.
+    parseYaml: (text: string) => host.parseYaml(text),
     // One listing for all of them, and one load's worth of it: every record
-    // below reads the same `paths` out of the same configuration directory, so
-    // there is one pass over the projects directory for the lot.
-    sharedCatalogue: oneListing(paths),
+    // below lists the same store, the projects directory of the same
+    // configuration directory, so there is one pass over it for the lot.
+    sharedCatalogue: oneListing(),
     ...(said.computerExecutable === undefined ? {} : { computerExecutable: said.computerExecutable }),
     ...(said.computerConfigDir === undefined ? {} : { computerConfigDir: said.computerConfigDir }),
     ...(said.computerCli === undefined ? {} : { computerCli: said.computerCli }),

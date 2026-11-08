@@ -48,7 +48,7 @@ const sdk = vi.hoisted(() => {
   return state;
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => {
     sdk.servers.push(given);
     return { type: 'sdk', name: given.name, tools: given.tools };
@@ -84,7 +84,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 const { createSession } = await import('../src/session.js');
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 const until = async (done: () => boolean): Promise<void> => {
@@ -211,27 +211,20 @@ it('disallows Bash and aliases it to a marked host bash, and leaves an unmarked 
   expect(sdk.options?.toolAliases).toBeUndefined();
 });
 
-it('reads a marked host shell\'s calls by the owner\'s terminal rules, as Bash lines', async () => {
-  const asked: { kind: string; line: string; shell: string | undefined; tool: string | undefined }[] = [];
-  const check: NonNullable<ClaudeSessionOptions['getAutoApproval']> = (kind, line, shell, tool) => {
-    asked.push({ kind, line, shell, tool });
-    if (kind === 'shell' && line === 'make test') return 'not-needed' as ReturnType<NonNullable<ClaudeSessionOptions['getAutoApproval']>>;
-    return undefined;
-  };
-  const { sent } = await open([{
+it('asks about a marked host shell\'s call as a shell command, which the owner\'s terminal rules read', async () => {
+  const { session, sent } = await open([{
     definition: { name: 'bash', inputSchema: { type: 'object', properties: { command: { type: 'string' } } } },
     overridesBuiltInTool: true,
     run: async () => 'ran',
-  }], { getAutoApproval: check });
+  }]);
+  session.sendMessage('t1', 'run the tests');
+  await settle();
 
-  expect(await sdk.canUseTool!('mcp__host__bash', { command: 'make test' }, { toolUseID: 'toolu_bash' }))
-    .toEqual({ behavior: 'allow', updatedInput: { command: 'make test' } });
-  // The operator's rule is asked about the tool's name and then about the
-  // command line, with the host tool's own name so a rule can tell them apart.
-  expect(asked).toEqual([
-    { kind: 'tool', line: 'host/bash', shell: undefined, tool: undefined },
-    { kind: 'shell', line: 'make test', shell: 'bash', tool: 'mcp__host__bash' },
-  ]);
-  // Approved before a question was drawn: no client is left holding one.
-  expect(sent.filter((one) => one.type === 'session/inputNeededSet')).toEqual([]);
+  void sdk.canUseTool!('mcp__host__bash', { command: 'make test' }, { toolUseID: 'toolu_bash' });
+  await settle();
+  // The host decides the question at its shell step, as it decides one about
+  // Claude's own Bash, so the same terminal rules answer both.
+  expect(sent.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === 'toolu_bash')).toMatchObject({
+    permissionKind: 'shell', shellLanguage: 'bash', shellCommand: 'make test',
+  });
 });

@@ -7,11 +7,17 @@
     "root": {
       "description": "Carpeta de los espacios de trabajo de los bots, un '<root>/<slug>' por bot. Por defecto, '~/.bots'. No puede estar dentro de la carpeta de configuración."
     },
-    "lastChats": {
-      "description": "Cuántos chats recientes lista '{{chats}}' en una plantilla. Por defecto, 10."
-    },
     "mainTurnPostMessageAbsent": {
       "description": "Qué muestra el chat del bot cuando su sesión de trabajo termina sin post_message. 'post' (por defecto) muestra las últimas palabras de la sesión; 'notice' muestra un aviso; 'silence' no muestra nada; 'postNotice' muestra las últimas palabras, o el aviso si no hay ninguna."
+    },
+    "instructionsIn": {
+      "description": "Dónde están las instrucciones del bot en su AGENTS.md. 'section' (por defecto) lee su sección '## Instructions'; 'body' lee todo el cuerpo después del frontmatter."
+    },
+    "contextIn": {
+      "description": "Dónde va el contexto de un mensaje que despierta al bot. 'text' (por defecto) añade un bloque antes de las palabras de la persona con el chat principal, la persona y la hora; 'meta' envía las palabras tal como se dijeron, con el chat principal en el _meta de delegación del mensaje."
+    },
+    "askIn": {
+      "description": "Dónde aparecen las preguntas y aprobaciones de la sesión de trabajo. 'main' (por defecto) las copia en el chat principal para responderlas allí; 'own' las deja en el chat de la sesión de trabajo y las lista en el inputNeeded del chat principal."
     }
   },
   "session": {

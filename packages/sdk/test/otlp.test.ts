@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -50,12 +49,27 @@ it('sends nothing to a client that has not subscribed', async () => {
 
 it('subscribes without a snapshot, because the channel is a stream', async () => {
   const { client } = await connected();
-  const opened = await client.handle({
-    method: 'subscribe', params: { channel: 'ahp-otlp://logs/info' },
-  }) as { snapshot: { state: Record<string, unknown> } };
-  // Refusing would tell a client the channel does not exist; an empty state
-  // tells it there is nothing yet, which is what is true.
-  expect(opened.snapshot.state).toEqual({});
+  // The spec's empty SubscribeResult, the snapshot left out for a stateless
+  // channel, as VS Code answers it.
+  for (const channel of ['ahp-otlp://logs/info', 'ahp-otlp://traces', 'ahp-otlp://metrics']) {
+    expect(await client.handle({ method: 'subscribe', params: { channel } })).toEqual({});
+  }
+});
+
+/*
+ * A record reaches every subscription whose band includes its severity, the
+ * level read case-blind, as VS Code's host fans one out.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4529-L4558
+ */
+it('sends an INFO line to a debug or trace subscription too, and none to a warn one', async () => {
+  const { client, peer: p } = await connected();
+  for (const channel of ['ahp-otlp://logs/DEBUG', 'ahp-otlp://logs/trace', 'ahp-otlp://logs/warn']) {
+    await client.handle({ method: 'subscribe', params: { channel } });
+  }
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'echo' } });
+
+  const channels = new Set(logs(p).map((one) => one.channel));
+  expect([...channels].sort()).toEqual(['ahp-otlp://logs/DEBUG', 'ahp-otlp://logs/trace']);
 });
 
 it('carries what the host logs as an OTLP request the client can parse', async () => {
@@ -111,6 +125,10 @@ const traces = (p: ReturnType<typeof peer>) => p.notes
   .filter((n) => n.method === 'otlp/exportTraces')
   .map((n) => (n.params as { payload: Record<string, never> }).payload);
 
+/** The chat the host minted for a session, read off its state as a client reads it. */
+const mintedChat = async (client: { handle(request: unknown): Promise<unknown> }, session: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+
 it('advertises the traces and metrics channels as literals, having no variable to offer', async () => {
   const { hello } = await connected() as unknown as {
     hello: { telemetry?: { logs?: string; traces?: string; metrics?: string } };
@@ -126,7 +144,7 @@ it('sends a span for the turn, once the turn has ended', async () => {
   const { client, peer: p } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://traces' } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/t', provider: 'echo' } });
-  const chat = chatUriFor('ahp-session:/t');
+  const chat = await mintedChat(client, 'ahp-session:/t');
   client.handle({
     method: 'dispatchAction',
     params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
@@ -145,11 +163,18 @@ it('sends a span for the turn, once the turn has ended', async () => {
   expect(turn?.spanId).toMatch(/^[0-9a-f]{16}$/);
 });
 
-it('counts turns cumulatively, so a collector that arrives late reads a total', async () => {
+/*
+ * OpenTelemetry's GenAI conventions define an agent invocation's duration and
+ * tool calls, and a tool execution's duration, as histograms with the units and
+ * boundaries they name; kept cumulative, so a collector that arrives late reads
+ * a total.
+ * https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md
+ */
+it('measures each turn as the GenAI conventions\' agent invocation, cumulatively', async () => {
   const { client, peer: p } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://metrics' } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/m', provider: 'echo' } });
-  const chat = chatUriFor('ahp-session:/m');
+  const chat = await mintedChat(client, 'ahp-session:/m');
   client.handle({
     method: 'dispatchAction',
     params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
@@ -158,13 +183,50 @@ it('counts turns cumulatively, so a collector that arrives late reads a total', 
 
   const sent = p.notes.filter((n) => n.method === 'otlp/exportMetrics');
   expect(sent.length).toBeGreaterThan(0);
+  type Histogram = { aggregationTemporality: number; dataPoints: { count: string; bucketCounts: string[]; explicitBounds: number[]; attributes: { key: string }[] }[] };
   const last = (sent.at(-1)?.params as { payload: { resourceMetrics: { scopeMetrics: { metrics: {
-    name: string; sum: { isMonotonic: boolean; aggregationTemporality: number; dataPoints: { asInt: string }[] };
+    name: string; unit: string; histogram: Histogram;
   }[] }[] }[] } }).payload;
-  const turns = last.resourceMetrics[0]?.scopeMetrics[0]?.metrics.find((one) => one.name === 'ahpd.turns');
-  expect(turns?.sum.isMonotonic).toBe(true);
+  const metrics = last.resourceMetrics[0]?.scopeMetrics[0]?.metrics ?? [];
+  expect(metrics.map((one) => one.name).sort()).toEqual(['gen_ai.invoke_agent.duration', 'gen_ai.invoke_agent.tool_calls']);
+  const duration = metrics.find((one) => one.name === 'gen_ai.invoke_agent.duration');
+  expect(duration?.unit).toBe('s');
   // `2` is cumulative: the reference point is the process start, not the last
   // export, so a restarted collector is not reading from an unknown baseline.
-  expect(turns?.sum.aggregationTemporality).toBe(2);
-  expect(Number(turns?.sum.dataPoints[0]?.asInt)).toBeGreaterThan(0);
+  expect(duration?.histogram.aggregationTemporality).toBe(2);
+  expect(duration?.histogram.dataPoints[0]?.count).toBe('1');
+  expect(duration?.histogram.dataPoints[0]?.explicitBounds).toHaveLength(13);
+  expect(duration?.histogram.dataPoints[0]?.bucketCounts).toHaveLength(14);
+  expect(duration?.histogram.dataPoints[0]?.attributes.map((one) => one.key)).toEqual(['gen_ai.agent.name']);
+  expect(metrics.find((one) => one.name === 'gen_ai.invoke_agent.tool_calls')?.unit).toBe('{tool_call}');
+});
+
+/*
+ * The spec's correlation attributes on every span, a cancelled turn's status
+ * left unset, as OpenTelemetry sets Error only where a convention calls the
+ * outcome one.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/telemetry-channel.md#L141-L149
+ * https://opentelemetry.io/docs/specs/otel/trace/api/#set-status
+ */
+it('marks a turn\'s span with the spec\'s correlation attributes, and leaves a cancelled one\'s status unset', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://traces' } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/c', provider: 'echo' } });
+  const chat = await mintedChat(client, 'ahp-session:/c');
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
+  await client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 1 } } });
+  await new Promise((resolve) => { setTimeout(resolve, 60); });
+
+  const spans = traces(p).flatMap((one) => (one as unknown as {
+    resourceSpans: { scopeSpans: { spans: { name: string; status?: unknown; attributes: { key: string; value: { stringValue: string } }[] }[] }[] }[];
+  }).resourceSpans[0]?.scopeSpans[0]?.spans ?? []);
+  const turn = spans.find((one) => one.name === 'turn');
+  expect(turn?.attributes).toEqual([
+    { key: 'ahp.session.id', value: { stringValue: 'c' } },
+    { key: 'ahp.turn.id', value: { stringValue: 't1' } },
+  ]);
+  expect(turn).not.toHaveProperty('status');
 });

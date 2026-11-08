@@ -10,7 +10,6 @@
 
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import type { Agent, Start } from '../src/types/agent.js';
@@ -261,13 +260,17 @@ async function colleague(host: ReturnType<typeof createHost>, token: string): Pr
 }
 
 const uri = 'ahp-session:/metered';
-const chatUri = chatUriFor(uri);
+/** The chat the host minted for the session, read off its state once `open` made it. */
+let chatUri = '';
 
-const open = (client: Client): Promise<unknown> => client.handle({
-  method: 'createSession', params: { channel: uri, provider: 'meter', config: {} },
-});
+const open = async (client: Client): Promise<unknown> => {
+  const made = await client.handle({ method: 'createSession', params: { channel: uri, provider: 'meter', config: {} } });
+  chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+  return made;
+};
 
-const ask = (client: Client, text = 'go', turn = 't1', startedAt = new Date().toISOString()): Promise<unknown> => client.handle({
+/** A turn sent, begun at the time the chat holds it as begun. */
+const ask = (client: Client, text = 'go', turn = 't1', startedAt = '2026-10-04T10:00:00.000Z'): Promise<unknown> => client.handle({
   method: 'dispatchAction',
   params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: turn, startedAt, message: { text, origin: { kind: 'user' } } } },
 });
@@ -312,7 +315,7 @@ it('writes one record for a turn that completed, saying what its last report sai
     team: 'backend',
     project: 'ahpd',
     session: 'ahp-session:/metered',
-    chat: 'ahp-chat://default/YWhwLXNlc3Npb246L21ldGVyZWQ',
+    chat: chatUri,
     turn: 't1',
     // The turn is written once here, and that record opens it.
     opens: true,

@@ -144,6 +144,23 @@ it('on a host with people, tells nobody of a session the host names no owner for
   expect(world.sent.map((one) => one.to)).toEqual(['ExponentPushToken[ana]']);
 });
 
+// Softov 2026-10-31, "A setting per device (Recommended)": every session of the
+// device's person, or only those this device's client created or opened.
+it('tells a device set to device only the sessions its own client created or opened, and a person device those too', async () => {
+  const world = await up({
+    'phone-ana': { token: 'ExponentPushToken[ana]', platform: 'ios', owner: 'user:ana', client: 'app-ana', audience: 'device' },
+    'phone-bo': { token: 'ExponentPushToken[bo]', platform: 'ios', owner: 'user:bo', client: 'app-bo' },
+  }, new Map([['echo:/one', 'user:ana'], ['echo:/two', 'user:ana'], ['echo:/three', 'user:carol']]), true);
+  await world.fire({ type: 'session_start', session: 'echo:/one', provider: 'echo', client: 'app-ana' });
+  await world.fire({ type: 'session_opened', session: 'echo:/three', client: 'app-bo' });
+  await waiting(world, 'echo:/one');
+  await waiting(world, 'echo:/two');
+  await waiting(world, 'echo:/three');
+  // Ana's device hears the session its client made and not her other one; Bo's
+  // hears the one his client opened though it is Carol's.
+  expect(world.sent.map((one) => one.to)).toEqual(['ExponentPushToken[ana]', 'ExponentPushToken[bo]']);
+});
+
 it('on a host with no people, tells every device of every session', async () => {
   const world = await up(PHONES, new Map(), false);
   await waiting(world, 'echo:/one');

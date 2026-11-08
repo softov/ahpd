@@ -4,8 +4,8 @@ import type { Bag, OnWire } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { createTasks } from './tasks.js';
-import { lineOf, pastLineOf, titleOf, toolInputOf, writeOf } from '../input.js';
-import { claudeToolDenialCode, getClaudeToolDisplayName, toolMetaOf } from '../kinds.js';
+import { getClaudeInvocationMessage, getClaudePastTenseMessage, getClaudeToolInputString, titleOf, writeOf } from '../input.js';
+import { claudeToolDenialCode, getClaudeToolDisplayName, resultContent, toolMetaOf } from '../kinds.js';
 import { ranOn } from '../models.js';
 
 /**
@@ -37,11 +37,11 @@ export interface Stream {
   rounds: Map<string, { answered: boolean; stopped?: string }>;
   /** The line each call's row draws once it has ended, by its call id, made from its input. */
   pastLines: Map<string, StringOrMarkdown>;
-  /** Whose tool a call runs, as its start says it: a client's, an MCP server's, or nobody's. */
-  contributorOf: (toolName: string) => Contributor | undefined;
+  /** Whose tool a call runs, as its start says it: a client's, an MCP server's, or nobody's; `server` the configured one, where the CLI named it. */
+  contributorOf: (toolName: string, server?: string) => Contributor | undefined;
   /** The name a call's row is drawn under. */
   displayNameOf: (toolName: string) => string;
-  /** Every file an edit call began changing, recorded as it is now: a stop closes the CLI that would have ended the call. */
+  /** Every file an edit call began changing, recorded as it is now, for a stop that aborts the query that would have ended the call. */
   editsStopped: () => void;
 }
 
@@ -66,8 +66,10 @@ export function createStream(ctx: SessionContext): Stream {
   /**
    * Whose tool a call runs, as the call's start says it: the client whose own
    * tool it is, or else the MCP server of this session's customizations whose
-   * it is, by the customization's id, as VS Code's Claude session stamps it.
-   * A call of a server the session lists no customization for names none.
+   * it is, by the customization's id, as VS Code's Claude session stamps it:
+   * the server the CLI's `canUseTool` names, the configured one, where it is
+   * asked about the call, and else the one its name is under. A call of a
+   * server the session lists no customization for names none.
    *
    * A client's own beats the server it is offered through: the tools a client
    * provides reach the model on this host's in-process `client` server, so by
@@ -78,10 +80,10 @@ export function createStream(ctx: SessionContext): Stream {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L427-L441
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/mcpCustomizationController.ts#L692-L710
    */
-  const contributorOf = (toolName: string): Contributor | undefined => {
+  const contributorOf = (toolName: string, named?: string): Contributor | undefined => {
     const own = ctx.clientToolOf(toolName);
     if (own !== undefined) return { kind: 'client', clientId: own.owner };
-    const from = serverOf(toolName);
+    const from = named ?? serverOf(toolName);
     if (from === undefined) return undefined;
     const server = [...ctx.customizations, ...ctx.customizations.flatMap((one) => list(one.children).map(bag))]
       .find((one) => str(one.type) === 'mcpServer' && str(one.name) === from);
@@ -149,7 +151,7 @@ export function createStream(ctx: SessionContext): Stream {
     // The worker has not been named yet: held whole, and delivered once the
     // chat is open and the turn its frames belong to exists.
     if (scope.waiting !== undefined) {
-      scope.waiting.push(() => { streamed(event, parent); });
+      if (scope.failed !== true) scope.waiting.push(() => { streamed(event, parent); });
       return;
     }
 
@@ -246,13 +248,13 @@ export function createStream(ctx: SessionContext): Stream {
          * is still read; only the row a client would draw is left out.
          */
         if (ctx.options.plan === true && name === 'TodoWrite') return;
-        scope.calling.set(key, id);
+        scope.activeToolBlocks.set(key, id);
         if (scope.parts.has(id)) return;
         // A spawning call's spawn, recorded at its block's start as VS Code's
         // mapper records it, so its worker's chat opens on the worker's first
         // frame with what the record holds by then.
         // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L646-L653
-        if (name === 'Task' || name === 'Agent') ctx.recordSpawn(id, {}, scope, str(turn.id));
+        if (name === 'Task' || name === 'Agent') ctx.recordSpawn(id, {}, scope);
         // Whose tool it is. The reducer refuses `chat/toolCallAuthRequired` on
         // a call with no MCP contributor, so an MCP server's is also what makes
         // a sign-in mid-call sayable at all.
@@ -304,7 +306,7 @@ export function createStream(ctx: SessionContext): Stream {
     }
 
     if (type === 'content_block_delta') {
-      const toolCallId = scope.calling.get(key);
+      const toolCallId = scope.activeToolBlocks.get(key);
       if (toolCallId !== undefined) {
         const json = str(bag(event.delta).partial_json);
         const call = bag(scope.parts.get(toolCallId)?.toolCall);
@@ -339,7 +341,7 @@ export function createStream(ctx: SessionContext): Stream {
   const assistant = (message: Bag, parent = ''): void => {
     const scope = ctx.scopeFor(parent);
     if (scope.waiting !== undefined) {
-      scope.waiting.push(() => { assistant(message, parent); });
+      if (scope.failed !== true) scope.waiting.push(() => { assistant(message, parent); });
       return;
     }
     const turn = ctx.openTurn(scope);
@@ -394,9 +396,9 @@ export function createStream(ctx: SessionContext): Stream {
          */
         if (ctx.options.plan === true && name === 'TodoWrite') continue;
         const displayName = displayNameOf(name);
-        const line = lineOf(name, bag(block.input), displayName);
-        ctx.pastLines.set(id, pastLineOf(name, bag(block.input), displayName));
-        const input = toolInputOf(name, bag(block.input));
+        const line = getClaudeInvocationMessage(name, displayName, bag(block.input));
+        ctx.pastLines.set(id, getClaudePastTenseMessage(name, displayName, bag(block.input), true));
+        const input = getClaudeToolInputString(name, block.input);
         const from = serverOf(name);
         /*
          * A spawning call, whose input is the only place the harness says what
@@ -406,7 +408,7 @@ export function createStream(ctx: SessionContext): Stream {
          * what the scope waits for. Recorded there too, from the permission
          * callback, which is handed the whole input and can be first.
          */
-        if (name === 'Task' || name === 'Agent') ctx.recordSpawn(id, bag(block.input), scope, str(turn.id));
+        if (name === 'Task' || name === 'Agent') ctx.recordSpawn(id, bag(block.input), scope);
         // Whose tool this is, which decides who has to run it, as its start
         // said it.
         const contributor = contributorOf(name);
@@ -550,15 +552,15 @@ export function createStream(ctx: SessionContext): Stream {
     const info = ctx.spawning.get(id);
     if (info === undefined) return;
     info.completed = true;
-    if (info.foreground) ctx.endWorker(id, 'complete');
+    if (info.foreground) ctx.endSubagent(id, 'complete');
     // Ended, or never opened and not running on in the background.
-    if (ctx.ended.has(id) || (!ctx.scopes.has(id) && info.foreground)) ctx.spawning.delete(id);
+    if (ctx.completed.has(id) || (!ctx.scopes.has(id) && info.foreground)) ctx.spawning.delete(id);
   };
 
   const results = (message: Bag, parent = '', structured?: unknown): void => {
     const scope = ctx.scopeFor(parent);
     if (scope.waiting !== undefined) {
-      scope.waiting.push(() => { results(message, parent, structured); });
+      if (scope.failed !== true) scope.waiting.push(() => { results(message, parent, structured); });
       return;
     }
     for (const raw of list(message.content)) {
@@ -626,7 +628,7 @@ export function createStream(ctx: SessionContext): Stream {
        */
       const displayName = str(call.displayName) ?? str(call.toolName) ?? 'the tool';
       const said = bag(call.contributor).kind === 'client' ? displayName
-        : !ok ? pastLineOf(str(call.toolName) ?? '', {}, displayName, false)
+        : !ok ? getClaudePastTenseMessage(str(call.toolName) ?? '', displayName, {}, false)
           : ctx.pastLines.get(id) ?? str(call.invocationMessage) ?? displayName;
       ctx.pastLines.delete(id);
       const denial = ok || text === undefined ? undefined : claudeToolDenialCode(text);
@@ -642,15 +644,15 @@ export function createStream(ctx: SessionContext): Stream {
        * so its worker is opened here and the completion names it.
        */
       if (ctx.spawning.get(id)?.foreground === false) ctx.scopeFor(id);
-      const workerContent = ctx.workerBlock(id);
+      const workerContent = ctx.subagentBlock(id);
       /*
        * The terminal that shows a `Bash` output too large to send, after the
        * notice that stands in for that output in the text, which is where the
        * reference adds it.
        * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L383-L391
        */
-      const saved = id === undefined ? undefined : ctx.savedTerminals.get(id);
-      if (id !== undefined) ctx.savedTerminals.delete(id);
+      const retained = id === undefined ? undefined : ctx.retainedTerminalOutputs.get(id);
+      if (id !== undefined) ctx.retainedTerminalOutputs.delete(id);
       /*
        * The file an edit tool changed, its two sides held by the host for a
        * client to draw the call's diff from, after the text, as VS Code's
@@ -685,9 +687,9 @@ export function createStream(ctx: SessionContext): Stream {
       const shown = [
         ...(workerContent !== undefined ? [workerContent] : []),
         ...(shownTerminal !== undefined ? [shownTerminal] : []),
-        ...(text !== undefined ? [{ type: 'text', text }] : []),
+        ...resultContent(block.content),
         ...(fileEdit !== undefined ? [fileEdit] : []),
-        ...(saved !== undefined ? [saved] : []),
+        ...(retained !== undefined ? [retained] : []),
       ] as OnWire<ToolResultContent>[];
       const result = {
         success: ok,

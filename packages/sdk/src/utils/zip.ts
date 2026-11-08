@@ -44,16 +44,32 @@ const dosTime = (at: Date): { time: number; date: number } => {
 const u16 = (value: number): Buffer => { const b = Buffer.alloc(2); b.writeUInt16LE(value & 0xffff); return b; };
 const u32 = (value: number): Buffer => { const b = Buffer.alloc(4); b.writeUInt32LE(value >>> 0); return b; };
 
-/** Write the entries to `archive`, and answer the number of bytes it came to. */
-export async function zip(archive: string, entries: ZipEntry[]): Promise<number> {
+/**
+ * Write the entries to `archive`, and answer the number of bytes it came to.
+ *
+ * `progress` hears the bytes read so far after each entry, with the entry's
+ * name, and an aborted `signal` stops the archive before the next entry, as
+ * the reference's zip takes a token and reports as it goes.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostDebugLogs.ts#L110-L120
+ */
+export async function zip(
+  archive: string,
+  entries: ZipEntry[],
+  watch: { signal?: AbortSignal; progress?: (bytes: number, path: string) => void } = {},
+): Promise<number> {
   const out = createWriteStream(archive);
   let offset = 0;
+  let read = 0;
   const written = (chunk: Buffer): Promise<void> => new Promise((resolve, reject) => {
     offset += chunk.length;
     out.write(chunk, (error) => (error ? reject(error) : resolve()));
   });
   const directory: Buffer[] = [];
   for (const entry of entries) {
+    if (watch.signal?.aborted === true) {
+      await new Promise<void>((resolve) => { out.end(() => { resolve(); }); });
+      throw new Error('Canceled');
+    }
     const data = await readFile(entry.from);
     const when = dosTime((await stat(entry.from)).mtime);
     const packed = deflateRawSync(data);
@@ -68,6 +84,8 @@ export async function zip(archive: string, entries: ZipEntry[]): Promise<number>
     directory.push(Buffer.concat([
       u32(0x02014b50), u16(20), fields, u16(0), u16(0), u16(0), u32(0), u32(at), name,
     ]));
+    read += data.length;
+    watch.progress?.(read, entry.path);
   }
   const start = offset;
   for (const record of directory) await written(record);

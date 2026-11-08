@@ -49,7 +49,7 @@ const foldered = (): { folder: string; log: string } => {
 };
 
 /** A session of the fixture server, with the host's own answer about a folder. */
-function sessionIn(over: Partial<Start>, log: string, honours?: boolean): { session: Session; actions: Bag[] } {
+async function sessionIn(over: Partial<Start>, log: string, honours?: boolean): Promise<{ session: Session; actions: Bag[] }> {
   const actions: Bag[] = [];
   const agent = acpAgent({
     command: process.execPath,
@@ -69,7 +69,7 @@ function sessionIn(over: Partial<Start>, log: string, honours?: boolean): { sess
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
     ...over,
   };
-  const session = agent.create(start);
+  const session = await agent.create(start);
   started.push(session);
   return { session, actions };
 }
@@ -83,7 +83,7 @@ const failure = (actions: Bag[]): string | undefined => {
 
 it('refuses a folder nobody vouched for, rather than starting the agent in it', async () => {
   const { folder, log } = foldered();
-  const { session, actions } = sessionIn({ workingDirectory: folder, trusted: () => false }, log);
+  const { session, actions } = await sessionIn({ workingDirectory: folder, trusted: () => false }, log);
   session.sendMessage('t1', 'hi');
   await until(() => failure(actions) !== undefined);
   // The sentence names the folder and the way out of it, so a person reading
@@ -97,7 +97,7 @@ it('refuses a folder nobody vouched for, rather than starting the agent in it', 
 
 it('starts the agent in an untrusted folder when the preset says it honours trust', async () => {
   const { folder, log } = foldered();
-  const { session } = sessionIn({ workingDirectory: folder, trusted: () => false }, log, true);
+  const { session } = await sessionIn({ workingDirectory: folder, trusted: () => false }, log, true);
   session.sendMessage('t1', 'hi');
   await until(() => existsSync(log));
   expect(existsSync(log)).toBe(true);
@@ -105,7 +105,7 @@ it('starts the agent in an untrusted folder when the preset says it honours trus
 
 it('starts the agent in a folder the host vouched for', async () => {
   const { folder, log } = foldered();
-  const { session } = sessionIn({ workingDirectory: folder, trusted: () => true }, log);
+  const { session } = await sessionIn({ workingDirectory: folder, trusted: () => true }, log);
   session.sendMessage('t1', 'hi');
   await until(() => existsSync(log));
   expect(existsSync(log)).toBe(true);

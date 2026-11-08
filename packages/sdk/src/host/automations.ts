@@ -1,6 +1,7 @@
+import { isDeepStrictEqual } from 'node:util';
 import { computerSource } from '../machines/computers.js';
 import { Status, idOf, uriFor } from '../sessions/catalog.js';
-import { INVALID_PARAMS, RpcError } from '../rpc.js';
+import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { EVENT_TRIGGERS, pluginTriggerTypes, wrongIn } from '../automations/automations.js';
 import { sameOwnerOrHost, withConnectorChoices } from '../connectors/fields.js';
 import { presetById } from '../automations/triggerpresets.js';
@@ -8,8 +9,8 @@ import { localPath } from '../resources/fileuri.js';
 import { createRuleEngine } from '../automations/triggers.js';
 import { wakeMessage } from '../automations/wakemessage.js';
 import { bag } from '../utils/values.js';
-import { AUTOMATIONS, chatUriFor } from './channels.js';
-import { CLOSING, NO_AGENT, need } from './common.js';
+import { AUTOMATIONS, isAutomationResource } from './channels.js';
+import { CLOSING, need, noProvider } from './common.js';
 import { refusalReason } from './gate.js';
 import type { Bag } from '../types/common.js';
 import type { AutomationEntry, AutomationRun, AutomationRunState, RunEnding, StartSession } from '../types/automations.js';
@@ -37,13 +38,16 @@ const ENDING = new Set<SessionEventKind>(['turnCompleted', 'turnFailed', 'turnCa
 const OVER = new Set(['completed', 'failed', 'cancelled']);
 
 /**
- * Who a run's own plugins are announced as.
+ * Who a run's own plugins are announced as: VS Code's
+ * `AUTOMATION_ACTIVE_CLIENT_ID`, shown as "Automation", which each captured
+ * plugin names as its client too.
  *
  * An active client, as a person's window is, and named for what it is rather
  * than for anybody: the plugins it carries are the automation's, and a client
  * reading a session that began at nine is owed something that says so.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationCustomizations.ts#L101-L108
  */
-const AUTOMATION_CLIENT = 'Automation';
+const AUTOMATION_CLIENT = 'vscode.automation';
 
 /** The event ids a saved trigger names, in the order the client put them. */
 const eventsOf = (trigger: Bag): string[] => (Array.isArray(trigger.events) ? trigger.events : [])
@@ -83,9 +87,9 @@ const eventTitle = (type: string, id: string): string =>
 const eventName = (type: TriggerTypeDefinition, id: string): string =>
   type.events.find((one) => one.id === id)?.title ?? id;
 
-/** The resource an automation id names, or the URI it already is. */
+/** The resource an automation id names, or the URI it already is: any URI in the `ahp-automation` scheme. */
 const automationResource = (id: string): string =>
-  (id.startsWith('ahp-automation:/') ? id : `ahp-automation:/${id}`);
+  (isAutomationResource(id) ? id : `ahp-automation:/${id}`);
 
 /**
  * Whose an automation is, as the entry a client reads carries it.
@@ -173,8 +177,8 @@ export const runState = ({ owner, notes, ...rest }: AutomationRun): AutomationRu
  * is told when it moves, and the run a due automation starts.
  */
 export interface Automations {
-  /** The sessions each run was last announced as having, by run URI. */
-  linked: Map<string, string[]>;
+  /** The run each manual request made, by its `requestId`, with the automation it named. */
+  manualRunRequests: Map<string, { automation: string; run: string }>;
   /** Move the run a session belongs to, when that session stops working. */
   settleRun(uri: string, ending: RunEnding): void;
   /** Stop the run a client named: nothing where it stopped, or why it did not. */
@@ -230,12 +234,18 @@ export function createAutomations(ctx: HostContext): Automations {
   const {
     options, sessions, byChat, senders, charged, origins, kept,
     dispatch, log, fire, statusOf, principalFor, admitted, placedIn,
-    isolated, settle, openSession, backendsOwn, modelIn, unheld, forWhom, leadOf,
-    turnInstructions,
+    resolveCreatedSessionConfig, createProviderSession, backendsOwn, modelIn, unheld, forWhom, leadOf,
+    scratchFolder, turnInstructions,
   } = ctx;
 
-  /** The sessions each run was last announced as having, by run URI. */
-  const linked = new Map<string, string[]>();
+  /**
+   * Each run as its channel last said it, by run URI: its lifecycle, its
+   * sessions and its primary session, which the next move is said against.
+   */
+  const runStates = new Map<string, Pick<AutomationRun, 'automation' | 'lifecycle' | 'sessions' | 'primarySession'>>();
+
+  /** The run each manual request made, by its `requestId`, for the daemon's run. */
+  const manualRunRequests = new Map<string, { automation: string; run: string }>();
 
   /**
    * The one wake each automation is holding behind a run that is still going.
@@ -302,45 +312,52 @@ export function createAutomations(ctx: HostContext): Automations {
    *
    * A run is sessions and what runs in a session is a turn, so the call is the
    * one `chat/turnCancelled` makes: the chat's backend is asked to stop the
-   * turn it is running, and the backend's own ending is what the run reads. A
-   * session that is not live here has no turn to stop, which is the same
-   * answer as one between turns.
+   * turn it is running, and the backend's own ending is what the run reads.
+   * Answers whether there was a turn to stop: a session that is not live here
+   * has none, as one between turns has none.
    */
-  const stopTurn = (session: string): void => {
-    const chat = byChat.get(chatUriFor(session))?.chat;
-    if (chat === undefined) return;
+  const stopTurn = (session: string): boolean => {
+    const chat = byChat.get(ctx.defaultChatFor(session))?.chat;
+    if (chat === undefined) return false;
     const active = (chat.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
-    if (typeof active?.id === 'string') void chat.abort();
+    if (typeof active?.id !== 'string') return false;
+    void chat.abort();
+    return true;
   };
 
   /**
-   * Stop a run, and answer why it did not stop where it did not.
+   * Stop a run, and answer with the reason it did not stop where it did not.
    *
-   * The action is a request with no room for an answer, so the reason travels
-   * back to the one client that asked as a `rejectionReason` rather than as a
-   * result - which is why this hands one out instead of refusing.
+   * The action's one answer is a `rejectionReason` to the client that sent it,
+   * so the caller refuses with the reason this hands back.
    *
-   * A run that has no session running a turn is settled here and now. That is
-   * a run whose session is between turns, one asleep in the catalogue, and one
-   * whose session is still being made: none of the three will ever emit an
-   * ending, and a cancel that waited for one would wait for ever. The
-   * reference host does the same with the last of them, which it answers by
-   * writing the run's own end rather than by asking a session for it.
+   * A run with no session yet is settled here and now, as the reference host
+   * writes such a run's own end. A run with sessions is stopped by stopping
+   * their turns, and its own ending is what their backends' endings make of
+   * it; one none of whose sessions runs a turn is refused, as the reference
+   * host refuses a cancellation none of its sessions accepted. Each refusal
+   * is in the reference host's words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L740-L762
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1187-L1203
    *
-   * The wake this automation is holding behind the run goes with it. That wake
-   * was waiting for the slot this run had, and a person pressing Stop is
-   * stopping the work rather than asking for the next piece of it: left where
-   * it is, the run's own ending would release it a turn later and the stop
-   * would have started the automation's next run.
+   * The wake this automation is holding behind the run goes with a run that
+   * stops. That wake was waiting for the slot this run had, and a person
+   * pressing Stop is stopping the work rather than asking for the next piece
+   * of it: left where it is, the run's own ending would release it a turn
+   * later and the stop would have started the automation's next run.
    */
   const cancelRun = (run: string): string | undefined => {
     const store = options.automations;
     const found = store?.runOf?.(run);
     if (found === undefined) return `Automation run not found: ${run}`;
     if (OVER.has(String(found.lifecycle.status))) return `Automation run is already terminal: ${run}`;
+    if (found.sessions.length === 0) {
+      waiting.delete(found.automation);
+      store?.settle?.(run, { status: 'cancelled' });
+      return undefined;
+    }
+    if (!found.sessions.map(stopTurn).some((stopped) => stopped)) return `Automation run cancellation was not accepted: ${run}`;
     waiting.delete(found.automation);
-    for (const session of found.sessions) stopTurn(session);
-    if (!stillGoing(found)) store?.settle?.(run, { status: 'cancelled' });
     return undefined;
   };
 
@@ -355,6 +372,11 @@ export function createAutomations(ctx: HostContext): Automations {
   const changed = (event: { automation?: string; run?: string; removed?: string }): void => {
     if (event.removed !== undefined) {
       watchFor(event.removed);
+      // The manual requests go with the automation, as VS Code's host drops them
+      // with its history.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L637-L638
+      for (const [requestId, asked] of manualRunRequests) if (asked.automation === event.removed) manualRunRequests.delete(requestId);
+      for (const [run, said] of runStates) if (said.automation === event.removed) runStates.delete(run);
       dispatch(AUTOMATIONS, { type: 'automation/removed', resource: event.removed });
       return;
     }
@@ -365,30 +387,42 @@ export function createAutomations(ctx: HostContext): Automations {
     }
     if (event.run !== undefined) {
       const run = options.automations?.runOf(event.run);
-      if (!run) return;
-      // Two channels, because they answer different questions: the run's own
-      // says what it is doing, and the catalogue's says which session it is
-      // doing it in.
-      dispatch(event.run, { type: 'automationRun/lifecycleChanged', lifecycle: run.lifecycle });
+      if (!run) {
+        runStates.delete(event.run);
+        return;
+      }
       /*
-       * Which sessions it has, as the difference rather than the list.
-       *
-       * `automationRun/sessionSet` appends one and `sessionRemoved` takes one
-       * away - there is no action carrying the whole set - so what is sent is
-       * what moved since the last time this looked. A run that started one
-       * session says so once; one whose session was disposed says that too,
-       * and a client watching the run channel is not left pointing at a
-       * channel nobody can open.
+       * Each action on its own change, as VS Code's host commits a run's change
+       * with the actions of that change: the lifecycle at a transition, a
+       * session as it joins, and the primary session when it is another. A run
+       * this channel has said nothing of yet is said whole, because a client
+       * may hold it from a snapshot older than this move.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1143-L1184
        */
-      const before = linked.get(event.run) ?? [];
-      for (const gone of before.filter((one) => !run.sessions.includes(one)))
+      const before = runStates.get(event.run);
+      if (before === undefined || !isDeepStrictEqual(before.lifecycle, run.lifecycle)) {
+        dispatch(event.run, { type: 'automationRun/lifecycleChanged', lifecycle: run.lifecycle });
+      }
+      /*
+       * Its sessions, one action per session that joined or went:
+       * `automationRun/sessionSet` appends one and `sessionRemoved` takes one
+       * away. A session disposed goes from its run, so a client watching the
+       * run channel is not left pointing at a channel nobody can open.
+       */
+      const was = before?.sessions ?? [];
+      for (const gone of was.filter((one) => !run.sessions.includes(one)))
         dispatch(event.run, { type: 'automationRun/sessionRemoved', session: gone });
-      for (const added of run.sessions.filter((one) => !before.includes(one)))
+      for (const added of run.sessions.filter((one) => !was.includes(one)))
         dispatch(event.run, { type: 'automationRun/sessionSet', session: added });
-      linked.set(event.run, [...run.sessions]);
-      if (run.primarySession !== undefined) {
+      if (run.primarySession !== undefined && run.primarySession !== before?.primarySession) {
         dispatch(event.run, { type: 'automationRun/primarySessionChanged', primarySession: run.primarySession });
       }
+      runStates.set(event.run, {
+        automation: run.automation,
+        lifecycle: structuredClone(run.lifecycle),
+        sessions: [...run.sessions],
+        ...(run.primarySession === undefined ? {} : { primarySession: run.primarySession }),
+      });
     }
   };
 
@@ -504,7 +538,7 @@ export function createAutomations(ctx: HostContext): Automations {
         ? startForAutomation
         : (wanted) => startForAutomation({ ...wanted, text: wakeMessage(wanted.text, facts) }));
       log(run
-        ? `${said} and started ${run.primarySession ?? run.resource}`
+        ? `${said} and started ${run.resource}`
         : `${said} and is switched off or gone`);
     }
     catch (error) {
@@ -599,7 +633,7 @@ export function createAutomations(ctx: HostContext): Automations {
       return;
     }
     if (overlap === 'steer' && facts !== undefined && flight.session !== undefined) {
-      const chat = byChat.get(chatUriFor(flight.session))?.chat;
+      const chat = byChat.get(ctx.defaultChatFor(flight.session))?.chat;
       if (chat?.sendSteeringMessage?.({ id: crypto.randomUUID(), text: wakeMessage(templateOf(automation), facts) }) === true) {
         log(`${said} into the turn that was already running`);
         return;
@@ -666,7 +700,7 @@ export function createAutomations(ctx: HostContext): Automations {
     if (wanted.text.trim() === '') return;
     const turnId = crypto.randomUUID();
     if (wanted.owner !== undefined) senders.set(turnId, wanted.owner);
-    const chat = byChat.get(chatUriFor(session))?.chat;
+    const chat = byChat.get(ctx.defaultChatFor(session))?.chat;
     if (chat !== undefined) void ctx.startTurn(chat, turnId, wanted.text, modelIn(wanted.model), { origin: { kind: 'automation' } });
   };
 
@@ -696,20 +730,21 @@ export function createAutomations(ctx: HostContext): Automations {
    * Two roads reach here, and they are the two ways this host starts work for a
    * person who is not at the keyboard: an automation's run, and a plugin asking
    * for one. Neither may take a shorter route than a client, so the steps are
-   * here once - the tree is isolated, the owner's policies and grants are asked
-   * about, the machine the config names is made, and the first turn is sent -
-   * and what each road adds is the question that is its own.
+   * here once - the owner's policies and grants are asked about, the machine
+   * the config names is made, and the first turn is sent, which makes the tree
+   * of a worktree session - and what each road adds is the question that is
+   * its own.
    */
   const beginSession = async (wanted: StartSession, named?: (uri: string) => void): Promise<string> => {
     const provider = wanted.provider ?? ctx.first?.provider;
-    if (provider === undefined) throw new Error(NO_AGENT);
+    if (provider === undefined) throw new Error(noProvider(provider));
     // Named the way a client's `createSession` names a session.
     const uri = uriFor(crypto.randomUUID());
     unheld(uri);
     /*
      * Told before anything is made, which is what puts a plugin's own answer
      * in the first tool list: the backend is spawned with the list built
-     * while the tree is being isolated, so a reader that learns the URI after
+     * while the session is being set up, so a reader that learns the URI after
      * the start answers has already missed it.
      *
      * A door that throws has heard as much as it could and is not this
@@ -723,12 +758,12 @@ export function createAutomations(ctx: HostContext): Automations {
       }
     }
     const config = wanted.config ?? {};
-    // The same two steps a client's `createSession` takes: the tree is made
-    // before anything runs in it, and the host's own keys are not the
-    // backend's to read. An automation asking for isolation is the case this
-    // exists for - nobody is at the keyboard to notice two of them colliding.
-    const where = await isolated(uri, config, wanted.workingDirectory);
-    await settle(uri, wanted.workingDirectory, config);
+    // The same steps a client's `createSession` takes: the folder the daemon's
+    // `workspacelessFolder` says where none is named, the host's own keys are
+    // not the backend's to read, and a worktree is made at the first send,
+    // which a run makes at once.
+    const where = wanted.workingDirectory ?? await scratchFolder(uri);
+    await resolveCreatedSessionConfig(uri, where, config);
     /*
      * The two checks a client's `createSession` makes, asked here too and before
      * anything runs in the machine - an automation is nobody at the keyboard to
@@ -795,9 +830,9 @@ export function createAutomations(ctx: HostContext): Automations {
       options.clientPlugins?.spare(wanted.customizations.map((one) => localPath(one.uri)));
       ctx.presence.set(idOf(uri), new Map([[AUTOMATION_CLIENT, {
         clientId: AUTOMATION_CLIENT,
-        displayName: AUTOMATION_CLIENT,
+        displayName: 'Automation',
         tools: [],
-        customizations: wanted.customizations,
+        customizations: wanted.customizations.map((one) => ({ ...one, clientId: AUTOMATION_CLIENT })),
       }]]));
       ctx.retool(uri);
       await ctx.pluginsSettled(uri);
@@ -812,7 +847,7 @@ export function createAutomations(ctx: HostContext): Automations {
     if (wanted.trusted === true && wanted.workingDirectory !== undefined) {
       kept.setTrustedFolder?.(idOf(uri), localPath(wanted.workingDirectory));
     }
-    await openSession(
+    await createProviderSession(
       uri,
       provider,
       config,
@@ -831,6 +866,7 @@ export function createAutomations(ctx: HostContext): Automations {
         ...(wanted.userSettings === undefined ? {} : { userSettings: wanted.userSettings }),
       },
     );
+    ctx.oweTree(uri, {}, () => ({}));
     fireRun(wanted);
     beginIn(uri, wanted);
     return uri;
@@ -1045,15 +1081,16 @@ export function createAutomations(ctx: HostContext): Automations {
    * behind, with no process here and nothing on disk, and a plugin reusing a
    * session has to be told it apart from one it still has.
    *
-   * `past` is what asks the catalogue, because it answers for a backend that
-   * can be asked about one id as well as for a listing already held, and it
-   * keeps a transcript it read. Nothing is asked of the store: the row that
-   * outlived the session is exactly the thing this question does not trust.
-   * The URI has to be the one the session is published under, which is the
-   * only one it opens by, and is read once `past` has named the row.
+   * `restoreSession` is what asks the catalogue, because it answers for a
+   * backend that can be asked about one id as well as for a listing already
+   * held, and it keeps a transcript it read. Nothing is asked of the store:
+   * the row that outlived the session is exactly the thing this question does
+   * not trust. The URI has to be the one the session is published under,
+   * which is the only one it opens by, and is read once `restoreSession` has
+   * named the row.
    */
   const opensSession = async (uri: string): Promise<boolean> =>
-    sessions.has(uri) || ((await ctx.past(idOf(uri))) !== undefined && ctx.nameOf(idOf(uri)) === uri);
+    sessions.has(uri) || ((await ctx.restoreSession(idOf(uri))) !== undefined && ctx.nameOf(idOf(uri)) === uri);
 
   /**
    * Every automation this host is watching, by resource.
@@ -1497,7 +1534,7 @@ export function createAutomations(ctx: HostContext): Automations {
   };
 
   return {
-    linked, settleRun, cancelRun, gone, stop, changed, beginAutomation, startForAutomation, startForPlugin, startForPluginChat, due,
+    manualRunRequests, settleRun, cancelRun, gone, stop, changed, beginAutomation, startForAutomation, startForPlugin, startForPluginChat, due,
     wireTriggerTypes, wirePluginStarts,
   };
 }
@@ -1545,13 +1582,28 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
       ],
     }),
     /**
-     * Start one now.
+     * Start one now, or answer with the run of it that is going.
      *
-     * The session is created here rather than in the store, because only
-     * this file knows what a session is - the store is handed a function
-     * and gets a URI back. `requestId` is echoed nowhere: the protocol has
-     * it so a client can match its own request to the run it gets, and the
-     * run URI in the result is that match.
+     * A manual run is made as VS Code's host makes one. Its `requestId` is
+     * the request's identity: the same request asked again is answered with
+     * the run it made, and one used for another automation is refused. The
+     * requests are kept for the daemon's run and go with their automation.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1027-L1077
+     *
+     * A press is never held. While a run of the automation has not ended, the
+     * newest such run is the answer, whatever the automation says about
+     * overlapping runs: that setting is about an event arriving on its own.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1546-L1555
+     *
+     * Otherwise the answer is the run as the store recorded it, and its
+     * session is made after: a client watching the run reads the session
+     * arrive on it, as VS Code's host answers with the run it recorded and
+     * starts it after. The run goes where the automation's wake says, a
+     * session of its own or a turn in its pinned chat.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L707-L713
+     *
+     * The session is created here, because only this file knows what a
+     * session is: the store is handed a function and gets a URI back.
      *
      * The origin is `{ kind: 'manual' }` and nothing else, because that is
      * the whole of `AutomationManualRunOrigin` - it carries no room for
@@ -1562,25 +1614,33 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
      * not the presser's: the owner rides on the automation and travels
      * with the run, and this origin says only that a person pressed it.
      *
-     * A press is never held behind a run that is going, whatever the
-     * automation says about overlapping ones: what this answers with is the
-     * run it started, and a press that started nothing has nothing to
-     * answer with. What an automation says about running twice is about an
-     * event arriving on its own, and a person asking for one now is not
-     * that - they get a session or a turn in the pinned chat, which is the
-     * half of those settings a press is held to.
-     *
-     * `enabled` and a disable condition are not this method's business
-     * either, and the protocol says so: they govern runs an automation
-     * schedules for itself, and a person pressing Run gets a run of one
-     * that is switched off. `-32001` here means there is no automation at
-     * that resource, and nothing else.
+     * `enabled` and a disable condition do not gate a press, and the protocol
+     * says so: they govern runs an automation schedules for itself, and a
+     * person pressing Run gets a run of one that is switched off. Each
+     * refusal is VS Code's plain error, in its words.
      */
     runAutomation: async (params) => {
       const store = need(options.automations, 'runAutomation');
       const automation = String(params.automation ?? '');
+      const requestId = typeof params.requestId === 'string' ? params.requestId : '';
+      if (requestId.trim() === '') throw new RpcError(INTERNAL_ERROR, 'Automation run requestId must not be empty.');
+      const asked = ctx.manualRunRequests.get(requestId);
+      if (asked !== undefined) {
+        if (asked.automation !== automation) {
+          throw new RpcError(INTERNAL_ERROR, `Automation run requestId is already used for another automation: ${requestId}`);
+        }
+        if (store.runOf(asked.run) === undefined) throw new RpcError(INTERNAL_ERROR, `Automation run requestId refers to a missing run: ${requestId}`);
+        return { resource: asked.run };
+      }
+      const entry = store.get(automation);
+      if (entry === undefined) throw new RpcError(INTERNAL_ERROR, `Automation not found: ${automation}`);
+      if (!entry.operations.includes('run')) throw new RpcError(INTERNAL_ERROR, `Automation operation 'run' is not available: ${automation}`);
+      const going = entry.runs.map((one) => store.runOf(String(bag(one).resource)))
+        .find((one) => one !== undefined && !OVER.has(String(one.lifecycle.status)));
+      if (going !== undefined) return { resource: going.resource };
       const run = await store.run(automation, { kind: 'manual' }, startForAutomation);
-      if (!run) throw new RpcError(-32001, `No automation at ${automation}`);
+      if (!run) throw new RpcError(INTERNAL_ERROR, `Automation not found: ${automation}`);
+      ctx.manualRunRequests.set(requestId, { automation, run: run.resource });
       return { resource: run.resource };
     },
     /**
@@ -1591,15 +1651,22 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
      * so about, and every subscriber of the catalogue has it on the same
      * `automation/set` - which the store dispatches before this answers.
      *
-     * The cursor is the entry's `runsNextCursor`, and the store says whether
-     * it was one it issued. The protocol asks for an unrecognised cursor to be
-     * refused rather than guessed at, which is the refusal `fetchTurns` makes
-     * on an older page too.
+     * The cursor is the entry's `runsNextCursor`. An automation nobody keeps,
+     * and a cursor that is not the entry's, are refused in VS Code's words, and
+     * an entry with no more runs is answered at once, as VS Code's host answers.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L719-L738
      */
     fetchAutomationRuns: async (params) => {
+      const store = need(options.automations, 'fetchAutomationRuns');
+      const automation = String(params.automation ?? '');
       const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
-      const known = need(options.automations, 'fetchAutomationRuns').runs(String(params.automation ?? ''), cursor);
-      if (!known) throw new RpcError(INVALID_PARAMS, `Unrecognised cursor ${String(cursor)}`);
+      const entry = store.get(automation);
+      if (entry === undefined) throw new RpcError(INTERNAL_ERROR, `Automation not found: ${automation}`);
+      if (entry.runsNextCursor === undefined) return {};
+      if (cursor !== undefined && cursor !== entry.runsNextCursor) {
+        throw new RpcError(INTERNAL_ERROR, `Automation run-history cursor is no longer available: ${cursor}`);
+      }
+      store.runs(automation, cursor);
       return {};
     },
   };

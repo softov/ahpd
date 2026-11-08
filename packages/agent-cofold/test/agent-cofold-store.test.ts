@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -9,7 +10,7 @@ import type { Message, MessageSource, ModelAdapter, ModelReply, ModelStreamEvent
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { uriOf } from '@ahpd/sdk';
-import type { Agent, Bag, BoundTool, Listed, Start } from '@ahpd/sdk';
+import type { Agent, Bag, BoundTool, Listed, MessageAttachment, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { startedNow } from '../../sdk/test/support/started.js';
 import { cofoldAgent, turnsOf } from '../src/index.js';
@@ -52,7 +53,7 @@ vi.mock('@cofold/store-file', async (original) => {
  * out fails on its own message rather than letting the case read on. `seen`
  * describes what had arrived, for the message.
  */
-const until = async (check: () => boolean, ms = 4000, seen?: () => string): Promise<void> => {
+const until = async (check: () => boolean, ms = WAIT_MS, seen?: () => string): Promise<void> => {
   const limit = Date.now() + ms;
   while (!check()) {
     if (Date.now() > limit) throw new Error(seen === undefined ? 'timed out waiting' : `timed out waiting; seen: ${seen()}`);
@@ -85,7 +86,7 @@ function channels(onEmit?: (channel: 'session' | 'chat' | 'terminal', action: Ba
  * `awaiting`, so a test that restarts on the action alone can read a run that
  * is still `running`.
  */
-const pausedRun = async (root: string, sessionId: string, ms = 4000): Promise<void> => {
+const pausedRun = async (root: string, sessionId: string, ms = WAIT_MS): Promise<void> => {
   const store = createFileStore({ root });
   const limit = Date.now() + ms;
   for (;;) {
@@ -249,6 +250,22 @@ it('finds a session written after the last listing, and nothing for one the stor
 
   expect((await agent.find?.('late'))?.title).toBe('said later');
   expect(await agent.find?.('nobody')).toBeUndefined();
+});
+
+/*
+ * A session nobody said anything in is listed untitled, as VS Code lists a
+ * session that has no summary.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6140-L6146
+ */
+it('lists a session nobody said anything in with an empty title', async () => {
+  const { root, sweep } = place();
+  const before = made.length;
+  const agent = backend(root, createFakeModel({ script: [] }), allowAll());
+  const store = made[before] as Store;
+  await store.sessions.create({ sessionId: 'quiet', agentId: 'cofold', workspace: sweep });
+
+  expect((await agent.list?.())?.find((row) => row.id === 'quiet')?.title).toBe('');
+  expect((await agent.find?.('quiet'))?.title).toBe('');
 });
 
 it('reads one record and never lists the store', async () => {
@@ -682,6 +699,87 @@ it('rebuilds a call whose run recorded a result but no start, with the duration 
   expect(call._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
 });
 
+/** A session's `messages.jsonl` in the file store, one message a line. */
+const messagesOf = (root: string): string => {
+  const found = readdirSync(root, { recursive: true }).map(String).filter((one) => one.endsWith('messages.jsonl'));
+  expect(found).toHaveLength(1);
+  return join(root, found[0] as string);
+};
+
+it('reads a shell call back with the command it runs as its input, as the live row has it', async () => {
+  const { root, sweep } = place();
+  const model = createFakeModel({
+    script: [{ toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'call-1' }] }, { text: 'done' }],
+    stream: true,
+  });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'one', sweep, { tools: [] });
+  one.session.sendMessage('t1', 'run it');
+  await until(() => ended(one.view));
+  one.session.close();
+
+  const parts = ((await agent.transcript?.('one'))?.[0]?.responseParts ?? []) as Bag[];
+  expect((parts.find((part) => part.kind === 'toolCall')?.toolCall as Bag).toolInput).toBe('echo hi');
+});
+
+/*
+ * A finished turn's call with no result ends as the reducer ends it at the
+ * turn's end; a result closes its call in whatever turn holds it, and one with
+ * no call is dropped, as VS Code's reader applies a completion by its call.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+ */
+it('ends a call with no result as the turn\'s end does, and closes a call by a result read in a later turn', async () => {
+  const { root, sweep } = place();
+  const model = createFakeModel({
+    script: [
+      { toolCalls: [{ name: 'lookup', input: { query: 'x' }, callId: 'call-1' }] },
+      { text: 'found it' },
+      { toolCalls: [{ name: 'lookup', input: { query: 'y' }, callId: 'call-2' }] },
+      { text: 'found that' },
+    ],
+    stream: true,
+  });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'one', sweep, { tools: [lookup([])] });
+  one.session.sendMessage('t1', 'first');
+  await until(() => ended(one.view));
+  one.session.sendMessage('t2', 'second');
+  await until(() => one.view.types('chat').filter((type) => type === 'chat/turnComplete').length === 2);
+  one.session.close();
+
+  // The first call's result read after the second question, and the second
+  // call's result gone.
+  const file = messagesOf(root);
+  const lines = readFileSync(file, 'utf8').split('\n').filter((line) => line !== '');
+  const results = lines.filter((line) => (JSON.parse(line) as { role?: string }).role === 'tool');
+  const rest = lines.filter((line) => !results.includes(line));
+  const second = rest.findIndex((line) => line.includes('second'));
+  writeFileSync(file, [...rest.slice(0, second + 1), results[0], ...rest.slice(second + 1)].join('\n') + '\n');
+
+  const turns = (await agent.transcript?.('one')) ?? [];
+  const callIn = (turn: number, id: string): Bag | undefined =>
+    ((turns[turn]?.responseParts ?? []) as Bag[]).find((part) => (part.toolCall as Bag | undefined)?.toolCallId === id)?.toolCall as Bag | undefined;
+  expect(callIn(0, 'call-1')).toMatchObject({ status: 'completed', success: true });
+  expect(callIn(1, 'call-2')).toMatchObject({ status: 'cancelled', reason: 'skipped' });
+  expect(turns.flatMap((turn) => (turn.responseParts as Bag[]).filter((part) => part.kind === 'systemNotification'))).toEqual([]);
+});
+
+it('reads a person\'s message back as the words they typed, without what an attachment was read into', async () => {
+  const { root, sweep } = place();
+  mkdirSync(sweep, { recursive: true });
+  const notes = join(sweep, 'notes.txt');
+  writeFileSync(notes, 'one\ntwo\n');
+  const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'one', sweep);
+  const attached = { type: 'resource', uri: `file://${notes}`, label: 'notes.txt', contentType: 'text/plain' } as unknown as MessageAttachment;
+  one.session.sendMessage('t1', 'read this', undefined, [attached]);
+  await until(() => ended(one.view));
+  one.session.close();
+
+  expect((await agent.transcript?.('one'))?.[0]?.message.text).toBe('read this');
+});
+
 it('answers undefined for a session the store does not know and empty for one with nothing said', async () => {
   const { root, sweep } = place();
   const model = createFakeModel({ script: [{ text: 'unused' }], stream: true });
@@ -771,7 +869,7 @@ it('continues a paused run when a client resumes its turn, writing the input onc
   expect((entry?.request as Bag | undefined)?.kind).toBe('toolConfirmation');
   expect(after.view.said('chat', 'chat/toolCallStart')).toBeUndefined();
   after.session.confirm('call-1', true);
-  await until(() => ended(after.view), 4000, () => JSON.stringify(after.view.notes.map((one) => [one.channel, one.action.type, one.action.type === 'chat/toolCallComplete' || one.action.type === 'chat/error' || one.action.type === 'session/inputNeededSet' ? one.action : undefined])));
+  await until(() => ended(after.view), WAIT_MS, () => JSON.stringify(after.view.notes.map((one) => [one.channel, one.action.type, one.action.type === 'chat/toolCallComplete' || one.action.type === 'chat/error' || one.action.type === 'session/inputNeededSet' ? one.action : undefined])));
 
   // A silent give-up in `until` must not read as a pass: the turn this asserts
   // is the one the answer was supposed to reach.
@@ -789,7 +887,7 @@ it('continues a paused run when a client resumes its turn, writing the input onc
   expect(messages.filter((one: Message) => one.role === 'user' && textOf(one) === 'hi')).toHaveLength(1);
 });
 
-it('replays a paused shell command as the question it was, whatever the rules say now', async () => {
+it('replays a paused shell command as the question it was', async () => {
   const { root, sweep } = place();
   const asks: Partial<Policy> = {
     decide: ({ tool }) => (tool.name === 'shell_exec' ? { behavior: 'ask' } : { behavior: 'allow' }),
@@ -805,20 +903,12 @@ it('replays a paused shell command as the question it was, whatever the rules sa
   await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
   await pausedRun(root, 'rules');
 
-  // The restarted host now has a rule that allows the command.
-  const asked: string[] = [];
+  // The restarted host resumes the turn, and the replay puts the question again.
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
-  const after = await resumedTurn(second, 'rules', sweep, 't1', {
-    getAutoApproval: (kind, line) => {
-      if (kind === 'shell') asked.push(line);
-      return 'not-needed' as NonNullable<ReturnType<NonNullable<Start['getAutoApproval']>>>;
-    },
-  });
+  const after = await resumedTurn(second, 'rules', sweep, 't1');
   await until(() => after.view.said('session', 'session/inputNeededSet') !== undefined);
 
-  // The replay asks again and never consults the rules for what was asked then.
   expect((after.view.said('session', 'session/inputNeededSet')?.request as Bag | undefined)?.kind).toBe('toolConfirmation');
-  expect(asked).toEqual([]);
   after.session.confirm('call-1', false);
   await until(() => ended(after.view));
   expect(ended(after.view)).toBe(true);
@@ -920,7 +1010,7 @@ it('answers a pause the resumed run raises after the restart', async () => {
    * rather than on the call start is what puts the answer after the request is
    * held, since a decision for a request still in flight is a decision dropped.
    */
-  await until(() => entries() >= 2, 4000, () => JSON.stringify(calls()));
+  await until(() => entries() >= 2, WAIT_MS, () => JSON.stringify(calls()));
   // The resumed turn already holds the first call, so only the second opens.
   expect(calls()).toEqual(['call-2']);
   // The turn is still open: the replay answered one pause, the run raised the
@@ -928,7 +1018,7 @@ it('answers a pause the resumed run raises after the restart', async () => {
   expect(ended(after.view)).toBe(false);
 
   after.session.confirm('call-2', true);
-  await until(() => ended(after.view), 4000, () => JSON.stringify(calls()));
+  await until(() => ended(after.view), WAIT_MS, () => JSON.stringify(calls()));
 
   expect(ran).toEqual(['x', 'y']);
   expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');
@@ -1016,6 +1106,52 @@ it('takes a second turn handed while a resumed session opens, and runs it after 
   expect((await reader.runs.list({ sessionId: 'one' })).length).toBe(3);
 });
 
+/*
+ * A host that only lets a session go leaves its run paused on a person where it
+ * is, detached with its request open in the store for a later resume, as
+ * cofold's `detach` is for a host that stops caring about a pause; a session
+ * being deleted cancels it.
+ */
+it('leaves a paused run waiting on a stopping close, and cancels it on a delete', async () => {
+  const { root, sweep } = place();
+  const asks: Partial<Policy> = {
+    decide: ({ tool }) => (tool.name === 'lookup' ? { behavior: 'ask' } : { behavior: 'allow' }),
+  };
+  const tool = lookup([]);
+  const asking = (): ModelAdapter => createFakeModel({
+    script: [{ toolCalls: [{ name: 'lookup', input: { query: 'x' }, callId: 'call-1' }] }],
+    stream: true,
+  });
+  const reader = createFileStore({ root });
+  /**
+   * The run's status once it rests: past `awaiting` and the `running` a cancel
+   * passes through, or the last one read when it has not within the window.
+   */
+  const rests = async (sessionId: string, window: number): Promise<string | undefined> => {
+    const limit = Date.now() + window;
+    for (;;) {
+      const status = (await reader.runs.list({ sessionId }))[0]?.status;
+      if ((status !== 'awaiting' && status !== 'running') || Date.now() > limit) return status;
+      await new Promise((r) => { setTimeout(r, 5); });
+    }
+  };
+  const paused = async (id: string) => {
+    const opened = open(backend(root, asking(), asks), id, sweep, { tools: [tool] });
+    opened.session.sendMessage('t1', 'hi');
+    await until(() => opened.view.said('session', 'session/inputNeededSet') !== undefined);
+    await pausedRun(root, id);
+    return opened;
+  };
+
+  const kept = await paused('kept');
+  await kept.session.close('stopping');
+  expect(await rests('kept', 500)).toBe('awaiting');
+
+  const gone = await paused('gone');
+  await gone.session.close('dispose');
+  expect(await rests('gone', WAIT_MS)).toBe('cancelled');
+});
+
 it('runs a new message in place of resuming a paused run, the run let go first', async () => {
   const { root, sweep } = place();
   const asks: Partial<Policy> = {
@@ -1039,7 +1175,7 @@ it('runs a new message in place of resuming a paused run, the run let go first',
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
   const after = open(second, 'one', sweep, { resume: 'one', seed: (await second.transcript?.('one')) ?? [], tools: [tool] });
   after.session.sendMessage('t2', 'something else');
-  await until(() => ended(after.view), 4000, () => JSON.stringify(after.view.notes.map((one) => one.action.type)));
+  await until(() => ended(after.view), WAIT_MS, () => JSON.stringify(after.view.notes.map((one) => one.action.type)));
 
   expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');
   const runs = await createFileStore({ root }).runs.list({ sessionId: 'one' });
@@ -1094,6 +1230,22 @@ it('rebuilds a turn with the model it ran on, after a restart', async () => {
   const turn = (await second.transcript?.('one'))?.at(-1);
   expect((turn?.message as { model?: { id?: string } } | undefined)?.model?.id).toBe('open_router/x');
   expect(turn?.usage?.model).toBe('open_router/x');
+});
+
+/*
+ * The start every client holds is the message as the client sent it, as VS
+ * Code's host says a client's start: a turn that names no model holds none,
+ * whatever model the backend runs it on.
+ */
+it('holds a turn that names no model as it was sent', async () => {
+  const { root, sweep } = place();
+  const agent = cofoldAgent({ adapter: createFakeModel({ script: [{ text: 'ok' }], stream: true }), store: root, model: 'configured/model', policy: allowAll() });
+  const one = open(agent, 'one', sweep);
+  one.session.sendMessage('t1', 'hi');
+  await until(() => ended(one.view));
+
+  expect(((one.session.chatState().turns as Bag[])[0]?.message as Bag | undefined)).not.toHaveProperty('model');
+  one.session.close();
 });
 
 it('rebuilds a turn with no model when its run recorded none', async () => {
@@ -1189,12 +1341,40 @@ it('reads a compacted session\'s summary as the notice the live turn sent', asyn
   const parts = (turns[1]?.responseParts ?? []) as Bag[];
   expect(parts[0]).toMatchObject({
     kind: 'systemNotification',
-    content: 'Context compacted automatically: 9000 tokens to 2000.',
+    content: 'Context compacted: 9000 tokens to 2000.',
   });
   // The notice is where the summary was written, before the answer that follows it.
   expect(parts[1]).toMatchObject({ kind: 'markdown', content: 'answer two' });
   // The summary was written for the model, so its text is nowhere a client reads.
   expect(JSON.stringify(turns)).not.toContain('everything so far');
+});
+
+/*
+ * An image a reply carried reads back as the live turn said it: the spec's
+ * reference by its own URL, or by the reference the host kept its bytes under
+ * where the reader is handed it.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
+ */
+it('reads a reply\'s image back as the reference the live turn said it by', async () => {
+  const store = await stored([
+    wrote('u1', 'user', 'input', 'draw it'),
+    {
+      id: 'a1',
+      role: 'assistant',
+      source: 'model',
+      createdAt: AT,
+      parts: [
+        { type: 'image', mimeType: 'image/png', data: 'cG5n' },
+        { type: 'image', mimeType: 'image/jpeg', url: 'https://example.com/a.jpg' },
+      ],
+    },
+  ]);
+  const kept = (key: string): Bag | undefined =>
+    (key === 'a1:0' ? { uri: 'session-db-resource:/image?kept', contentType: 'image/png' } : undefined);
+  expect((await turnsOf(store, 'one', undefined, kept))[0]?.responseParts).toEqual([
+    { kind: 'contentRef', uri: 'session-db-resource:/image?kept', contentType: 'image/png' },
+    { kind: 'contentRef', uri: 'https://example.com/a.jpg', contentType: 'image/jpeg' },
+  ]);
 });
 
 it('says a compaction happened when the store kept no numbers for it', async () => {
@@ -1206,7 +1386,10 @@ it('says a compaction happened when the store kept no numbers for it', async () 
 
   const turns = await turnsOf(store, 'one');
   const parts = (turns[0]?.responseParts ?? []) as Bag[];
-  expect(parts[0]).toMatchObject({ kind: 'systemNotification', content: 'Context compacted automatically.' });
+  expect(parts[0]).toMatchObject({
+    kind: 'systemNotification',
+    content: 'Context compacted: the conversation so far was folded into this summary; the model continues from it.',
+  });
   expect(JSON.stringify(turns)).not.toContain('everything so far');
 });
 

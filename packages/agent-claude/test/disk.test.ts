@@ -2,14 +2,19 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { configDirOf, filesOf, managedDirOf, projectDirOf } from '../src/session/disk.js';
+import { parseYaml } from '@cofold/yaml';
+import { configDirOf, filesOf as readFiles, frontmatterOf, managedDirOf, projectDirOf } from '../src/session/disk.js';
+import type { DiskRoots } from '../src/session/disk.js';
 
 /*
  * The disk read the customizations are laid out from.
  *
  * Each case writes the files where the CLI would read them, under a fresh
- * folder, and reads them back through `filesOf`.
+ * folder, and reads them back through `filesOf`, with the YAML the host hands
+ * a plugin, as the daemon's context does.
  */
+
+const filesOf = (roots: DiskRoots) => readFiles(roots, parseYaml);
 
 const made: string[] = [];
 afterEach(() => { for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -47,7 +52,7 @@ describe('the files of each scope', () => {
     ]);
   });
 
-  it('reads the personal skills, commands, agents and rules from the config directory', () => {
+  it('reads the personal skills, commands as skills, agents and rules from the config directory', () => {
     const root = tree({
       'skills/writing/SKILL.md': named('writing'),
       'commands/review.md': '# Review\n',
@@ -57,14 +62,14 @@ describe('the files of each scope', () => {
     });
     expect(filesOf({ configDir: root })).toEqual([
       { kind: 'skill', name: 'writing', scope: 'user', path: join(root, 'skills', 'writing', 'SKILL.md') },
-      { kind: 'prompt', name: 'review', scope: 'user', path: join(root, 'commands', 'review.md') },
+      { kind: 'skill', name: 'review', scope: 'user', path: join(root, 'commands', 'review.md') },
       { kind: 'agent', name: 'scout', scope: 'user', path: join(root, 'agents', 'scout.md') },
       { kind: 'rule', name: 'CLAUDE.md', scope: 'user', path: join(root, 'CLAUDE.md') },
       { kind: 'rule', name: 'style.md', scope: 'user', path: join(root, 'rules', 'style.md') },
     ]);
   });
 
-  it('reads the project files from the working directory and its .claude', () => {
+  it('reads the project files from the working directory and its .claude, a command as a skill', () => {
     const root = tree({
       'work/.claude/skills/build/SKILL.md': named('build'),
       'work/.claude/commands/ship.md': '# Ship\n',
@@ -77,7 +82,7 @@ describe('the files of each scope', () => {
     const work = join(root, 'work');
     expect(filesOf({ configDir: join(root, 'config'), cwd: work })).toEqual([
       { kind: 'skill', name: 'build', scope: 'project', path: join(work, '.claude', 'skills', 'build', 'SKILL.md') },
-      { kind: 'prompt', name: 'ship', scope: 'project', path: join(work, '.claude', 'commands', 'ship.md') },
+      { kind: 'skill', name: 'ship', scope: 'project', path: join(work, '.claude', 'commands', 'ship.md') },
       { kind: 'agent', name: 'tester', scope: 'project', path: join(work, '.claude', 'agents', 'tester.md') },
       { kind: 'rule', name: 'CLAUDE.md', scope: 'project', path: join(work, 'CLAUDE.md') },
       { kind: 'rule', name: 'CLAUDE.md', scope: 'project', path: join(work, '.claude', 'CLAUDE.md') },
@@ -159,6 +164,22 @@ describe('what each file is read for', () => {
     ]);
   });
 
+  /*
+   * The frontmatter between the fences VS Code's `parseFrontMatter` splits,
+   * parsed as YAML with the host's reader, the plugin context's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/yaml.ts#L33-L46
+   */
+  it('reads a frontmatter as YAML, a folded scalar and a quoted value with a colon among it', () => {
+    const root = tree({
+      'skills/review/SKILL.md': '---\nname: "review: deep"\ndescription: >-\n  Reads the change\n  and says what breaks.\n---\n\nBody.\n',
+    });
+    const path = join(root, 'skills', 'review', 'SKILL.md');
+    expect(filesOf({ configDir: root })).toEqual([
+      { kind: 'skill', name: 'review: deep', scope: 'user', path, description: 'Reads the change and says what breaks.' },
+    ]);
+    expect(frontmatterOf(path, parseYaml)).toEqual({ name: 'review: deep', description: 'Reads the change and says what breaks.' });
+  });
+
   it('reads only a regular file, and only the first 64 KB of it', () => {
     const root = tree({
       'skills/near/SKILL.md': `---\nname: inside\n---\n${'x'.repeat(70 * 1024)}`,
@@ -167,6 +188,26 @@ describe('what each file is read for', () => {
     // A folder named like the file is not one.
     mkdirSync(join(root, 'skills', 'hollow', 'SKILL.md'), { recursive: true });
     expect(filesOf({ configDir: root }).map((one) => one.name)).toEqual(['far', 'inside']);
+  });
+
+  it('reads as much of a file as the record\'s fileMostBytes names', () => {
+    const root = tree({ 'skills/far/SKILL.md': `---\npad: ${'x'.repeat(200)}\nname: beyond\n---\n` });
+    // Past 100 bytes the frontmatter is not closed, so the skill keeps its folder's name.
+    expect(filesOf({ configDir: root, fileMostBytes: 100 }).map((one) => one.name)).toEqual(['far']);
+    expect(filesOf({ configDir: root }).map((one) => one.name)).toEqual(['beyond']);
+  });
+
+  it('walks the rules folders as deep and as far as the record\'s ruleDepth and ruleMost name', () => {
+    const root = tree({
+      'rules/a.md': '# A\n',
+      'rules/b.md': '# B\n',
+      'rules/deep/c.md': '# C\n',
+    });
+    const rules = (bounds: Pick<DiskRoots, 'ruleDepth' | 'ruleMost'>): string[] =>
+      filesOf({ configDir: root, ...bounds }).filter((one) => one.kind === 'rule').map((one) => one.name);
+    expect(rules({})).toEqual(['a.md', 'b.md', 'c.md']);
+    expect(rules({ ruleDepth: 0 })).toEqual(['a.md', 'b.md']);
+    expect(rules({ ruleMost: 1 })).toEqual(['a.md']);
   });
 
   it('returns nothing, and throws nothing, for a missing folder or one the read fails on', () => {

@@ -92,7 +92,8 @@ export interface Worktrees {
    *
    * The root and not the directory: a worktree is made from the repository,
    * and a session pointed at `src/` inside one is still a session in it.
-   * Undefined means there is no repository here and no isolation to offer.
+   * Undefined means the directory is in no repository, and its sessions are
+   * offered the folder alone.
    */
   repository(dir: string): Promise<string | undefined>;
 
@@ -131,6 +132,14 @@ export interface Worktrees {
    * but the default.
    */
   branches(repository: string): Promise<string[]>;
+
+  /**
+   * The branch a worktree starts from when nobody chooses: the repository's
+   * default branch, named by its remote's `HEAD`, as the upstream its local
+   * copy tracks, else as the local branch, else as the remote's. Nothing for
+   * a repository with no remote default.
+   */
+  defaultBranch?(repository: string): Promise<string | undefined>;
 
   /** Make one. Answers the path it made, which is where the session runs. */
   create(worktree: Worktree): Promise<void>;

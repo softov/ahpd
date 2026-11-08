@@ -1,0 +1,7 @@
+{
+  "name": "ahpd-part-codex",
+  "private": true,
+  "dependencies": {
+    "@agentclientprotocol/codex-acp": "2.5.0"
+  }
+}

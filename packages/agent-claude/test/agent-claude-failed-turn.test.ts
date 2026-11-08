@@ -44,7 +44,7 @@ const sdk = vi.hoisted(() => {
   return state;
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   deleteSession: async () => {},
   query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
@@ -96,7 +96,7 @@ const { createSession } = await import('../src/session.js');
 const { OpenLogins } = await import('../src/logins.js');
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** A session over a temporary folder, and everything it said on its chat. */
@@ -537,14 +537,19 @@ it('fails a turn whose result is an error during execution, typed by it, in its 
 it('opens no turn for a lead frame no prompt is pending for, and refuses its question', async () => {
   sdk.reset();
   const { chat, session } = live();
+  // The CLI the first turn started, that turn over.
+  session.sendMessage('t1', 'one');
   await settle();
+  sdk.push(step('a0'), worked);
+  await settle();
+  const before = chat.length;
   sdk.push(step('a1'), worked);
   await settle();
-  expect(chat).toEqual([]);
+  expect(chat.slice(before)).toEqual([]);
   expect((session.chatState() as Bag).activeTurn).toBeUndefined();
   const canUseTool = sdk.queries.at(-1)?.options.canUseTool as (name: string, input: Bag, about: Bag) => Promise<Bag>;
   expect(await canUseTool('Bash', { command: 'ls' }, { toolUseID: 'toolu_alone', signal: new AbortController().signal }))
     .toMatchObject({ behavior: 'deny' });
-  expect(chat).toEqual([]);
+  expect(chat.slice(before)).toEqual([]);
 });
 

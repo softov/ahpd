@@ -228,7 +228,7 @@ const other = (starts: Start[]): Agent => {
     schema: () => {
       const schema = base.schema();
       const properties = { ...(schema.properties as Record<string, Record<string, unknown>>) };
-      properties.voice = { type: 'string', title: 'Voice', scope: 'session' };
+      properties.voice = { type: 'string', title: 'Voice' };
       return { ...schema, properties };
     },
     create: (start: Start) => { starts.push(start); return base.create(start); },
@@ -319,7 +319,7 @@ it('refuses a backend it does not have, and a value that backend does not take',
   // A backend this host does not hold is refused rather than quietly started
   // on the session's own: the plugin asked for a harness, and did not get it.
   expect(await refused(plugin.startChat(session, { provider: 'nobody', prompt: 'Say hello' })))
-    .toMatchObject({ message: 'No provider called nobody' });
+    .toMatchObject({ message: 'No agent provider registered for: nobody' });
 
   // And a value the named backend's schema refuses, before anything starts.
   const refusedValue = await refused(plugin.startChat(session, {

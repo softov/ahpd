@@ -53,6 +53,15 @@ export interface ProxySetting {
    * meter records the same turn, so `record` can count its tokens twice.
    */
   sessionCalls?: SessionCalls;
+  /**
+   * What the caller is answered when a provider refuses this host's key with a
+   * 401 or a 403: `hostError`, this host's own 502 naming the model and the
+   * provider, or `passthrough`, the provider's status and error as it sent
+   * them, as VS Code's Claude proxy re-emits an upstream error verbatim
+   * (src/vs/platform/agentHost/node/claude/anthropicErrors.ts L16-L18, L48-L61
+   * at 6b68d3fe).
+   */
+  keyRefusal?: KeyRefusal;
 }
 
 /** What `modelProxy.sessionCalls` may say. */
@@ -61,12 +70,20 @@ export const SESSION_CALLS = ['record', 'skip'] as const;
 /** One of those. */
 export type SessionCalls = (typeof SESSION_CALLS)[number];
 
+/** What `modelProxy.keyRefusal` may say. */
+export const KEY_REFUSALS = ['hostError', 'passthrough'] as const;
+
+/** One of those. */
+export type KeyRefusal = (typeof KEY_REFUSALS)[number];
+
 /** What `modelProxy` reads as. */
 export interface ProxyConfiguration {
   /** Every model name, and the entries that serve it. */
   models: Record<string, ModelEntry[]>;
   /** Whether a session's own call is checked and recorded; `record` when the file says nothing. */
   sessionCalls: SessionCalls;
+  /** What a provider's refusal of this host's key answers; `hostError` when the file says nothing. */
+  keyRefusal: KeyRefusal;
 }
 
 /**
@@ -78,6 +95,7 @@ export interface ProxyConfiguration {
 export const proxyConfiguration = (setting?: ProxySetting): ProxyConfiguration => ({
   models: { ...setting?.models },
   sessionCalls: setting?.sessionCalls ?? 'record',
+  keyRefusal: setting?.keyRefusal ?? 'hostError',
 });
 
 /** One entry of a model name, as the file writes it. */
@@ -118,6 +136,11 @@ export const proxySchema: JsonSchema = {
       type: 'string',
       enum: SESSION_CALLS,
       description: "record, the default, checks and records a call made with a session's own token; skip does neither.",
+    },
+    keyRefusal: {
+      type: 'string',
+      enum: KEY_REFUSALS,
+      description: "hostError, the default, answers a provider's 401 or 403 with this host's 502; passthrough sends the provider's status and error as they came.",
     },
   },
 };

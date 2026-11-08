@@ -1,8 +1,10 @@
-import { compareProtocolVersions, negotiateProtocolVersion, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
+import { compareProtocolVersions, negotiateProtocolVersion, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { RUN_HISTORY_LIMIT } from '../automations/automations.js';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { uriOf } from '../resources/fileuri.js';
 import { bag, str } from '../utils/values.js';
+import { keyOf, normalizeScopes, storedAuthToken } from './auth.js';
+import { AUTOMATIONS_TEMPLATE, ownerUriOf, ROOT, spaceOf } from './channels.js';
 import { BANG } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -31,11 +33,20 @@ export interface Handshake {
  */
 const LEGACY_COMPATIBLE_VERSION = '0.10.0';
 
-/** The longest `locale` kept: a BCP 47 tag past this is not one a client sends. */
+/**
+ * The longest `locale` kept, the least RFC 5646 lets an implementation that
+ * bounds its tags keep; a longer one is read as no locale sent, which the
+ * plugin documents say, as the RFC asks of a bound.
+ * https://www.rfc-editor.org/rfc/rfc5646#section-4.4.1
+ */
 const LOCALE_LIMIT = 35;
 
-/** Every version the host speaks, highest first: the package's baselines and the 1.141 alias. */
-const SPOKEN_VERSIONS = [...SUPPORTED_PROTOCOL_VERSIONS, LEGACY_COMPATIBLE_VERSION]
+/**
+ * Every version the host supports, highest first: the package's baselines and
+ * the 1.141 alias, as VS Code's `getAgentHostSupportedProtocolVersions` lists them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostProtocolCompatibility.ts#L25
+ */
+const AGENT_HOST_SUPPORTED_PROTOCOL_VERSIONS = [...SUPPORTED_PROTOCOL_VERSIONS, LEGACY_COMPATIBLE_VERSION]
   .sort((a, b) => compareProtocolVersions(b, a));
 
 /**
@@ -46,20 +57,6 @@ interface Target {
   session: string;
   customizationId: string;
 }
-
-/**
- * The key a pushed token is kept under: its resource, and the server it was
- * aimed at when the client named one.
- *
- * The protocol keys a provider-level token by its resource and a targeted one
- * by its target as well, because two MCP servers can share a resource and
- * still be two consumers. So `tokensFor` and `lent`, which look a token up by
- * its resource, never find one aimed at a server.
- * https://github.com/microsoft/agent-host-protocol/blob/0b7b7f9f4ceb2fbd8846557416f765ac73da647d/docs/specification/authentication.md#L151-L153
- */
-const keyOf = (resource: string, target?: Target): string => (target === undefined
-  ? resource
-  : JSON.stringify([resource, target.session, target.customizationId]));
 
 /**
  * The MCP server a session publishes under an id, at the top level or as the
@@ -77,17 +74,24 @@ const mcpServerIn = (customizations: unknown[], id: string): Bag | undefined => 
   return undefined;
 };
 
+/**
+ * How long a client with no connection open keeps its record: ten of the
+ * reference host's 30 s disconnect windows.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostClientConnectionService.ts#L10
+ */
+const CLIENT_RECORD_RETENTION = 30_000 * 10;
+
 export function createHandshake(ctx: HostContext, conn: ConnectionContext): Handshake {
   const { connection } = conn;
   const {
-    advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting,
-    clientNames, clientPluginsOf, clientsChanged, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaMoved,
-    metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
-    snapshotOf, TRACES, visible, watchedAs,
+    advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, projectSnapshot, browsable, authRequiredChannel,
+    clientNames, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, releaseActiveClientForSession,locales, authenticationResource, log, LOGS, METRICS, metaChanged,
+    metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, projectActionForClient, sessions,
+    snapshotOf, TRACES, visible, subscribedAs,
   } = ctx;
 
   /**
-   * Mark this connection as an older VS Code window, as the reference host
+   * Mark this connection as a legacy VS Code window, as the reference host
    * marks one: a client that names itself `vscode-editor-window` or
    * `vscode-agents-window` and does not declare `vscode.ahpSessionUris` cannot
    * address an `ahp-session:` session, and one that does not declare
@@ -95,11 +99,39 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1054-L1055
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/common/agentHostClientInfo.ts#L8-L36
    */
-  const markOlder = (name: string | undefined, meta: unknown): void => {
+  const markLegacy = (name: string | undefined, meta: unknown): void => {
     const window = name === 'vscode-editor-window' || name === 'vscode-agents-window';
     const declared = bag(meta);
     connection.legacySessionUris = window && declared['vscode.ahpSessionUris'] !== true;
     connection.legacyChatUris = window && declared['vscode.ahpChatUris'] !== true;
+  };
+
+  /**
+   * A client arrived: its record is active again, every wait its closed
+   * connections began is over, a request or a watch waiting on its resources
+   * goes on, and the records of clients gone longer than the retention are
+   * forgotten, as the reference host disposes a returning client's disconnect
+   * timeouts, registers its filesystem again and prunes its client records
+   * whenever a client attaches. A reconnect naming one is then refused, and
+   * its client starts again with `initialize`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1412-L1414
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1459-L1478
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2064-L2076
+   */
+  const attached = (clientId: string): void => {
+    ctx.lastSeen.delete(clientId);
+    ctx.waitsOver(clientId);
+    ctx.clientBack(clientId);
+    const cutoff = Date.now() - CLIENT_RECORD_RETENTION;
+    for (const [id, at] of [...ctx.lastSeen]) {
+      if (at >= cutoff) continue;
+      ctx.lastSeen.delete(id);
+      known.delete(id);
+      ctx.baselineDebt.delete(id);
+      clientNames.delete(id);
+      clientVersions.delete(id);
+      locales.delete(id);
+    }
   };
 
   /**
@@ -125,7 +157,13 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
    *
    * Narrowed rather than handed over whole: a token for one resource is
    * not a token for another, and a backend has no business seeing a
-   * credential meant for something it does not speak to.
+   * credential meant for something it does not speak to. Each resource's
+   * token is the one for the scopes its record lists, as VS Code's host asks
+   * its store for a resource's token, and not one that has run out: the timer
+   * below takes it away at the moment it expires, but a session asked for in
+   * the same tick would still find it here, and would start on a credential
+   * the client was about to be told is gone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1983-L1987
    */
   const tokensFor = (provider: string): Record<string, string> => {
     const agent = agents.get(provider);
@@ -133,75 +171,64 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
     for (const one of agent?.protectedResources ?? []) {
       const id = (one as { resource?: unknown }).resource;
       if (typeof id !== 'string') continue;
-      const held = connection.tokens.get(id);
-      // Not one that has run out. The timer below takes it away at the
-      // moment it expires, but a session asked for in the same tick would
-      // still find it here, and would start on a credential the client
-      // was about to be told is gone.
-      if (held !== undefined && !(held.expiresAt !== undefined && held.expiresAt <= Date.now())) out[id] = held.token;
+      const held = storedAuthToken(connection.tokens, id, normalizeScopes((one as { scopes_supported?: unknown }).scopes_supported));
+      if (held !== undefined) out[id] = held.token;
     }
     return out;
   };
   /**
-   * When each token runs out, so the client that pushed it is told.
+   * When a sign-in or a token runs out, the client that pushed it is told,
+   * with `auth/required` and `reason: 'expired'`, the moment the `expiresIn`
+   * it sent says: nothing here verifies a token, so the client's word is
+   * when it goes stale. Said to that connection and no other, because the
+   * credential was theirs.
    *
-   * The protocol has a word for this - `auth/required` with
-   * `reason: 'expired'` - and until `expiresIn` arrived on `authenticate`
-   * this host had no way to earn it: nothing here verifies a token, so it
-   * never learned that one had gone stale. Now the client says how long
-   * it has, and the moment it runs out is a fact this host holds alone.
-   * Said to that connection and no other, because the token was theirs.
-   *
-   * `setTimeout` takes at most 2^31-1 milliseconds, a little under
-   * twenty-five days; a token good for longer is checked again at that
-   * boundary rather than fired early.
+   * Each clock is kept under the key its credential is: the sign-in's under
+   * its resource, a token's under `keyOf`'s key. `setTimeout` takes at most
+   * 2^31-1 milliseconds, a little under twenty-five days; a credential good
+   * for longer is checked again at that boundary rather than fired early.
    */
   const expiring = new Map<string, ReturnType<typeof setTimeout>>();
   const LONGEST = 2 ** 31 - 1;
-  const expire = (resource: string, target?: Target): void => {
-    /*
-     * The host's own resource holds no token to expire - what it leaves is
-     * a principal - so it is the one case this path answers differently.
-     * The notification is the same either way, because what a client has
-     * to do about it is the same.
-     */
-    if (target === undefined && options.users !== undefined && resource === loginId()) {
-      const until = connection.principalUntil;
-      if (until === undefined) return;
-      const left = until - Date.now();
-      if (left > 0) {
-        expiring.set(resource, setTimeout(() => expire(resource), Math.min(left, LONGEST)));
-        expiring.get(resource)?.unref?.();
-        return;
-      }
-      expiring.delete(resource);
-      delete connection.principal;
-      delete connection.principalUntil;
-      log(`${connection.clientId || 'a client'}'s sign-in expired`);
-      connection.peer.notify('auth/required', {
-        channel: channelAwaiting(resource, connection),
-        resource: metadataFor(resource),
-        reason: 'expired',
-      });
+  /*
+   * The host's own resource holds no token to expire - what it leaves is a
+   * principal - and its end is said on the root, as VS Code's host says its
+   * identity's end.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/missionControl/missionControlProtocolServer.ts#L214-L218
+   */
+  const expireSignIn = (): void => {
+    const resource = authenticationResource();
+    const until = connection.principalUntil;
+    if (until === undefined) return;
+    const left = until - Date.now();
+    if (left > 0) {
+      expiring.set(resource, setTimeout(expireSignIn, Math.min(left, LONGEST)));
+      expiring.get(resource)?.unref?.();
       return;
     }
-    const key = keyOf(resource, target);
+    expiring.delete(resource);
+    delete connection.principal;
+    delete connection.principalUntil;
+    log(`${connection.clientId || 'a client'}'s sign-in expired`);
+    connection.peer.notify('auth/required', { channel: ROOT, resource: metadataFor(resource), reason: 'expired' });
+  };
+  const expireToken = (key: string): void => {
     const held = connection.tokens.get(key);
     if (held?.expiresAt === undefined) return;
     const left = held.expiresAt - Date.now();
     if (left > 0) {
-      expiring.set(key, setTimeout(() => expire(resource, target), Math.min(left, LONGEST)));
+      expiring.set(key, setTimeout(() => expireToken(key), Math.min(left, LONGEST)));
       expiring.get(key)?.unref?.();
       return;
     }
     expiring.delete(key);
     connection.tokens.delete(key);
-    log(`${connection.clientId || 'a client'}'s token for ${resource}${target === undefined ? '' : ` at ${target.customizationId}`} expired`);
+    log(`${connection.clientId || 'a client'}'s token for ${held.resource}${held.target === undefined ? '' : ` at ${held.target.customizationId}`} expired`);
     connection.peer.notify('auth/required', {
       // An MCP server's requirement is drawn on its session, and a token
       // aimed at one names that session itself.
-      channel: target === undefined ? channelAwaiting(resource, connection) : target.session,
-      resource: metadataFor(resource),
+      channel: held.target === undefined ? authRequiredChannel(held.resource, connection) : held.target.session,
+      resource: metadataFor(held.resource),
       reason: 'expired',
     });
   };
@@ -219,41 +246,27 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
    * The MCP server a token's `target` names, or the refusal of it.
    *
    * A client that answers one server's sign-in names that server by the
-   * session and the customization id this host published, and the protocol
-   * has the host refuse a target it cannot find with `-32602`. A kind this
-   * host does not know names a consumer it cannot confine the token to, so it
-   * is refused the same way, as the reference host refuses it.
-   *
-   * The resource has to be the one that server waits for: the protocol says
-   * so, and it is the resource this host advertised for it.
-   * https://github.com/microsoft/agent-host-protocol/blob/0b7b7f9f4ceb2fbd8846557416f765ac73da647d/docs/specification/authentication.md#L143-L145
-   * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L2033-L2048
+   * session and the customization id this host published. Refused, as the
+   * reference host refuses one and in its words, only for a kind other than
+   * an MCP server, and for a target that names no MCP server of a session this
+   * host holds: what the session publishes is both halves, what its backend
+   * reports and the plugins its clients handed it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2155-L2164
    */
-  const aimedAt = (named: unknown, resource: string): Target => {
+  const targetOf = (named: unknown): Target => {
     const target = bag(named);
     if (target.kind !== 'mcpServer') {
-      throw new RpcError(INVALID_PARAMS, `A target of kind ${JSON.stringify(target.kind ?? null)} is not one this host knows`);
+      throw new RpcError(INVALID_PARAMS, 'Unsupported authentication target kind');
     }
     const session = str(target.session) ?? '';
     const customizationId = str(target.customizationId) ?? '';
-    const held = sessions.get(session);
-    // A session this connection does not watch is not one its tokens are
-    // spent on, whoever else holds it open.
-    if (held !== undefined && watchedAs(connection, session) === undefined) {
-      throw new RpcError(INVALID_PARAMS, `${session} is not a session this connection watches`);
-    }
+    const held = spaceOf(session) === 'chat' ? undefined : sessions.get(session);
     const lead = held === undefined ? undefined : leadOf(held);
-    // Both halves of what the session publishes: what its backend reports,
-    // and the plugins its clients handed it.
     const server = lead === undefined
       ? undefined
       : mcpServerIn([...lead.customizations(), ...clientPluginsOf(session)], customizationId);
     if (server === undefined) {
-      throw new RpcError(INVALID_PARAMS, `${customizationId || 'That'} is not an MCP server of ${session || 'a session this host holds'}`);
-    }
-    const state = bag(server.state);
-    if (state.kind !== 'authRequired' || bag(state.resource).resource !== resource) {
-      throw new RpcError(INVALID_PARAMS, `${customizationId} in ${session} is not waiting for a token for ${resource || 'that resource'}`);
+      throw new RpcError(INVALID_PARAMS, 'Authentication target must identify an MCP server in an existing session');
     }
     return { session, customizationId };
   };
@@ -294,10 +307,14 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       if (!agreed) {
         // `supportedVersions`, which is the name the protocol gives this
         // field and the only reason the error is recoverable: it is what a
-        // client reads to pick a version to retry with. Under any other
-        // spelling, the one way out of a version mismatch reads
-        // `undefined`.
-        throw new RpcError(-32005, 'No protocol version in common', { supportedVersions: [...SPOKEN_VERSIONS] });
+        // client reads to pick a version to retry with. The words are the
+        // reference host's for the same refusal.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1033-L1051
+        throw new RpcError(
+          -32005,
+          `Client offered protocol versions [${offered.join(', ')}], none of which are compatible with this server's version ${PROTOCOL_VERSION} (server accepts ${AGENT_HOST_SUPPORTED_PROTOCOL_VERSIONS.join(', ')}).`,
+          { supportedVersions: [...AGENT_HOST_SUPPORTED_PROTOCOL_VERSIONS] },
+        );
       }
       /*
        * Whether a container can be made here, asked before the answer
@@ -312,24 +329,32 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       const containersReady = options.containers === undefined
         ? false
         : await options.containers.available().catch(() => false);
-      connection.clientId = typeof params.clientId === 'string' ? params.clientId : 'anonymous';
+      /*
+       * The id the client gave, as VS Code's host takes it from the
+       * initialize; a client that gives none has none, which nobody holds and
+       * nothing is routed to (`ownId`).
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1054-L1061
+       */
+      connection.clientId = typeof params.clientId === 'string' ? params.clientId : '';
       /*
        * What this connection agreed to, kept for every later delivery: an
        * action introduced after this version is not sent to it, live or in a
        * replay. Read before the snapshots below, which are answered whole.
        */
       connection.protocolVersion = agreed;
+      clientVersions.set(connection.clientId, agreed);
       // Met, so a later `reconnect` under this id is answerable.
       known.add(connection.clientId);
+      attached(connection.clientId);
       /*
-       * And what it called itself, which a `reconnect` reads again: an older
+       * And what it called itself, which a `reconnect` reads again: a legacy
        * VS Code window is told by its name and by what this `initialize`
        * declares, before any snapshot below is taken.
        */
       const named = bag(params.clientInfo).name;
       if (typeof named === 'string') clientNames.set(connection.clientId, named);
       else clientNames.delete(connection.clientId);
-      markOlder(clientNames.get(connection.clientId), params._meta);
+      markLegacy(clientNames.get(connection.clientId), params._meta);
       keepLocale(params.locale, false);
       void fire({ type: 'client_connect', client: connection.clientId });
       // The client list is told once the connection has said who it is.
@@ -352,20 +377,44 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         // A handshake that fails because one requested channel is gone is
         // a client that cannot connect at all. Take what can be taken.
         try {
-          // Gated, resolved and answered the way `subscribe` is: the root
-          // under another spelling is told under that spelling, and a
-          // channel an older VS Code window may not see is left out, as the
-          // reference host leaves it out. Awaited only when the gate is
-          // waiting on a scheme, so a handshake does not spend a turn of the
-          // loop on a question it will not be asked.
+          // Gated, resolved and answered the way `subscribe` is: subscribed to
+          // as the host's own channel whatever its spelling, and a channel a
+          // legacy VS Code window may not see is left out, as the reference
+          // host leaves it out. Awaited only when the gate is waiting on a
+          // scheme, so a handshake does not spend a turn of the loop on a
+          // question it will not be asked.
           // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1197-L1201
           const held = conn.admit('subscribe', { channel });
           if (held !== undefined) await held;
           if (!visible(connection, meantBy(channel))) continue;
-          const snapshot = await snapshotOf(meantBy(channel), connection);
-          const meant = answeredAs(connection, channel, snapshot);
+          /*
+           * A session's, a chat's or a terminal's state this process does not
+           * hold is subscribed with no snapshot, and owes this client a
+           * baseline, which a reconnect naming it is answered with; a held
+           * one, the root, and a session's annotations and changesets are
+           * answered as `subscribe` answers them, as VS Code's host answers
+           * an initial subscription.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1204-L1241
+           */
+          const asked = meantBy(channel);
+          const space = spaceOf(asked);
+          if ((space === 'session' || space === 'chat' || space === 'terminal') && ownerUriOf(asked) === asked
+            && ctx.stateOf(asked) === undefined && !sessions.has(asked) && !ctx.byChat.has(asked) && !ctx.terminals.has(asked)) {
+            connection.activeSubscriptions.add(asked);
+            const owed = ctx.baselineDebt.get(connection.clientId) ?? new Set<string>();
+            ctx.baselineDebt.set(connection.clientId, owed.add(asked));
+            continue;
+          }
+          const snapshot = await snapshotOf(asked, connection);
+          // A stateless channel is watched, with no snapshot in the answer.
+          if (snapshot === undefined) {
+            connection.activeSubscriptions.add(asked);
+            continue;
+          }
+          const meant = projectSnapshot(connection, channel, snapshot);
           snapshots.push(snapshot);
-          connection.watching.add(channel);
+          connection.activeSubscriptions.add(meant);
+          ctx.clearBaselineDebt(connection.clientId, meant);
           openedBy(meant, connection.clientId);
           // Recent in the residency, as a subscribe makes it.
           // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11633-L11634
@@ -458,10 +507,20 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           'vscode.removeSessionArtifact': true,
           'vscode.detachedWorktrees': true,
           'vscode.getAgentHostSessionStateFile.chat': true,
+          // A debug-log collection its window follows may be called off.
+          'vscode.debugLogsCancellation': true,
           // A run of this host's automations needs no client connected. The
           // reference client offers a host's automations only where it says
           // so, so it goes with the `automations` capability above.
           ...(options.automations ? { 'vscode.autonomousAutomations': true } : {}),
+          /*
+           * The automations catalogue narrowed to one owner, as an RFC 6570
+           * template a client expands before it subscribes, as the protocol
+           * advertises the logs channel's (`telemetry.logs`): `owner=me` is
+           * the caller's own automations.
+           * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/common/commands.ts#L281-L290
+           */
+          ...(options.automations ? { 'ahpd.automations': AUTOMATIONS_TEMPLATE } : {}),
           /*
            * This host's session URIs are the AHP ones, and not the legacy
            * `provider:/id` spelling.
@@ -473,6 +532,13 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
            * change - decision `ahpd-says-it-is-a-native-host`.
            */
           'vscode.ahpSessionUris': true,
+          /*
+           * This host addresses a chat whose URI names no session, as VS
+           * Code's host says it does, so a client mints a session's next chat
+           * in the format of that session's default chat.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostExtensionProtocol.ts#L158-L163
+           */
+          'vscode.ahpChatUris': true,
           // The dev container surface. A client reads this before it
           // offers the flow, so it is true only where a container can
           // actually be made: a host with the launcher loaded and no
@@ -535,10 +601,12 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * reads that one code as "the server forgot me" and falls back to a
        * fresh `initialize` - which is the only path on which it restores
        * its subscriptions. Any other error is rethrown and the connection
-       * fails, so this is not a detail: it is the whole recovery.
+       * fails, so this is not a detail: it is the whole recovery. The words
+       * are the reference host's.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1339-L1342
        */
       if (!known.has(clientId)) {
-        throw new RpcError(-32008, `${clientId || 'That client'} is not a client this host has seen`);
+        throw new RpcError(-32008, `Reconnect client not found: ${clientId}`);
       }
       /*
        * Under a users directory, a person signed in resumes only an id
@@ -558,13 +626,22 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         holders.set(clientId, connection.principal.id);
       }
       connection.clientId = clientId;
-      // An older VS Code window, by the name it gave at `initialize` and what
+      attached(clientId);
+      // Held to the version this client agreed at `initialize`, which a
+      // `reconnect` offers none of, live and in its replay.
+      const agreed = clientVersions.get(clientId);
+      if (agreed === undefined) delete connection.protocolVersion;
+      else connection.protocolVersion = agreed;
+      // A legacy VS Code window, by the name it gave at `initialize` and what
       // this `reconnect` declares, as the reference host reads it.
       // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1350-L1351
-      markOlder(clientNames.get(clientId), params._meta);
-      // An ahpd extension: `reconnect` takes `locale` as `initialize` does,
-      // and a client that sends none keeps the one it had.
-      keepLocale(params.locale, true);
+      markLegacy(clientNames.get(clientId), params._meta);
+      // A locale is this host's own input on `reconnect`, so it rides the
+      // request's `_meta` under this host's key, as the protocol carries a
+      // request's extra inputs and the reference host reads its own there; a
+      // client that sends none keeps the one it had.
+      // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L47-L51
+      keepLocale(bag(params._meta)['ahpd.locale'], true);
       void fire({ type: 'client_connect', client: connection.clientId });
       // The client list is told once the connection has said who it is.
       if (connection.socket !== undefined) clientsChanged({ socket: connection.socket, joined: true });
@@ -575,8 +652,8 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       // does not ask back for is the third way the protocol says a client
       // stops being active in a session: reconnecting without
       // resubscribing to it.
-      const before = [...connection.watching];
-      connection.watching.clear();
+      const before = [...connection.activeSubscriptions];
+      connection.activeSubscriptions.clear();
       const wanted = Array.isArray(params.subscriptions)
         ? params.subscriptions.filter((uri): uri is string => typeof uri === 'string')
         : [];
@@ -591,6 +668,15 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * same word twice.
        */
       flushDeltas();
+      /*
+       * Whether a channel it comes back for still owes it a baseline, read
+       * before any is restored: the cursor proves the client saw every action,
+       * and nothing about whether such a channel ever had state from this
+       * process to apply them to, as VS Code's host decides it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1385-L1391
+       */
+      const owed = ctx.baselineDebt.get(clientId);
+      const owes = owed !== undefined && wanted.some((channel) => owed.has(meantBy(channel)));
       const missing: string[] = [];
       /** Each channel read back, by the name this host dispatches under, with the name the client used. */
       const resumed = new Map<string, string>();
@@ -599,7 +685,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           // Resolved the way `subscribe` resolves it, so a client coming
           // back under its own spelling of the root or the automations
           // catalogue is resumed and replayed, and a replay is keyed by the
-          // name this host dispatches under. A channel an older VS Code
+          // name this host dispatches under. A channel a legacy VS Code
           // window may not see is missing, as the reference host reports it.
           // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1543-L1565
           const held = conn.admit('subscribe', { channel });
@@ -612,8 +698,9 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         catch {
           // A session whose agent has gone, or one this client may no
           // longer see. Named, so the client drops it rather than waiting
-          // on a channel that will never speak again.
+          // on a channel that will never speak again, and owed nothing.
           missing.push(channel);
+          ctx.clearBaselineDebt(clientId, meantBy(channel));
         }
       }
       /*
@@ -623,9 +710,8 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * every restore has settled.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1577-L1583
        */
-      for (const [meant, channel] of resumed) {
-        if (meant !== channel) connection.aliases.set(meant, channel);
-        connection.watching.add(channel);
+      for (const meant of resumed.keys()) {
+        connection.activeSubscriptions.add(meant);
         openedBy(meant, connection.clientId);
         // Recent in the residency, as a subscribe makes it.
         // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11633-L11634
@@ -637,43 +723,40 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
 
       // Whatever it did not ask back for, it has left.
       for (const channel of before) {
-        if (!connection.watching.has(channel)) leaves(channel, clientId);
+        if (!connection.activeSubscriptions.has(channel)) releaseActiveClientForSession(channel, clientId);
       }
 
-      const oldest = replayable[0]?.serverSeq;
       /*
-       * A channel whose state this host let go of while the client was away
-       * holds, once opened again from its record, a state the client was never
-       * given: the actions since apply to that state and not to the one the
-       * client has. Such a client is sent the state, as the reference sends
-       * one to a client that holds no baseline from the state it holds.
-       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1374-L1379
+       * Replayed when it has seen the oldest action still buffered, or every
+       * action when none is, and no channel it named owes it a baseline, as
+       * VS Code's host decides; a client ahead of this host is replayed the
+       * nothing after its cursor. A channel whose state this host let go of
+       * and opened again while the client was away is replayed onto what the
+       * client holds, as the reference host replays onto a session it
+       * evicted and restored.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1385-L1391
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L692-L704
        */
-      const unbased = [...resumed.keys()].some((meant) => ctx.lapsed.get(clientId)?.has(meant) === true);
-      // Nothing buffered means nothing has happened since, which is a
-      // replay of nothing rather than a reason to re-snapshot. A client
-      // ahead of this host is the other way round and cannot be replayed to
-      // at all - whatever it counted, it was not this stream - so it is
-      // sent state rather than a difference.
-      const replayable_ = !unbased && since <= ctx.serverSeq && (oldest === undefined || since >= oldest - 1);
-      if (replayable_) {
+      const oldest = replayable[0]?.serverSeq ?? ctx.serverSeq;
+      if (since >= oldest && !owes) {
         log(`${clientId} came back at ${since}, replaying`);
         return {
           type: 'replay',
           // Each under the held name, the automations catalogue among them.
           actions: replayable.flatMap((held) => {
             if (held.serverSeq <= since || !resumed.has(held.channel)) return [];
-            const envelope = seenBy(connection, held);
+            const envelope = projectActionForClient(connection, held);
             return envelope === undefined ? [] : [envelope];
           }),
           missing,
         };
       }
-      log(`${clientId} came back at ${since}, too far behind ${oldest} - snapshotting`);
+      log(`${clientId} came back at ${since}, ${owes ? 'owed a baseline' : `behind ${oldest}`} - snapshotting`);
       const snapshots = [];
       for (const channel of resumed.values()) {
         const snapshot = await snapshotOf(meantBy(channel), connection);
-        answeredAs(connection, channel, snapshot);
+        if (snapshot === undefined) continue;
+        ctx.clearBaselineDebt(clientId, projectSnapshot(connection, channel, snapshot));
         snapshots.push(snapshot);
       }
       return { type: 'snapshot', snapshots };
@@ -709,7 +792,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * alone, so nothing below treats it as the host's sign-in or as a
        * backend's own credential.
        */
-      const target = params.target === undefined ? undefined : aimedAt(params.target, resource);
+      const target = params.target === undefined ? undefined : targetOf(params.target);
       /*
        * A backend's own resource, or one of its MCP servers'.
        *
@@ -721,16 +804,20 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        *
        * Only the sessions this connection watches: a token is spent on the
        * sessions its client asks for and nowhere else, and these are the
-       * ones it was asked to sign in for.
+       * ones whose servers' `authRequired` state it reads.
        */
       const waiting = (target === undefined
-        ? [...sessions].filter(([uri]) => watchedAs(connection, uri) !== undefined).flatMap(([, held]) => [...held.chats.values()])
+        ? [...sessions].filter(([uri]) => subscribedAs(connection, uri) !== undefined).flatMap(([, held]) => [...held.chats.values()])
         : [...(sessions.get(target.session)?.chats.values() ?? [])])
         .filter((chat) => chat.awaiting?.().includes(resource) === true);
       if (target === undefined && waiting.length === 0 && !advertised().has(resource)) {
         throw new RpcError(INVALID_PARAMS, `${resource || 'That'} is not a resource this host advertises`);
       }
-      const key = keyOf(resource, target);
+      // Kept under its resource, the scopes the client says it grants and its
+      // target, as VS Code's host keeps one.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L134-L135
+      const scopes = normalizeScopes(params.scopes);
+      const key = keyOf(resource, scopes, target);
       /*
        * An empty token takes the credential back.
        *
@@ -748,7 +835,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       if (token === '') {
         const had = connection.tokens.delete(key);
         forgetExpiry(key);
-        const signedOut = target === undefined && options.users !== undefined && resource === loginId()
+        const signedOut = target === undefined && options.users !== undefined && resource === authenticationResource()
           && connection.principal !== undefined && connection.root !== true;
         if (signedOut) {
           delete connection.principal;
@@ -778,7 +865,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * demote it and signing out could only lose the key. Answered as accepted and otherwise
        * ignored, because the client asked for something that is already so.
        */
-      if (target === undefined && connection.root === true && options.users !== undefined && resource === loginId()) return {};
+      if (target === undefined && connection.root === true && options.users !== undefined && resource === authenticationResource()) return {};
       /*
        * The host's own resource: the one credential here that is checked.
        *
@@ -787,7 +874,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * still does. This one is a person, and the directory is the only
        * thing that can say whether the token belongs to one.
        */
-      if (target === undefined && options.users !== undefined && resource === loginId()) {
+      if (target === undefined && options.users !== undefined && resource === authenticationResource()) {
         const held = await options.users.verify(token);
         if (held === undefined) {
           throw new RpcError(-32007, 'That credential is not one this host knows', {
@@ -823,6 +910,8 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         connection.principal = held;
         principals.set(`user:${held.id}`, held);
         if (ownId(connection.clientId)) holders.set(connection.clientId, held.id);
+        // Its resources answer from here, so whatever waited on them goes on.
+        ctx.clientBack(connection.clientId);
         /*
          * When the sign-in ends, which is the earlier of two clocks.
          *
@@ -842,7 +931,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         if (until === undefined) delete connection.principalUntil;
         else {
           connection.principalUntil = until;
-          expire(resource);
+          expireSignIn();
         }
         // A person's id rather than the clientId, which is the thing about
         // this connection that was actually checked.
@@ -867,10 +956,13 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       forgetExpiry(key);
       connection.tokens.set(key, {
         token,
+        resource,
+        scopes,
+        ...(target === undefined ? {} : { target }),
         ...(expiresIn !== undefined ? { expiresAt: Date.now() + expiresIn * 1000 } : {}),
       });
       void fire({ type: 'authenticated', client: connection.clientId || 'anonymous', resource });
-      if (expiresIn !== undefined) expire(resource, target);
+      if (expiresIn !== undefined) expireToken(key);
       const at = target === undefined ? '' : ` at ${target.customizationId} in ${target.session}`;
       log(`${connection.clientId || 'a client'} authenticated for ${resource}${at}${expiresIn !== undefined ? `, for ${expiresIn}s` : ''}`);
       // A GitHub token is a reason to ask GitHub again: a lookup that
@@ -878,7 +970,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       // a server is not a token those lookups are ever given.
       if (target === undefined && resource === String(options.github?.resource.resource ?? '')) {
         for (const dir of browsable()) {
-          void refreshPullRequests(dir).then((moved) => { if (moved) metaMoved(dir); }).catch(() => {});
+          void refreshPullRequests(dir).then((moved) => { if (moved) metaChanged(dir); }).catch(() => {});
         }
       }
       return {};

@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createHost, doorOf, fileUsers, hostTools, ROOT, type RequestHandler, type Users } from '@ahpd/sdk';
+import { createHost, doorOf, fileUsers, hostTools, type RequestHandler, type Users } from '@ahpd/sdk';
 import { echo } from '../../../examples/echo/agent.js';
 import { mcpHandler, type McpTools } from '../src/mcp.js';
 import { withoutApi } from '../src/http.js';
@@ -41,17 +41,18 @@ beforeEach(async () => {
   // A role that reads sessions and may knock, and no more.
   await users.addRole('viewer', ['session:read', 'mcp:call']);
   await users.add('gus', ['viewer'], { memberships: ['backend'], primary: 'backend' });
-  // A person who may push the operator's rules, the way a window does.
-  await users.addRole('operator', ['config:change']);
-  await users.add('opa', ['operator']);
   ana = await users.mint('ana');
   gus = await users.mint('gus');
-  host = createHost({
-    path: home,
-    agents: [{ ...echo({ path: home, pace: 0 }), provider: 'base' }],
-    users,
-    tools: hostTools(),
-  });
+  host = serving();
+});
+
+/** The host these cases call into, with the operator's per-tool rule where a case sets one. */
+const serving = (eligibleForAutoApproval?: Record<string, boolean>): ReturnType<typeof createHost> => createHost({
+  path: home,
+  agents: [{ ...echo({ path: home, pace: 0 }), provider: 'base' }],
+  users,
+  tools: hostTools(),
+  ...(eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval }),
 });
 
 afterEach(() => {
@@ -89,32 +90,6 @@ const ask = async (
 /** The names `tools/list` answered. */
 const listed = (said: Record<string, unknown>): string[] =>
   ((said.result as { tools: { name: string }[] }).tools).map((one) => one.name);
-
-/** A connection that keeps nothing, for the one root push these cases make. */
-const quiet = (): Parameters<ReturnType<typeof createHost>['accept']>[0] => ({
-  send: () => {},
-  notify: () => {},
-  request: async () => ({}),
-  answered: () => {},
-  close: () => {},
-});
-
-/** Push a window's rules into the host, as a client does over the root channel. */
-const pushing = async (config: Record<string, unknown>): Promise<void> => {
-  const client = host.accept(quiet());
-  await client.handle({
-    method: 'initialize',
-    params: { clientId: 'rules', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
-  });
-  await client.handle({
-    method: 'authenticate',
-    params: { channel: ROOT, resource: users.resource.resource, token: await users.mint('opa') },
-  });
-  await client.handle({
-    method: 'dispatchAction',
-    params: { channel: ROOT, action: { type: 'root/configChanged', config } },
-  });
-};
 
 /** One tool call, as the model would have asked for it. */
 const call = (handler: RequestHandler, name: string, args: Record<string, unknown>, token: string) =>
@@ -208,7 +183,7 @@ describe('/mcp serves the sessionless tools a caller may run', () => {
   });
 
   it('refuses a tool the operator\'s rule names, and runs one it does not', async () => {
-    await pushing({ eligibleForAutoApproval: { 'ahp/create_session': false } });
+    host = serving({ 'host/create_session': false });
 
     const refused = await call(door(), 'create_session', {
       relationship: 'independent', prompt: 'Say hello.', title: 'Not allowed', workspace: home, worktree: false,

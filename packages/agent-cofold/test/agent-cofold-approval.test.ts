@@ -191,10 +191,12 @@ it('pauses an approval as a tool call and one entry, and does not complete the t
     toolCall: { toolCallId: string; status: string; confirmationTitle?: string; invocationMessage?: string };
   };
   // The entry is self-sufficient: the chat to answer on, the call to name,
-  // and the question the person reads.
+  // and the question the person reads, under VS Code's id for a call at a
+  // confirmation.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L157
   expect(entry.chat).toBe(chatUri);
   expect(entry.turnId).toBe('t1');
-  expect(entry.id.startsWith('approval:')).toBe(true);
+  expect(entry.id).toBe(`toolConfirmation:${chatUri}:t1:call-a`);
   expect(entry.toolCall.toolCallId).toBe('call-a');
   expect(entry.toolCall.status).toBe('pending-confirmation');
   expect(entry.toolCall.confirmationTitle).toBeDefined();
@@ -264,7 +266,10 @@ it('runs an approved tool, takes the entry down and finishes the turn', async ()
   expect(session.inputNeeded).toBeUndefined();
   const call = chat.turns[0]?.responseParts.find((one) => one.kind === 'toolCall')?.toolCall as { status: string; confirmed: string };
   expect(call).toMatchObject({ status: 'completed', confirmed: 'user-action' });
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread
+  // says it at every turn's end.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 /** Two turns, each writing once, so a second call of the same tool can be watched for a second ask. */
@@ -302,7 +307,12 @@ const asked = (p: ReturnType<typeof peer>, uri: string): number => actions(p, ur
   .filter((e) => e.action.type === 'session/inputNeededSet' && (e.action.request as { kind?: string }).kind === 'toolConfirmation')
   .length;
 
-it('offers allow once, allow the tool for this session, and deny', async () => {
+/*
+ * The question carries no options of cofold's: the host puts VS Code's on it,
+ * as VS Code's agents raise a pending confirmation for their host's chain.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L67-L76
+ */
+it('offers none of its own options, the host putting VS Code\'s', async () => {
   const model = createFakeModel({ script: writeScript('call-a', 'hi'), stream: true });
   const { client, peer: p } = await talking(model, [writer([])], asksFor(['write']));
   const { uri, chatUri } = await open(client, 'one');
@@ -310,9 +320,9 @@ it('offers allow once, allow the tool for this session, and deny', async () => {
   await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
 
   const offered = [
-    { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
-    { id: 'allow-session', label: 'Allow Write a note for this session', kind: 'approve', group: 1 },
-    { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
+    { id: 'allow-session', label: 'Allow in this Session', kind: 'approve', group: 1 },
+    { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+    { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
   ];
   const ready = p.notes.find((n) => n.method === 'action' && (n.params as Note).action.type === 'chat/toolCallReady');
   expect((ready?.params as Note).action.options).toEqual(offered);
@@ -322,7 +332,14 @@ it('offers allow once, allow the tool for this session, and deny', async () => {
   expect([ready, entry].flatMap((frame) => check.frame(frame)).map((one) => `${one.def} ${one.at} ${one.what}`)).toEqual([]);
 });
 
-it('allows the tool for the rest of the session when that is picked', async () => {
+/*
+ * "Allow in this Session" is the host's to keep: the tool's name in the
+ * session's `permissions`, from which the host answers the next question
+ * cofold puts about the tool, as VS Code's host keeps one for its agents;
+ * cofold is answered for each call alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L619-L650
+ */
+it('keeps an Allow in this Session answer in the host, which answers the next question about the tool', async () => {
   const ran: string[] = [];
   const model = createFakeModel({ script: twoWrites, stream: true });
   const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
@@ -333,18 +350,23 @@ it('allows the tool for the rest of the session when that is picked', async () =
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: true, confirmed: 'user-action', selectedOptionId: 'allow-session' },
+      action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-a', approved: true, confirmed: 'user-action', selectedOptionId: 'allow-session' },
     },
   });
   await until(() => ended(p, chatUri));
   const echoed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
   expect(echoed?.action.selectedOptionId).toBe('allow-session');
+  const kept = actions(p, uri).filter((e) => e.action.type === 'session/configChanged').map((e) => e.action.config);
+  expect(kept).toEqual([{ permissions: { allow: ['write'], deny: [] } }]);
 
   begin(client, chatUri, 't2', 'write two');
   await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length >= 2);
-  // Run without a second question: cofold kept the answer for this session.
+  // cofold put the question again, which the host answered from what it kept,
+  // saying the call running on the question's own line.
   expect(ran).toEqual(['one', 'two']);
   expect(asked(p, uri)).toBe(1);
+  const second = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallReady' && e.action.toolCallId === 'call-b');
+  expect(second[0]?.action).toMatchObject({ confirmed: 'not-needed', invocationMessage: 'Run Write a note?' });
 });
 
 it('asks again next time when the approval was only for once', async () => {
@@ -384,9 +406,10 @@ it('denies a tool, carries the reason and does not run it', async () => {
   expect(ran).toEqual([]);
   const confirmed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
   // Said back as the client sent it, its reason with it, and the model is
-  // given cofold's own words for a declined call.
+  // given cofold's own words for a refused call, the deny carrying no reason
+  // of this host's, as cofold's own app denies one.
   expect(confirmed?.action.reason).toBe('denied');
-  expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('Denied by the user');
 
   const { chat, session } = reduced(p, uri, chatUri);
   expect(session.inputNeeded).toBeUndefined();
@@ -418,7 +441,7 @@ it('says a refusal once, as the client sent it, and gives the model its sentence
   // says a client's action as it came.
   const confirmed = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallConfirmed');
   expect(confirmed.map((e) => e.action)).toEqual([refusal]);
-  expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('Denied by the user');
 });
 
 it('keeps two open approvals independent, each answered by its own call id', async () => {
@@ -582,6 +605,9 @@ it('raises a chatInput entry for cofold\'s own ask tool and answers it back', as
   };
   expect(entry.request.questions[0]).toMatchObject({ id: 'which', kind: 'single-select', message: 'Which note?' });
   expect(entry.request.questions[0]?.options.map((one) => one.label)).toEqual(['monday', 'tuesday']);
+  // The questions say what is asked, with no message of the host's own, as
+  // VS Code's Claude agent puts a model's questions.
+  expect(entry.request).not.toHaveProperty('message');
   await settle();
   expect(ended(p, chatUri)).toBe(false);
   /*
@@ -614,10 +640,56 @@ it('raises a chatInput entry for cofold\'s own ask tool and answers it back', as
   // The answer reached the run as the tool's result, and the entry came down.
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('monday');
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry.id)).toBe(true);
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
   // And the chat's request carries the answer it was completed with.
   const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: Record<string, unknown> } };
   expect(requested(after.snapshot.state, 'last').map((part) => part.response)).toEqual(['accept']);
+});
+
+/*
+ * The words a person typed beside a choice, or instead of one, go with it, as
+ * VS Code's Claude agent hands a model its answers.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L133-L156
+ */
+it('hands the model the words a person typed beside a choice, or instead of one', async () => {
+  const questions: AskQuestion[] = [
+    { id: 'which', question: 'Which note?', header: 'Note', options: [{ label: 'monday' }, { label: 'tuesday' }] },
+    { id: 'when', question: 'When?', header: 'When', options: [{ label: 'now' }, { label: 'later' }] },
+  ];
+  const model = createFakeModel({
+    script: [
+      { toolCalls: [{ name: 'ask_user', input: { questions }, callId: 'call-q' }] },
+      { text: 'noted' },
+    ],
+    stream: true,
+  });
+  const { client, peer: p } = await talking(model, [], asksFor([]));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'ask me');
+  await until(() => needed(p, uri, 'chatInput') !== undefined);
+  const entry = needed(p, uri, 'chatInput') as { request: { id: string } };
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: {
+        type: 'chat/inputCompleted',
+        requestId: entry.request.id,
+        response: 'accept',
+        answers: {
+          which: { state: 'submitted', value: { kind: 'selected', value: 'monday', freeformValues: ['the long one'] } },
+          when: { state: 'submitted', value: { kind: 'selected', freeformValues: ['after lunch'] } },
+        },
+      },
+    },
+  });
+  await until(() => ended(p, chatUri));
+
+  const told = JSON.stringify(model.requests[1]?.messages);
+  expect(told).toContain('monday, the long one');
+  expect(told).toContain('A: after lunch');
 });
 
 it('declines cofold\'s own ask tool as a denial the model reads', async () => {
@@ -646,7 +718,9 @@ it('declines cofold\'s own ask tool as a denial the model reads', async () => {
 
   const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
   expect((done?.action.result as { success: boolean } | undefined)?.success).toBe(false);
-  expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
+  // cofold's own words for a question nobody answered, the deny carrying no
+  // reason of this host's.
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('The user declined to answer');
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry.id)).toBe(true);
 });
 
@@ -676,7 +750,8 @@ it('leaves cofold\'s ask tool out when a host tool already answers to that name'
   expect(mine).toHaveLength(1);
   expect(needed(p, uri, 'chatInput')).toBeUndefined();
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('the host answered');
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 it('asks about a destructive host tool with no policy configured', async () => {
@@ -759,7 +834,8 @@ it('lands a steer sent during a pause after the answer', async () => {
   expect(ran).toEqual(['hi']);
   expect(JSON.stringify(model.requests[0]?.messages)).not.toContain('make it short');
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('make it short');
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 it('answers a second pause on the same run', async () => {
@@ -850,5 +926,6 @@ it('refuses a decision for a turn that already ended to its sender, and throws n
   expect(after.map((e) => [e.action.type, e.rejectionReason !== undefined])).toEqual([['chat/toolCallConfirmed', true]]);
   expect(reduced(p, uri, chatUri).session.inputNeeded).toBeUndefined();
   expect(ran).toEqual(['hi']);
-  expect(types(p, chatUri).at(said - 1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(said - 2, said)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });

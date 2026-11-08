@@ -127,8 +127,8 @@ export const apply: Plugin['apply'] = (host, options) => {
       description: 'Open the example canvas beside this chat. Answer: the canvas resource and its URL.',
       inputSchema: { type: 'object', properties: {} },
     },
-    run: (_input, at) => {
-      const resource = host.openCanvas(at.chat, stateOf());
+    run: async (_input, at) => {
+      const resource = await host.openCanvas(at.chat, stateOf());
       if (url === undefined) opened.set(at.chat, resource);
       return JSON.stringify({ resource, url });
     },

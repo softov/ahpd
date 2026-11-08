@@ -5,7 +5,7 @@ export type { OpenPi } from './session.js';
 export { openPi, runtimeModels } from './backend.js';
 export type { BackendOptions, PiBackend, RuntimeModels } from './backend.js';
 export { catalogue, forget, stateFile, watch, watchedSession } from './catalog.js';
-export { activityOf, mapEvent, resultText } from './mapping.js';
+export { mapEvent, resultText } from './mapping.js';
 export { idOf, listed, modelFor, THINKING_KEY } from './models.js';
 export type { PiModel } from './models.js';
 export { turnsOf } from './transcript.js';

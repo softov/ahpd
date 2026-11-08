@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { canonicalFromCli, check, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, JsonSchema, Registry } from '@cofold/commands';
-import type { Agent, Alert, AutomationStore, AutomationsOptions, ClientCounts, ClientRegistry, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, Alert, AutomationStore, AutomationsOptions, ClientCounts, ClientRegistry, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, PluginContext, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Vault } from '@ahpd/sdk';
+import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import {
   adaptersChannel,
   enginesChannel,
@@ -30,12 +31,14 @@ import {
   createMinuteMeter,
   doorOf,
   fileResources,
+  ripgrepFiles,
   fileSessions,
   fileUsage,
   filePolicies,
   policyChannels,
   fileUsers,
   fileNodes,
+  frozenCopy,
   liveNodes,
   nodesFileOf,
   gitBranches,
@@ -70,7 +73,7 @@ import { controlIn, controlServer } from '../control.js';
 import type { ControlServer } from '../control.js';
 import { here } from '../ask.js';
 import { offerConfigure, askToServe } from './configure.js';
-import { agentPluginsDir, automationsDir, automationsPath, automationStatePath, configDir, configPath, customizationStatePath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
+import { agentPluginsDir, automationsDir, automationsPath, automationStatePath, configDir, configPath, customizationStatePath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, rootConfigPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
 import { API_PREFIX, PROXY_PREFIX, apiHandler, isUnder, json, listenApi, plainRequests, pluginRoutes, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { isRootPath } from '../proxy/dialects.js';
 import { mcpHandler } from '../mcp.js';
@@ -87,17 +90,23 @@ import { applyPresets, planPresets, splitModels } from '../agents/migrate.js';
 import { handedAgent } from '../agents/handed.js';
 import { fileVault } from '../vault.js';
 import { daemonRootConfig } from '../rootconfig.js';
+import { fileRootConfigStore } from '../rootconfigstore.js';
 import { pty } from '../pty.js';
-import { shellIntegration } from '../shellintegration.js';
+import { shellIntegrationOf } from '../shellintegration.js';
 import { screen } from '../screen.js';
 import { realManager } from '../service.js';
+import type { Manager, Service } from '../service.js';
 import { migrateAutomations, scheduledAutomations } from '../scheduled.js';
+import type { ScheduledStore } from '../scheduled.js';
 import { fileEnablement } from '../enablement.js';
 import { filesOf, lineFor, writerFor } from '../wire.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npmRegistry, stale, updateLine } from '../update.js';
 import { manifest, version } from '../version.js';
 import { conflict, namedOptionsFrom, secret, flagFields, stop } from './options.js';
-import { FORCED_SIGNAL, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, restartMethod, successorTakes } from './restart.js';
+import {
+  FORCED_SIGNAL, RESTART_DELAY_MS, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, parking, restartMethod, successorTakes,
+} from './restart.js';
+import type { RestartOutcome } from './restart.js';
 import type { Options } from './options.js';
 
 /** The listener an HTTP surface is on: the daemon's, the API's own or the model API's own. */
@@ -200,7 +209,7 @@ export function daemonSessions(told: (message: string) => void): SessionStore {
  * daemon's business because where its files live is, and the store this version
  * opens only knows the folder and the state file.
  */
-export function daemonAutomations(told: (message: string) => void, store?: AutomationsOptions): AutomationStore {
+export function daemonAutomations(told: (message: string) => void, store?: AutomationsOptions): ScheduledStore {
   migrateAutomations({ file: automationsPath(), dir: automationsDir(), state: automationStatePath(), onProblem: told });
   return scheduledAutomations({
     dir: automationsDir(), state: automationStatePath(), onProblem: told,
@@ -216,7 +225,7 @@ export function daemonAutomations(told: (message: string) => void, store?: Autom
  * the configuration directory, the machine owners and the vault included. The
  * owners file is the computer plugin's and the vault is this daemon's own port
  * until a plugin registers one, and this daemon's own start is the only place
- * that knows all five at once - which is why the sweep happens here rather than
+ * that knows all six at once - which is why the sweep happens here rather than
  * beside any one of the writers.
  */
 export const wholeFiles = (users?: string): string[] => [
@@ -224,6 +233,7 @@ export const wholeFiles = (users?: string): string[] => [
   policiesPath(),
   automationStatePath(),
   customizationStatePath(),
+  rootConfigPath(),
   join(configDir(), 'computers.json'),
   vaultPath(),
 ];
@@ -517,6 +527,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   // The store the host was built over, once it is: a plugin may have replaced
   // the daemon's own, and before the host exists a request finds none.
   let kept: AutomationStore | undefined;
+  // Where automations are kept and whether their schedules fire, as `status`
+  // and the announcement say it, once the store has read its state file.
+  let automationMode = memory ? 'in memory, schedules do not fire' : `in ${automationsDir()}, schedules fire`;
   /*
    * The policies saying who may use which agent, model and computer.
    *
@@ -558,7 +571,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   // Both are this daemon's once the host is built and the socket is open; a
   // request before then finds no turn and nothing to restart.
   let turning = (): string[] => [];
-  let restart = async (_argv: string[], _force: boolean): Promise<void> => { conflict('It is still starting; restart it once it has.'); };
+  let restart = async (_argv: string[], _force: boolean): Promise<RestartOutcome> => conflict('It is still starting; restart it once it has.');
+  // A restart asked for while a turn runs, held until the turns end.
+  const parked = parking(() => turning(), (step) => { setTimeout(step, 0); });
   const facts: ServedFacts = {
     options,
     configFile: options.configFile ?? configPath(),
@@ -572,7 +587,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       paths: options.paths,
       ...(options.startFolder === undefined ? {} : { startFolder: options.startFolder }),
       startedAt,
-      automations: memory ? 'in memory, schedules do not fire' : `in ${automationsDir()}, schedules fire`,
+      automations: automationMode,
       // The manager that started this process, so a served `ahpd status` says
       // what a local one says about the same daemon.
       ...(service === undefined ? {} : { service }),
@@ -905,7 +920,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     configFile: pluginFile,
     typed: options.typedPlugins,
     noPlugins: options.noPlugins,
-    where: { configDir: configDir(), cwd: process.cwd() },
+    where: {
+      configDir: configDir(),
+      cwd: process.cwd(),
+      entryOutside: options.pluginEntryOutside,
+      icons: { limitBytes: options.iconLimitBytes, timeoutMs: options.iconTimeoutMs },
+    },
     loaded: () => loaded,
     alerts: () => alerts,
     // Read through the set rather than kept here: a view changes with no
@@ -982,7 +1002,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     // what a connector holds; the whole URI is accepted too, because that is
     // what a person copying one out of the catalogue has.
     automations: (id) => {
-      const entry = automationsStore?.get(id.startsWith('ahp-automation:/') ? id : `ahp-automation:/${id}`);
+      const entry = automationsStore?.get(id.startsWith('ahp-automation:') ? id : `ahp-automation:/${id}`);
       if (entry === undefined) return undefined;
       return { owner: ownerOf(entry._meta?.['ahpd.owner']) };
     },
@@ -1193,21 +1213,46 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * channel has listed, both through getters: the store is built before the
    * plugins are loaded and before the connectors are opened, and what a save
    * is held to is what is known when the save arrives.
+   *
+   * A daemon store whose state file did not load is handed to nothing that runs
+   * automations: the host is given none and so advertises none, as VS Code
+   * advertises no automation capabilities over storage that did not load, and
+   * `ahpd automation` and `ahpd status` say why.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L246-L258
    */
-  const automations = memory
-    ? memoryAutomations({
-      pluginTypes: () => pluginTypes,
-      connectors: () => connectorLists.refs(),
-      agents: () => agentLists.owners(),
-      hasUsers: () => users !== undefined,
-    })
+  const filed = memory
+    ? undefined
     : daemonAutomations((message) => process.stderr.write(`${message}\n`), {
       pluginTypes: () => pluginTypes,
       connectors: () => connectorLists.refs(),
       agents: () => agentLists.owners(),
       hasUsers: () => users !== undefined,
     });
+  const automations = filed === undefined
+    ? memoryAutomations({
+      pluginTypes: () => pluginTypes,
+      connectors: () => connectorLists.refs(),
+      agents: () => agentLists.owners(),
+      hasUsers: () => users !== undefined,
+    })
+    : filed.available ? filed : undefined;
+  if (filed?.available === false) automationMode = `unavailable until ${automationStatePath()} is recovered`;
   automationsStore = automations;
+
+  /** What the daemon's own event listeners are handed, the facts a plugin's context carries. */
+  const daemonContext: PluginContext = Object.freeze({
+    path: options.paths[0] as string,
+    paths: frozenCopy(options.paths),
+    version: version(),
+    hostName: hostname(),
+    configDir: configDir(),
+    hostId: hostId(),
+    ...(users === undefined ? {} : { hasUsers: true }),
+    log: stamp,
+    say: stamp,
+    parseYaml: (text: string) => parseYaml(text),
+    stringifyYaml,
+  });
 
   const base: HostOptions = {
     path: options.paths[0] as string,
@@ -1259,9 +1304,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       /*
        * VS Code's scripts, beside the pseudoterminal they need: a shell under
        * pipes has no prompt to mark, and the store asks the port only for one
-       * under a pseudoterminal.
+       * under a pseudoterminal. The zsh folder is taken as `zshFolder` says.
        */
-      shellIntegration,
+      shellIntegration: shellIntegrationOf(options.zshFolder),
       /*
        * The emulated screen each terminal under a pseudoterminal is fed with,
        * so a tool can tell a full-screen program or bracketed paste, and a
@@ -1270,6 +1315,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       screen,
     }),
     directories: gitBranches(),
+    // The files `@` completes, listed by `rg` on the path as `git` is run.
+    workspaceFiles: ripgrepFiles(),
     changes: gitChanges(),
     worktrees: gitWorktrees(),
     /*
@@ -1409,6 +1456,13 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * a daemon setting, not a per-session one.
      */
     closedChats: options.closedChats,
+    unofferedModel: options.unofferedModel,
+    workspacelessFolder: options.workspacelessFolder,
+    rootOwner: options.rootOwner,
+    turnSenders: options.turnSenders,
+    steerReadBack: options.steerReadBack,
+    backendBackgroundWork: options.backendBackgroundWork,
+    agentOrchestrationLimitsScope: options.agentOrchestrationLimitsScope,
     archiveDirtyWorktree: options.archiveDirtyWorktree,
     pullRequestLookup: options.pullRequestLookup,
     // What a session on a joined node does when that node's join restarts.
@@ -1420,6 +1474,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * is the same answer and one place should hold it.
      */
     ...(options.clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs: options.clientToolTimeoutMs }),
+    // And how long a gone client keeps its place and its calls, the host's own thirty seconds unless the operator said.
+    ...(options.clientToolCallDisconnectTimeoutMs === undefined ? {} : { clientToolCallDisconnectTimeoutMs: options.clientToolCallDisconnectTimeoutMs }),
     /*
      * The environment the operator names for the shells this host starts.
      *
@@ -1438,6 +1494,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * way.
      */
     terminalAutoApproveDefaults: options.terminalAutoApproveDefaults,
+    // The operator's managed permissions and per-tool eligibility, handed on as the file says them.
+    ...(options.managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions: options.managedSettingsPermissions }),
+    ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
+    managedRules: options.managedRules,
     /*
      * The reader a configured module exports, which takes the sdk's own
      * splitter's place.
@@ -1455,6 +1515,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     ...(options.deltaWindowMs === undefined ? {} : { deltaWindowMs: options.deltaWindowMs }),
     ...(options.sleepAfterMinutes === undefined ? {} : { sleepAfterMinutes: options.sleepAfterMinutes }),
     ...(options.sessionResidencyLimit === undefined ? {} : { sessionResidencyLimit: options.sessionResidencyLimit }),
+    ...(options.attachmentFetchLimitBytes === undefined ? {} : { attachmentFetchLimitBytes: options.attachmentFetchLimitBytes }),
+    ...(options.toolResultResourceLimitBytes === undefined ? {} : { toolResultResourceLimitBytes: options.toolResultResourceLimitBytes }),
     /*
      * The daemon's own settings, as the keys root config carries.
      *
@@ -1464,6 +1526,16 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * the host only shows what it is given and hands writes on.
      */
     rootConfig: daemonRootConfig(options, typed, openWire, (servers) => { mcpServers = servers as typeof mcpServers; }, async () => (await applyNow()).restart),
+    /*
+     * The root config a client pushed, kept between restarts, as VS Code's
+     * host keeps its own: a daemon restarted for an upgrade comes back with
+     * the settings its windows set, an Always Allow among them, and the
+     * approval and policy keys from each window's next push.
+     */
+    rootConfigStore: fileRootConfigStore({
+      file: rootConfigPath(),
+      onProblem: (message) => process.stderr.write(`${message}\n`),
+    }),
     /*
      * What this host adds on top of a backend, kept between restarts.
      *
@@ -1487,9 +1559,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * `--automations memory` is the same store without either half: nothing is
      * written and nothing fires. Both are an `AutomationStore`, so the host is
      * not told which it was given - a host embedded in something that already
-     * schedules passes a third of its own.
+     * schedules passes a third of its own. None at all while the daemon's
+     * store could not read its state file.
      */
-    automations: automations,
+    ...(automations === undefined ? {} : { automations }),
     /*
      * Whether a customization is on, for every session or for one folder.
      *
@@ -1547,18 +1620,27 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     onEvent: stamp,
     /*
+     * The daemon's own listeners, ahead of every plugin's: a turn or a session
+     * that ended may be the last one a parked restart waits for. Handed the
+     * daemon's facts as their context, as a plugin's are handed its own.
+     */
+    events: {
+      turn_end: [{ by: 'ahpd', context: daemonContext, handle: () => { parked.ended(); } }],
+      session_end: [{ by: 'ahpd', context: daemonContext, handle: () => { parked.ended(); } }],
+    },
+    /*
      * What the window's diagnostics get from this daemon.
      *
      * The version out of the manifest, the log a detached daemon writes to and
      * every file of the wire capture when there is one - a capture that stops
-     * at the last roll is missing its start - and a shutdown that runs the same
-     * way down `ahpd stop` does, so it stops the daemon gracefully on every
-     * platform rather than signalling itself.
+     * at the last roll is missing its start - and a shutdown that stops the
+     * daemon the way `ahpd stop` does, through the service manager that holds
+     * it where one does.
      */
     diagnostics: {
       version: version(),
       logs: () => [daemonLog(), ...(capture.at === undefined ? [] : filesOf(capture.at))],
-      shutdown: daemonShutdown(() => wayDown),
+      shutdown: daemonShutdown(() => wayDown, service === undefined ? undefined : { service, name: serviceName, manager: realManager() }),
     },
   };
 
@@ -1679,6 +1761,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     configDir: configDir(),
     hostId: hostId(),
     cwd: process.cwd(),
+    entryOutside: options.pluginEntryOutside,
+    icons: { limitBytes: options.iconLimitBytes, timeoutMs: options.iconTimeoutMs },
     log: stamp,
     say: (line) => {
       const one = line.trim();
@@ -1809,7 +1893,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    */
   if (folded.usage !== undefined) metered = folded.usage;
   if (folded.vault !== undefined) held = folded.vault;
-  kept = folded.automations;
+  // The daemon's own store that could not read its state file, when no plugin
+  // brought one: the host has none, and `ahpd automation` says why.
+  kept = folded.automations ?? filed;
   /*
    * The presets written now that the engines and the vault are known.
    *
@@ -1976,7 +2062,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   });
   // The plugin channel's marks reach the host that now serves it.
   markRestart = () => { host.markRestartNeeded(); };
-  valuesMoved = () => host.daemonValuesMoved();
+  valuesMoved = () => host.daemonValuesChanged();
   /*
    * The host the plugins were loaded for, handed over now that it exists.
    *
@@ -2109,6 +2195,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       host: listener.host,
       port: listener.port,
       guarded: listener.guarded,
+      ...(token === undefined ? {} : { connectionToken: token }),
     };
     await raise(folded.events, listened, failed('listening'));
     /*
@@ -2155,7 +2242,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     + `pid ${String(process.pid)}\n`
     // Its own line rather than the end of the one above, which `daemon.ts`
     // reads the session directories off with a regular expression.
-    + `automations ${memory ? 'in memory, schedules do not fire' : `in ${automationsDir()}, schedules fire`}\n`
+    + `automations ${automationMode}\n`
     // Its own line for the same reason: a client that only needs the names reads
     // one line, and `daemon.ts` keeps matching the two above unchanged.
     + `plugins ${loaded.length === 0 ? 'none' : loaded.map((one) => one.name).join(', ')}\n`
@@ -2254,6 +2341,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   let controlListener: ControlServer | undefined;
   const way = lifecycle({
     down: async () => {
+      // A restart parked until the turns end is one this way down replaces,
+      // and the turns it ends would otherwise run it.
+      parked.drop();
       /*
        * The tunnels first, so a kind has already let go when the plugin that
        * registered it hears `stopping` and starts closing its own work. Each
@@ -2294,7 +2384,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       // the terminals, and the stores, so a successor is their only writer.
       await host.close();
     },
-    start: (line, token) => startDaemon(line, process.argv[1] as string, token, process.pid),
+    start: (line, token) => startDaemon(line, process.argv[1] as string, token, process.pid, options.readyTimeoutMs),
     stop: (successor) => {
       try { process.kill(successor.pid, 'SIGTERM'); }
       catch { /* it went already, which is a stop */ }
@@ -2303,7 +2393,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     forget: () => { forget([process.pid]); },
     log: stamp,
     exit: (code) => process.exit(code),
-    later: (step) => { setTimeout(step, 0); },
+    later: (step) => { setTimeout(step, RESTART_DELAY_MS); },
     /*
      * A daemon a service manager holds is restarted through it: the manager
      * starts the next daemon from the unit or the agent, and a successor this
@@ -2319,10 +2409,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   process.on('SIGTERM', way.shutdown);
   /*
    * A restart, served or signalled: the recorded line and its token read over
-   * the configuration as it is now, before anything goes down; then, after the
-   * answer has gone, the same steps as a shutdown, the successor started with
-   * that line and token, and the exit. The token is the one the line reads
-   * now, so a changed token is the one the successor's record carries.
+   * the configuration as it is now, before anything goes down; then, once the
+   * answer has had its three seconds, the same steps as a shutdown, the
+   * successor started with that line and token, and the exit. The token is the
+   * one the line reads now, so a changed token is the one the successor's
+   * record carries. While a turn runs, one that is not forced waits in
+   * `parked` for the host's word that the last turn or session ended.
    *
    * Before any of that, the host stops taking new turns: the way down awaits
    * the plugins' `stopping` handlers, which have no limit, and a turn begun
@@ -2363,6 +2455,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     () => host.turning(),
     way,
     (why) => { host.refuseTurns(why); },
+    parked,
+    stamp,
   );
   /*
    * `ahpd restart` at the terminal: a signal to the recorded process, which
@@ -2370,9 +2464,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    */
   if (detached) {
     const answer = (forced: boolean, piped: boolean) => (): void => {
-      void answerRestartSignal(forced, {
-        self: process.pid, recorded: running, turning: () => host.turning(), log: stamp, restart,
-      }, piped);
+      void answerRestartSignal(forced, { self: process.pid, recorded: running, log: stamp, restart }, piped);
     };
     const onRestart = answer(false, false);
     const onForced = answer(true, false);
@@ -2401,8 +2493,13 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
 }
 
 /**
- * What a `shutdown` request does to this daemon: the way down once there is
- * one, and the signal it sent itself before that.
+ * What a `shutdown` request does to this daemon once it has been answered:
+ * stops it the way `ahpd stop` does.
+ *
+ * A daemon a service manager holds is stopped through the manager, as `ahpd
+ * stop` stops one, so a unit that starts its daemon again whenever it exits
+ * does not bring it back. Any other runs its way down once there is one, and
+ * the signal it sent itself before that.
  *
  * `way` answers the way down the daemon has now, or nothing in the window
  * between the host being built with this and the lifecycle being made - the
@@ -2413,7 +2510,14 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
  * connections, the listeners and `host.close()` all happen - which sending
  * `SIGTERM` to itself never did on Windows, where Node makes that a hard kill.
  */
-export const daemonShutdown = (way: () => (() => void) | undefined): (() => void) => () => {
+export const daemonShutdown = (
+  way: () => (() => void) | undefined,
+  held?: { service: Service; name?: string | undefined; manager: Pick<Manager, 'stop'> },
+): (() => Promise<void>) => async () => {
+  if (held !== undefined) {
+    await held.manager.stop(held.service, held.name);
+    return;
+  }
   const down = way();
   if (down === undefined) {
     process.kill(process.pid, 'SIGTERM');

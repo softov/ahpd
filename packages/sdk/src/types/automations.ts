@@ -1,6 +1,6 @@
 /** Automations: a session started by a trigger rather than by a person. */
 
-import type { AutomationOperation, AutomationTriggerDefinition, SessionOriginKind } from '@microsoft/agent-host-protocol';
+import type { AutomationOperation, AutomationTriggerDefinition, ErrorInfo, SessionOriginKind } from '@microsoft/agent-host-protocol';
 
 import type { CapturedPlugin } from './clientplugins.js';
 import type { Bag } from './common.js';
@@ -14,7 +14,7 @@ import type { Owner } from './usage.js';
  * done, and which of the three verbs may be used on it now.
  */
 export interface Automation {
-  /** `ahp-automation:/<id>`. The channel a run is reported against names it. */
+  /** A URI in the `ahp-automation` scheme, `ahp-automation:/<id>` for one this host names. The channel a run is reported against names it. */
   resource: string;
   /** What the client asked for. Opaque here except for `enabled` and `title`. */
   definition: Bag;
@@ -225,8 +225,8 @@ export interface StartSession {
 /** How a run's execution ended, for a store to record. */
 export interface RunEnding {
   status: 'completed' | 'failed' | 'cancelled';
-  /** Why it failed, when it did. */
-  error?: { message: string };
+  /** Why it failed, when it did, as the turn's own error said it. */
+  error?: ErrorInfo;
 }
 
 /**
@@ -284,8 +284,14 @@ export interface AutomationStore {
    * and is handed in for the same reason the definition is: only the host can
    * read a client, and a store that copied a plugin would be a second thing
    * that knows what a client is. Absent means the template names none.
+   *
+   * `runs` takes back the runs a store kept beside the definition, newest
+   * first, as VS Code's automation service restores its runs beside its
+   * catalogue; like `runCount`, a store reading its own record is the only
+   * caller that passes them, and a run that was not over when they were
+   * written is failed as interrupted.
    */
-  create(resource: string, definition: Bag, owner?: Owner, runCount?: number, customizations?: CapturedPlugin[]): AutomationEntry;
+  create(resource: string, definition: Bag, owner?: Owner, runCount?: number, customizations?: CapturedPlugin[], runs?: AutomationRun[]): AutomationEntry;
   /**
    * Patch one. Absent keys are left alone, which is what a patch means.
    *
@@ -304,6 +310,10 @@ export interface AutomationStore {
    * `start` is handed in rather than reached for: only the host can create a
    * session, and a store that could would be a second thing that knows what a
    * session is. It answers the session URI, and the store records it.
+   *
+   * Answered with the run once it is recorded, before the session `start` makes
+   * is there: what the start comes to is said on the run, as VS Code's host
+   * answers `runAutomation` with the run it recorded and starts it after.
    */
   run(
     resource: string,

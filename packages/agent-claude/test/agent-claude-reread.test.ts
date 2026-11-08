@@ -41,13 +41,13 @@ const watched = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/session/watch.js', () => ({
-  watchFolders: (_roots: unknown, onChange: () => void) => {
+  createClaudeCustomizationWatcher: (_roots: unknown, onChange: () => void) => {
     watched.changes.push(onChange);
     return () => { watched.stopped += 1; };
   },
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: () => {
     let closed = false;
@@ -86,10 +86,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 const { createSession } = await import('../src/session.js');
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
-/** A session whose first list has been said, with what it says from then on. */
+/** A session whose first send started its CLI and whose first list has been said, with what it says from then on. */
 async function open(extra: Record<string, unknown> = {}) {
   const said: Bag[] = [];
   const session = createSession({
@@ -99,6 +99,7 @@ async function open(extra: Record<string, unknown> = {}) {
     emit: (_channel, action) => { said.push(action as Bag); },
     ...extra,
   });
+  session.sendMessage('t1', 'hello');
   await settle();
   return { session, said };
 }

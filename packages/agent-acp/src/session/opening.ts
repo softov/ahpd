@@ -4,6 +4,7 @@ import { machineAsked, machinePathOf } from '@ahpd/sdk';
 import type { Spawn, Start, ToolsEndpoint } from '@ahpd/sdk';
 import { heardCapabilities, watchSession } from '../catalog.js';
 import { connectAcp } from '../connection.js';
+import { HOST_TOOLS } from '../mapping.js';
 import type { AcpConnection, AcpOptions } from '../types.js';
 import { messageOf } from './common.js';
 import type { SessionContext } from './context.js';
@@ -16,15 +17,16 @@ export interface Opening {
    * Read the record again, and put a new server behind the conversation when
    * what it spawns with changed.
    *
-   * Called at the start of every turn. Answers a sentence when the record can
-   * no longer be used, which is the turn's own refusal, and nothing otherwise.
+   * Called as the session is created and at the start of every turn. Answers
+   * a sentence when the record can no longer be used, which is the turn's own
+   * refusal, and nothing otherwise.
    */
   refreshOptions(): string | undefined;
   /**
-   * The host's own tools endpoint, once a turn has opened it.
+   * The host's own tools endpoint, once the session's open has opened it.
    *
    * Asked rather than kept, because it is opened inside the first `session/new`
-   * and a session that has run no turn has none yet. What asks is the offering
+   * and a session whose server has not opened has none. What asks is the offering
    * being replaced: a client that arrives or goes moves the list the agent was
    * handed, and the endpoint is the only thing serving it.
    */
@@ -48,6 +50,8 @@ const SPAWN_KEYS = [
 const LIVE_KEYS = [
   'command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model',
   'authenticate', 'authenticateInMachine', 'hostTools', 'honoursTrust', 'toolsChanged', 'machine', 'variant',
+  'cutTurns', 'stderrTail', 'modesFrom', 'unreportedClientCalls', 'findFreshMs',
+  'listingIdleMs', 'sessionListMaxPages', 'exitGraceMs', 'stderrBytes', 'killGraceMs', 'closeGraceMs',
 ] as const;
 
 /** What a spawned server is built from, as one string to compare an edit by. */
@@ -64,16 +68,6 @@ const spawnOf = (one: AcpOptions): string =>
  */
 const advertised = <T>(capability: T | null | undefined): boolean =>
   capability !== undefined && capability !== null;
-
-/**
- * One host server as `session/new` names it.
- *
- * ACP spells an HTTP server as a URL and a list of headers rather than as the
- * map of headers VS Code's key holds, so the token goes over as the one header
- * it is: `ahp` is the name the in-process server carries, and a server that
- * already has one by that name is being told about the same tools twice.
- */
-export const HOST_TOOLS = 'ahp';
 
 /**
  * The hosts that name this machine itself, wherever the address is read.
@@ -177,6 +171,8 @@ const serversFor = (
     say(`host tools: ${String(where)} cannot reach the daemon at ${addressOf(endpoint.url)}, so they were left out`);
     return taken;
   }
+  // ACP spells an HTTP server as a URL and a list of headers, so the token goes
+  // over as the one header it is.
   taken.push({
     type: 'http',
     name: HOST_TOOLS,
@@ -238,10 +234,6 @@ export function createOpening(ctx: SessionContext): Opening {
    * client's tools, and a client arriving mid-turn is the ordinary case rather
    * than a rare one. A deployment that would rather its agents re-listed than
    * be interrupted sets `list`.
-   *
-   * `mayRun` goes with it because the agent calls that server directly: a call
-   * never passes through this bridge, so the server is the one place a person
-   * can be asked before a tool of the host's runs.
    */
   let endpoint: ToolsEndpoint | undefined;
   let asked = false;
@@ -250,7 +242,6 @@ export function createOpening(ctx: SessionContext): Opening {
       endpoint = start.toolsServer?.({
         runClient: ctx.ranByClient,
         toolsChanged: options.toolsChanged ?? 'notify',
-        mayRun: ctx.askTool,
       });
       asked = true;
     }
@@ -355,7 +346,8 @@ export function createOpening(ctx: SessionContext): Opening {
    *
    * One promise for the whole of it, so a second turn that arrives while the
    * first is still shaking hands waits on the same server rather than spawning
-   * another. A failure clears it, so the next turn tries again.
+   * another. A failure clears it and stops the server it spawned, so the next
+   * turn tries again.
    *
    * A fork is asked first and is the one case that copies rather than
    * continues: the conversation it was given stays where it is and this session
@@ -382,6 +374,8 @@ export function createOpening(ctx: SessionContext): Opening {
      * session's own are what the open sends.
      */
     const values = { ...ctx.values };
+    /** The server this open spawned, once it has. */
+    let made: AcpConnection | undefined;
     const pending = (async () => {
       /*
        * A folder the host did not vouch for, and an agent that loads the
@@ -444,8 +438,12 @@ export function createOpening(ctx: SessionContext): Opening {
               }),
         },
         ...(options.log === undefined ? {} : { log: options.log }),
+        ...(options.exitGraceMs === undefined ? {} : { exitGraceMs: options.exitGraceMs }),
+        ...(options.stderrBytes === undefined ? {} : { stderrBytes: options.stderrBytes }),
+        ...(options.killGraceMs === undefined ? {} : { killGraceMs: options.killGraceMs }),
       });
       ctx.live = connection;
+      made = connection;
       // A server that dies between turns is let go, so the next turn spawns
       // another rather than prompting a process that is no longer there.
       void connection.ended.then(() => {
@@ -603,8 +601,10 @@ export function createOpening(ctx: SessionContext): Opening {
        *
        * The host's own turns go with it for the same reason: a resume and a
        * fork both replay nothing, so without them the record would hold a
-       * conversation that starts at whatever the person says next.
+       * conversation that starts at whatever the person says next. The replay
+       * the host was still keeping content of goes in once it is kept.
        */
+      await ctx.keeping;
       ctx.record = watchSession({
         provider,
         id: ctx.acpSessionId,
@@ -636,6 +636,17 @@ export function createOpening(ctx: SessionContext): Opening {
       ctx.syncConfig(values);
     };
     void pending.then(opened, opened);
+    /*
+     * An open that fails lets go of itself and of the server it spawned, so a
+     * server that refused the session or its sign-in leaves no process behind
+     * and the next open spawns one of its own.
+     */
+    void pending.catch(() => {
+      if (ctx.opening === pending) ctx.opening = undefined;
+      if (made === undefined) return;
+      if (ctx.live === made) ctx.live = undefined;
+      void made.close();
+    });
     return pending;
   };
 
@@ -652,8 +663,9 @@ export function createOpening(ctx: SessionContext): Opening {
    * The conversation is kept by leaving `acpSessionId` where it is and letting
    * the old server go, so `open` reopens it the way it reopens one that died -
    * a resume where the server advertised that it can take one back without
-   * replaying, and a load otherwise. The first turn settles what the server was
-   * opened with, because a record can be edited between the open and that turn.
+   * replaying, and a load otherwise. The session's creation reads what its
+   * first server is built with, so an edit made after that is one the next
+   * turn spawns a server for.
    *
    * A record that can no longer be used is the turn's own refusal rather than a
    * session that died, which is why it comes back as a sentence.

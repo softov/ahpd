@@ -316,18 +316,18 @@ describe('a first-party plugin', () => {
    * imported for them.
    */
   const schemas: [string, string[]][] = [
-    ['activepieces', ['pieces', 'networkMode', 'ssrfAllowList', 'sandboxPropagatedEnvVars']],
+    ['activepieces', ['pieces', 'networkMode', 'ssrfAllowList', 'sandboxPropagatedEnvVars', 'logoLimitBytes', 'logoTimeoutMs']],
     ['agent-acp', ['hostTools', 'toolsChanged']],
     ['agent-claude', [
       'paths', 'computerExecutable', 'computerCli', 'computerCliFallback', 'computerConfigDir',
       'handshakeTimeoutMs', 'hostTools',
     ]],
     ['agent-cofold', [
-      'model', 'baseUrl', 'instructions', 'computerConfigDir', 'store', 'memory', 'tools', 'strictTools', 'apiKey',
-      'resource', 'autoCompactTokens', 'hostTools',
+      'model', 'baseUrl', 'models', 'instructions', 'computerConfigDir', 'store', 'memory', 'tools', 'strictTools', 'apiKey',
+      'resource', 'autoCompactTokens', 'autoCompactAt', 'catalogueTimeoutMs', 'hostTools',
     ]],
     ['agent-pi', ['model', 'projectTrust', 'sessionDir', 'hostTools']],
-    ['bot', ['root', 'lastChats', 'mainTurnPostMessageAbsent']],
+    ['bot', ['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn']],
     ['computer', [
       'runtime', 'command', 'args', 'ssh', 'libvirt', 'proxmox', 'env', 'image', 'cpus', 'memory', 'max', 'label',
       'prefix', 'sessionSetting', 'sessionDefault', 'needs', 'mounts', 'profiles', 'bodyMounts', 'imageMounts',

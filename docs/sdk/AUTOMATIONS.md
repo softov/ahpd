@@ -4,7 +4,7 @@ An **automation** is one instruction this host carries out with nobody watching:
 
 Automations live on a catalogue of their own, `ahp-automations://`. A client subscribes to it, writes definitions into it, and watches each run on the run's own channel.
 
-A client that wants only its own automations subscribes to `ahp-automations://?owner=me`. The snapshot keeps the entries whose `_meta['ahpd.owner']` is that connection's principal: `user:<id>` for a person, `plugin:<name>` for a plugin. A connection with no principal owns nothing, and the filter answers no entries. Any other value is refused with `-32602`, the way a wrong param is. An action about one automation reaches a filtered subscription only when that automation is the subscriber's own. A removal carries an id and no entry, so it reaches every filtered subscription.
+A client that wants only its own automations subscribes to `ahp-automations://?owner=me`: the RFC 6570 template `ahp-automations://{?owner}`, which `initialize` advertises as `_meta['ahpd.automations']` on a host that serves automations, expanded with `owner` `me`. The snapshot keeps the entries whose `_meta['ahpd.owner']` is that connection's principal: `user:<id>` for a person, `plugin:<name>` for a plugin. A connection with no principal owns nothing, and the filter answers no entries. Any other value is refused with `-32602`, the way a wrong param is. An action about one automation reaches a filtered subscription only when that automation is the subscriber's own. A removal carries an id and no entry, so it reaches every filtered subscription.
 
 Terms, one line each:
 
@@ -112,15 +112,15 @@ A preset also takes the same `filter` the rule does, so one can be narrowed to a
 
 A run is started by a schedule, by an event, or by a person pressing Run, and all three go through the same door, because what an automation says about running twice is about the automation rather than about what asked. Starting a run and a person pressing Run both begin the first turn in `beginAutomation`.
 
-The store records the run before the session exists, marks it `running` when the session is asked for, and the host settles it when its sessions stop, not when it starts. Its lifecycle is `pending`, then `running`, then one of `completed`, `failed` or `cancelled`, and a `failed` one carries the error. A run that could not start at all is `failed` with no `startedAt`, because no execution began.
+The store records the run before the session exists, marks it `running` when the session is asked for, and the host settles it when a turn of its session's default chat ends and none of its other sessions is still working, as VS Code's host settles a run on its sessions' default chats; a turn in a side chat of that session leaves the run going. `runAutomation` is answered with the run once it is recorded, and its session is made after, so a press is answered whatever making the session takes, as VS Code's host answers it. A press's `requestId` is its identity, as it is to VS Code's host: the same request asked again is answered with the run it made, and one already used for another automation is refused. Its lifecycle is `pending`, then `running`, then one of `completed`, `failed` or `cancelled`, and a `failed` one carries the chat error's own `ErrorInfo`, its `errorType` and `message`. A run that could not start at all is `failed` with no `startedAt`, because no execution began.
 
-An automation's entry carries its runs newest first, twenty at a time, with `runsNextCursor` when there are more: `fetchAutomationRuns` grows the page in view and every subscriber reads the longer list off the same `automation/set`, because the protocol's answer to that command is empty. `operations` is always `update`, `remove` and `run`: `enabled` governs the schedule only, so a person can run a switched-off automation by hand.
+An automation's entry carries its runs newest first, twenty at a time, with `runsNextCursor` when there are more: `fetchAutomationRuns` grows the page in view and every subscriber reads the longer list off the same `automation/set`, because the protocol's answer to that command is empty. A cursor that is not the entry's own is refused, and an entry with no more runs is answered at once, as VS Code's host answers. `operations` is always `update`, `remove` and `run`: `enabled` governs the schedule only, so a person can run a switched-off automation by hand.
 
 ## One chat, or a session each run
 
 By default every run makes a session of its own. The automation's `_meta.ahpd.session` set to `pinned` changes that: it keeps one session and adds each run as the next turn in the chat that session holds, so a run sees the ones before it. The host writes that session's URI to `_meta.ahpd.pinnedSession` - it is the host's own note, and a client writing one has it dropped - and a run whose session is gone makes a new one and keeps it there. The session's folder, worktree and machine stay between runs, and its context grows until the backend compacts it. A pinned session that is asleep is woken in place for the run, and no new session is made - [SESSIONS.md](SESSIONS.md#sleep-and-wake).
 
-A pinned automation also types into a chat somebody else may be using, so a turn running there is a turn already going, whoever started it: an event arriving then is answered by `overlap` like any other, and a run pressed by hand is refused while that turn runs. A pinned run into a chat that belongs to somebody else is refused as well - it is the one road into a session that does not go through `createSession`, and it must not be a way to type in another person's session as though the work were theirs.
+A pinned automation also types into a chat somebody else may be using, so a turn running there is a turn already going, whoever started it: an event arriving then is answered by `overlap` like any other, and a run pressed by hand while somebody's own turn runs there fails, with that reason. A pinned run into a chat that belongs to somebody else is refused as well - it is the one road into a session that does not go through `createSession`, and it must not be a way to type in another person's session as though the work were theirs.
 
 ```json
 { "_meta": { "ahpd": { "session": "pinned", "pinnedSession": "ahp-session://claude/local/..." } } }
@@ -138,7 +138,7 @@ An event can arrive while the automation's own last run is still going, and `_me
 | `parallel` | A run starts for every event |
 | `skip` | The event is dropped, and counted on the run it arrived during |
 
-A pinned automation refuses `parallel` when it is saved, because it has one chat and two turns in it at once is not a thing. A scheduled automation answers to this setting exactly as an event does. A run somebody presses by hand is not held behind one that is going - what the press is answered with is the run it started - with one exception: a press on a pinned automation is refused while its chat has a turn running, because that chat takes one turn at a time. Decision: An automation says what an event does while it runs.
+A pinned automation refuses `parallel` when it is saved, because it has one chat and two turns in it at once is not a thing. A scheduled automation answers to this setting exactly as an event does. A press is never held: while a run of the automation is going, the press is answered with the newest such run, as VS Code's host answers it, and otherwise a run starts now. A press on a pinned automation whose chat is running somebody's own turn starts a run that fails with the reason, because that chat takes one turn at a time. Decision: An automation says what an event does while it runs.
 
 An event dropped by `skip` is dropped before anything is counted, so it is not one of the twenty an hour either; the one counted on the run is noted as `ahpd.dropped` in the run's `_meta`, which is how the agent working in that turn, and anybody watching the run, learns what happened while it worked.
 
@@ -198,7 +198,7 @@ Run history is in memory either way, in both modes: a run names the sessions it 
 
 ## Where an automation is kept
 
-With `automations: "file"`, the default, an automation is one Markdown file in `<configDir>/automations`, named after the id it has on the catalogue: `ahp-automation:/nightly-review` is `nightly-review.md`. It is the same shape as a record a plugin keeps, held the same way - YAML frontmatter and a Markdown body, written whole at mode 0600 in a folder made at 0700 - and the body is the message a run is given, which is the long text and so the part a person came to the file to read:
+With `automations: "file"`, the default, an automation is one Markdown file in `<configDir>/automations`, named after the resource it has on the catalogue: `ahp-automation:/nightly-review` is `nightly-review.md`. It is the same shape as a record a plugin keeps, held the same way - YAML frontmatter and a Markdown body, written whole at mode 0600 in a folder made at 0700 - and the body is the message a run is given, which is the long text and so the part a person came to the file to read:
 
 ```markdown
 ---
@@ -218,9 +218,11 @@ triggers:
 Review what changed in the repository today and open a pull request for anything that needs one.
 ```
 
-The file name is the id, not a field in the frontmatter, and the id is lowercase letters, digits and dashes, one to sixty-four of them, starting with a letter or a digit - a rule of its own rather than a bot's slug, because a client may name an automation with a UUID - so an id that could not name a file is refused where the automation is written rather than kept somewhere unexpected. A copy under a new name is a new automation: `cp nightly-review.md monday-review.md` installs a second one, which this host picks up at once, with a run history that starts empty.
+The file name is the resource, not a field in the frontmatter. `ahp-automation:/<id>`, with an id of lowercase letters, digits and dashes, one to sixty-four of them, starting with a letter or a digit, is `<id>.md`, so a UUID a client names an automation with is a file name as it stands. Any other `ahp-automation:` URI, which the protocol lets a client choose, is its whole URI as unpadded url-safe base64, the way VS Code puts a URI into one path segment: `ahp-automation:/Daily Review` is `YWhwLWF1dG9tYXRpb246L0RhaWx5IFJldmlldw.md`. A resource in another scheme is refused with VS Code's `Automation resource must use the ahp-automation scheme`, and a new automation whose file is already there, as a file this host could not load is, is refused with `Automation file already exists`. A copy under a new name is a new automation: `cp nightly-review.md monday-review.md` installs a second one, which this host picks up at once, with a run history that starts empty.
 
 What a run changes is not in the file. The count against an `afterRuns` allowance, the occurrence it is waiting for, and when it last moved are in `<configDir>/automations-state.json`, so a run never rewrites a file somebody is editing. The file holds what a person wrote: the definition, the owner, and when the automation was made.
+
+A daemon with no state file has no run state yet. A state file that is there and cannot be read, or that holds what this version does not understand, is the only record of what each allowance has paid for and what each automation is waiting on, so it is reported and left alone, and automations stay unavailable until it is recovered, as VS Code's do over storage that does not load. The daemon loads, fires and watches nothing, its host advertises no automations, `ahpd status` says `automations unavailable until <file> is recovered`, and `ahpd automation` and every write are refused with `Automation storage is unavailable and must be recovered before automations can run.` Repair or move the file and restart the daemon.
 
 A daemon that is running reads a file the moment it changes - added, edited or removed - and follows it at once: the schedule is armed again, the state file is written, and every client subscribed to `ahp-automations://` is told, exactly as if the change had come over the protocol. A file this host will not run, because its frontmatter cannot be read or its definition is one the host refuses, is reported to the log and skipped, with the definition the daemon already had left in place.
 
@@ -239,12 +241,12 @@ Automations are driven over the protocol, and over the HTTP API where the daemon
 | Command | What it does |
 | --- | --- |
 | `listAutomationTriggerDefinitions` | Every event trigger type this host fires: `session`, `watch`, and each plugin's |
-| `runAutomation` | Start one now, as the automation's owner, and answer with the run's URI. Refused when there is no such automation. A switched-off automation runs, and the run does not count against an `afterRuns` cap |
-| `fetchAutomationRuns` | Bring one more page of an automation's runs into view. An unrecognised cursor is refused rather than guessed at |
-| `automation/createRequested` | Write one into the catalogue |
+| `runAutomation` | Start one now, as the automation's owner, and answer with the run's URI once the run is recorded, its session made after. A press while a run of it is going is answered with that run, and a `requestId` asked again with the run it made. Refused when there is no such automation. A switched-off automation runs, and the run does not count against an `afterRuns` cap |
+| `fetchAutomationRuns` | Bring one more page of an automation's runs into view. A cursor that is not the entry's own is refused |
+| `automation/createRequested` | Write one into the catalogue, at any URI in the `ahp-automation` scheme; a URI in another is refused "Automation resource must use the ahp-automation scheme", and a create where one is kept with another definition "Automation already exists", in VS Code's words |
 | `automation/updateRequested` | Patch one - absent keys are left alone, so two clients editing different fields do not revert each other |
 | `automation/removed` | Take one out |
-| `automationRun/cancelRequested` | Stop a run: the turns of its sessions stop, and the run settles `cancelled` once none is going. Answered to the client that asked; refused for a run that is unknown or already over |
+| `automationRun/cancelRequested` | Stop a run: the turns its sessions are running stop, and the run settles as they end; a run with no session yet settles `cancelled` at once. Answered to the client that asked; refused for a run that is unknown, already over, or running no turn |
 
 The `automation/*` and `automationRun/*` rows, with their origins, are [AHP.md](AHP.md#automation--4-of-4-).
 
@@ -278,7 +280,7 @@ triggers:
 Review what changed in the repository today.
 ```
 
-The id is the automation's id in this host's store, bare or as `ahp-automation:/<id>`. The file name is made from the title, as VS Code makes it. The note of the chat a pinned automation keeps is left out, because that chat is on this host.
+The id is the one `ahpd automation list` shows: what follows `ahp-automation:/` in the resource, or the whole resource where it does not start so. The whole URI is taken too. The file name is made from the title, as VS Code makes it. The note of the chat a pinned automation keeps is left out, because that chat is on this host.
 
 `ahpd automation import` makes an automation from that file:
 
@@ -314,7 +316,7 @@ schedule:
 Review the commits made to this repository since yesterday morning.
 ```
 
-The id is the automation's id in this host's store, bare or as `ahp-automation:/<id>`. The file's `id` and its file name are made from the title, as VS Code makes them. The file holds the title, the message and the schedule, and nothing else: no folder, no provider, no owner, and not whether it is on, because VS Code refuses a file with any key it does not know.
+The id is the one `ahpd automation list` shows, or the whole URI. The file's `id` and its file name are made from the title, as VS Code makes them. The file holds the title, the message and the schedule, and nothing else: no folder, no provider, no owner, and not whether it is on, because VS Code refuses a file with any key it does not know.
 
 The file holds one schedule, as VS Code's editor reads one, so export refuses an automation it cannot hold and says what:
 

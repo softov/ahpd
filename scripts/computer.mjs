@@ -28,9 +28,10 @@
  *   --label <k=v>     Another label, repeatable; ahpd.computer=1 is always set
  *
  * The `parts` verb runs the plugin's own source, so it needs the resolver that
- * strips types:
+ * strips types and the condition that points each workspace package at its
+ * source:
  *
- *   node --import ./scripts/dev.mjs scripts/computer.mjs parts --all
+ *   node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts --all
  *
  * Exit status is docker's where docker ran, and 2 for a refusal this script
  * makes itself.
@@ -47,12 +48,13 @@ const USAGE = `A disposable computer, on Docker.
   node scripts/computer.mjs stop              stop it, keeping it
   node scripts/computer.mjs rm                remove it for good
   node scripts/computer.mjs list              every computer this script made
-  node scripts/computer.mjs parts <id>...     build the parts a machine needs
-  node scripts/computer.mjs parts --all       build every part, ahead of a session
+  node scripts/computer.mjs parts <id>...     load the parts a machine needs
+  node scripts/computer.mjs parts --all       load every part, ahead of a session
   node scripts/computer.mjs parts --joined    build the joined image as well
 
 The parts verb reads the plugin's own source and needs the type-stripping
-resolver: node --import ./scripts/dev.mjs scripts/computer.mjs parts --all
+resolver and the development condition:
+node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts --all
 
 Options: --name <n>  --image <ref>  --cpus <n>  --memory <size>
          --mount <spec>  --kvm  --label <k=v>`;
@@ -240,10 +242,10 @@ const verbs = {
       runtime = await import('../packages/computer/src/runtime.ts');
     } catch (error) {
       refuse(`The parts verb runs @ahpd/computer's own source, which this Node cannot read: ${error.message}\n`
-        + 'Run it as: node --import ./scripts/dev.mjs scripts/computer.mjs parts --all');
+        + 'Run it as: node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts --all');
     }
     const { dockerRuntime } = runtime;
-    const { ahpdSourceOf, ensureJoined, ensurePart, readParts, tagOf, versionsPath } = source;
+    const { ahpdSourceOf, dockerfileOf, ensureJoined, ensurePart, lockOf, readParts, tagOf, versionsPath } = source;
     const docker = dockerRuntime({ command: 'docker', label: 'ahpd.computer=1' });
 
     if (options.joined) {
@@ -265,23 +267,30 @@ const verbs = {
         return one;
       });
 
-    // The ahpd part's tag carries a hash of its own source, so from a checkout
-    // the question has to be answered before it is asked.
-    const tagFor = async (part) =>
-      tagOf(part, part.kind === 'ahpd' ? (await ahpdSourceOf()).hash : undefined);
+    // The ahpd part's tag carries a hash of its own source, so the question has
+    // to be answered before it is asked; and every tag carries the hash of the
+    // Dockerfile that writes it, with the sums of a part's lock, as the plugin
+    // spells it.
+    const sourceOf = async (part) => (part.kind === 'ahpd' ? await ahpdSourceOf() : undefined);
+    const tagFor = async (part) => {
+      const source = await sourceOf(part);
+      return tagOf(part, source?.hash, dockerfileOf(part, source, lockOf(part)));
+    };
 
     let refused = false;
     for (const part of wanted) {
       try {
         // Asked before, not after: what the daemon had is the answer, and after
-        // a build it always has.
+        // a load it always has. A checkout's own ahpd part is built here, and
+        // every other part is pulled.
         const had = await docker.hasImage(await tagFor(part));
         const tag = await ensurePart(part.id, { runtime: docker });
-        process.stdout.write(`${tag} ${had ? 'was already there' : 'built'}\n`);
+        const how = (await sourceOf(part))?.from === 'workspace' ? 'built' : 'pulled';
+        process.stdout.write(`${tag} ${had ? 'was already there' : how}\n`);
       } catch (error) {
-        // One part that will not build is one part, and the rest of the file is
+        // One part that will not load is one part, and the rest of the file is
         // still worth warming.
-        process.stdout.write(`${part.id} not built: ${error.message}\n`);
+        process.stdout.write(`${part.id} not loaded: ${error.message}\n`);
         refused = true;
       }
     }

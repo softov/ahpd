@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
@@ -11,9 +11,11 @@ import { posix } from '../../../tools/posix.ts';
 /**
  * The tool call statuses a client would show, folded from the actions.
  *
- * The transitions are the protocol reducer's: a call completes only from
- * `running` or `pending-confirmation`, so a result for one already
+ * The transitions are the protocol reducer's: a call is readied only from
+ * `streaming`, `running` or `pending-confirmation`, and completes only from
+ * `running` or `pending-confirmation`, so a ready or a result for one already
  * `cancelled` leaves it cancelled.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L559-L635
  */
 const callStatuses = (sent: { channel: string; action: Bag }[]): Map<string, string> => {
   const states = new Map<string, string>();
@@ -24,7 +26,9 @@ const callStatuses = (sent: { channel: string; action: Bag }[]): Map<string, str
     const current = states.get(id);
     if (action.type === 'chat/toolCallStart') states.set(id, 'streaming');
     else if (action.type === 'chat/toolCallReady') {
-      states.set(id, action.confirmed === 'not-needed' ? 'running' : 'pending-confirmation');
+      if (current === undefined || current === 'streaming' || current === 'running' || current === 'pending-confirmation') {
+        states.set(id, action.confirmed === 'not-needed' ? 'running' : 'pending-confirmation');
+      }
     }
     else if (action.type === 'chat/toolCallConfirmed') {
       states.set(id, action.approved === true ? 'running' : 'cancelled');
@@ -57,19 +61,18 @@ it('asks a person before a call runs, and runs it on their answer', async () => 
   expect(session.status()).toBe(Status.InProgress);
 });
 
-it('leaves the activity as it was while a confirmation waits', async () => {
+it('says the wait for a confirmation in its status, and no activity', async () => {
   const { session, pi } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
   session.sendMessage('t1', 'hello');
   await settled();
-  expect(session.activity()).toBe('Thinking');
 
   void driveCall(pi, 'c1', 'bash', { command: 'ls' });
   await settled();
+  // A chat's activity is a wait before its turn can run, so a call's question
+  // is said by the status alone.
   expect(session.status()).toBe(Status.InputNeeded);
-  // The status says a person is needed; the activity keeps the line the call
-  // set when it started rather than naming the wait a second time.
-  expect(session.activity()).toBe('Running bash');
+  expect(session.activity()).toBeUndefined();
 });
 
 it('answers what it is waiting on in its state, so a client that connects late sees the question', async () => {
@@ -87,7 +90,11 @@ it('answers what it is waiting on in its state, so a client that connects late s
   expect(session.sessionState().inputNeeded).toBeUndefined();
 });
 
-it('blocks a declined call with the reason the model reads', async () => {
+/*
+ * In pi's own words for a call its approval gate refused.
+ * npm://@earendil-works/pi-coding-agent@1.3.0 docs/extensions.md L169-L178
+ */
+it('blocks a declined call in pi\'s words for a call that was not approved', async () => {
   const { session, pi } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
   session.sendMessage('t1', 'hello');
@@ -95,7 +102,7 @@ it('blocks a declined call with the reason the model reads', async () => {
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'rm -rf /' });
   await settled();
   session.confirm('c1', false);
-  expect(await waiting).toEqual({ block: true, reason: 'The person declined this action' });
+  expect(await waiting).toEqual({ block: true, reason: 'bash was not approved' });
 });
 
 it('answers two waiting calls independently, and a cancel answers both it leaves', async () => {
@@ -285,6 +292,49 @@ it('does not send a client tool to its client until the person approves it', asy
   await running;
 });
 
+/*
+ * A chat's activity is a wait before its turn can run, as VS Code's host says
+ * one: a turn thinking, asking a person, waiting on a client's tool or being
+ * stopped says none, its work shown in its own parts.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+ */
+it('says no activity while a turn thinks, asks, waits on a client or is stopped', async () => {
+  const bound: BoundTool = {
+    definition: { name: 'editor__open' },
+    owner: 'editor',
+    effects: { writes: true },
+  };
+  const { session, pi, sent } = opened({
+    tools: [bound],
+    settings: { permissionMode: 'default' },
+  } as Partial<Start>);
+  const said = () => [session.activity(), session.chatState().activity, session.sessionState().activity];
+  pi.hold();
+  pi.holdStops();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  pi.raise({ type: 'agent_start' });
+  const thinking = said();
+  const waiting = driveCall(pi, 'c1', 'editor__open', {});
+  await settled();
+  const asking = said();
+  session.confirm('c1', true);
+  await waiting;
+  const tool = pi.opens[0]?.tools?.find((one) => one.name === 'editor__open');
+  const running = tool!.execute('c1', {} as never, undefined, undefined, undefined as never).catch((error: unknown) => error);
+  await settled();
+  const onClient = said();
+  session.abort();
+  await running;
+  const stopping = said();
+  pi.raise({ type: 'agent_settled', aborted: true });
+  await settled();
+
+  const none = [undefined, undefined, undefined];
+  expect({ thinking, asking, onClient, stopping }).toEqual({ thinking: none, asking: none, onClient: none, stopping: none });
+  expect(sent.filter((one) => one.action.type === 'chat/activityChanged' || one.action.type === 'session/activityChanged')).toEqual([]);
+});
+
 it('keeps a declined call cancelled in the snapshot and for a client', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
@@ -305,6 +355,67 @@ it('keeps a declined call cancelled in the snapshot and for a client', async () 
   expect(sent.some((one) => one.action.type === 'chat/toolCallConfirmed')).toBe(false);
   const refusal = { channel: 'chat', action: { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: false, reason: 'denied' } };
   expect(callStatuses([...sent.slice(0, answered), refusal, ...sent.slice(answered)]).get('c1')).toBe('cancelled');
+});
+
+/*
+ * A refusal the host makes itself is said to no client, and neither is the
+ * question it refused: the failure pi reports for the block is what ends the
+ * call for every client, as VS Code's agents report the failure their runtime
+ * gives a call their host refused.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1727-L1735
+ */
+it('ends a call the host refused before anybody was asked, as pi reports it failed', async () => {
+  const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const waiting = driveCall(pi, 'c1', 'bash', { command: 'rm -rf /' });
+  await settled();
+  session.confirm('c1', false);
+  await waiting;
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'blocked', isError: true });
+  await settled();
+  // What a client was said: everything but the question the host kept back.
+  const said = sent.filter((one) => one.action.type !== 'chat/toolCallReady' || one.action.confirmationTitle === undefined);
+  expect(callStatuses(said).get('c1')).toBe('completed');
+});
+
+/*
+ * A question says what the host decides it by, beside its ready, as VS Code's
+ * agents raise a pending confirmation: the kind by pi's tool, the path a read
+ * or a write names in the session's folder, and a command in the shell its
+ * tool is named for, as VS Code's Copilot agent names a known shell tool's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L7983-L7991
+ */
+it('says what the host decides a question by on its ready', async () => {
+  const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const readyOf = (id: string): Bag | undefined => sent.map((one) => one.action)
+    .find((action) => action.type === 'chat/toolCallReady' && action.toolCallId === id);
+  const shell = driveCall(pi, 'c1', 'bash', { command: 'make test' });
+  await settled();
+  expect(readyOf('c1')).toMatchObject({ permissionKind: 'shell', shellCommand: 'make test', shellLanguage: 'bash' });
+  session.confirm('c1', false);
+  await shell;
+  const powershell = driveCall(pi, 'c4', 'powershell', { command: 'Get-ChildItem' });
+  await settled();
+  expect(readyOf('c4')).toMatchObject({ permissionKind: 'shell', shellCommand: 'Get-ChildItem', shellLanguage: 'powershell' });
+  session.confirm('c4', false);
+  await powershell;
+  const read = driveCall(pi, 'c2', 'read', { path: '/elsewhere/a.txt' });
+  await settled();
+  // Resolved in the session's folder, which names its drive on Windows.
+  expect(readyOf('c2')).toMatchObject({ permissionKind: 'read', permissionPath: resolve(root, '/elsewhere/a.txt') });
+  session.confirm('c2', false);
+  await read;
+  const write = driveCall(pi, 'c3', 'write', { path: 'notes/b.txt', content: 'x' });
+  await settled();
+  expect(readyOf('c3')).toMatchObject({ permissionKind: 'write', permissionPath: join(root, 'notes', 'b.txt') });
+  session.confirm('c3', false);
+  await write;
 });
 
 it('still asks under projectTrust deny, because the inline extension is not the project\'s own', async () => {
@@ -463,6 +574,11 @@ it('closes a refused call failed, never readied to run and never handed to its c
   expect(callIn(parts, 'c1')).toMatchObject({ status: 'completed', success: false });
 });
 
+/*
+ * Each chat keeps its own mode, as VS Code's Claude agent marks its mode
+ * `chatMutable`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2283-L2305
+ */
 it('advertises the six permission modes, defaulting to default', () => {
   const agent = piAgent({}, [root]);
   const properties = ((agent.schema?.() as Bag).properties as Bag);
@@ -470,6 +586,7 @@ it('advertises the six permission modes, defaulting to default', () => {
   expect(mode.enum).toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
   expect(mode.default).toBe('default');
   expect(mode.sessionMutable).toBe(true);
+  expect(mode.chatMutable).toBe(true);
   expect((agent.defaults?.() as Bag).permissionMode).toBe('default');
 });
 

@@ -7,7 +7,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import type { HostContext } from '../src/host/context.js';
 import type { SessionStore } from '../src/types/sessions.js';
 import type { SessionEvent, SessionTurn } from '../src/types/triggers.js';
-import { claude, createHost, hello, hostTools, machine, peer, resetSdk, sessionQueries } from './support/host.js';
+import { builtServer, claude, createHost, hello, hostTools, machine, peer, resetSdk } from './support/host.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -327,10 +327,10 @@ it('records the parent of a session the create tool started', async () => {
   await client.handle(hello(['0.9.0']));
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/parent', provider: 'claude' } });
 
-  const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+  const served = builtServer('host') as { tools: {
     name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
-  }[] }>;
-  const create = servers.host?.tools.find((one) => one.name === 'create_session');
+  }[] } | undefined;
+  const create = served?.tools.find((one) => one.name === 'create_session');
   const said = await create?.handler({
     relationship: 'independent', workspace: '/home/softov', title: 'Child', prompt: 'go', worktree: false,
   });

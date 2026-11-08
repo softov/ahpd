@@ -2,13 +2,14 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, expect, it, vi } from 'vitest';
+import { uriOf } from '@ahpd/sdk';
 import type { AgentView, Bag, BoundTool, Start } from '@ahpd/sdk';
 import { echo } from '../../../examples/echo/agent.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
- * A switch on a plugin the CLI loaded, the CLI's own built-ins included.
+ * A switch on a plugin the CLI loaded from a root on this disk.
  *
  * The CLI has no call for it. What it takes is an `enabledPlugins` setting,
  * read when it loads its plugins, and a reload to make it now - so the switch
@@ -19,10 +20,11 @@ import { startedNow } from '../../sdk/test/support/started.js';
  */
 
 const sdk = vi.hoisted(() => {
-  /** What the CLI ships, as its reload describes them. */
+  /** Two marketplace plugins at their roots, and one the CLI ships, as its reload describes them. */
   const ALL = [
+    { name: 'beta', path: '/plugins/beta', source: 'beta@market' },
+    { name: 'acme', path: '/plugins/acme', source: 'acme@market' },
     { name: 'cc-plugin-agents-md', path: 'builtin', source: 'cc-plugin-agents-md@builtin' },
-    { name: 'cc-plugin-telemetry', path: 'builtin', source: 'cc-plugin-telemetry@builtin' },
   ];
   const held = {
     ALL,
@@ -47,7 +49,7 @@ const sdk = vi.hoisted(() => {
   return held;
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: (given: { options: Record<string, unknown> }) => {
     sdk.options.push(given.options);
@@ -95,7 +97,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const { createSession } = await import('../src/session.js');
 
-/** One session over a CLI with the two built-ins, once its handshake is in. */
+/** One session over a CLI with the two built-ins, once its first send started the CLI and its handshake is in. */
 const opened = async (): Promise<{ session: ReturnType<typeof createSession>; said: Bag[] }> => {
   const said: Bag[] = [];
   let handshook = (): void => {};
@@ -110,6 +112,7 @@ const opened = async (): Promise<{ session: ReturnType<typeof createSession>; sa
     preset: { outputStyle: 'Concise' },
     onHandshake: () => { handshook(); },
   } as never);
+  session.sendMessage('t1', 'hello');
   await shook;
   // The handshake reloads the plugins to find out what there is, which is not
   // a switch: what a case reads here is what a switch asked for.
@@ -123,60 +126,65 @@ const lastList = (said: Bag[]): Bag[] => {
   return (changes.at(-1)?.customizations ?? []) as Bag[];
 };
 
+/** A plugin's root as a URI, which its container is id'd by. */
+const rootOf = (name: string): string => uriOf(`/plugins/${name}`);
+
+/** A plugin's container, by its id. */
 const containerOf = (list: Bag[], name: string): Bag | undefined =>
-  list.find((one) => one.id === `plugin:${name}`);
+  list.find((one) => one.id === rootOf(name));
 
 beforeEach(() => { sdk.reset(); });
 
 it('sends the plugin as a flag setting and reloads, in that order, and answers true', async () => {
   const { session, said } = await opened();
-  expect(containerOf(session.customizations(), 'cc-plugin-agents-md')).toBeDefined();
+  expect(containerOf(session.customizations(), 'beta')).toBeDefined();
   expect(said.filter((one) => one.type === 'session/customizationsChanged')).toHaveLength(1);
 
-  expect(await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', false)).toBe(true);
+  expect(await session.setCustomizationEnabled(rootOf('beta'), false)).toBe(true);
 
   expect(sdk.order).toEqual(['applyFlagSettings', 'reloadPlugins']);
   expect(sdk.settings[0]).toEqual({
     outputStyle: 'Concise',
-    enabledPlugins: { 'cc-plugin-agents-md@builtin': false },
+    enabledPlugins: { 'beta@market': false },
   });
   await session.close();
 });
 
 it('keeps the plugin in the list with the session switched off, and says the list again', async () => {
   const { session, said } = await opened();
-  expect(await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', false)).toBe(true);
+  expect(await session.setCustomizationEnabled(rootOf('beta'), false)).toBe(true);
 
   // The CLI stopped reporting it - `loading` is what its reload lists - and
   // the row is still there, because a switch is the session's own answer.
-  expect(sdk.loading.has('cc-plugin-agents-md')).toBe(false);
-  expect(containerOf(lastList(said), 'cc-plugin-agents-md')).toMatchObject({
+  expect(sdk.loading.has('beta')).toBe(false);
+  expect(containerOf(lastList(said), 'beta')).toMatchObject({
     type: 'plugin',
-    uri: 'cc-plugin-agents-md@builtin',
+    uri: rootOf('beta'),
+    name: 'beta@market',
     enablement: [{ kind: 'session', enabled: false }],
   });
-  // And only that one: the other built-in is a plugin nobody decided about.
-  expect(containerOf(lastList(said), 'cc-plugin-telemetry')).not.toHaveProperty('enablement');
+  // And only that one: the other plugin is one nobody decided about.
+  expect(containerOf(lastList(said), 'acme')).not.toHaveProperty('enablement');
   await session.close();
 });
 
 it('answers true for switching it back on, and the row carries no decision again', async () => {
   const { session, said } = await opened();
-  await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', false);
+  await session.setCustomizationEnabled(rootOf('beta'), false);
 
-  expect(await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', true)).toBe(true);
+  expect(await session.setCustomizationEnabled(rootOf('beta'), true)).toBe(true);
   expect(sdk.settings.at(-1)).toEqual({
     outputStyle: 'Concise',
-    enabledPlugins: { 'cc-plugin-agents-md@builtin': true },
+    enabledPlugins: { 'beta@market': true },
   });
-  expect(containerOf(lastList(said), 'cc-plugin-agents-md')).not.toHaveProperty('enablement');
+  expect(containerOf(lastList(said), 'beta')).not.toHaveProperty('enablement');
   await session.close();
 });
 
 it('sends what the session decided before beside the plugin it is moving', async () => {
   const { session } = await opened();
-  await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', false);
-  await session.setCustomizationEnabled('plugin:cc-plugin-telemetry', false);
+  await session.setCustomizationEnabled(rootOf('beta'), false);
+  await session.setCustomizationEnabled(rootOf('acme'), false);
 
   // `applyFlagSettings` merges at the top level, so the second switch replaces
   // the whole `enabledPlugins` key: the first plugin's decision has to be in it
@@ -184,8 +192,8 @@ it('sends what the session decided before beside the plugin it is moving', async
   expect(sdk.settings.at(-1)).toEqual({
     outputStyle: 'Concise',
     enabledPlugins: {
-      'cc-plugin-agents-md@builtin': false,
-      'cc-plugin-telemetry@builtin': false,
+      'beta@market': false,
+      'acme@market': false,
     },
   });
   await session.close();
@@ -196,19 +204,49 @@ it('answers false when the CLI did not take the switch', async () => {
   const before = said.filter((one) => one.type === 'session/customizationsChanged').length;
   sdk.deaf = true;
 
-  expect(await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', false)).toBe(false);
+  expect(await session.setCustomizationEnabled(rootOf('beta'), false)).toBe(false);
   // Nothing is published again: the list says what the CLI says, and the CLI
   // says it is still loading the plugin.
-  expect(containerOf(lastList(said), 'cc-plugin-agents-md')).not.toHaveProperty('enablement');
+  expect(containerOf(lastList(said), 'beta')).not.toHaveProperty('enablement');
   expect(said.filter((one) => one.type === 'session/customizationsChanged')).toHaveLength(before);
+  await session.close();
+});
+
+/*
+ * A plugin the CLI ships has no root, and VS Code lists a native plugin it
+ * resolves to a root, so it has no row and no switch here.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeNativePluginScan.ts#L230-L250
+ */
+it('lists no row for a plugin the CLI ships, and switches none', async () => {
+  const { session } = await opened();
+  expect(session.customizations().filter((one) => one.type === 'plugin').map((one) => one.name)).toEqual(['beta@market', 'acme@market']);
+  expect(await session.setCustomizationEnabled('cc-plugin-agents-md@builtin', false)).toBe(false);
+  expect(sdk.order).toEqual([]);
+  await session.close();
+});
+
+/*
+ * A plugin's row is id'd by its root's URI and named by its `enabledPlugins`
+ * id, as VS Code's Claude discovery projects one, and the switch is the
+ * setting under that name.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L65-L88
+ */
+it('switches a plugin by the enabledPlugins id its row is named by, the row id\'d by its root\'s URI', async () => {
+  const { session, said } = await opened();
+  const root = rootOf('acme');
+  expect(session.customizations().find((one) => one.id === root)).toMatchObject({ type: 'plugin', uri: root, name: 'acme@market' });
+
+  expect(await session.setCustomizationEnabled(root, false)).toBe(true);
+  expect(sdk.settings[0]).toEqual({ outputStyle: 'Concise', enabledPlugins: { 'acme@market': false } });
+  expect(lastList(said).find((one) => one.id === root)).toMatchObject({ name: 'acme@market', enablement: [{ kind: 'session', enabled: false }] });
   await session.close();
 });
 
 it('answers false for a skill and for a plugin nobody reported, and asks the CLI nothing', async () => {
   const { session } = await opened();
 
-  expect(await session.setCustomizationEnabled('skill:review', false)).toBe(false);
-  expect(await session.setCustomizationEnabled('plugin:not-a-plugin', false)).toBe(false);
+  expect(await session.setCustomizationEnabled('agent-builtin:/skill/review', false)).toBe(false);
+  expect(await session.setCustomizationEnabled(rootOf('nobody'), false)).toBe(false);
   expect(sdk.order).toEqual([]);
   await session.close();
 });
@@ -226,7 +264,7 @@ const SOURCE = './packages/agent-claude/src/index.ts';
 const ROOT = mkdtempSync(join(tmpdir(), 'ahpd-host-tools-'));
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+  for (let i = 0; i < times; i++) await new Promise((done) => { setImmediate(done); });
 };
 
 /** The host's own tool and a client's, as every session here is handed both. */

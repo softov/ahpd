@@ -23,8 +23,15 @@ export interface TaskOutputReader {
   getTaskOutput(taskId: string): Promise<TaskOutput>;
 }
 
-/** How often a live task's output is read, in milliseconds. */
-export const POLL_MS = 1000;
+/**
+ * The waits between a live task's reads, as VS Code's output monitor polls a
+ * running command: the first 500 ms, each one twice the last up to 10 s, and
+ * two reads in a row that find no output count the task as quiet.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/terminalContrib/chatAgentTools/browser/tools/monitoring/types.ts#L45-L51
+ */
+export const FIRST_WAIT_MS = 500;
+export const LONGEST_WAIT_MS = 10_000;
+const QUIET_READS = 2;
 
 const utf8 = (text: string): number => Buffer.byteLength(text, 'utf8');
 
@@ -60,8 +67,12 @@ export interface TaskOutputOptions {
   terminal: OutputTerminal;
   /** One read, as the query offers it. */
   read(taskId: string): Promise<TaskOutput>;
-  /** How often to read while the task runs. The backend's own second by default. */
-  everyMs?: number;
+  /** The first wait between reads, in milliseconds; `FIRST_WAIT_MS` when absent. */
+  firstWaitMs?: number;
+  /** The longest wait between reads, in milliseconds; `LONGEST_WAIT_MS` when absent. */
+  longestWaitMs?: number;
+  /** The reads in a row that find nothing that count the task quiet; `QUIET_READS` when absent. */
+  quietReads?: number;
   /** What to do about a read that failed, which is not the same as a task ending. */
   onError?(error: unknown): void;
 }
@@ -69,9 +80,15 @@ export interface TaskOutputOptions {
 /**
  * Follow one background shell's output for as long as it runs.
  *
- * A read is made at once, then one after each second. Reads never overlap: a
- * read that is slow queues the next behind it rather than racing it, so the
- * bytes appended are in the order the task wrote them.
+ * A read is made at once, then after 500 ms, and each wait after that is
+ * twice the last, up to 10 s, as VS Code's output monitor polls a running
+ * command. Output that comes once the task has gone quiet starts the waits
+ * at 500 ms again, as the monitor starts a new pass when new data comes after
+ * a command went idle. Reads never overlap: a read that is slow queues the
+ * next behind it rather than racing it, so the bytes appended are in the order
+ * the task wrote them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/terminalContrib/chatAgentTools/browser/tools/monitoring/outputMonitor.ts#L478-L500
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/terminalContrib/chatAgentTools/browser/tools/monitoring/outputMonitor.ts#L248-L257
  *
  * What is appended is the growth `total_bytes` reports, taken from the end of
  * the tail - the tail is the end of the whole output, not of the growth. When
@@ -80,18 +97,27 @@ export interface TaskOutputOptions {
  * transcript that would claim bytes nobody saw.
  */
 export const pollTaskOutput = (options: TaskOutputOptions): TaskOutputPoll => {
-  const every = options.everyMs ?? POLL_MS;
   /** The bytes of output already written to the terminal. */
   let seen = 0;
   let done = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const first = options.firstWaitMs ?? FIRST_WAIT_MS;
+  const longest = options.longestWaitMs ?? LONGEST_WAIT_MS;
+  /** The next wait, and the reads in a row that found no output. */
+  let wait = first;
+  let quiet = 0;
 
   const write = (answer: TaskOutput): void => {
     const total = Number.isFinite(answer.total_bytes) ? Math.max(0, answer.total_bytes) : seen;
     const output = typeof answer.output === 'string' ? answer.output : '';
     const grown = total - seen;
     seen = total;
-    if (grown <= 0) return;
+    if (grown <= 0) {
+      quiet += 1;
+      return;
+    }
+    if (quiet >= (options.quietReads ?? QUIET_READS)) wait = first;
+    quiet = 0;
     if (grown > utf8(output)) options.terminal.replace(output);
     else options.terminal.append(tailText(output, grown));
   };
@@ -112,7 +138,9 @@ export const pollTaskOutput = (options: TaskOutputOptions): TaskOutputPoll => {
 
   const again = (): void => {
     if (done) return;
-    timer = setTimeout(() => { void take().then(again); }, every);
+    const now = wait;
+    wait = Math.min(wait * 2, longest);
+    timer = setTimeout(() => { void take().then(again); }, now);
   };
 
   const settle = (last: boolean): void => {

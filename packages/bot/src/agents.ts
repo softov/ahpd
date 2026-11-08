@@ -4,20 +4,27 @@
  *
  * The file is the bot's: it may rewrite any part of it, in any shape, and the
  * parser takes what it finds rather than refusing a file. Two parts belong to
- * the owner and are all this module knows: the frontmatter keys `version`,
- * `name` and `description`, and the text under the `## Instructions` heading,
- * which runs to the next `##` heading or the end of the file. A part the file
- * does not have reads as empty.
+ * the owner and are all this module knows: the frontmatter keys `name` and
+ * `description`, as VS Code's agent definitions carry them, and the text under
+ * the `## Instructions` heading, which runs to the next `##` heading or the end
+ * of the file. A part the file does not have reads as empty.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotBuiltinAgents.ts#L84-L95
  *
  * The writer changes those parts in place and keeps every other byte, because
  * everything else in the file is the bot's own writing - comments, other
  * frontmatter keys, other sections. The frontmatter is edited by line rather
  * than re-stringified whole for the same reason: a key a person or the bot put
  * there is not this module's to reformat.
+ *
+ * The plugin's `instructionsIn` may say `body` instead, which reads a bot's
+ * instructions as the whole body after the frontmatter, as VS Code reads an
+ * agent file: then the body is the owner's, and the frontmatter's other keys
+ * are all that stays the bot's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/common/promptSyntax/service/promptsServiceImpl.ts#L1761
  */
 
-/** The layout version `writeAgents` writes when neither the parts nor the file names one. */
-export const AGENTS_VERSION = 1;
+/** Where a bot's instructions are in its `AGENTS.md`: its own section, or the whole body. */
+export type InstructionsIn = 'section' | 'body';
 
 /**
  * The YAML the plugin host hands the plugin, which the host reads its own
@@ -41,19 +48,22 @@ const INSTRUCTIONS = /^##[ \t]+Instructions[ \t]*(?:\r?\n|$)/m;
 const HEADING = /^##(?:[ \t]|$)/m;
 
 /** The frontmatter keys the owner owns, in the order the writer adds the ones a file lacks. */
-const OWNED = ['version', 'name', 'description'] as const;
+const OWNED = ['name', 'description'] as const;
 
 /** What an `AGENTS.md` says in the parts its owner owns. */
 export interface AgentsParts {
-  /** The layout version the frontmatter names, or `undefined` when it names none. */
-  version: number | undefined;
   /** The bot's name, or empty. */
   name: string;
   /** One line about the bot, or empty. */
   description: string;
-  /** The text under `## Instructions`, without the blank lines at each end, or empty. */
+  /** The text under `## Instructions`, or the body, without the blank lines at each end, or empty. */
   instructions: string;
 }
+
+/** Text without the blank lines at each end. */
+const trimmed = (text: string): string => text
+  .replace(/^(?:[ \t]*\r?\n)+/, '')
+  .replace(/(?:\r?\n[ \t]*)+$/, '');
 
 /** A file as the parts the writer changes and the parts it leaves alone. */
 interface Split {
@@ -116,10 +126,7 @@ function fields(yaml: Yaml, front: string): Record<string, unknown> | undefined 
 /** The text of the Instructions section, without the blank lines at each end. */
 function instructionsOf(body: string): string {
   const region = sectionOf(body);
-  if (region === undefined) return '';
-  return body.slice(region.start, region.end)
-    .replace(/^(?:[ \t]*\r?\n)+/, '')
-    .replace(/(?:\r?\n[ \t]*)+$/, '');
+  return region === undefined ? '' : trimmed(body.slice(region.start, region.end));
 }
 
 /** Where the Instructions section's text starts and ends in the body, or `undefined` when there is no section. */
@@ -137,28 +144,21 @@ const said = (fields: Record<string, unknown> | undefined, key: string): string 
   return typeof value === 'string' ? value : '';
 };
 
-/** A layout version, where the frontmatter names an integer one. */
-const versionOf = (fields: Record<string, unknown> | undefined): number | undefined => {
-  const value = fields?.['version'];
-  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
-};
-
 /**
  * The parts an `AGENTS.md` says its owner owns.
  *
- * A file with no frontmatter, or with one that names none of the keys, reads
- * its version as `undefined` and its name and description as empty. A file
- * with no Instructions section reads its instructions as empty - what a bot
- * leaves of a section it removed, and what an edit in the UI writes again.
+ * A file with no frontmatter, or with one that names neither key, reads its
+ * name and description as empty. A file with no Instructions section reads
+ * its instructions as empty - what a bot leaves of a section it removed, and
+ * what an edit in the UI writes again - unless the instructions are the body.
  */
-export function readAgents(yaml: Yaml, text: string): AgentsParts {
+export function readAgents(yaml: Yaml, text: string, at: InstructionsIn = 'section'): AgentsParts {
   const { front, body } = split(text);
   const parsed = fields(yaml, front);
   return {
-    version: versionOf(parsed),
     name: said(parsed, 'name'),
     description: said(parsed, 'description'),
-    instructions: instructionsOf(body),
+    instructions: at === 'body' ? trimmed(body) : instructionsOf(body),
   };
 }
 
@@ -271,9 +271,12 @@ function setFields(yaml: Yaml, front: string, values: Record<string, unknown>): 
  *
  * The Instructions section ends at the next `##` line, so a line of the
  * instructions that starts with one would read back as the end of the section:
- * the write is refused rather than cutting the text in silence.
+ * the write is refused rather than cutting the text in silence. Instructions
+ * that are the whole body may hold any line.
  */
-export function instructionsProblem(instructions: string): string | undefined {
+export function instructionsProblem(instructions: string, at: InstructionsIn = 'section'): string | undefined {
+  // The whole body has no end a heading could mark.
+  if (at === 'body') return undefined;
   const line = instructions.split(/\r?\n/).find((one) => /^##(?:[ \t]|$)/.test(one));
   return line === undefined ? undefined : `the instructions have a line that starts with "## ": ${line}`;
 }
@@ -285,27 +288,25 @@ const gap = (body: string, eol: string): string =>
 /**
  * The file with the owner's parts changed and every other byte kept.
  *
- * The version is the parts' own, or the one the frontmatter already names, or
- * `AGENTS_VERSION` - a write that says nothing about a layout does not move a
- * file from the layout it is in. A missing Instructions section is added after
- * the frontmatter, and a missing frontmatter is added on top, so a file the
- * bot wrote before this layout reads with its old text below the new section.
+ * A missing Instructions section is added after the frontmatter, and a missing
+ * frontmatter is added on top, so a file the bot wrote before it had either
+ * reads with its own text below the new section. Where the instructions are
+ * the body, the body is the instructions and nothing else.
  */
-export function writeAgents(yaml: Yaml, text: string, parts: AgentsParts): string {
+export function writeAgents(yaml: Yaml, text: string, parts: AgentsParts, at: InstructionsIn = 'section'): string {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const { head, front, close, body, has } = split(text);
-  const version = parts.version ?? versionOf(fields(yaml, front)) ?? AGENTS_VERSION;
   const values: Record<string, unknown> = {
-    version,
     name: parts.name,
     description: parts.description,
   };
   const edited = setFields(yaml, front, values);
 
   const region = sectionOf(body);
-  const kept = region === undefined
-    ? `${eol}## Instructions${eol}${eol}${parts.instructions}${eol}${gap(body, eol)}${body}`
-    : body.slice(0, region.start) + eol + parts.instructions + eol + (region.end < body.length ? eol : '') + body.slice(region.end);
+  let kept: string;
+  if (at === 'body') kept = `${eol}${parts.instructions}${eol}`;
+  else if (region === undefined) kept = `${eol}## Instructions${eol}${eol}${parts.instructions}${eol}${gap(body, eol)}${body}`;
+  else kept = body.slice(0, region.start) + eol + parts.instructions + eol + (region.end < body.length ? eol : '') + body.slice(region.end);
 
   return has
     ? head + edited + close + kept

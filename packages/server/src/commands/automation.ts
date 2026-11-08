@@ -29,13 +29,16 @@ import {
 } from '../blueprint.js';
 import type { AutomationBlueprint } from '../blueprint.js';
 import { automationStatePath, automationsDir } from '../config.js';
-import { automationFile, readAutomationFile, scheduledAutomations } from '../scheduled.js';
+import { AUTOMATIONS_UNAVAILABLE, automationFile, readAutomationFile, scheduledAutomations } from '../scheduled.js';
 import { isRoot } from './authorize.js';
 import { under } from './configure.js';
 import { conflict, optionsFrom, serverFields, stop } from './options.js';
 import type { ServedFacts } from './served.js';
 
-/** What every automation's resource starts with. */
+/** The scheme every automation's resource carries. */
+const SCHEME = 'ahp-automation:';
+
+/** What the resource of an automation with a bare id starts with. */
 const PREFIX = 'ahp-automation:/';
 
 /** What import says to a VS Code file read without `--vscode`. */
@@ -45,20 +48,36 @@ const VSCODE_FILE = 'This is a VS Code automation file. Add --vscode.';
  * The store this run reads and writes, and what to do once it is done.
  *
  * Served, the daemon's own, which stays open. On a line it is the daemon's
- * folder, opened for this one command and closed after it.
+ * folder, opened for this one command and closed after it. A store whose state
+ * file cannot be read is refused in VS Code's words, after what the store said
+ * about that file on a line, where nothing else says it.
  */
 const storeOf = (served?: ServedFacts): { store: AutomationStore; done(): void } => {
   if (served !== undefined) {
     const store = served.automations?.();
     if (store === undefined) stop('This daemon has no automations yet.');
+    if ('available' in store && store.available === false) conflict(AUTOMATIONS_UNAVAILABLE);
     return { store, done: () => {} };
   }
-  const store = scheduledAutomations({ dir: automationsDir(), state: automationStatePath() });
+  const said: string[] = [];
+  const store = scheduledAutomations({
+    dir: automationsDir(), state: automationStatePath(), onProblem: (message) => { said.push(message); },
+  });
+  if (!store.available) {
+    store.close?.();
+    conflict([...said, AUTOMATIONS_UNAVAILABLE].join('\n'));
+  }
   return { store, done: () => { store.close?.(); } };
 };
 
-/** The resource an id names: a bare id or the whole `ahp-automation:/` URI. */
-const resourceOf = (id: string): string => (id.startsWith(PREFIX) ? id : `${PREFIX}${id}`);
+/** The resource an id names: a bare id, or a whole `ahp-automation:` URI. */
+const resourceOf = (id: string): string => (id.startsWith(SCHEME) ? id : `${PREFIX}${id}`);
+
+/** The id a resource is shown by: what follows `ahp-automation:/`, or the whole URI where that would name another. */
+const idOf = (resource: string): string => {
+  const id = resource.startsWith(PREFIX) ? resource.slice(PREFIX.length) : resource;
+  return resourceOf(id) === resource ? id : resource;
+};
 
 /** One row of `automation list`. */
 export interface ListedAutomation {
@@ -98,7 +117,7 @@ const triggerOf = (raw: unknown): string => {
 
 /** One automation as a row of `automation list`. */
 const rowOf = (automation: AutomationEntry): ListedAutomation => {
-  const id = automation.resource.startsWith(PREFIX) ? automation.resource.slice(PREFIX.length) : automation.resource;
+  const id = idOf(automation.resource);
   const definition = bag(automation.definition);
   const title = typeof definition.title === 'string' ? definition.title.trim() : '';
   const directories = bag(definition.session).workingDirectories;
@@ -312,7 +331,7 @@ export const declareAutomation = (registry: Registry<object>, served?: ServedFac
       finally {
         done();
       }
-      const data: ExportedAutomation = { id: resource.slice(PREFIX.length), fileName, text };
+      const data: ExportedAutomation = { id: idOf(resource), fileName, text };
       const out = served === undefined ? context.optional<string>('out') : undefined;
       if (out === undefined) return output(data, text);
       const file = resolve(out);

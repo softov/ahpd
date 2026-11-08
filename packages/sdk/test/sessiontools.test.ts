@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { uriOf } from '../src/resources/fileuri.js';
 import { Status } from '../src/sessions/catalog.js';
 import { ROOT, createHost } from '../src/host.js';
@@ -11,7 +11,7 @@ import {
   filterSessions, openLink, serializeContext, serializeSession, sessionMeant, sessionTools, statusWords,
 } from '../src/tools/session.js';
 import { directory, hello, root, signIn } from './users-gate-helpers.js';
-import { claude, echo, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
+import { SIGNED_IN, builtCount, builtServer, claude, echo, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Summary } from '../src/types/catalog.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
@@ -35,6 +35,31 @@ beforeEach(resetSdk);
  * that a message actually starts a turn, that a session actually appears - is
  * in `host.test.ts`, where the backend is faked.
  */
+
+/** The chat the host minted for a session, read off its state as a client reads it. */
+const mintedChat = async (client: { handle(request: { method: string; params: Record<string, unknown> }): Promise<unknown> }, uri: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+
+/**
+ * A session's first turn, answered by the CLI that turn starts, so it is
+ * announced and at rest: a session made fresh is provisional until its first
+ * message, and a tool names only a session the host has announced, as VS
+ * Code's host keeps one. Called right after the session is made, so the CLI
+ * its first send starts is the newest.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6347-L6362
+ */
+const answeredFirst = async (client: { handle(request: { method: string; params: Record<string, unknown> }): Promise<unknown> }, uri: string): Promise<void> => {
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: await mintedChat(client, uri), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
+  await settle(8);
+  const cli = sessionQueries().at(-1);
+  cli?.frames.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  cli?.wake?.();
+  if (cli !== undefined) cli.wake = undefined;
+  await settle(8);
+};
 
 const row = (over: Partial<Summary> & Record<string, unknown> = {}): Summary => ({
   resource: 'ahp-session:/s1',
@@ -240,6 +265,11 @@ describe('the set itself', () => {
     expect(schema('rename_chat').required).toEqual(['title']);
   });
 
+  /*
+   * As VS Code's session tools answer it: whether a session supports the tool,
+   * and the wording it is offered in there.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L90-L95
+   */
   it('shapes rename_chat by the title strategy the session runs under', () => {
     const rename = sessionTools().find((one) => one.definition.name === 'rename_chat');
     expect(rename?.forSession).toBeDefined();
@@ -247,11 +277,12 @@ describe('the set itself', () => {
     // the tool through the discovery the artifact instruction points at.
     expect(rename?.deferLoading).toBe(true);
     // A utility strategy names chats itself, so the tool is not offered.
-    expect(rename?.forSession?.({ titleStrategy: 'utility' })).toEqual({ offered: false });
+    expect(rename?.isEnabledForSession?.({ titleStrategy: 'utility' })).toBe(false);
+    expect(rename?.isEnabledForSession?.({ titleStrategy: 'deferred' })).toBe(true);
     // An active agent names its own chats with the tool as it stands.
+    expect(rename?.isEnabledForSession?.({ titleStrategy: 'activeAgent' })).toBe(true);
     expect(rename?.forSession?.({ titleStrategy: 'activeAgent' })).toBeUndefined();
     const deferred = rename?.forSession?.({ titleStrategy: 'deferred' });
-    expect(deferred?.offered).toBe(true);
     const definition = deferred?.definition as {
       description?: string; inputSchema?: { properties?: Record<string, unknown>; required?: string[] };
     };
@@ -282,8 +313,8 @@ describe('what a session tool asks of the turn it runs in', () => {
 
   /** One session's tools, as the model reaches them. */
   const toolsOf = (index = -1): Record<string, Tool> => {
-    const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
+    const host = builtServer('host', index) as { tools: Tool[] } | undefined;
+    return Object.fromEntries((host?.tools ?? []).map((one) => [one.name, one]));
   };
   const call = async (name: string, input: unknown, index = -1): Promise<Answer> => {
     const tool = toolsOf(index)[name];
@@ -412,6 +443,7 @@ describe('what a session tool asks of the turn it runs in', () => {
     // a member may write a session and may not delete one that is not theirs.
     const { client: other } = await signing(host, 'other');
     const theirs = await opening(other, 'theirs');
+    await answeredFirst(other, theirs.uri);
     await saying(client, lead.chat, 't1', 'start something else');
     expect(said(await call('create_session', {
       relationship: 'independent', workspace: root, title: 'Child', prompt: 'go', worktree: false,
@@ -420,7 +452,7 @@ describe('what a session tool asks of the turn it runs in', () => {
 
     // The child's turn is the member's, so the child may do what the member
     // may: it reads the host, and it writes a chat of its own session.
-    const child = sessionQueries().length - 1;
+    const child = builtCount('host') - 1;
     const rows = JSON.parse(said(await call('list_sessions', {}, child))) as { sessions: unknown[] };
     expect(rows.sessions).toHaveLength(3);
     expect(said(await call('create_session', { relationship: 'currentSession', title: 'Grandchild', prompt: 'go' }, child)))
@@ -466,6 +498,7 @@ describe('what a session tool asks of the turn it runs in', () => {
     const { host } = hosting({ member: MEMBER });
     const { client } = await signing(host, 'member');
     const idle = await opening(client, 'idle');
+    await answeredFirst(client, idle.uri);
     // Nothing is running in this chat. A window outlives the turn it sent, so a
     // tool can be reached now that the turn that asked for it has ended - and
     // no turn is what carries a person, so the call is nobody's. The danger is a
@@ -501,11 +534,12 @@ describe('what a session tool asks of the turn it runs in', () => {
     // a member may write a session and may not delete another person's.
     const { client: other } = await signing(after, 'other');
     const theirs = await opening(other, 'theirs');
+    await answeredFirst(other, theirs.uri);
 
     // Due only now, and the member is here to carry it.
     time.pass(2);
     await settle(8);
-    const woken = sessionQueries().length - 1;
+    const woken = builtCount('host') - 1;
     // The turn the wake began is the member's: a write the member may make is
     // made, and one the member may not is refused as the member is refused it.
     expect(said(await call('rename_chat', { title: 'Woken' }, woken))).toBe('Renamed chat to "Woken".');
@@ -558,10 +592,20 @@ describe("VS Code's limits on spawning and messaging", () => {
   type Tool = { name: string; handler: (input: unknown) => Promise<Answer> };
   type Client = ReturnType<ReturnType<typeof createHost>['accept']>;
 
+  /*
+   * Every host a case made, closed after it. A case here makes fifty sessions
+   * or more, and a host left running keeps each of them and their timers for
+   * the rest of the file, so every case after it ran slower than the last.
+   */
+  const hosts: ReturnType<typeof createHost>[] = [];
+  afterEach(async () => {
+    await Promise.all(hosts.splice(0).map((host) => host.close()));
+  });
+
   /** One session's tools, as the model of the session at `index` reaches them. */
   const toolsOf = (index: number): Record<string, Tool> => {
-    const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
+    const host = builtServer('host', index) as { tools: Tool[] } | undefined;
+    return Object.fromEntries((host?.tools ?? []).map((one) => [one.name, one]));
   };
   const call = async (name: string, input: unknown, index: number): Promise<Answer> => {
     const tool = toolsOf(index)[name];
@@ -578,6 +622,7 @@ describe("VS Code's limits on spawning and messaging", () => {
       path: root, agents: [claude({ paths: [root] })], ...machine(), tools: hostTools(),
       sleepAfterMinutes: 0,
     });
+    hosts.push(host);
     const client = host.accept(peer());
     await hello(client);
     return client;
@@ -586,14 +631,16 @@ describe("VS Code's limits on spawning and messaging", () => {
   /**
    * A session on this host, and the tools its own model reaches.
    *
-   * `at` is the CLI that session was handed, which is how a case says whose
-   * tools are making a call: one CLI per session started, in the order they
-   * were started, so the newest is `sessionQueries().length - 1`.
+   * `at` is the host server that session built, which is how a case says
+   * whose tools are making a call: one per session made, in the order they
+   * were made, so the newest is `builtCount('host') - 1`.
    */
   const started = async (client: Client, name: string): Promise<{ held: string; at: number }> => {
     await client.handle({ method: 'createSession', params: { channel: `ahp-session:/${name}`, provider: 'claude' } });
     await settle(8);
-    return { held: `ahp-session:/${name}`, at: sessionQueries().length - 1 };
+    const at = builtCount('host') - 1;
+    await answeredFirst(client, `ahp-session:/${name}`);
+    return { held: `ahp-session:/${name}`, at };
   };
 
   /** One session's tools make another, whose own tools are then the newest. */
@@ -609,19 +656,99 @@ describe("VS Code's limits on spawning and messaging", () => {
   const telling = (at: number, to: string, message: string): Promise<Answer> =>
     call('send_message', { session: to, message }, at);
 
+  /**
+   * VS Code's refusal for a tree out of room, with the tree where VS Code
+   * names the session.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L86-L94
+   */
+  const outOfRoom = (action: string, max: number): RegExp => new RegExp(
+    `^Refusing to ${action}: this session tree already used ${max} of ${max} allowed in the last 60 minutes\\.`
+    + ' The limit applies to each session tree separately and frees up as older actions leave that window\\.'
+    + ' Retry after \\d+ seconds, or turn off agent orchestration limits in settings\\.$',
+  );
+
+  /*
+   * The reference host's create carries the session, chat and turn it was
+   * made from on the new session's summary, under `agentHost/createdBySession`,
+   * before the session is announced.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1236-L1242
+   */
+  it('announces a session it made with the session and chat it was made from on its summary', async () => {
+    const host = createHost({
+      path: root, agents: [claude({ paths: [root] })], ...machine(), tools: hostTools(),
+      sleepAfterMinutes: 0,
+    });
+    hosts.push(host);
+    const p = peer();
+    const client = host.accept(p);
+    await hello(client);
+    const first = await started(client, 'first');
+    expect(said(await spawn(first.at, 'made'))).toMatch(/^New session created \(/);
+
+    const added = p.notes
+      .filter((note) => note.method === 'root/sessionAdded')
+      .map((note) => (note.params as { summary: { resource: string; _meta?: Record<string, unknown> } }).summary)
+      .find((summary) => summary.resource !== first.held);
+    expect(added?._meta?.['agentHost/createdBySession']).toEqual({ session: first.held, chat: await mintedChat(client, first.held) });
+  });
+
+  /*
+   * A call that names no model runs on the calling chat's: its running
+   * turn's, else its draft's, else its last turn's, as VS Code's
+   * getCreationDefaults reads it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2566-L2600
+   */
+  it('runs a session it makes on the model the calling chat holds, when the call names none', async () => {
+    const client = await top();
+    const first = await started(client, 'first');
+    const chat = await mintedChat(client, first.held);
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/draftChanged', draft: { text: 'next', origin: { kind: 'user' }, model: { id: 'haiku' } } } },
+    });
+    await settle(4);
+    sdk.modelsSet.length = 0;
+    expect(said(await spawn(first.at, 'made'))).toMatch(/^New session created \(/);
+    expect(sdk.modelsSet).toContain('haiku');
+  });
+
+  /*
+   * A new session of the calling chat's agent takes the settings that agent
+   * names as inherited, as VS Code's create-session takes getCreationDefaults'
+   * config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1208-L1233
+   */
+  it('starts a session it makes with what the calling chat\'s agent says a new chat inherits', async () => {
+    const inheriting = {
+      ...claude({ paths: [root] }),
+      inheritedChatConfig: (config: Readonly<Record<string, unknown>>) =>
+        (config.permissionMode === undefined ? undefined : { permissionMode: config.permissionMode }),
+    };
+    const host = createHost({ path: root, agents: [inheriting], ...machine(), tools: hostTools(), sleepAfterMinutes: 0 });
+    hosts.push(host);
+    const client = host.accept(peer());
+    await hello(client);
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/first', provider: 'claude', config: { permissionMode: 'plan' } } });
+    await settle(8);
+    const at = builtCount('host') - 1;
+    expect(said(await spawn(at, 'made'))).toMatch(/^New session created \(/);
+    expect(sessionQueries().at(-1)?.options.permissionMode).toBe('plan');
+  });
+
   it("stops a chain of sessions at spawn depth 3, in the reference host's words", async () => {
     const client = await top();
     const first = await started(client, 'first');
     /*
      * Three links down. The session asked is the one whose tools make the call,
-     * so each step moves to the newest CLI: `first` at depth 0 makes `second`
+     * so each step moves to the newest session's: `first` at depth 0 makes `second`
      * at 1, that one makes `third` at 2, and `fourth` at 3 is the last one
      * allowed - a session three deep may not make another.
      */
     let at = first.at;
     for (const title of ['second', 'third', 'fourth']) {
       expect(said(await spawn(at, title)), title).toMatch(/^New session created \(/);
-      at = sessionQueries().length - 1;
+      at = builtCount('host') - 1;
     }
 
     const refused = await spawn(at, 'fifth');
@@ -640,7 +767,7 @@ describe("VS Code's limits on spawning and messaging", () => {
     }
 
     const refused = await spawn(first.at, 'one more');
-    expect(said(refused)).toBe('Refusing to create more than 50 sessions from server tools in this session tree.');
+    expect(said(refused)).toMatch(outOfRoom('create more sessions', 50));
     expect(refused.isError).toBe(true);
 
     // A second tree is a session nothing started, and its budget is its own.
@@ -648,6 +775,77 @@ describe("VS Code's limits on spawning and messaging", () => {
     // runaway agent does not spend what another session may make.
     const elsewhere = await started(client, 'elsewhere');
     expect(said(await spawn(elsewhere.at, 'its own child'))).toMatch(/^New session created \(/);
+  });
+
+  /*
+   * The daemon's `agentOrchestrationLimitsScope` at `session`, VS Code's: each
+   * session keeps its own count, so a session the first one made still makes
+   * one once the first has used its fifty, and the refusal is VS Code's own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L46-L94
+   */
+  it('keeps each session\'s count where the daemon counts per session, and refuses in VS Code\'s words', async () => {
+    const host = createHost({
+      path: root, agents: [claude({ paths: [root] })], ...machine(), tools: hostTools(),
+      sleepAfterMinutes: 0, agentOrchestrationLimitsScope: 'session',
+    });
+    hosts.push(host);
+    const client = host.accept(peer());
+    await hello(client);
+    const first = await started(client, 'first');
+    for (let i = 0; i < 50; i++) {
+      expect(said(await spawn(first.at, `made ${i}`)), `made ${i}`).toMatch(/^New session created \(/);
+    }
+    const child = builtCount('host') - 1;
+
+    expect(said(await spawn(first.at, 'one more'))).toMatch(new RegExp(
+      '^Refusing to create more sessions: this session already used 50 of 50 allowed in the last 60 minutes\\.'
+      + ' The limit applies to each session separately and frees up as older actions leave that window\\.'
+      + ' Retry after \\d+ seconds, or turn off agent orchestration limits in settings\\.$',
+    ));
+    expect(said(await spawn(child, 'the child\'s own'))).toMatch(/^New session created \(/);
+  });
+
+  /*
+   * Counted over VS Code's sliding hour, so a tree that hit a limit recovers
+   * as its oldest actions leave the window.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L43-L94
+   */
+  it('makes a session again once the oldest of its tree\'s fifty has left the hour', async () => {
+    const client = await top();
+    const first = await started(client, 'first');
+    for (let i = 0; i < 50; i++) {
+      expect(said(await spawn(first.at, `made ${i}`)), `made ${i}`).toMatch(/^New session created \(/);
+    }
+    expect(said(await spawn(first.at, 'one more'))).toMatch(outOfRoom('create more sessions', 50));
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 60 * 60 * 1000 + 1000);
+      expect(said(await spawn(first.at, 'an hour on'))).toMatch(/^New session created \(/);
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+   * VS Code's `agentOrchestrationLimits`, a root key this host declares: `off`
+   * lifts the spawn depth and the counts.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1197-L1200
+   */
+  it('makes a session past spawn depth 3 once a client turned agentOrchestrationLimits off', async () => {
+    const client = await top();
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: ROOT, action: { type: 'root/configChanged', config: { agentOrchestrationLimits: 'off' } } },
+    });
+    await settle(4);
+    const first = await started(client, 'first');
+    let at = first.at;
+    for (const title of ['second', 'third', 'fourth', 'fifth']) {
+      expect(said(await spawn(at, title)), title).toMatch(/^New session created \(/);
+      at = builtCount('host') - 1;
+    }
   });
 
   it('refuses the 51st chat in one tree, by either tool that makes one', async () => {
@@ -658,13 +856,13 @@ describe("VS Code's limits on spawning and messaging", () => {
     }
 
     const refused = await call('create_chat', { prompt: 'one more' }, first.at);
-    expect(said(refused)).toBe('Refusing to create more than 50 chats from server tools in this session tree.');
+    expect(said(refused)).toMatch(outOfRoom('create more chats', 50));
     expect(refused.isError).toBe(true);
 
     // `create_session` with `currentSession` makes a chat too, and spends the
     // same budget. The reference host counts them as one, and so does this.
     expect(said(await call('create_session', { relationship: 'currentSession', title: 'x', prompt: 'y' }, first.at)))
-      .toBe('Refusing to create more than 50 chats from server tools in this session tree.');
+      .toMatch(outOfRoom('create more chats', 50));
   });
 
   it('refuses the 101st message sent through the tools', async () => {
@@ -679,7 +877,7 @@ describe("VS Code's limits on spawning and messaging", () => {
     }
 
     const refused = await telling(from.at, to.held, 'one more');
-    expect(said(refused)).toBe('Refusing to send more than 100 messages from server tools in this session tree.');
+    expect(said(refused)).toMatch(outOfRoom('send more messages', 100));
     expect(refused.isError).toBe(true);
   });
 
@@ -702,7 +900,7 @@ describe("VS Code's limits on spawning and messaging", () => {
       expect(said(await telling(from.at, to.held, `word ${i}`)), `word ${i}`).toMatch(/^Message (sent|queued) \(/);
     }
     expect(said(await telling(from.at, to.held, 'one more')))
-      .toBe('Refusing to send more than 100 messages from server tools in this session tree.');
+      .toMatch(outOfRoom('send more messages', 100));
   });
 
   it('counts messages sent to any session against the sender, not the target', async () => {
@@ -726,7 +924,7 @@ describe("VS Code's limits on spawning and messaging", () => {
     }
 
     const refused = await telling(from.at, two.held, 'one more');
-    expect(said(refused)).toBe('Refusing to send more than 100 messages from server tools in this session tree.');
+    expect(said(refused)).toMatch(outOfRoom('send more messages', 100));
     expect(refused.isError).toBe(true);
     // And the sessions it was writing into are untouched by the refusal: what
     // ran out is the sender's budget, not theirs.
@@ -766,7 +964,7 @@ describe('a chat opened on a backend of its own', () => {
       schema: () => {
         const schema = base.schema();
         const properties = { ...(schema.properties as Record<string, Record<string, unknown>>) };
-        properties.voice = { type: 'string', title: 'Voice', scope: 'session' };
+        properties.voice = { type: 'string', title: 'Voice' };
         return { ...schema, properties };
       },
       create: (start: Start) => { starts.push(start); return base.create(start); },
@@ -826,8 +1024,8 @@ describe('a chat opened on a backend of its own', () => {
       params: { channel: 'ahp-session:/mine', provider: 'claude', config: { computer: '', permissionMode: 'plan' } },
     });
     await settle(8);
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const tool = servers?.host?.tools.find((one) => one.name === 'make_chat') as Tool | undefined;
+    const served = builtServer('host') as { tools: Tool[] } | undefined;
+    const tool = served?.tools.find((one) => one.name === 'make_chat') as Tool | undefined;
     if (tool === undefined) throw new Error('no make_chat');
     return { client, call: (input) => tool.handler(input) };
   };
@@ -864,7 +1062,7 @@ describe('a chat opened on a backend of its own', () => {
     const before = (await state(client)).chats.length;
     const refused = await call({ provider: 'nobody', prompt: 'say hi' });
     expect(refused.isError).toBe(true);
-    expect(refused.content[0]?.text).toBe('No provider called nobody');
+    expect(refused.content[0]?.text).toBe('No agent provider registered for: nobody');
     expect(starts).toHaveLength(0);
     // Nothing was announced and nothing was started: the session has the chats
     // it had.
@@ -899,14 +1097,13 @@ describe('a tool a person calls with no session', () => {
    * two people these cases name. `contribution` adds a plugin's read of the
    * host's events, which is how a case watches `tool_call`.
    */
-  const hosting = (more: HostTool[] = [], contribution?: Contribution, agents?: Agent[]) => {
-    // A third person holding the grant a root config push needs, so a case can
-    // set the operator's rule the way a window does.
-    const users = directory({ member: MEMBER, guest: GUEST, owner: ['config:change'] });
+  const hosting = (more: HostTool[] = [], contribution?: Contribution, agents?: Agent[], over: Partial<HostOptions> = {}) => {
+    const users = directory({ member: MEMBER, guest: GUEST });
     const store = fileSessions({ dir: join(root, 'sessions') });
     const base: HostOptions = {
       path: root, agents: agents ?? [claude({ paths: [root] })], ...machine(),
       users, sessions: store, tools: [...hostTools(), ...more], sleepAfterMinutes: 0,
+      ...over,
     };
     return { host: createHost(contribution === undefined ? base : foldHostOptions(base, [contribution]).options), users, store };
   };
@@ -968,15 +1165,10 @@ describe('a tool a person calls with no session', () => {
       sessionless: true,
       run: () => { calls.push(name); return name; },
     });
-    const { host, users } = hosting([probe('notify'), probe('ping')]);
-    const client = host.accept(peer());
-    await hello(client);
-    await signIn(client, 'owner');
-    await client.handle({
-      method: 'dispatchAction',
-      params: { channel: ROOT, action: { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'ahp/notify': false } } } },
-    });
-    await settle();
+    // The operator's rule, the daemon's setting, naming a host tool `host/<name>`, a tool of the server VS Code's
+    // Claude carries the host's tools on.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+    const { users, host } = hosting([probe('notify'), probe('ping')], undefined, undefined, { eligibleForAutoApproval: { 'host/notify': false } });
     const member = await principal(users, 'member');
 
     await expect(run(host, { principal: member }, 'notify', {})).rejects.toThrow('eligibleForAutoApproval');
@@ -984,6 +1176,23 @@ describe('a tool a person calls with no session', () => {
     expect(calls).toEqual([]);
     expect(await run(host, { principal: member }, 'ping', {})).toBe('ping');
     expect(calls).toEqual(['ping']);
+  });
+
+  /*
+   * Under `managedRules: handed` the host checks no managed rule, VS Code's
+   * host, and this door has no runtime to hand one to, so the call runs.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
+   */
+  it('runs a tool the operator\'s rule names when the daemon hands the managed rules on', async () => {
+    const calls: string[] = [];
+    const notify: HostTool = {
+      definition: { name: 'notify', title: 'notify', description: 'notify, and sessionless.', inputSchema: { type: 'object', properties: {} } },
+      sessionless: true,
+      run: () => { calls.push('notify'); return 'notify'; },
+    };
+    const { users, host } = hosting([notify], undefined, undefined, { eligibleForAutoApproval: { 'host/notify': false }, managedRules: 'handed' });
+    expect(await run(host, { principal: await principal(users, 'member') }, 'notify', {})).toBe('notify');
+    expect(calls).toEqual(['notify']);
   });
 
   it('makes a session the caller owns, with no parent, when it is independent', async () => {
@@ -1021,12 +1230,13 @@ describe('a tool a person calls with no session', () => {
     await signIn(client, 'member');
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/inbox', provider: 'claude' } });
     await settle(8);
+    await answeredFirst(client, 'ahp-session:/inbox');
     await run(host, { principal: member }, 'send_message', { session: 'ahp-session:/inbox', message: 'take a look' });
     await settle(8);
     // The session's own tools run in the turn that message began, so a write
     // through them is allowed only where the turn's sender is the member.
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const rename = servers?.host?.tools.find((one) => one.name === 'rename_chat');
+    const served = builtServer('host') as { tools: Tool[] } | undefined;
+    const rename = served?.tools.find((one) => one.name === 'rename_chat');
     if (rename === undefined) throw new Error('no rename_chat');
     const answered = await rename.handler({ title: 'Woken by a person' });
     expect(answered.isError).toBeFalsy();
@@ -1055,8 +1265,14 @@ describe('a tool a person calls with no session', () => {
     return { ...base, provider, create: (start: Start) => { starts.push(start); return base.create(start); } };
   };
 
-  /** The two backends, both offering `shared-model`, recording what starts on the second. */
-  const pair = (starts: Start[]): Agent[] => [backend('claude', []), backend('other', starts)];
+  /**
+   * The two backends, both offering `shared-model`, recording what starts on the second; their CLI is signed in, as a
+   * harness offers its models once it is.
+   */
+  const pair = (starts: Start[]): Agent[] => {
+    sdk.init = { account: SIGNED_IN, models: [], commands: [], agents: [] };
+    return [backend('claude', []), backend('other', starts)];
+  };
 
   it('starts a new session on the agent it names, where two agents offer one model', async () => {
     const starts: Start[] = [];
@@ -1093,6 +1309,12 @@ describe('a tool a person calls with no session', () => {
     })).rejects.toThrow('Invalid create_session input: model "claude-model" is not one this host offers for other.');
   });
 
+  /*
+   * A call with no calling chat, as through the `/mcp` door, has no chat to
+   * take VS Code's creation defaults from, so the person names the agent and
+   * its settings, as upstream decided (plan host/20261102-1347, "Add optional
+   * agent input"): checked as `createChat` checks a chat's.
+   */
   it('gives a new session its settings, and refuses what its agent does not take', async () => {
     const starts: Start[] = [];
     const { host, users } = hosting([], undefined, pair(starts));
@@ -1131,8 +1353,8 @@ describe('a tool a person calls with no session', () => {
       params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle(8);
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const create = servers?.host?.tools.find((one) => one.name === 'create_session');
+    const served = builtServer('host') as { tools: Tool[] } | undefined;
+    const create = served?.tools.find((one) => one.name === 'create_session');
     if (create === undefined) throw new Error('no create_session');
     const made = await create.handler({
       relationship: 'currentSession', prompt: 'say hi', title: 'Another backend', agent: 'other',

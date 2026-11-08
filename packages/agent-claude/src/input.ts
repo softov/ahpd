@@ -6,23 +6,40 @@ import type { ChatInputAnswer, ChatInputQuestion, ChatInputRequest, StringOrMark
  * What a tool call says about its input, live and read back from a transcript.
  *
  * Three different things: the line a row draws, the subject a status line
- * reads, and the input a client parses.
+ * reads, and the input drawn under the row.
  */
 
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 
 /**
- * A call's `toolInput`: its whole input as JSON, which a client parses.
- *
- * Bash is its command, because a terminal row reads the command there. Absent
- * for a call with no input, as a call with nothing to say carries no `{}`.
+ * A call's `toolInput`, the input drawn under its row: a shell tool's
+ * command, a search tool's pattern, and any other input as indented JSON.
+ * Absent only for a call with no input. VS Code's Claude's
+ * `getClaudeToolInputString`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L543-L570
  */
-export function toolInputOf(name: string, input: Bag): string | undefined {
-  if (name === 'Bash') return str(input.command);
-  return Object.keys(input).length > 0 ? JSON.stringify(input) : undefined;
+export function getClaudeToolInputString(toolName: string, input: unknown): string | undefined {
+  if (input === undefined) return undefined;
+  if (toolName === 'Bash' || toolName === 'BashOutput' || toolName === 'KillBash') {
+    const command = str(bag(input).command);
+    if (command) return command;
+  }
+  if (toolName === 'Grep' || toolName === 'Glob') {
+    const pattern = str(bag(input).pattern);
+    if (pattern) return pattern;
+  }
+  try {
+    return JSON.stringify(input, null, 2);
+  }
+  catch {
+    return undefined;
+  }
 }
 
-/** VS Code's `SUBAGENT_CHAT_TITLE_MAX_LENGTH`: a worker chat's title, before it is cut. */
+/**
+ * VS Code's `SUBAGENT_CHAT_TITLE_MAX_LENGTH`: a worker chat's title, before it
+ * is cut, unless the record's `subagentTitleMax` says otherwise.
+ */
 const TITLE_MAX = 60;
 
 /**
@@ -30,17 +47,17 @@ const TITLE_MAX = 60;
  *
  * VS Code's `subagentChatTitle`: the task description, which is the sentence
  * somebody actually wrote and the one thing that tells two workers apart, cut
- * to sixty characters; failing that the kind of agent it is, which says what
- * it is rather than what it was for; failing that `Subagent`, which says only
- * that there is one.
+ * to `most` characters, sixty unless the record says otherwise; failing that
+ * the kind of agent it is, which says what it is rather than what it was for;
+ * failing that `Subagent`, which says only that there is one.
  *
  * One rule for a live chat, one restored from a transcript and the `subagent`
  * block that links the two, so a worker's name does not change when the daemon
  * does - and so six workers spawned by one turn do not all read `Explore`.
  */
-export function titleOf(description: string | undefined, agentType: string | undefined): string {
+export function titleOf(description: string | undefined, agentType: string | undefined, most?: unknown): string {
   const task = description?.trim();
-  if (task) return truncate(task, TITLE_MAX);
+  if (task) return truncate(task, typeof most === 'number' ? most : TITLE_MAX);
   return agentType?.trim() || 'Subagent';
 }
 
@@ -242,14 +259,15 @@ export function writeOf(name: string, input: Bag): { path: string; apply: (curre
 }
 
 /**
- * The line a call's row draws while it runs, and on its confirmation card.
+ * The line a call's row draws while it runs, and on its confirmation card:
+ * VS Code's `getClaudeInvocationMessage`.
  *
- * VS Code's line for the tools `getClaudeInvocationMessage` maps, in its
- * English and as markdown where it sends markdown, a `Task` or `Agent` call's
- * own description, and the call's display name for any other tool.
+ * VS Code's line for the tools it maps, in its English and as markdown where
+ * it sends markdown, a `Task` or `Agent` call's own description, and the
+ * call's display name for any other tool.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L346-L455
  */
-export function lineOf(name: string, input: Bag, displayName: string): StringOrMarkdown {
+export function getClaudeInvocationMessage(name: string, displayName: string, input: Bag): StringOrMarkdown {
   const path = PATHS[name] === undefined ? undefined : filled(input[PATHS[name]]);
   switch (name) {
     case 'Bash': {
@@ -302,13 +320,13 @@ export function lineOf(name: string, input: Bag, displayName: string): StringOrM
 }
 
 /**
- * The line a call's row draws once it has ended, as VS Code's
- * `getClaudePastTenseMessage` words it: a failed call `"<display name>"
- * failed`, and one that ran the past tense for the tools it maps and the
- * running line for the rest.
+ * The line a call's row draws once it has ended: VS Code's
+ * `getClaudePastTenseMessage`, a failed call `"<display name>" failed`, and
+ * one that ran the past tense for the tools it maps and the running line for
+ * the rest.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L536
  */
-export function pastLineOf(name: string, input: Bag, displayName: string, success = true): StringOrMarkdown {
+export function getClaudePastTenseMessage(name: string, displayName: string, input: Bag, success: boolean): StringOrMarkdown {
   if (!success) return `"${displayName}" failed`;
   switch (name) {
     case 'Bash': {
@@ -326,6 +344,6 @@ export function pastLineOf(name: string, input: Bag, displayName: string, succes
       const skill = filled(input.skill);
       return skill !== undefined ? md(`Ran skill ${appendEscapedMarkdownInlineCode(truncate(skill, 80))}`) : 'Ran skill';
     }
-    default: return lineOf(name, input, displayName);
+    default: return getClaudeInvocationMessage(name, displayName, input);
   }
 }

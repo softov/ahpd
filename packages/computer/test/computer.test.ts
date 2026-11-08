@@ -3,11 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { computerProvider } from '../src/provider.js';
+import { dockerRuntime } from '../src/runtime.js';
 import { computerTools } from '../src/tools.js';
 import type { ComputerRuntime, MachineSpec } from '../src/runtime.js';
 import type { ToolCall } from '../../sdk/src/types/host.js';
 import type { PluginHost } from '../../sdk/src/types/plugin.js';
 import type { Write } from '../../sdk/src/types/resources.js';
+import type { Owner } from '../../sdk/src/types/usage.js';
 
 /*
  * The provider and the tools, against a runtime that is a plain object.
@@ -72,11 +74,18 @@ const fake = () => {
     state: async (id) => (held.get(id) === undefined ? undefined : 'running'),
     agents: async (id) => (held.get(id) === undefined ? undefined : []),
     parts: async (id) => (held.get(id) === undefined ? undefined : []),
-    owner: async (id) => (held.get(id) === undefined ? undefined : {}),
+    owner: async (id) => {
+      const one = held.get(id);
+      if (one === undefined) return undefined;
+      return {
+        ...(typeof one.owner === 'string' ? { owner: one.owner as Owner } : {}),
+        ...(typeof one.team === 'string' ? { team: one.team } : {}),
+      };
+    },
     run: async (spec) => {
       calls.push(`run ${spec.name} ${spec.image} ${spec.cpus ?? '-'} ${spec.memory ?? '-'} ${spec.label}${spec.mounts === undefined ? '' : ` v=${spec.mounts.join(',')}`}${spec.workdir === undefined ? '' : ` w=${spec.workdir}`}`);
       specs.push(spec);
-      held.set(spec.name, { name: spec.name, image: spec.image, Created: new Date(0).toISOString() });
+      held.set(spec.name, { name: spec.name, image: spec.image, Created: new Date(0).toISOString(), ...(spec.owner === undefined ? {} : { owner: spec.owner }) });
       return { id: spec.name, image: spec.image ?? '', status: 'running', created: '' };
     },
     stop: async (id) => { calls.push(`stop ${id}`); },
@@ -106,13 +115,15 @@ const fake = () => {
     takeOut: async (id, paths) => { calls.push(`takeOut ${id} ${paths.join(',')}`); },
     capabilities: () => ({
       runtime: 'docker',
-      actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],
-      resources: ['status', 'capabilities', 'stats', 'state'],
+      actions: ['create', 'start', 'stop', 'restart', 'exec', 'delete'],
+      resources: ['status', 'capabilities', 'state', 'stats'],
     }),
-    // No image is here and nothing builds one: a machine is made from an image
-    // this runtime already has, and which one is the caller's own business.
+    // Every image is here and nothing builds or pulls one: a machine is made
+    // from an image this runtime already has, and which one is the caller's
+    // own business.
     hasImage: async () => true,
     buildImage: async (tag) => { calls.push(`build ${tag}`); },
+    pullImage: async (from, tag) => { calls.push(`pull ${from} ${tag}`); },
   };
   return { runtime, held, calls, specs };
 };
@@ -121,7 +132,13 @@ const fake = () => {
 const unread: PluginHost['secret'] = async () => '';
 
 const options = { image: 'debian:bookworm-slim', cpus: '2', memory: '2g', max: 2, label: 'ahpd.computer=1', secret: unread };
-const at = {} as ToolCall;
+/** A call the host's own turn makes, or one a person's turn makes, which may hold a grant or not. */
+const callBy = (person = 'host', may = true): ToolCall => ({
+  person: () => person,
+  may: () => may,
+  refusal: (grant: string) => `${person} may not ${grant} here`,
+}) as unknown as ToolCall;
+const at = callBy();
 const by = (tools: ReturnType<typeof computerTools>, name: string) =>
   tools.find((one) => one.definition.name === name) as ReturnType<typeof computerTools>[number];
 
@@ -229,6 +246,41 @@ it('refuses past the maximum, a name already taken, and a machine it does not ha
   // A call with nothing named is a sentence, not a throw: the model reads it.
   expect(String(await by(tools, 'release_computer').run({}, at))).toContain('Which computer?');
   expect(String(await by(tools, 'run_in_computer').run({ id: 'one' }, at))).toContain('What command?');
+});
+
+/*
+ * A machine tool acts on the machines the turn's person may use, their own,
+ * the host's or a team's, and asks the person's grant as the host's own tools
+ * do (P2CJ-0083's gate): a machine is owned by whoever made it.
+ */
+it('acts on the machines the turn\'s person may use, and asks the person\'s grant', async () => {
+  const { runtime, held, specs } = fake();
+  const tools = computerTools(runtime, { ...options, max: 9, label: 'ahpd.computer=1', prefix: 'ahpd-computer' });
+  const ada = callBy('user:ada');
+  const bo = callBy('user:bo');
+
+  // A machine Ada asks for is hers.
+  await by(tools, 'request_disposable_computer').run({ name: 'adas' }, ada);
+  expect(specs.at(-1)?.owner).toBe('user:ada');
+  held.set('hosts', { name: 'hosts', image: 'i', Created: '', owner: 'root:here' });
+  held.set('teams', { name: 'teams', image: 'i', Created: '', owner: 'user:cy', team: 'eng' });
+
+  // Bo may not use hers, and is told there is none, as a session he may not
+  // read is not one a tool names.
+  expect(String(await by(tools, 'run_in_computer').run({ id: 'adas', command: 'true' }, bo))).toBe('There is no computer called adas.');
+  expect(String(await by(tools, 'release_computer').run({ id: 'adas' }, bo))).toBe('There is no computer called adas.');
+  expect(held.has('adas')).toBe(true);
+  // The host's and a team's are his to use.
+  expect(String(await by(tools, 'run_in_computer').run({ id: 'hosts', command: 'true' }, bo))).toBe('hello\n\nexit 0');
+  expect(String(await by(tools, 'run_in_computer').run({ id: 'teams', command: 'true' }, bo))).toBe('hello\n\nexit 0');
+  // And Ada uses and removes her own.
+  expect(String(await by(tools, 'release_computer').run({ id: 'adas' }, ada))).toContain('gone');
+
+  // A person without the grant is refused in the host's words, and nothing is made.
+  const before = specs.length;
+  expect(String(await by(tools, 'request_disposable_computer').run({ name: 'nope' }, callBy('user:dee', false)))).toBe('user:dee may not computer:write here');
+  expect(String(await by(tools, 'release_computer').run({ id: 'hosts' }, callBy('user:dee', false)))).toBe('user:dee may not computer:write here');
+  expect(specs).toHaveLength(before);
 });
 
 it('declares what each tool does, so a policy has something to ask on', () => {
@@ -427,11 +479,11 @@ it('refuses a body that is not a manifest, field by field', async () => {
  * machines under, `runsc` for gVisor.
  *
  * The profile's alone, because the boundary a machine is given is the
- * operator's to choose: a body that names one is refused rather than obeyed,
- * and so is a dev container machine from a profile that names one, which the
- * Dev Container CLI makes rather than `docker run`. What reaches the runtime
- * is the field itself; the `--runtime=<value>` argument it becomes is written
- * by the docker runtime and asserted where a command is spawned.
+ * operator's to choose: a body that names one is refused rather than obeyed.
+ * A dev container machine takes its profile's as any other machine does. What
+ * reaches the runtime is the field itself; the `--runtime=<value>` argument it
+ * becomes is written by the docker runtime and asserted where a command is
+ * spawned, and on the dev container route where its override config is read.
  */
 it('takes the OCI runtime from the profile alone', async () => {
   const { runtime, specs } = fake();
@@ -461,17 +513,14 @@ it('takes the OCI runtime from the profile alone', async () => {
   expect(refused).toMatchObject({ code: -32602 });
   expect((refused as Error).message).toMatch(/takes the OCI runtime from its profiles.*sandbox/);
 
-  // Nor may a dev container machine take one, whichever profile made it: the
-  // CLI makes that machine, so there is no flag here to add.
+  // And that refusal made no machine.
+  expect(specs).toHaveLength(2);
+
+  // A dev container machine takes its profile's too.
   const folder = temp('dev');
   writeFileSync(join(folder, '.devcontainer.json'), '{}\n');
-  const dev = await provider.write('computer://devbox', made({ profile: 'guarded', devcontainer: folder }))
-    .catch((error: unknown) => error);
-  expect(dev).toMatchObject({ code: -32602 });
-  expect((dev as Error).message).toMatch(/dev container machine is made by the Dev Container CLI/);
-
-  // And neither refusal made a machine.
-  expect(specs).toHaveLength(2);
+  await provider.write('computer://devbox', made({ profile: 'guarded', devcontainer: folder }));
+  expect(specs[2]).toMatchObject({ devcontainer: folder, ociRuntime: 'runsc' });
 });
 
 it('refuses a create onto a name already taken, and makes one past the tool\'s maximum', async () => {
@@ -497,13 +546,27 @@ it('destroys a machine, and refuses what is not one', async () => {
   held.set('box', { name: 'box', image: 'debian:bookworm-slim', Created: '2026-09-22T00:00:00Z' });
   const provider = computerProvider(runtime, options);
 
-  await provider.remove('computer://box');
+  await provider.delete('computer://box');
   expect(calls).toContain('remove box');
   expect(held.has('box')).toBe(false);
 
-  await expect(provider.remove('computer://box')).rejects.toMatchObject({ code: -32008 });
-  await expect(provider.remove('computer://')).rejects.toMatchObject({ code: -32602 });
-  await expect(provider.remove('computer://box/status')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.delete('computer://box')).rejects.toMatchObject({ code: -32008 });
+  await expect(provider.delete('computer://')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.delete('computer://box/status')).rejects.toMatchObject({ code: -32602 });
+});
+
+/*
+ * The Docker runtime names its verbs as Docker Engine's API names the
+ * operations it serves them with, removing a machine as `delete` as the
+ * scheme's resourceDelete does, and its resources `state` and `stats` as
+ * ContainerInspect's State and ContainerStats answer them.
+ */
+it('names the Docker runtime\'s verbs as Docker Engine\'s API does, removing a machine as delete', () => {
+  expect(dockerRuntime({ command: 'docker', label: 'ahpd.computer=1' }).capabilities()).toEqual({
+    runtime: 'docker',
+    actions: ['create', 'start', 'stop', 'restart', 'exec', 'delete'],
+    resources: ['status', 'capabilities', 'state', 'stats'],
+  });
 });
 
 it('says in capabilities what a create body may contain', async () => {
@@ -514,7 +577,7 @@ it('says in capabilities what a create body may contain', async () => {
     actions: string[];
     manifest: { type: string; properties: Record<string, { default?: string }> };
   };
-  expect(caps.actions).toEqual(['create', 'destroy', 'exec', 'start', 'stop', 'restart']);
+  expect(caps.actions).toEqual(['create', 'start', 'stop', 'restart', 'exec', 'delete']);
   // No `mounts`: this host does not let a body name any, so a client drawing a
   // form from the schema draws no field for something it would be refused.
   expect(Object.keys(caps.manifest.properties)).toEqual(['runtime', 'source', 'image', 'devcontainer', 'cpus', 'memory', 'workdir']);

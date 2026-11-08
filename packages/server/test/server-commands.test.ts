@@ -147,7 +147,7 @@ describe('the command registry', () => {
         users: directory,
         running: () => ({ pid: process.pid, url: 'ws://127.0.0.1:9350', host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
         turning: () => [],
-        restart: () => {},
+        restart: () => ({ restartDelayMs: 0 }),
       };
       const served = servedRegistry(facts);
       const command = served.find(id);
@@ -429,7 +429,7 @@ describe('teams, projects and memberships', () => {
     users: directory,
     running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
     turning: () => [],
-    restart: () => {},
+    restart: () => ({ restartDelayMs: 0 }),
   });
 
   /** The same file served under `/api`, with a deployment token when one is named. */
@@ -850,7 +850,7 @@ describe('nodes that join this host', () => {
         users: fileUsers({ path: people }),
         running: () => ({ pid: process.pid, url: 'ws://127.0.0.1:9350', host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
         turning: () => [],
-        restart: () => {},
+        restart: () => ({ restartDelayMs: 0 }),
       });
       const command = served.find(id);
       expect(command, id).toBeDefined();
@@ -876,7 +876,7 @@ describe('what a served command says it does', () => {
       users: fileUsers({ path: people }),
       running: () => ({ pid: process.pid, url: 'ws://127.0.0.1:9350', host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
       turning: () => [],
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     };
     const manifest = manifestFrom(servedRegistry(facts), { name: 'ahpd', version: '0.0.0' });
 
@@ -986,7 +986,7 @@ describe('a list answers the key its item commands take', () => {
       turning: () => [],
       usage: () => usage,
       vault: () => vault,
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     };
   };
 

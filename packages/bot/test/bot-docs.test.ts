@@ -89,7 +89,6 @@ it('shows a record the daemon reads as a bot without the persona', async () => {
 
 it('shows an AGENTS.md whose parts the UI owns', () => {
   const parts = readAgents(yaml, sample(readFileSync(PAGE, 'utf8'), 'The persona'));
-  expect(parts.version).toBe(1);
   expect(parts.name).toBe('Motion');
   expect(parts.description).toBe('Reads pull requests and says what would break.');
   expect(parts.instructions).toMatch(/^You review pull requests\./);

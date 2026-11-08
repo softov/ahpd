@@ -12,7 +12,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOST_CLOSE_WAIT_MS, createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { shellTerminals } from '../src/machines/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -283,8 +282,9 @@ describe('Host.close refuses what would start', () => {
     const told: { method: string; params: unknown }[] = [];
     const client = host.accept({ ...peer(), notify: (method: string, params: unknown) => { told.push({ method, params }); } } as unknown as Peer);
     await client.handle({ method: 'initialize', params: { clientId: 'c', protocolVersions: ['0.9.0'] } });
-    const chat = chatUriFor('ahp-session:/one');
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
+    // The chat the host minted for the session, read off its state.
+    const chat = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     const closing = host.close();
     await client.handle({

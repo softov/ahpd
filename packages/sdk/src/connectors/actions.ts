@@ -135,11 +135,8 @@ const actionTool = (
      * adapter, and shaped by which and how many. Read at each list, so a
      * binding that arrived since the last one reaches it.
      */
-    forSession: ({ bindings }) => {
-      const aliases = aliasesFor(bindings, adapter.name);
-      if (aliases.length === 0) return { offered: false };
-      return { offered: true, definition: { inputSchema: formOf(capability, aliases) } };
-    },
+    isEnabledForSession: ({ bindings }) => aliasesFor(bindings, adapter.name).length > 0,
+    forSession: ({ bindings }) => ({ definition: { inputSchema: formOf(capability, aliasesFor(bindings, adapter.name)) } }),
     run: async (input, at) => {
       // Read now, not when the list was built: a binding removed since is a
       // connector this call may not use, whatever the model was offered.

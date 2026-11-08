@@ -47,6 +47,9 @@ export const membership = (written: string): Membership | undefined => {
   return { written, team, project };
 };
 
+/** A scope as a membership writes it, `team` or `team:project`, the name `namesOf` offers for it. */
+export const scopeName = (scope: Scope): string => (scope.project === undefined ? scope.team : `${scope.team}:${scope.project}`);
+
 /** Whether this membership says any project of its team rather than one of them. */
 const anyProject = (one: Membership): boolean => one.project === '*';
 
@@ -127,6 +130,15 @@ export const poolsFor = (principal: Principal): string[] => [
     return one?.project === undefined ? `team:${name}` : `project:${name}`;
   }),
 ];
+
+/**
+ * The teams one person is on, each once, in the order they wrote them.
+ *
+ * A membership of any form, `team`, `team:*` or `team:project`, puts them on
+ * the team it names before its colon, which is the rule a team's record and a
+ * team's usage pool are read by.
+ */
+export const teamsOf = (principal: Principal): string[] => [...new Set(heldBy(principal).map((one) => one.team))];
 
 /**
  * Whether one person may read one usage pool without `usage:read`.

@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 
 /** A session over the fixture server, with every action it emits kept. */
-function talking(...flags: string[]): { session: Session; actions: Bag[] } {
+async function talking(...flags: string[]): Promise<{ session: Session; actions: Bag[] }> {
   const actions: Bag[] = [];
   const agent = acpAgent({ command: process.execPath, args: [FIXTURE, ...flags], provider: 'acp-usage' });
   const opening: Start = {
@@ -54,7 +54,7 @@ function talking(...flags: string[]): { session: Session; actions: Bag[] } {
     // folder is one the host vouched for.
     trusted: () => true,
   };
-  const session = agent.create(opening);
+  const session = await agent.create(opening);
   started.push(session);
   return { session, actions };
 }
@@ -86,7 +86,7 @@ async function turn(session: Session, actions: Bag[], turnId: string, text: stri
 }
 
 it('sends the change in the session cost as each update lands', async () => {
-  const { session, actions } = talking();
+  const { session, actions } = await talking();
   await turn(session, actions, 't1', 'spend some of it');
 
   // A dollar charged before this bridge saw the session, then a quarter and
@@ -109,7 +109,7 @@ it('sends the change in the session cost as each update lands', async () => {
 });
 
 it('sends the context on its own when the server reported no cost', async () => {
-  const { session, actions } = talking();
+  const { session, actions } = await talking();
   await turn(session, actions, 't1', 'fill the window');
 
   // The update, then the prompt's response carrying nothing but the context the
@@ -122,7 +122,7 @@ expect(reports(actions)).toEqual([
 });
 
 it('counts a second turn from where the first left the books', async () => {
-  const { session, actions } = talking();
+  const { session, actions } = await talking();
   await turn(session, actions, 't1', 'spend some of it');
   await turn(session, actions, 't2', 'spend some more');
 
@@ -133,7 +133,7 @@ it('counts a second turn from where the first left the books', async () => {
 });
 
 it('counts the first turn from a cost the server reported before it', async () => {
-  const { session, actions } = talking('--books');
+  const { session, actions } = await talking('--books');
   await turn(session, actions, 't1', 'spend some of it');
 
   // The dollar spent before this bridge attached was reported outside any
@@ -142,7 +142,7 @@ it('counts the first turn from a cost the server reported before it', async () =
 });
 
 it('sends the tokens the prompt response counted, with the cost it did not', async () => {
-  const { session, actions } = talking();
+  const { session, actions } = await talking();
   await turn(session, actions, 't1', 'spend and count the tokens');
 
   const said = reports(actions);
@@ -172,7 +172,7 @@ it('sends the tokens the prompt response counted, with the cost it did not', asy
 });
 
 it('sends the cost alone when the response counted nothing', async () => {
-  const { session, actions } = talking();
+  const { session, actions } = await talking();
   await turn(session, actions, 't1', 'spend without a count');
 
   // A response that says nothing about tokens is ordinary: the field is
@@ -184,7 +184,7 @@ it('sends the cost alone when the response counted nothing', async () => {
 });
 
 it('sends no usage for a turn whose server reported none', async () => {
-  const { session, actions } = talking();
+  const { session, actions } = await talking();
   await turn(session, actions, 't1', 'say nothing about it');
 
   expect(reports(actions)).toEqual([]);

@@ -20,7 +20,7 @@ import { expect, it, vi } from 'vitest';
 
 const sdk = vi.hoisted(() => ({ frames: [] as Record<string, unknown>[] }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: ({ prompt }: { prompt: AsyncIterable<unknown> }) => ({
     async *[Symbol.asyncIterator]() {
@@ -54,7 +54,7 @@ const fixture = (name: string): Record<string, unknown>[] => readFileSync(
 ).split('\n').filter((line) => line.trim() !== '').map((line) => JSON.parse(line) as Record<string, unknown>);
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** Replay one fixture through a real session and collect what it emitted. */
@@ -87,6 +87,18 @@ it('announces a round that ended with no text and no tool call', async () => {
   expect(ended).toHaveLength(1);
   expect(ended[0]).toMatchObject({ content: '', _meta: { kind: 'responseRoundEnded' } });
   expect(parts.findIndex((one) => one.kind === 'systemNotification')).toBeGreaterThan(reasoning);
+});
+
+/*
+ * A compacted conversation, in the CLI's own words for the boundary, the text
+ * its transcript keeps and VS Code's Claude draws as a notice.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L305-L314
+ */
+it('says a compacted conversation in the CLI\'s own words', async () => {
+  const { parts } = await replay([
+    { type: 'system', subtype: 'compact_boundary', session_id: 'cli-1', compact_metadata: { trigger: 'auto', pre_tokens: 180000, post_tokens: 22000 } },
+  ]);
+  expect(parts.filter((one) => one.kind === 'systemNotification')).toEqual([{ kind: 'systemNotification', content: 'Conversation compacted' }]);
 });
 
 it('says nothing extra for a round that answered with text', async () => {

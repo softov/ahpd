@@ -198,6 +198,21 @@ it('starts a run when the plugin fires its event', async () => {
   expect(sdk.said.some((line) => line.includes('Weather: A storm is coming (The weather) on the coast'))).toBe(true);
 });
 
+/*
+ * A plugin names an automation by its id or by its URI, any URI in the
+ * `ahp-automation` scheme, as VS Code's automation service takes one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1513-L1517
+ */
+it('runs an automation a plugin names by a URI in the ahp-automation scheme', async () => {
+  const { plugin, store, client } = offered([WEATHER]);
+  const resource = 'ahp-automation:batten';
+  store.create(resource, BATTEN);
+  await client.handle(hello(['0.9.0'], { clientId: 'probe', initialSubscriptions: [ROOT] }));
+
+  plugin.runAutomation(resource, { where: 'the coast' });
+  await until(() => (store.get(resource)?.runs ?? []).length === 1, 'the run the plugin asked for');
+});
+
 /** BATTEN, with its trigger's `config` set to `config`. */
 const battenWith = (config: Bag): Bag => ({
   ...BATTEN,

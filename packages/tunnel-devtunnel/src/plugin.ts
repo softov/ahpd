@@ -185,9 +185,11 @@ export const apply: Plugin['apply'] = (plugin, options) => {
   /** What `listening` said, which the system tunnel's hop and token need. */
   let daemonPort: number | undefined;
   let guarded = false;
+  let connectionToken: string | undefined;
   plugin.on('listening', (event) => {
     daemonPort = event.port;
     guarded = event.guarded;
+    connectionToken = event.connectionToken;
   });
 
   /** The tunnel each connector hosted, by connector id, which the next run looks up first. */
@@ -216,6 +218,7 @@ export const apply: Plugin['apply'] = (plugin, options) => {
     open: (id) => tunnels.held(id) !== undefined,
     daemonPort: () => daemonPort,
     guarded: () => guarded,
+    connectionToken: () => connectionToken,
   }));
 
   // Every host the service opened closes with the plugin that opened it, even

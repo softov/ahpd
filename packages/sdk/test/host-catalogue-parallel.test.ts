@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createHost, hello, machine, peer, resetSdk, settle } from './support/host.js';
+import { createHost, hello, machine, peer, resetSdk, settle, showExternal } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Listed } from '@ahpd/sdk';
 
@@ -20,6 +20,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 beforeEach(resetSdk);
 
 const PATH = '/home/softov';
+const HOUR = 60 * 60 * 1000;
 
 /** How many `list` calls were in flight at once, and how many there have been. */
 const counting = () => ({ running: 0, highest: 0, calls: 0 });
@@ -93,13 +94,17 @@ describe('the backends are asked at once', () => {
 
   it('folds the answers in load order, not in the order they answered', async () => {
     const together = counting();
+    // One transcript in the store both read, written an hour ago and never run
+    // by this host, and the second backend's copy a moment newer.
+    const written = Date.now() - HOUR;
     // The first one loaded is the slowest, so the order the answers arrive in
     // is the reverse of the order the agents were given in. Nothing is sorted
     // back into place afterwards.
     const client = await started([
-      slow('first-loaded', 60, [row('shared', 1)], together),
-      slow('second-loaded', 0, [row('shared', 2)], together),
+      slow('first-loaded', 60, [row('shared', written)], together),
+      slow('second-loaded', 0, [row('shared', written + 1)], together),
     ], together);
+    await showExternal(client);
 
     const answer = await listed(client);
     // One row, whose provider is the first backend's - which is the answer a

@@ -16,6 +16,7 @@ import {
 } from '../src/index.js';
 import type { CofoldOptions, ToolsConfig } from '../src/index.js';
 import { startedNow } from '../../sdk/test/support/started.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * The four capabilities a cofold session runs itself.
@@ -34,7 +35,7 @@ import { startedNow } from '../../sdk/test/support/started.js';
 type Script = Parameters<typeof createFakeModel>[0]['script'];
 
 /** Waits for `check` to hold, turning the event loop, and throws once `ms` of wall-clock time has passed. */
-const when = async (check: () => boolean, ms = 5000): Promise<void> => {
+const when = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
   const until = Date.now() + ms;
   while (!check()) {
     if (Date.now() > until) throw new Error('timed out waiting');
@@ -599,6 +600,60 @@ it('still sends the after when the person declines the edit', async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+/*
+ * A run whose events cannot be applied ends its turn with `chat/error` and the
+ * run cancelled, as VS Code's Claude pipeline fails the sends it holds when its
+ * loop throws and its host ends a failed send, typed `sendFailed`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2349
+ */
+it('ends the turn with chat/error when an event of its run cannot be applied', async () => {
+  const dir = place();
+  let thrown = false;
+  const { session, v } = await open({
+    script: [{ text: 'hello' }],
+    workspace: dir,
+    store: dir,
+    onEmit: (channel, action) => {
+      if (thrown || channel !== 'chat' || action.type !== 'chat/delta') return;
+      thrown = true;
+      throw new Error('a client could not take it');
+    },
+  });
+  session.sendMessage('t1', 'hi');
+  await when(() => ended(v));
+  expect(v.of('chat', 'chat/error').at(-1)?.part)
+    .toMatchObject({ kind: 'error', error: { errorType: 'sendFailed', message: 'a client could not take it' } });
+  await settled(dir);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/*
+ * A refused call held in the session's own snapshot as the protocol's reducer
+ * holds it: cancelled, with `denied`, the reason its cancelled state carries,
+ * and left so by the completion that follows, so a client that subscribes
+ * later reads the row every client that watched holds.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L635
+ */
+it('holds a refused call cancelled as denied in the session\'s own snapshot', async () => {
+  const dir = place();
+  const { session, v } = await open({
+    script: [{ toolCalls: [call('write_file', { path: 'b.txt', content: 'new' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'default' },
+  });
+  session.sendMessage('t1', 'write it');
+  await when(() => asked(v));
+  session.confirm('c1', false);
+  await when(() => ended(v));
+
+  const turn = (session.chatState().turns as Bag[])[0] as Bag;
+  const row = (turn.responseParts as Bag[]).find((one) => one.kind === 'toolCall' && (one.toolCall as Bag).toolCallId === 'c1')?.toolCall as Bag;
+  expect(row).toMatchObject({ status: 'cancelled', reason: 'denied' });
+  expect(row).not.toHaveProperty('success');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 it('sends a declined edit its after before the next ask', async () => {
   const dir = place();
   const { session, v, edits } = await open({
@@ -803,6 +858,76 @@ it('says no times for a call the run refused before it ran', () => {
   // The kind is still there: it is what the call is drawn as, and it was never
   // a time.
   expect((parts[0]?.toolCall as Bag)._meta).toEqual({ toolKind: 'terminal' });
+});
+
+/*
+ * An image a reply carries is the spec's reference to content held outside the
+ * state tree: the one the host answered for the bytes it kept, else the
+ * image's own URL, in the reply's order, and nothing for bytes nobody kept.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
+ */
+it('says a reply\'s image by the reference the host kept its bytes under, or by its own URL', () => {
+  const parts: Bag[] = [];
+  const turn = mapTurn({
+    turnId: 't1',
+    chatUri: 'ahp-chat:/tools',
+    parts,
+    startedAt: Date.now(),
+    displayNameOf: (name) => name,
+    ownerOf: () => undefined,
+    cancelled: () => false,
+    keptOf: (key) => (key === 'm1:1' ? { uri: 'session-db-resource:/image?kept', contentType: 'image/png', sizeHint: 9 } : undefined),
+  });
+  turn.actions({
+    type: 'model.completed',
+    message: {
+      id: 'm1',
+      role: 'assistant',
+      source: 'model',
+      createdAt: new Date().toISOString(),
+      parts: [
+        { type: 'text', text: 'Here: ' },
+        { type: 'image', mimeType: 'image/png', data: 'cG5n' },
+        { type: 'image', mimeType: 'image/jpeg', url: 'https://example.com/a.jpg' },
+        { type: 'image', mimeType: 'image/gif', data: 'Z2lm' },
+      ],
+    },
+    usage: { inputTokens: 1, outputTokens: 1 },
+    finish: 'stop',
+  } as unknown as RunEvent);
+  // The reply is said at the next event, once it is known not to be a summary.
+  const said = turn.actions({ type: 'run.steered' } as unknown as RunEvent);
+
+  expect(said.actions.filter((one) => one.type === 'chat/responsePart').map((one) => one.part)).toEqual([
+    expect.objectContaining({ kind: 'markdown' }),
+    { kind: 'contentRef', uri: 'session-db-resource:/image?kept', contentType: 'image/png', sizeHint: 9 },
+    { kind: 'contentRef', uri: 'https://example.com/a.jpg', contentType: 'image/jpeg' },
+  ]);
+  expect(parts.map((one) => one.kind)).toEqual(['markdown', 'contentRef', 'contentRef']);
+});
+
+/*
+ * An event a newer cofold sends that its types do not name maps to nothing,
+ * with nothing logged, as VS Code's Claude mapper maps a message type it does
+ * not know.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L292-L298
+ */
+it('maps an event cofold\'s types do not name to nothing, and logs nothing', () => {
+  const said = (['debug', 'error', 'info', 'log', 'warn'] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => {}));
+  try {
+    const turn = mapTurn({
+      turnId: 't1',
+      chatUri: 'ahp-chat:/tools',
+      parts: [],
+      startedAt: Date.now(),
+      displayNameOf: (name) => name,
+      ownerOf: () => undefined,
+      cancelled: () => false,
+    });
+    expect(turn.actions({ type: 'run.newer' } as unknown as RunEvent).actions).toEqual([]);
+    expect(said.flatMap((one) => one.mock.calls)).toEqual([]);
+  }
+  finally { for (const one of said) one.mockRestore(); }
 });
 
 it('asks before a shell command and sends its bare command on the request', async () => {

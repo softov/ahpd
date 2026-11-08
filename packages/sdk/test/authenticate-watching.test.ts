@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ROOT } from '../src/host.js';
-import { claude, createHost, hostTools, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
+import { claude, createHost, hostTools, machine, peer, resetSdk, sdk, sendAnswered, sessionQueries, settle } from './support/host.js';
 import type { Fake } from './support/claude-sdk.js';
 
 /*
@@ -20,7 +20,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 vi.mock('../../agent-claude/src/mcp.js', () => ({
   // The host offers none of its own here.
-  offeredServers: () => ({}),
+  toClaudeMcpServers: () => ({}),
   serversFor: () => ({ desk: { type: 'http', url: 'https://desk.example/desk' } }),
   urlOf: (config: { url?: string }) => config.url,
   protectedResource: async () => ({ resource: 'https://desk.example/', authorization_servers: ['https://login.example'] }),
@@ -30,6 +30,8 @@ beforeEach(resetSdk);
 
 const DIR = '/home/softov';
 const DESK = 'https://desk.example/';
+/** The server's row, named by its internal uri: no file here declares it. */
+const DESK_ID = 'claude-internal:/mcp/desk#mcp=desk';
 const ONE = 'ahp-session:/one';
 const TWO = 'ahp-session:/two';
 
@@ -50,7 +52,9 @@ const opened = async (client: Client, uri: string): Promise<Fake> => {
     params: { channel: uri, provider: 'claude', workingDirectories: [`file://${DIR}`] },
   });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
-  // `describe` answers on its own clock; the server's state arrives with it.
+  // The CLI its first send starts, whose `describe` answers on its own clock;
+  // the server's state arrives with it.
+  await sendAnswered(client, uri);
   await settle(8);
   const cli = sessionQueries().at(-1);
   if (cli === undefined) throw new Error(`no CLI runs for ${uri}`);
@@ -104,22 +108,28 @@ it('refuses a token for a server only another connection watches', async () => {
   expect(sdk.mcpDeclared).toEqual([]);
 });
 
-it('refuses a token aimed at a session its connection does not watch', async () => {
-  const { bea, one } = await twoClients();
+/*
+ * VS Code takes a token aimed at an MCP server of an existing session from any
+ * connection, watching it or not.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2155-L2164
+ */
+it('takes a token aimed at a session its connection does not watch, as VS Code\'s', async () => {
+  const { bea } = await twoClients();
   await expect(bea.client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: DESK, token: 'desk-bea', target: { kind: 'mcpServer', session: ONE, customizationId: 'mcp:desk' } },
-  })).rejects.toMatchObject({ code: -32602 });
-  await settle(8);
-  expect(header(one)).toBeUndefined();
+    params: { channel: ROOT, resource: DESK, token: 'desk-bea', target: { kind: 'mcpServer', session: ONE, customizationId: DESK_ID } },
+  })).resolves.toEqual({});
 });
 
 /*
- * A session is watched, asked about and aimed at by the one URI it is held by:
- * the same id in a provider's scheme is no session, and a token aimed at it
- * names no server.
+ * A server's sign-in is its `authRequired` state, which a client watching the
+ * session reads, as a VS Code window reads it: VS Code's host says no
+ * `auth/required` for it. A session is watched and aimed at by the one URI it
+ * is held by: the same id in a provider's scheme is no session, and a token
+ * aimed at it names no server.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L729-L736
  */
-it('asks a client watching the session to sign in under its one URI, and refuses a token aimed at another', async () => {
+it('leaves a server\'s sign-in to its state, and refuses a token aimed at another URI of the session', async () => {
   sdk.mcp = [{ name: 'desk', status: 'connected' }];
   const host = createHost({ path: DIR, agents: [claude({ paths: [DIR] })], ...machine() });
   const ana = await introduced(host, 'ana');
@@ -128,27 +138,29 @@ it('asks a client watching the session to sign in under its one URI, and refuses
     params: { channel: ONE, provider: 'claude', workingDirectories: [`file://${DIR}`] },
   });
   await ana.client.handle({ method: 'subscribe', params: { channel: ONE } });
+  await sendAnswered(ana.client, ONE);
   await settle(8);
 
   // The server starts asking for a sign-in, read when somebody asks it to start.
   sdk.mcp = [{ name: 'desk', status: 'needs-auth' }];
   void ana.client.handle({
     method: 'dispatchAction',
-    params: { channel: ONE, action: { type: 'session/mcpServerStartRequested', id: 'mcp:desk' } },
+    params: { channel: ONE, action: { type: 'session/mcpServerStartRequested', id: DESK_ID } },
   });
   await settle(12);
 
-  expect(signIns(ana.wire, 'required')).toEqual([{
-    method: 'auth/required',
-    params: { channel: ONE, resource: expect.objectContaining({ resource: DESK }), reason: 'required' },
-  }]);
+  expect(signIns(ana.wire, 'required')).toEqual([]);
+  const state = (await ana.client.handle({ method: 'subscribe', params: { channel: ONE } }) as {
+    snapshot: { state: { customizations?: { id?: string; state?: { kind?: string } }[] } };
+  }).snapshot.state;
+  expect(state.customizations?.find((one) => one.id === DESK_ID)?.state?.kind).toBe('authRequired');
   await expect(ana.client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: 'claude:/one', customizationId: 'mcp:desk' } },
+    params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: 'claude:/one', customizationId: DESK_ID } },
   })).rejects.toMatchObject({ code: -32602 });
   await expect(ana.client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: ONE, customizationId: 'mcp:desk' } },
+    params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: ONE, customizationId: DESK_ID } },
   })).resolves.toEqual({});
 });
 
