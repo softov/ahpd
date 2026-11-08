@@ -12,7 +12,7 @@
  * catalogue is `catalog.ts`.
  */
 
-import type { Agent, Bag, Listed, MachineNeed, Offered, Session } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, MachineNeed, Offered, Session, SessionMachine } from '@ahpd/sdk';
 import { catalogueOf, deletes, findListed, forgetSession, forks, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
 import type { Choice } from './session/config.js';
@@ -216,7 +216,9 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
      * handshake at the delete while none has been read.
      */
     get delete() {
-      return deletes(options) === false ? undefined : (id: string) => forgetSession(options, provider, id);
+      return deletes(options) === false
+        ? undefined
+        : (id: string, _directory: string | undefined, machine?: SessionMachine) => forgetSession(options, provider, id, machine);
     },
 
     /*

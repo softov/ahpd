@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -260,6 +260,35 @@ it('spawns the server through the machine the session named', async () => {
 
   expect(asked).toEqual([{ id: 'box', command: process.execPath }]);
   expect(types(p, chatUri)).toContain('chat/turnComplete');
+});
+
+it('deletes a session in the machine it ran in, rather than on this host', async () => {
+  const asked: string[] = [];
+  const log = join(mkdtempSync(join(tmpdir(), 'ahpd-machine-delete-')), 'requests.jsonl');
+  const computers: ComputerPort = {
+    how: async (id) => {
+      asked.push(id);
+      return id === 'box' ? { command: process.execPath, args: [FIXTURE], env: { ACP_LOG: log } } : undefined;
+    },
+  };
+  // The backend's own command exits before the handshake, so a delete sent to
+  // this host would fail the dispose.
+  const { client, peer: p, chatUri, uri } = await talking({
+    command: process.execPath, args: FAILS, computers, computer: 'computer://box',
+  });
+  begin(client, chatUri);
+  await until(() => settled(p, chatUri));
+  opened.splice(0);
+
+  await client.handle({ method: 'disposeSession', params: { channel: uri } });
+
+  // Every server was the machine's: the session's, then one per delete - the
+  // row's and its chat's, whose id is the conversation the session held.
+  expect(asked).toEqual(['box', 'box', 'box']);
+  const sent = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { method?: string; params?: { sessionId?: string } });
+  const conversation = sent.find((one) => one.method === 'session/prompt')?.params?.sessionId;
+  expect(conversation).toBeDefined();
+  expect(sent.filter((one) => one.method === 'session/delete').map((one) => one.params?.sessionId)).toContain(conversation);
 });
 
 it('refuses a machine that is not there rather than running on the host', async () => {

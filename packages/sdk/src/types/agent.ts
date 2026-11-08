@@ -186,6 +186,20 @@ export interface SessionAt {
 }
 
 /**
+ * The machine a session ran in, handed to a backend that deletes it there.
+ *
+ * A backend that spawns its server through `Start.computers` keeps the
+ * conversation inside the machine, so a delete sent to a server on this host
+ * reaches a store that never held it.
+ */
+export interface SessionMachine {
+  /** The machine's id: the `<id>` of the session's `computer://<id>`. */
+  id: string;
+  /** The host's port, gated to this session's provider and owner as the session's own was. */
+  computers: ComputerPort;
+}
+
+/**
  * What a backend's question about a call carries for the host's decision,
  * beside the `chat/toolCallReady` it emits, as VS Code's agents raise a
  * pending confirmation: fields the host reads and takes off the action before
@@ -1004,8 +1018,14 @@ export interface Agent<Started extends Session | Promise<Session> = Session | Pr
    * been read, and is absent once one said the server keeps its sessions. The
    * host reads this property once per delete, so what it finds is the answer
    * as of then.
+   *
+   * `machine` is where a session that asked for a computer ran, and absent for
+   * one that ran on this host. A backend that runs its server in the machine
+   * deletes through that machine: a port that answers no such machine is a
+   * conversation gone with it, and one that throws is a delete that did not
+   * happen.
    */
-  delete?: ((id: string, directory: string | undefined) => Promise<void>) | undefined;
+  delete?: ((id: string, directory: string | undefined, machine?: SessionMachine) => Promise<void>) | undefined;
 
   /**
    * Where this backend keeps its own record of a session, if it keeps one.

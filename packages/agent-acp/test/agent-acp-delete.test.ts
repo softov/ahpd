@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
-import type { Agent, Bag, Emit, Session, Start } from '@ahpd/sdk';
+import type { Agent, Bag, ComputerPort, Emit, Session, Start } from '@ahpd/sdk';
 import { acpAgent } from '../src/index.js';
 
 /*
@@ -177,4 +177,58 @@ it('forgets a session this process watched, so the next listing does not offer i
   expect(rows?.some((row) => row.id === 'watched-1')).toBe(false);
   // And the transcript is gone with it, which is what the record was for.
   expect(await agent.transcript?.('watched-1')).toBeUndefined();
+});
+/*
+ * A session that ran in a machine keeps its conversation there, in the store of
+ * the server the machine ran. The backend's own command is a program that
+ * exits before it answers, so a delete that reached this host would fail.
+ */
+const HOST_FAILS = ['-e', 'process.exit(3)'];
+
+/** A backend whose own command fails, with every line it logs. */
+function inMachine(): { agent: Agent; lines: string[] } {
+  const lines: string[] = [];
+  return {
+    agent: acpAgent({
+      command: process.execPath,
+      args: HOST_FAILS,
+      provider: 'acp',
+      log: (line) => { lines.push(line); },
+    }),
+    lines,
+  };
+}
+
+it('deletes a session that ran in a machine through that machine, and spawns nothing on this host', async () => {
+  const log = join(scratch(), 'requests.jsonl');
+  const asked: { id: string; command: string; args: string[] | undefined }[] = [];
+  const computers: ComputerPort = {
+    how: async (id, spawn) => {
+      asked.push({ id, command: spawn.command, args: spawn.args });
+      return { command: process.execPath, args: [FIXTURE], env: { ACP_LOG: log } };
+    },
+  };
+  const { agent } = inMachine();
+
+  await agent.delete?.('listed-2', '/tmp/two', { id: 'box', computers });
+
+  // The machine was asked for the backend's own command, and its server got the delete.
+  expect(asked).toEqual([{ id: 'box', command: process.execPath, args: HOST_FAILS }]);
+  expect(requests(log).map((one) => one.method)).toEqual(['initialize', 'session/delete']);
+  expect(requests(log)[1]?.params?.sessionId).toBe('listed-2');
+});
+
+it('counts a session whose machine is gone as deleted, and says so', async () => {
+  const computers: ComputerPort = { how: async () => undefined };
+  const { agent, lines } = inMachine();
+
+  await expect(agent.delete?.('listed-1', '/tmp/one', { id: 'box', computers })).resolves.toBeUndefined();
+  expect(lines).toContain('acp: computer://box is gone, and listed-1 with it');
+});
+
+it('raises a delete whose machine runtime is not answering', async () => {
+  const computers: ComputerPort = { how: async () => { throw new Error('the runtime is not answering'); } };
+  const { agent } = inMachine();
+
+  await expect(agent.delete?.('listed-1', '/tmp/one', { id: 'box', computers })).rejects.toThrow('the runtime is not answering');
 });

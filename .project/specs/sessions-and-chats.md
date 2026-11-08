@@ -354,6 +354,14 @@ THEN the host logs once per provider that the backend keeps its own copy.
 WHEN the backend's `delete` throws
 THEN the host still removes the row and sends the removal, and then it gives the error to the client.
 
+WHEN the session's config named a machine, `computer://<id>`
+THEN the host gives the backend's `delete` that machine and the computers port, gated to the session's provider and owner as its spawn was
+AND a backend that spawns its server through the port deletes the conversation inside the machine, not on this host.
+
+WHEN the session's config named a machine and the host has no computer plugin
+THEN the host logs that nothing of the session in the machine was deleted, and it does not call the backend's `delete`.
+
+A machine the port no longer has is a deleted conversation, and a port that cannot reach its runtime is a delete that failed.
 A backend's `delete` can be a getter, because the ACP backend learns it from the server's handshake.
 See [`code://packages/sdk/src/host/lifecycle.ts`](../../packages/sdk/src/host/lifecycle.ts).
 

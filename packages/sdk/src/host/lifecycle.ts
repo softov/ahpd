@@ -1,6 +1,6 @@
 import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
-import { computerId } from '../machines/computers.js';
+import { computerId, computersFor } from '../machines/computers.js';
 import { deleteNested } from '../sessions/nested.js';
 import { uriOf } from '../resources/fileuri.js';
 import { idOf, uriFor, Status } from '../sessions/catalog.js';
@@ -26,7 +26,7 @@ import type { MessageChatAttachment } from '@microsoft/agent-host-protocol';
 import type { Owner } from '../types/usage.js';
 import type { Principal } from '../types/users.js';
 import type { Connection } from '../types/host.js';
-import type { Agent } from '../types/agent.js';
+import type { Agent, SessionMachine } from '../types/agent.js';
 import type { StoredWorktree } from '../types/sessions.js';
 import type { Worktrees } from '../types/worktrees.js';
 import type { Held } from './state.js';
@@ -79,6 +79,16 @@ export type Attached =
   | { attachments?: MessageAttachment[] | undefined; refusal?: undefined }
   | { refusal: string; attachments?: undefined };
 
+/** Where a session ran: the machine its config named, the session, and whose it was. */
+export interface RanIn {
+  /** The machine's id: the `<id>` of the session's `computer://<id>`. */
+  id: string;
+  /** The session's URI, which the machine gate checks a delete against. */
+  session: string;
+  /** The session's owner, which the machine was prepared for. */
+  owner: Owner | undefined;
+}
+
 /**
  * What happens to a session between being opened and being gone.
  *
@@ -119,7 +129,9 @@ export interface Lifecycle {
   /** The name a backend is handed for one chat, which is the id a restart resumes it by. */
   chatIdOf(uri: string, chatUri: string, own: string | undefined): string | undefined;
   /** The backend's own copy of one chat's conversation disposed, as VS Code's provider disposes a chat. */
-  disposeProviderChat(backendId: string, agent: Agent, directory: string | undefined): Promise<unknown>;
+  disposeProviderChat(backendId: string, agent: Agent, directory: string | undefined, ran: RanIn | undefined): Promise<unknown>;
+  /** The machine a session runs in, while this host holds it; nothing for one on this host. */
+  ranIn(uri: string): RanIn | undefined;
   /**
    * The backend that serves one chat: the chat's own, or the session's, as
    * VS Code resolves the provider for a chat.
@@ -594,6 +606,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     uri: string,
     agent: Agent,
     directory: string | undefined,
+    ran: RanIn | undefined,
   ): Promise<unknown> => {
     if (agent.delete === undefined) {
       if (!cannotDelete.has(agent.provider)) {
@@ -603,7 +616,22 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       return undefined;
     }
     try {
-      await agent.delete(idOf(uri), directory);
+      /*
+       * A session that asked for a machine is deleted there, through the same
+       * gate its own spawn went through. A host with no computer plugin cannot
+       * reach the machine - and never started the session in one - so it says
+       * so and sends nothing: a delete sent to this host instead would succeed
+       * against a store that never held the conversation.
+       */
+      let machine: SessionMachine | undefined;
+      if (ran !== undefined) {
+        if (options.computers === undefined) {
+          log(`${ran.session} asked for computer://${ran.id}, and this host has no computer plugin, so nothing of it there was deleted`);
+          return undefined;
+        }
+        machine = { id: ran.id, computers: computersFor(options.computers, agent.provider, ran.session, ran.owner) };
+      }
+      await agent.delete(idOf(uri), directory, machine);
       return undefined;
     }
     catch (error) {
@@ -620,8 +648,19 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * same question and so the same answer, one log line and one returned
    * failure included.
    */
-  const disposeProviderChat = (backendId: string, agent: Agent, directory: string | undefined): Promise<unknown> =>
-    deleted(uriFor(backendId), agent, directory);
+  const disposeProviderChat = (backendId: string, agent: Agent, directory: string | undefined, ran: RanIn | undefined): Promise<unknown> =>
+    deleted(uriFor(backendId), agent, directory, ran);
+
+  /**
+   * The machine a session runs in, read off what this host kept of its config.
+   *
+   * Read while the session is still held: the teardown forgets the config and
+   * the owner both, and with them the only record of where the conversation is.
+   */
+  const ranIn = (uri: string): RanIn | undefined => {
+    const id = computerId((kept.config(idOf(uri)) ?? decided.get(uri))?.computer);
+    return id === undefined ? undefined : { id, session: uri, owner: kept.owner(idOf(uri)) };
+  };
 
   /**
    * A nested session's copy inside its machine, gone.
@@ -753,10 +792,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * only moment at which both still say where the session ran.
      *
      * The chats come with the directory, and for the same reason: the teardown
-     * below drops the record they are read from.
+     * below drops the record they are read from. So does the machine, which is
+     * read off the config the teardown forgets.
      */
     const directory = dirOf(uri);
     const chats = ctx.heldChats(idOf(uri));
+    const ran = ranIn(uri);
     /*
      * And the checkpoints its turns left in that folder, which are commits
      * under a ref of the session's own: nothing else will ever point at them,
@@ -771,7 +812,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     }
     if (held !== undefined) await teardown(held, uri);
     else await deletedInside(uri);
-    let failure = await deleted(uri, agent, directory);
+    let failure = await deleted(uri, agent, directory, ran);
     /*
      * And every chat of it, each a conversation of its own that the backend
      * keeps under an id of its own. Closed ones included: their conversation
@@ -791,7 +832,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       const served = chat.provider !== undefined
         ? ctx.agents.get(chat.provider) ?? agent
         : held === undefined ? agent : getProviderForChat(held, chat.uri);
-      const gone = await disposeProviderChat(chat.backendId, served, directory);
+      const gone = await disposeProviderChat(chat.backendId, served, directory, ran);
       if (failure === undefined) failure = gone;
     }
     if (held === undefined) {
@@ -2557,7 +2598,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   return {
-    removeSession, respawning, restart, moveSession, relaunchChat, chatIdOf, disposeProviderChat, backendsOwn,
+    removeSession, respawning, restart, moveSession, relaunchChat, chatIdOf, disposeProviderChat, ranIn, backendsOwn,
     getProviderForChat, chatConfig, effectiveChatConfigValues, initialChatConfig, keepChatOwnConfigValues, isolated, oweTree,
     requestSessionWorktreeRemoval, restoreSessionWorktree, canAutomaticallyDeleteArchivedSession, createDetachedWorktree,
     beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, scratchFolder, createProviderSession,

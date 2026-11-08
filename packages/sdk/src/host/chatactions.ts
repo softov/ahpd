@@ -2407,7 +2407,7 @@ export function chatAction(
         ctx.deleteLocalTurns(uri, chatUri, all.slice(kept.length) as Bag[]);
         const work = (async () => {
           await session.close('stopping');
-          const failed = own === undefined || own === '' ? undefined : await ctx.disposeProviderChat(own, agent, ctx.dirOf(uri));
+          const failed = own === undefined || own === '' ? undefined : await ctx.disposeProviderChat(own, agent, ctx.dirOf(uri), ctx.ranIn(uri));
           ctx.described.delete(chatUri);
           await spawn(
             agent,

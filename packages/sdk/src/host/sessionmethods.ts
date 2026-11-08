@@ -1736,7 +1736,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * told its request failed.
        */
       if (ctx.closedChats === 'delete' && held !== undefined && own !== undefined && own !== '') {
-        await ctx.disposeProviderChat(own, getProviderForChat(held, chatUri), ctx.dirOf(found.uri));
+        await ctx.disposeProviderChat(own, getProviderForChat(held, chatUri), ctx.dirOf(found.uri), ctx.ranIn(found.uri));
       }
       log(`closed ${chatUri}`);
       dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });

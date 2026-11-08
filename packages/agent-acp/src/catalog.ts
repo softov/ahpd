@@ -17,7 +17,7 @@
 import { RequestError } from '@agentclientprotocol/sdk';
 import type { AgentCapabilities, SessionInfo, SessionUpdate } from '@agentclientprotocol/sdk';
 import { bag, uriOf } from '@ahpd/sdk';
-import type { Bag, Listed } from '@ahpd/sdk';
+import type { Bag, Listed, SessionMachine } from '@ahpd/sdk';
 import { connectAcp } from './connection.js';
 import { replayedTurns } from './transcript.js';
 import type { AcpConnection, AcpHandlers, AcpOptions, WatchedSession } from './types.js';
@@ -306,37 +306,94 @@ export function watchedSession(provider: string, id: string): WatchedSession | u
  * out. Anything else is raised, because a conversation that would not go is a
  * delete that did not happen.
  */
-export async function forgetSession(options: AcpOptions, provider: string, id: string): Promise<void> {
+export async function forgetSession(options: AcpOptions, provider: string, id: string, machine?: SessionMachine): Promise<void> {
+  if (machine !== undefined) {
+    await forgetInMachine(options, provider, id, machine);
+    return;
+  }
   const held = listingFor(options);
   try {
-    const handshake = await held.connection.initialize();
-    heardCapabilities(options, handshake.agentCapabilities);
-    if (deletes(options) !== true) {
-      options.log?.(`${provider} keeps its own copy of a deleted session, so it may be listed again`);
-      return;
-    }
-    try {
-      await held.connection.deleteSession(id);
-    }
-    catch (error) {
-      if ((error as { code?: unknown }).code !== NOT_FOUND) throw error;
-    }
-    finally {
-      /*
-       * The rows a find read are a moment old, and a delete is the one change
-       * they cannot have: kept over it, a find right after a delete would answer
-       * the session the server has just dropped, and the host would offer it
-       * again. They go, so the next find lists the server again.
-       */
-      finds.delete(options);
-      watched.delete(keyOf(provider, id));
-      placeOf.delete(keyOf(provider, id));
-    }
+    await deleteThrough(held.connection, options, provider, id);
   }
   finally {
     idleClose(options, held);
   }
 }
+
+/**
+ * One session deleted from a server that ran in a machine.
+ *
+ * The conversation is the store of the server inside the machine, so the
+ * delete goes to a server spawned there the way the session's own was, rather
+ * than to the listing server on this host, which never held it. That server is
+ * spawned for this one delete and stopped after it.
+ *
+ * A machine the port no longer has took the conversation with it, so the
+ * delete is done; a port that cannot reach its runtime throws, and so does the
+ * delete.
+ */
+async function forgetInMachine(options: AcpOptions, provider: string, id: string, machine: SessionMachine): Promise<void> {
+  const spawn = await machine.computers.how(machine.id, {
+    command: options.command,
+    ...(options.args === undefined ? {} : { args: options.args }),
+    ...(options.env === undefined ? {} : { env: options.env }),
+  });
+  if (spawn === undefined) {
+    options.log?.(`${provider}: computer://${machine.id} is gone, and ${id} with it`);
+    forgotten(options, provider, id);
+    return;
+  }
+  const connection = connectAcp({
+    command: spawn.command,
+    args: spawn.args,
+    ...(spawn.env === undefined ? {} : { env: spawn.env }),
+    ...(spawn.cwd === undefined ? {} : { cwd: spawn.cwd }),
+    handlers: { update: () => {} },
+    ...(options.log === undefined ? {} : { log: options.log }),
+    ...(options.exitGraceMs === undefined ? {} : { exitGraceMs: options.exitGraceMs }),
+    ...(options.stderrBytes === undefined ? {} : { stderrBytes: options.stderrBytes }),
+    ...(options.killGraceMs === undefined ? {} : { killGraceMs: options.killGraceMs }),
+  });
+  try {
+    await deleteThrough(connection, options, provider, id);
+  }
+  finally {
+    await connection.close();
+  }
+}
+
+/** The handshake, then `session/delete` where the server advertises it, over one connection. */
+async function deleteThrough(connection: AcpConnection, options: AcpOptions, provider: string, id: string): Promise<void> {
+  const handshake = await connection.initialize();
+  heardCapabilities(options, handshake.agentCapabilities);
+  if (deletes(options) !== true) {
+    options.log?.(`${provider} keeps its own copy of a deleted session, so it may be listed again`);
+    return;
+  }
+  try {
+    await connection.deleteSession(id);
+  }
+  catch (error) {
+    if ((error as { code?: unknown }).code !== NOT_FOUND) throw error;
+  }
+  finally {
+    forgotten(options, provider, id);
+  }
+}
+
+/**
+ * This process's records of a deleted session, gone.
+ *
+ * The rows a find read are a moment old, and a delete is the one change they
+ * cannot have: kept over it, a find right after a delete would answer the
+ * session the server has just dropped, and the host would offer it again. They
+ * go, so the next find lists the server again.
+ */
+const forgotten = (options: AcpOptions, provider: string, id: string): void => {
+  finds.delete(options);
+  watched.delete(keyOf(provider, id));
+  placeOf.delete(keyOf(provider, id));
+};
 
 /**
  * One ACP server spawned for a read, with the handlers it was given.
