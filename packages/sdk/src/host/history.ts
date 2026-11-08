@@ -1,4 +1,6 @@
 import { idFor } from '../sessions/catalog.js';
+import { localPath } from '../resources/fileuri.js';
+import { scopeName } from '../usage/scopes.js';
 import { chatUriFor } from './channels.js';
 import type { Agent, Listed, SessionAt } from '../types/agent.js';
 import type { Bag } from '../types/common.js';
@@ -387,6 +389,33 @@ export function createHistory(ctx: HostContext): History {
     if (already) return await already;
     const asked = (async (): Promise<Bag[] | undefined> => {
       const row = await catalogueRow(id, askedEpoch);
+      /*
+       * Its config resolved as a created session's, against the folder its
+       * choice was made in, as VS Code's host resolves a restored session's
+       * with a folder isolation under the values it stored. The tree the
+       * record holds says the isolation and the branch it was cut from, and
+       * the scope it is charged to is its scope. A session this process holds
+       * a config for keeps it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14877-L14889
+       */
+      const agent = owners.get(nameOf(id));
+      if (row && agent !== undefined && !ctx.decided.has(nameOf(id))) {
+        const tree = ctx.kept.worktree?.(id);
+        const listed = ctx.wheres.get(nameOf(id))?.[0];
+        const scope = ctx.kept.scope(id);
+        await ctx.resolveCreatedSessionConfig(
+          nameOf(id),
+          tree?.repository ?? ctx.kept.workingDirectory?.(id) ?? (listed === undefined ? undefined : localPath(listed)),
+          {
+            isolation: 'folder',
+            ...ctx.storedConfig(agent, id),
+            ...(tree === undefined ? {} : { isolation: 'worktree', branch: tree.base }),
+            ...(scope === null || scope === undefined ? {} : { scope: scopeName(scope) }),
+          },
+          ctx.principalFor(ctx.kept.owner(id)),
+          true,
+        );
+      }
       /*
        * A nested session, opened from what this host recorded of it.
        *
