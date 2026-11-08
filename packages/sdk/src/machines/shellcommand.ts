@@ -70,9 +70,15 @@ const prefixForHistorySuppression = (shellType: ShellType): string => (shellType
 /** Whether a command spans lines: a line break no backslash continues. */
 const isMultilineCommand = (command: string): boolean => /(?<!\\)\n/.test(command.replace(/\r\n|\r/g, '\n'));
 
-/** The line that echoes the exit code of the command before it, with this run's id. */
+/**
+ * The line that echoes the exit code of the command before it, with this run's id.
+ *
+ * PowerShell's code is read off `$?` first: `$LASTEXITCODE` is a native
+ * program's alone, and stays unset after a cmdlet such as `echo`, so VS Code's
+ * line echoes no code for one and the command is never seen to end.
+ */
 const buildSentinelCommand = (sentinelId: string, shellType: ShellType): string => (shellType === 'powershell'
-  ? `Write-Output "${SENTINEL_PREFIX}${sentinelId}_EXIT_$LASTEXITCODE>>>"`
+  ? `$__ahpdOk = $?; Write-Output "${SENTINEL_PREFIX}${sentinelId}_EXIT_$(if ($__ahpdOk) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 })>>>"`
   : `echo "${SENTINEL_PREFIX}${sentinelId}_EXIT_$?>>>"`);
 
 /**
