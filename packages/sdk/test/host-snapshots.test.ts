@@ -133,6 +133,31 @@ describe('what it says it is doing', () => {
   });
 
   /*
+   * A row whose activity went away says so as `null`, the widening
+   * `docs/sdk/AHP.md` records under "Server notifications": a change is
+   * spread over the row a client holds, so a field left off would keep the
+   * last activity showing, and the reference host says `null` where its
+   * client reads it cleared.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L319-L331
+   */
+  it('says a session\'s activity that went away as null on its catalogue row', async () => {
+    const { host, client, p, uri } = await begun(doing('Reading'));
+    await flushed();
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUriFor(uri), clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+    });
+    await flushed();
+    const said = p.notes
+      .filter((note) => note.method === 'root/sessionSummaryChanged' && (note.params as { session?: string }).session === uri)
+      .map((note) => (note.params as { changes: { activity?: unknown } }).changes)
+      .filter((changes) => 'activity' in changes)
+      .map((changes) => changes.activity);
+    expect(said).toEqual(['Reading', null]);
+    await host.close();
+  });
+
+  /*
    * A backend's own word for what its session is doing is said as it came, as
    * VS Code's host says what its agent reports.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912

@@ -751,22 +751,16 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   /*
    * The declarations this host widens on purpose, keyed by the finding, each
    * to the heading in `docs/sdk/AHP.md` that records why.
-   *
-   * A partial is spread over the row a client holds, so a key left off is a
-   * field that did not move and an idled row would keep saying what its last
-   * tool was doing. The reference host sends `null` for that and its client
-   * reads it as cleared, so this one does too.
    */
   const WIDENED: Record<string, string> = {
-    'SessionSummaryChangedParams /changes/activity type must be string': 'Server notifications',
     // A question's request, marked with its purpose as VS Code's agents mark it,
     // wherever the request rides.
     'ActionEnvelope /action/request undeclared key `_meta`': 'Being asked',
     'ActionEnvelope /action/request/request undeclared key `_meta`': 'Being asked',
     'ChatInputRequestedAction /request undeclared key `_meta`': 'Being asked',
-    'CommandMap.reconnect.result /actions/N/action/request undeclared key `_meta`': 'Being asked',
-    'CommandMap.reconnect.result /actions/N/action/request/request undeclared key `_meta`': 'Being asked',
+    'ChatState /activeTurn/responseParts/N/request undeclared key `_meta`': 'Being asked',
     'SessionInputNeededSetAction /request/request undeclared key `_meta`': 'Being asked',
+    'SessionState /inputNeeded/N/request undeclared key `_meta`': 'Being asked',
     // A property a chat may set for itself, marked as VS Code's agents mark one.
     'ResolveSessionConfigResult /schema/properties/permissionMode undeclared key `chatMutable`': 'Commands',
     'ResolveSessionConfigResult /schema/properties/permissions undeclared key `chatMutable`': 'Commands',
