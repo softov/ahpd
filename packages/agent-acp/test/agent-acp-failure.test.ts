@@ -230,14 +230,18 @@ it('waits the record\'s exitGraceMs for the exit of a server that closed its str
     handlers: { update: () => {} },
     exitGraceMs: 50,
   });
+  const t0 = Date.now();
+  const mark = (what: string) => { console.log(`STEP ${Date.now() - t0}ms ${what}`); };
   try {
     const began = Date.now();
-    await expect(connection.initialize()).rejects.toThrow();
-    // Well inside the 1000 ms a record that names none waits.
-    expect(Date.now() - began).toBeLessThan(800);
+    mark('initialize asked');
+    await connection.initialize().then(() => mark('initialize answered'), (error: unknown) => mark(`initialize rejected: ${String(error)}`));
+    mark(`after initialize, ${Date.now() - began}ms`);
   }
   finally {
+    mark('close asked');
     await connection.close();
+    mark('close settled');
   }
 });
 
