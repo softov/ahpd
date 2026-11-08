@@ -6,6 +6,7 @@ import type { FileEdit } from './changes.js';
 import type { BoundTool } from './agent.js';
 import type { Account } from './probe.js';
 import type { ClientCallAnswer } from '../tools/clientcalls.js';
+import type { AgentPermissionDecisionSource } from '../vscode/agentpermissionresponsemeta.js';
 
 export type { MessageAttachment };
 
@@ -724,6 +725,14 @@ export interface Session {
    * host's or the backend's own, when the client sent one as
    * `selectedOptionId`; absent, the answer is a plain approve or deny.
    *
+   * `decisionSource` says who decided, as VS Code's host hands its agent the
+   * decision source of a permission response: `host_policy` for an answer the
+   * host's rules made, which nobody was asked, and for a client's decision the
+   * source its `_meta['agentHost.permissionDecisionSource']` names, where it
+   * names one of VS Code's four; absent where nothing says.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1696-L1765
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1898-L1902
+   *
    * Handed over once the chat's state has the call pending a confirmation,
    * which is the protocol's condition for taking one. The host has said the
    * client's own decision by then, so a `chat/toolCallConfirmed` the backend
@@ -732,7 +741,7 @@ export interface Session {
    * confirmation here, and the host then says the decision itself, since
    * every client holds the call the state says.
    */
-  confirm(toolCallId: string, approved: boolean, optionId?: string): boolean;
+  confirm(toolCallId: string, approved: boolean, optionId?: string, decisionSource?: AgentPermissionDecisionSource): boolean;
 
   /**
    * Replace the tools this session offers the model.
@@ -768,27 +777,20 @@ export interface Session {
    *
    * Handed over once the host has said the client's result to every client of
    * the chat, and for a result its client asks to have confirmed, once a
-   * client has approved it or denied it, a denial handed as a failure. False
-   * when no call by that id waits on that client here, a second result for a
-   * call among them, which the host logs. What the backend says of the call
-   * afterwards is said, and the protocol's reducer leaves the completed call
-   * as it was.
+   * client has approved it or denied it, a denial handed as a failure. A call
+   * a client that has gone still owes is handed the failure the host says for
+   * it once the client's window runs out or it leaves the session, as VS
+   * Code's host fails a departed client's calls. False when no call by that id
+   * waits on that client here, a second result for a call among them, which
+   * the host logs. What the backend says of the call afterwards is said, and
+   * the protocol's reducer leaves the completed call as it was.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
    */
   completeToolCall?(
     toolCallId: string,
     clientId: string,
     result: ClientCallAnswer,
   ): boolean;
-  /**
-   * A client that was running tool calls here has gone.
-   *
-   * @deprecated The host fails each call a gone client still owes itself, in
-   * VS Code's words, once the client's window runs out or it leaves the
-   * session, and hands the backend the failure through `completeToolCall`, as
-   * VS Code's host does; it calls no backend's `clientGone`.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
-   */
-  clientGone?(clientId: string): void;
   /**
    * Answer a question the agent asked, keyed by question id.
    *

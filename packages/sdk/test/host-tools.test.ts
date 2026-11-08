@@ -1095,14 +1095,19 @@ describe('the MCP servers a session is offered', () => {
    * with plugins of its own is - and the host's own servers are named so that
    * one of them clashes with the plugin's.
    */
-  async function withClientPlugin(pace = 0, tree: Record<string, string> = PLUGIN_TREE) {
+  async function withClientPlugin(pace = 0, tree: Record<string, string> = PLUGIN_TREE, refusedAgain?: Error) {
     const dir = mkdtempSync(join(tmpdir(), 'ahpd-host-plugins-'));
     dirs.push(dir);
     const base = echo({ path: dir, pace });
     const seen: Start[] = [];
     const agent: Agent = {
       ...base,
-      create: (start: Start) => { seen.push(start); return base.create(start); },
+      // A backend that will not start a chat a second time, where a case says so.
+      create: (start: Start) => {
+        if (refusedAgain !== undefined && seen.length > 0) throw refusedAgain;
+        seen.push(start);
+        return base.create(start);
+      },
     };
     let host: ReturnType<typeof createHost>;
     host = createHost({
@@ -1159,6 +1164,10 @@ describe('the MCP servers a session is offered', () => {
 
     return {
       dir, seen, loaded, finished,
+      /** The errors a turn ended in, as the chat says them. */
+      errors: (turnId: string): unknown[] => actions(watching, chat)
+        .filter((one) => one.action.type === 'chat/error' && one.action.turnId === turnId)
+        .map((one) => one.action),
       /** Everything this host said back to the client that asked, as a refusal. */
       refused: (): string[] => actions(holderPeer, uri)
         .map((one) => one.rejectionReason)
@@ -1230,6 +1239,23 @@ describe('the MCP servers a session is offered', () => {
       a: { type: 'stdio', command: join(at, 'bin', 'server'), args: ['--root', '.'] },
       b: { type: 'stdio', command: 'host-b' },
     });
+  });
+
+  /*
+   * The send waits for the chat that takes the running one's place, and a
+   * start again that fails ends the turn that waited on it, as a moved chat's
+   * relaunch that fails ends its turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L811
+   */
+  it('end the turn in the start\'s failure when the chat cannot be started again with the moved set', async () => {
+    const held = await withClientPlugin(0, PLUGIN_TREE, new Error('this backend will not start it again'));
+    await held.announce();
+    await until(() => held.loaded());
+    await held.send('t1');
+    await settle();
+
+    expect(held.seen).toHaveLength(1);
+    expect(JSON.stringify(held.errors('t1'))).toContain('this backend will not start it again');
   });
 
   it('start the chat again only when the set of plugins has moved', async () => {
@@ -2328,9 +2354,6 @@ describe('a client\'s call, held by the backend', () => {
           chat: start.chatUri,
           emit: start.emit,
           timeoutMs: start.clientToolTimeoutMs,
-          providers: (name) => current
-            .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
-            .map((one) => String(one.owner)),
         });
         const inner = base.create(start);
         held = { start, calls, tools: () => current, session: inner };

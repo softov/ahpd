@@ -215,8 +215,8 @@ The host keeps it in memory only, as VS Code's host keeps its root config.
 A daemon that restarts therefore holds no rule until a window pushes it again.
 A key names one tool exactly, or every tool of a server through `<server>/*`.
 A key is the backend's own tool name, matched with its case, so Claude's `Bash` and pi's `bash` are different keys.
-A tool this host offers is `ahp/<name>` in every backend.
-An MCP server's tool is `<server>/<tool>`: its server is the session's customization its call's `contributor` names, as [AHP](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1338-L1344) names an MCP tool's server on the call, and `<tool>` is the call's tool name or what ends it after a `__`. A call with no contributor is named by its full tool name alone.
+A tool this host offers is `host/<name>` in every backend, a tool of the server [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21) carries the host's tools on.
+An MCP server's tool is `<server>/<tool>`: its server is the session's customization its call's `contributor` names, as [AHP](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1338-L1344) names an MCP tool's server on the call, and `<tool>` is the call's tool name or what ends it after a `__`. A call no client and no MCP server of the session contributes is a server-side tool's, as [AHP](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1321-L1346) has a call say whose tool it runs: one of the tools this host offers is `host/<name>`, its name read from the call's the same way, whatever server its backend names it on, and any other is named by its full tool name alone.
 A matched call asks in every backend and every permission mode, `bypassPermissions` included.
 A `dontAsk` session refuses the call instead of asking.
 The question offers no "always" option, so an answer applies to that call alone.
@@ -1064,10 +1064,10 @@ A new tree carries what git checked out and nothing else: a checkout has no
 to run, so the isolation would work and the session inside it could not build -
 a failure the person meets after choosing it rather than while choosing it.
 `worktreeIncludeFiles` is what is brought along after the checkout: a list of
-patterns, in `.gitignore` syntax, for the git-ignored files to copy in. A
-comma-separated string is read as one list. The copy is best effort, one pattern at a time - a pattern that
-matches nothing is the ordinary case, and a session that refused to start over
-a missing optional file would be worse than one without it.
+patterns, in `.gitignore` syntax, for the git-ignored files to copy in. The
+copy is best effort, one pattern at a time - a pattern that matches nothing is
+the ordinary case, and a session that refused to start over a missing optional
+file would be worse than one without it.
 `worktreeSymlinkFolders` is the same idea for folders, and reaches them by
 linking rather than copying: a list of `.gitignore` patterns for the git-ignored
 folders to point at the checkout's, which is what makes `node_modules` - the

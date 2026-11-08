@@ -32,7 +32,7 @@ export type {
   Admission, Connected, Door, DoorOptions, NodeDoor, OnConnect, Opened, Raw, Runtime, Listener, ListenOptions, NodeRequestListener, RequestHandler, RequestsListener, RequestsOptions, StdioOptions, Tap,
 } from './listen.js';
 export type { Account, Offered } from './probe.js';
-export type { Agent, Listed, Start, BoundTool, Endpoint, ToolEffects, RestoredSubagent, SessionAt, McpServer, StdioMcpServer, HttpMcpServer, ToolResultResource, PendingConfirmation } from './agent.js';
+export type { Agent, Listed, Start, BoundTool, Endpoint, ToolEffects, RestoredSubagent, SessionAt, McpServer, StdioMcpServer, HttpMcpServer, ToolResultResource, PendingConfirmation, SchemaPolicy } from './agent.js';
 export type { ManagedSettingsPermissions, PermissionKind } from './permissions.js';
 export type {
   SandboxConfigValue, SandboxEnabledValue, SandboxFileSystemSetting, SandboxMaskedCredentials, SandboxUserConfiguredPaths,

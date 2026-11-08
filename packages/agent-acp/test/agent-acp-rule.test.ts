@@ -238,8 +238,13 @@ const OFFERED = [
 /** The call a question is about, in the shape the entry carries it. */
 const call = (entry: Bag | undefined): Bag => (entry?.toolCall ?? {}) as Bag;
 
+/*
+ * A host tool is `host/<name>` to the rule, a tool of the server VS Code's
+ * Claude carries the host's tools on, in every backend.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+ */
 it('asks before a matched host tool runs, and runs it when a person approves', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
+  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'host/list_sessions': false } });
   begin(client, chatUri, 'mreq=list_sessions={}=-');
   await until(() => question(p, uri) !== undefined);
 
@@ -249,10 +254,11 @@ it('asks before a matched host tool runs, and runs it when a person approves', a
     toolName: 'mcp__ahp__list_sessions',
     status: 'pending-confirmation',
   });
-  // One approval and one refusal: nothing on the card keeps an answer.
+  // VS Code's Allow Once and Skip, the options the host puts on a question the
+  // operator's rule asks: nothing on the card keeps an answer.
   expect(call(entry).options).toEqual([
-    { id: 'approve', label: 'Approve', kind: 'approve', group: 1 },
-    { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
+    { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+    { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
   ]);
   // It has not run while the question stands.
   expect(ran).toEqual([]);
@@ -264,7 +270,7 @@ it('asks before a matched host tool runs, and runs it when a person approves', a
 });
 
 it('refuses a matched host tool when a person denies it', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
+  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'host/list_sessions': false } });
   begin(client, chatUri, 'mreq=list_sessions={}=-');
   await until(() => question(p, uri) !== undefined);
 
@@ -277,7 +283,7 @@ it('refuses a matched host tool when a person denies it', async () => {
 });
 
 it('runs a host tool the rule does not name without asking', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/another_tool': false } });
+  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'host/another_tool': false } });
   begin(client, chatUri, 'mreq=list_sessions={}=-');
   await endedTurn(p, chatUri, 1);
 

@@ -18,11 +18,12 @@ import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, toolCallOfSubagentChat } from './channels.js';
 import { buildSubagentChatUri, chatUriFormatOf, subagentChatUri } from '../vscode/chatminting.js';
+import { findMcpChildId } from '../vscode/mcpcustomizations.js';
 import { CLOSING, withSenderOn } from './common.js';
 import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
 import {
   alwaysAsks, asksForTool, confirmationOptions, getAutoApproval as autoApprovalOf, isDeniedByPermissions, isForbiddenSnapshotWrite, managedDecision,
-  mcpServerOf, permissionRulesOf,
+  permissionRulesOf,
 } from './permissions.js';
 import type { ToolApproval } from './permissions.js';
 import { vscodeRootProperties } from '../vscoderootconfig.js';
@@ -32,10 +33,9 @@ import { sameFolder, trusted } from './trust.js';
 import { isWorktreeUnderRepository } from '../repo/worktrees.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
-import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
+import type { Agent, AutoApproval, AutoApprovalKind, BoundTool, Start } from '../types/agent.js';
 import type { TurnEndEvent, TurnEndReason } from '../types/events.js';
 import type { Owner } from '../types/usage.js';
-import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { ResourceStore } from '../types/resources.js';
@@ -104,12 +104,6 @@ export interface Spawn {
   /**
    * Start one backend's session, and the worker chats it goes on to ask for.
    *
-   * `sender` is the connection that sent the turn this start is for, when a
-   * client sent it. It is what the start's `trusted` and `getAutoApproval` are
-   * read from and nothing else is, so a start nobody's connection asked for -
-   * an automation, a host tool, a daemon restarting what it held - is a start
-   * with no trust and no rules at all.
-   *
    * `askedInstructions` is what the request that asked for this session says,
    * added to `Start.instructions` after what the host's tools say. It is not
    * kept, so a session started again after a restart is not told it: what has
@@ -131,7 +125,6 @@ export interface Spawn {
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
-    sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
   ): Session;
@@ -268,6 +261,23 @@ export function createSpawn(ctx: HostContext): Spawn {
     const linked = linkIn(action.content) ?? linkIn(result?.content) ?? links.linkOf(chat, action.toolCallId);
     const uri = linked ?? mintSubagentChatUri(session, chat, action.toolCallId);
     return { ...action, _meta: { ...action._meta, subagentChatUri: uri } };
+  };
+  /**
+   * A backend's start of an MCP server's call, the server's customization
+   * stamped on it where the backend named no contributor: a server a client's
+   * plugin contributes is a customization of the list this host lays over the
+   * session, which no backend is handed, so it is stamped here, where that list
+   * lives, as VS Code's Claude session stamps a call from the list it holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L420-L441
+   */
+  const withMcpContributor = (session: string, action: Bag): Bag => {
+    if (action.type !== 'chat/toolCallStart' || action.contributor !== undefined) return action;
+    const toolName = typeof action.toolName === 'string' ? action.toolName : '';
+    if (!toolName.startsWith('mcp__')) return action;
+    const serverName = toolName.split('__')[1];
+    const laid = ctx.stateOf(session)?.customizations;
+    const customizationId = serverName ? findMcpChildId(Array.isArray(laid) ? laid as Bag[] : [], serverName) : undefined;
+    return customizationId === undefined ? action : { ...action, contributor: { kind: 'mcp', customizationId } };
   };
   /**
    * The chat a call spawns a worker in, as VS Code's host mints one: in the
@@ -544,15 +554,16 @@ export function createSpawn(ctx: HostContext): Spawn {
      * `eligibleForAutoApproval` names.
      */
     const checked = options.managedRules !== 'handed';
-    // The operator's rule read against the tools this host offered the chat, which a backend names to the rule as
-    // `ahp/<name>`, and an MCP server's tool against the server its contributor names among the session's customizations.
+    // The operator's rule read by the call's contributor: the tools this host offered the chat and runs itself, which
+    // the rule names `host/<name>`, and an MCP server's tool against the server its contributor names among the
+    // session's customizations.
     const eligible = !checked || toolName === undefined || !alwaysAsks(options.eligibleForAutoApproval, toolName,
-      ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
-      mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
+      ctx.boundTools(session, chat, serving?.provider).filter((one) => one.owner === undefined).map((one) => one.definition.name),
+      contributor, ctx.stateOf(session)?.customizations);
     const managedSays = checked ? managedDecision(managedSettings, approval, subCommands) : undefined;
     const managed = signal.managedApprovalRequired === true || managedSays === 'ask' || !eligible;
     if (managedSays === 'deny' || isForbiddenSnapshotWrite(approval) || isDeniedByPermissions(approval, subCommands)) {
-      queueMicrotask(() => { backend()?.confirm(toolCallId, false); });
+      queueMicrotask(() => { backend()?.confirm(toolCallId, false, undefined, 'host_policy'); });
       return undefined;
     }
     const asked = { ...approval, ...(managed ? { managedApprovalRequired: true } : {}) };
@@ -566,7 +577,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       const { _meta: _given, ...rest } = action;
       return { ...rest, options: offered, ...(meta === undefined ? {} : { _meta: meta }) };
     }
-    queueMicrotask(() => { backend()?.confirm(toolCallId, true); });
+    queueMicrotask(() => { backend()?.confirm(toolCallId, true, undefined, 'host_policy'); });
     return {
       type: 'chat/toolCallReady',
       turnId: action.turnId,
@@ -584,7 +595,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
     // A question a worker's call puts is the lead chat's backend's to be answered, as a client's answer on the worker's chat is.
-    const action = toolReady(ref.session, uri, withWorkerUri(uri, given), () => {
+    const action = toolReady(ref.session, uri, withMcpContributor(ref.session, withWorkerUri(uri, given)), () => {
       const owning = sessions.get(ref.session);
       return owning === undefined ? undefined : ctx.leadOf(owning);
     });
@@ -1002,7 +1013,6 @@ export function createSpawn(ctx: HostContext): Spawn {
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
-    sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
   ): Session => {
@@ -1136,6 +1146,12 @@ export function createSpawn(ctx: HostContext): Spawn {
      * One endpoint per session, opened when the backend asks and closed when
      * the session goes, so a token reaches the tools of the session it was
      * handed to and nothing else.
+     *
+     * The operator's rule holds there as at the /mcp door, where the daemon's
+     * `managedRules` is `checked` and the backend asks nothing of its own
+     * before a call runs: a call through this server reaches no question, so a
+     * host tool the rule names is refused, and so it is in every list the
+     * backend hands the endpoint after.
      */
     const toolsServer = (ask?: {
       runClient?: RunClientTool;
@@ -1143,17 +1159,26 @@ export function createSpawn(ctx: HostContext): Spawn {
       mayRun?: MayRunTool;
     }): ToolsEndpoint | undefined => {
       if (bare) return undefined;
+      const ruled = options.managedRules !== 'handed' && ask?.mayRun === undefined;
+      const held = (tools: BoundTool[]): BoundTool[] => tools.map((one) => {
+        const name = one.definition.name;
+        if (!ruled || one.run === undefined || !asksForTool(options.eligibleForAutoApproval, `host/${name}`)) return one;
+        return {
+          ...one,
+          run: () => { throw new Error(`${name} asks every time: eligibleForAutoApproval names host/${name}, and this session's tools server puts no question`); },
+        };
+      });
       const opened = options.toolsServers?.open(
-        ctx.boundTools(uri, chatUri, agent.provider),
+        held(ctx.boundTools(uri, chatUri, agent.provider)),
         ask?.runClient,
         ask?.toolsChanged,
         ask?.mayRun,
       );
       if (opened === undefined) return undefined;
-      const held = ctx.served.get(uri) ?? [];
-      held.push(opened);
-      ctx.served.set(uri, held);
-      return opened;
+      const open = ctx.served.get(uri) ?? [];
+      open.push(opened);
+      ctx.served.set(uri, open);
+      return { ...opened, setTools: (now) => opened.setTools(held(now)) };
     };
     /*
      * What this backend is told about the folders it is handed.
@@ -1294,12 +1319,9 @@ export function createSpawn(ctx: HostContext): Spawn {
       chatUri,
       trusted: trustedBy,
       getAutoApproval,
-      ...(options.managedSettingsPermissions === undefined && options.eligibleForAutoApproval === undefined ? {} : {
-        managedSettings: {
-          ...(options.managedSettingsPermissions === undefined ? {} : { permissions: options.managedSettingsPermissions }),
-          ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
-        },
-      }),
+      // The operator's policy as it stands at the start: managed settings, and
+      // the auto-approval restriction a window forwarded.
+      ...ctx.schemaPolicy(),
       ...(userSettings === undefined ? {} : { userSettings }),
       /*
        * The tools bound to this session: this host's own, and whatever the
@@ -1540,7 +1562,7 @@ export function createSpawn(ctx: HostContext): Spawn {
         // A client's decision on a call is said once, as the client's.
         if (channel === 'chat' && decidedAlready(chatUri, action)) return;
         if (channel === 'chat') {
-          const put = toolReady(uri, chatUri, action, () => sessions.get(uri)?.chats.get(chatUri));
+          const put = toolReady(uri, chatUri, withMcpContributor(uri, action), () => sessions.get(uri)?.chats.get(chatUri));
           if (put === undefined) return;
           action = put;
         }

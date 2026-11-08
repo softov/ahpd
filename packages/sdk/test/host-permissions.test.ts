@@ -19,7 +19,7 @@ import { fileResources } from '../src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
-import type { HostOptions } from '../src/types/host.js';
+import type { HostOptions, HostTool } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Session } from '../src/types/session.js';
 import type { Users } from '../src/types/users.js';
@@ -71,7 +71,14 @@ type Answer = [string, boolean, string | undefined];
  * The echo backend, asking a person about one call of `tool` in every turn it
  * is sent, and keeping every answer it is handed.
  */
-const asking = (answers: Answer[], tool = 'bash', server?: { id: string; name: string }, asked: Bag = {}, starts: Start[] = []): Agent => {
+const asking = (
+  answers: Answer[],
+  tool = 'bash',
+  server?: { id: string; name: string },
+  asked: Bag = {},
+  starts: Start[] = [],
+  sources: (string | undefined)[] = [],
+): Agent => {
   const base = echo({ path: dir, pace: 50 });
   return {
     ...base,
@@ -98,8 +105,9 @@ const asking = (answers: Answer[], tool = 'bash', server?: { id: string; name: s
           // The question, with whatever the backend says for the host's decision beside it.
           start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: 'Run ls', toolInput: 'ls', confirmationTitle: 'Run Bash?', ...asked });
         },
-        confirm: (toolCallId: string, approved: boolean, optionId?: string) => {
+        confirm: (toolCallId: string, approved: boolean, optionId?: string, decisionSource?: string) => {
           answers.push([toolCallId, approved, optionId]);
+          sources.push(decisionSource);
           return true;
         },
       };
@@ -168,6 +176,57 @@ it('offers Allow Once and Skip alone where the operator\'s rule makes the tool a
 });
 
 /*
+ * The backend is told who decided, as VS Code's host hands its agent a
+ * permission response's decision source: the host's rules for an answer they
+ * made, which nobody was asked, and a client's own word for its decision.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1696-L1765
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1898-L1902
+ */
+it('tells the backend who decided: the host\'s rules, or the client in its own words', async () => {
+  const allowed: (string | undefined)[] = [];
+  const allowing = await serving(asking([], 'bash', undefined, {}, [], allowed));
+  await allowing.dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: ['bash'], deny: [] } } });
+  await allowing.turn('t1');
+  await until(() => allowed.length > 0, 'the answer');
+  expect(allowed).toEqual(['host_policy']);
+  await allowing.host.close();
+
+  const denied: (string | undefined)[] = [];
+  const denying = await serving(asking([], 'bash', undefined, {}, [], denied));
+  await denying.dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: [], deny: ['bash'] } } });
+  await denying.dispatch(CHAT, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'a turn long enough to be asked about', origin: { kind: 'user' } } });
+  await until(() => denied.length > 0, 'the refusal');
+  expect(denied).toEqual(['host_policy']);
+  await denying.host.close();
+
+  const said: (string | undefined)[] = [];
+  const asked = await serving(asking([], 'bash', undefined, {}, [], said));
+  await asked.turn('t1');
+  await asked.dispatch(CHAT, {
+    type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-t1', approved: true, confirmed: 'user-action', selectedOptionId: 'allow-once',
+    _meta: { 'agentHost.permissionDecisionSource': 'human_response' },
+  });
+  await asked.turn('t2');
+  await asked.dispatch(CHAT, { type: 'chat/toolCallConfirmed', turnId: 't2', toolCallId: 'call-t2', approved: false, confirmed: 'user-action', selectedOptionId: 'skip' });
+  await until(() => said.length > 1, 'both answers');
+  expect(said).toEqual(['human_response', undefined]);
+  await asked.host.close();
+});
+
+/*
+ * The rule is the daemon's setting alone: VS Code's host takes the setting's
+ * policy value and declares no root config key for it, so a client's push of
+ * one is kept as any key nobody declares is and asks about nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L26
+ */
+it('reads the operator\'s rule from the daemon\'s setting alone, a client\'s root push of one asking about nothing', async () => {
+  const { host, dispatch, turn } = await serving(asking([]));
+  await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { bash: false } } });
+  expect((await turn('t1')).options).toEqual(STANDARD);
+  await host.close();
+});
+
+/*
  * An MCP server's tool is `<server>/<tool>` to the rule, its server the one the
  * call's contributor names among the session's customizations, as AHP names an
  * MCP tool's server on the call.
@@ -191,6 +250,71 @@ it('names an MCP tool a call carries no contributor for by its full tool name al
   const full = await serving(asking([], 'mcp__my_tracker__create'), { eligibleForAutoApproval: { 'mcp__my_tracker__create': false } });
   expect((await full.turn('t1')).options).toEqual(ONCE);
   await full.host.close();
+});
+
+/*
+ * A server a client's plugin contributes is a customization of the list the
+ * host lays over the session, which no backend is handed, so the host stamps
+ * its customization on the start of a call of it the backend named no
+ * contributor for, as VS Code's Claude session stamps a call from the list it
+ * holds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L420-L441
+ */
+it('stamps the customization of an MCP server the session lists on the start of a call of it no contributor names', async () => {
+  const base = echo({ path: dir, pace: 50 });
+  const agent: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return {
+        ...session,
+        sessionState: () => ({
+          ...session.sessionState(),
+          customizations: [{
+            type: 'plugin', id: 'plugin:tools', uri: 'file:///plugin', name: 'tools',
+            children: [{ type: 'mcpServer', id: 'mcp:tracker', uri: 'file:///plugin/.mcp.json', name: 'tracker', state: { status: 'ready' } }],
+          }],
+        }),
+        sendMessage: (...args: Parameters<Session['sendMessage']>) => {
+          session.sendMessage(...args);
+          const turnId = args[0];
+          start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: `call-${turnId}`, toolName: 'mcp__tracker__create', displayName: 'Create' });
+          start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: `other-${turnId}`, toolName: 'mcp__other__create', displayName: 'Create' });
+        },
+      };
+    },
+  };
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(CHAT, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'a turn long enough to be asked about', origin: { kind: 'user' } } });
+  const started = (id: string): Bag | undefined => p.heard.find((one) => one.action.type === 'chat/toolCallStart' && one.action.toolCallId === id)?.action;
+  await until(() => started('other-t1') !== undefined, 'the starts');
+  expect(started('call-t1')?.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:tracker' });
+  expect(started('other-t1')).not.toHaveProperty('contributor');
+  await host.close();
+});
+
+/*
+ * A call no client and no MCP server of the session contributes is a
+ * server-side tool's, as AHP has a call say whose tool it runs, and one of the
+ * tools this host offered is `host/<name>` to the rule, read from the call's
+ * tool name as an MCP client names a server's tool: a backend that reaches the
+ * host's tools through a server of its own is asked as one that calls them by
+ * name.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1321-L1346
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+ */
+it('reads a host tool on a call no client and no MCP server contributes, whatever server its backend names it on', async () => {
+  const notify: HostTool = { definition: { name: 'notify', inputSchema: { type: 'object', properties: {} } }, run: () => 'sent' };
+  const named = { eligibleForAutoApproval: { 'host/notify': false }, tools: [notify] };
+  const prefixed = await serving(asking([], 'mcp__host__notify'), named);
+  expect((await prefixed.turn('t1')).options).toEqual(ONCE);
+  await prefixed.host.close();
+  const bare = await serving(asking([], 'notify'), named);
+  expect((await bare.turn('t1')).options).toEqual(ONCE);
+  await bare.host.close();
+  const other = await serving(asking([], 'mcp__host__notify'), { eligibleForAutoApproval: { 'host/ping': false }, tools: [notify] });
+  expect((await other.turn('t1')).options).toEqual(STANDARD);
+  await other.host.close();
 });
 
 it('keeps an Allow in this Session answer in the session\'s permissions, and answers the next question about the tool itself', async () => {

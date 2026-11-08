@@ -345,8 +345,13 @@ it('asks a tool the rule names even when a session approval was already remember
   rmSync(dir, { recursive: true, force: true });
 });
 
-it('names a host tool to the rule as ahp/<name>, as Claude and ACP do', () => {
+/*
+ * A host tool is `host/<name>` to the rule, a tool of the server VS Code's
+ * Claude carries the host's tools on, in every backend.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+ */
+it('names a host tool to the rule as host/<name>, as Claude and ACP do', () => {
   const offered = [{ definition: { name: 'notify', inputSchema: { type: 'object' as const, properties: {} } } }];
-  expect(ruleName(offered, 'notify')).toBe('ahp/notify');
+  expect(ruleName(offered, 'notify')).toBe('host/notify');
   expect(ruleName(offered, 'shell_exec')).toBe('shell_exec');
 });

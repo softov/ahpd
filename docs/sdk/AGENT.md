@@ -73,7 +73,7 @@ const host = createHost({ path, agents: [shout()] });
 | | | |
 | --- | --- | --- |
 | `provider`, `displayName` | Who you are. `provider` is what a client names in `createSession`, so it must be unique among a host's agents | required |
-| `schema()`, `defaults()` | What a session can be told to do differently | required |
+| `schema(policy?)`, `defaults()` | What a session can be told to do differently | required |
 | `completions` | Answers for a key of your own `schema()`, drawn as a picker | optional |
 | `inheritedChatConfig(config)` | The settings a chat or session a session tool makes takes from the chat that made it, picked out of that chat's config, as VS Code's `getInheritedChatConfig` (Claude's: its permission mode and permissions) | optional |
 | `create(start)` | Start one. Returns a `Session` | required |
@@ -83,7 +83,7 @@ const host = createHost({ path, agents: [shout()] });
 | `directories()` | The directories you will work in | optional |
 | `list()` | Sessions somebody can browse | optional |
 | `find(id, at?)` | One of those, on its own, for an id the host has not got | optional |
-| `transcript(id, at?, outputs?)` | One of those, as turns - a read, with nothing started | optional |
+| `transcript(id, at?, outputs?, kept?)` | One of those, as turns - a read, with nothing started | optional |
 | `subagents(id, turns?, at?)` | The worker chats one of those holds - a read, with nothing started | optional |
 | `protectedResources` | RFC 9728 metadata for anything you can be given a token for | optional |
 | `stateFile(id, directory)` | Where your own record of a session is, for the window to open or pack into a bug report | optional |
@@ -96,6 +96,15 @@ some.
 **One schema, not two.** `schema()` is used before a session exists *and* by
 every session that does. Two copies drift, and a composer then offers different
 controls on the new-session screen than in the session.
+
+**`schema(policy)` and the start carry the operator's policy alike.** The host
+hands `schema` what a start is handed under the same names: `managedSettings`,
+and `autoApprovePolicyRestricted` where a VS Code window forwarded its policy's
+restriction of elevated auto-approval into the root config. Withhold the same
+modes in both, so the form drawn before a session exists offers what the session
+would, as VS Code's agents read the restriction when they resolve a chat's
+config and when they launch a session
+([copilotAgent.ts](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7407-L7411)).
 
 **`completions` is how a key of your own schema offers answers.** A property
 with no `enum` reads as a fact somebody types, so a key whose values you already
@@ -168,6 +177,14 @@ output is kept. Both are absent where the session store keeps no folder for the
 session, and a `!` command's terminal or one opened with `start.terminals`
 needs neither: the host keeps what those print itself.
 
+**`kept` reads back what the host kept for `storeToolResultResource`.** Asked
+with the call's id (or the part's own) and the content's place you handed the
+store, it answers the `ContentRef` the host kept that content under, and nothing
+for content it kept nowhere, so a part read back after a restart names the
+bytes by the reference it named them by live, as VS Code's replay names a
+call's resources by what its session's database holds
+([mapSessionEvents.ts](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L617-L623)).
+
 **A turn is read back under the id your transcript gives it.** A turn a client
 sends has the client's id while it runs. A `!` command's turn is the host's and
 in no transcript of yours, so the host keeps it and puts it back after the turn
@@ -207,7 +224,7 @@ session channel. A session never needs to know either URI to do it.
 | the turn | `sendMessage(turnId, text, from?, attachments?, options?)`, `changeModel(model)`, `changeAgent(agent?)`, `abort()`, `resumeTurn?(turnId)`, `stopWorker?(toolCallId)` |
 | steering | `sendSteeringMessage?(message)`, `withdrawSteeringMessage?(id)` |
 | the draft | `setDraft(text)` |
-| being asked | `confirm(toolCallId, approved, optionId?)`, `answer(requestId, accepted, answers)` |
+| being asked | `confirm(toolCallId, approved, optionId?, decisionSource?)`, `answer(requestId, accepted, answers)` |
 | the controls | `setConfig(key, value)`, `settings()` |
 | customizations | `setCustomizationEnabled`, `startMcpServer`, `stopMcpServer` |
 | another host's session | `relay?(channel, action, origin?)` |
@@ -293,7 +310,7 @@ methods:
 
 | | `Session` method | said on the chat as |
 | --- | --- | --- |
-| a tool call waiting to be allowed | `confirm(toolCallId, approved, optionId?)` | `chat/toolCallReady` with no `confirmed` |
+| a tool call waiting to be allowed | `confirm(toolCallId, approved, optionId?, decisionSource?)` | `chat/toolCallReady` with no `confirmed` |
 | a question that is not about a tool | `answer(requestId, accepted, answers)` | `chat/inputRequested` |
 
 The session's `inputNeeded` list is the host's, an entry raised for each from

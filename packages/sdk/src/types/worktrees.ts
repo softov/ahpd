@@ -92,7 +92,8 @@ export interface Worktrees {
    *
    * The root and not the directory: a worktree is made from the repository,
    * and a session pointed at `src/` inside one is still a session in it.
-   * Undefined means there is no repository here and no isolation to offer.
+   * Undefined means the directory is in no repository, and its sessions are
+   * offered the folder alone.
    */
   repository(dir: string): Promise<string | undefined>;
 

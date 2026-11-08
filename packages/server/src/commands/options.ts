@@ -544,7 +544,7 @@ const eligibleForAutoApprovalField: MapSchema = {
   type: 'object',
   title: 'Eligible for Auto Approval',
   additionalProperties: { type: 'boolean', title: 'Eligible' },
-  description: "Controls which tools are eligible for automatic approval. Tools set to 'false' will always present a confirmation and will never offer the option to auto-approve. The default behavior (or setting a tool to 'true') may result in the tool offering auto-approval options. A tool is named as its backend names it, a tool this host offers as ahp/<name>, an MCP server's tool as <server>/<tool>, and every tool of a server as <server>/*. Set in the configuration file only.",
+  description: "Controls which tools are eligible for automatic approval. Tools set to 'false' will always present a confirmation and will never offer the option to auto-approve. The default behavior (or setting a tool to 'true') may result in the tool offering auto-approval options. A tool is named as its backend names it, a tool this host offers as host/<name>, an MCP server's tool as <server>/<tool>, and every tool of a server as <server>/*. Set in the configuration file only.",
 };
 
 /**

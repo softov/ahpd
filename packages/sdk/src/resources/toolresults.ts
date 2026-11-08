@@ -87,6 +87,8 @@ interface Kept {
 /** The host's store of kept content, and the provider a client reads it back through. */
 export interface ToolResultResources {
   store(sessionUri: string, resource: ToolResultResource): Promise<ContentRef | undefined>;
+  /** The reference one content was kept under, read back, or nothing for content kept nowhere. */
+  kept(sessionUri: string, toolCallId: string, ordinal: number): Promise<ContentRef | undefined>;
   provider: ResourceProvider;
 }
 
@@ -127,6 +129,27 @@ export function toolResultResources(
         uri: buildToolResultResourceUri(sessionUri, resource.toolCallId, resource.ordinal, resource.name),
         contentType: resource.contentType,
         sizeHint: resource.bytes.byteLength,
+      };
+    },
+    /**
+     * The reference one content was kept under, read back from what was kept
+     * beside its bytes, as VS Code's replay reads the resources its session's
+     * database holds for the calls it maps and names each by the reference it
+     * was kept under. Nothing for content kept nowhere.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L617-L623
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1353-L1363
+     */
+    kept: async (sessionUri, toolCallId, ordinal) => {
+      const dir = folderOf(sessionUri);
+      if (dir === undefined) return undefined;
+      let held: Partial<Kept>;
+      try { held = JSON.parse(await readFile(join(callFolder(dir, toolCallId), `${ordinal}.json`), 'utf8')) as Partial<Kept>; }
+      catch { return undefined; }
+      if (typeof held.name !== 'string') return undefined;
+      return {
+        uri: buildToolResultResourceUri(sessionUri, toolCallId, ordinal, held.name),
+        ...(typeof held.contentType === 'string' ? { contentType: held.contentType } : {}),
+        ...(typeof held.size === 'number' ? { sizeHint: held.size } : {}),
       };
     },
     provider: {

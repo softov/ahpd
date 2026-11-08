@@ -277,8 +277,13 @@ it('refuses a named tool in don\'t-ask mode, without a question', async () => {
   expect(types(sent)).not.toContain('session/inputNeededSet');
 });
 
-it('names a host tool to the rule as ahp/<name>, as Claude and ACP do', async () => {
-  const { asked, check } = ruling(['ahp/notify']);
+/*
+ * A host tool is `host/<name>` to the rule, a tool of the server VS Code's
+ * Claude carries the host's tools on, in every backend.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+ */
+it('names a host tool to the rule as host/<name>, as Claude and ACP do', async () => {
+  const { asked, check } = ruling(['host/notify']);
   const { session, pi, sent } = opened({
     tools: [{ definition: { name: 'notify', inputSchema: { type: 'object', properties: {} } }, run: () => 'sent' }],
     getAutoApproval: check,
@@ -290,7 +295,7 @@ it('names a host tool to the rule as ahp/<name>, as Claude and ACP do', async ()
 
   const waiting = driveCall(pi, 'c1', 'notify', {});
   await settled();
-  expect(asked).toEqual([{ kind: 'tool', line: 'ahp/notify', shell: undefined, tool: undefined }]);
+  expect(asked).toEqual([{ kind: 'tool', line: 'host/notify', shell: undefined, tool: undefined }]);
   expect(types(sent)).toContain('session/inputNeededSet');
   session.confirm('c1', true);
   expect(await waiting).toBeUndefined();

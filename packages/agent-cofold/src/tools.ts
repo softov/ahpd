@@ -25,12 +25,13 @@ type CofoldInput = Parameters<typeof createTool>[0]['input'];
 /**
  * A call's tool as the operator's `eligibleForAutoApproval` rule names it.
  *
- * A tool the host offered is `ahp/<name>`, which is the name Claude and ACP
- * give the same tool on the host's MCP server, so one rule reaches it in every
- * backend. cofold's own tools keep their own names.
+ * A tool the host offered is `host/<name>`, a tool of the server VS Code's
+ * Claude carries the host's tools on, so one rule reaches it in every backend.
+ * cofold's own tools keep their own names.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
  */
 export const ruleName = (offered: readonly BoundTool[], name: string): string =>
-  offered.some((one) => one.definition.name === name) ? `ahp/${name}` : name;
+  offered.some((one) => one.definition.name === name) ? `host/${name}` : name;
 
 /** The keys of a schema whose values are one schema each. */
 const ONE_SCHEMA = ['items', 'additionalProperties'] as const;
@@ -76,17 +77,17 @@ const inputOf = (bound: BoundTool): CofoldInput => {
  * A call a client announced it can run, on its way out to that client.
  *
  * The session holds one of these from the moment cofold tries to execute an
- * owner-bound tool until the owning client answers or goes away. The fields
- * are what `completeToolCall` and `clientGone` need: the owner tells one
- * client's call from another's, and the name is what a call failed by a lost
- * client can say it was.
+ * owner-bound tool until the owning client answers it, or the host fails it
+ * for a client that went. The fields are what `completeToolCall` needs: the
+ * owner tells one client's call from another's, and the name is what a call
+ * can say it was.
  */
 export interface ClientToolCall {
   /** The model's own id for the call, which every chat action names. */
   callId: string;
   /** The client that announced the tool, and the only one that may answer. */
   owner: string;
-  /** The offered name, for the result a client that went away earns. */
+  /** The offered name, which the call's row and its tool name are read from. */
   name: string;
   /** The arguments, held for as long as the round trip lasts. */
   input: unknown;

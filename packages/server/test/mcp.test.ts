@@ -183,7 +183,7 @@ describe('/mcp serves the sessionless tools a caller may run', () => {
   });
 
   it('refuses a tool the operator\'s rule names, and runs one it does not', async () => {
-    host = serving({ 'ahp/create_session': false });
+    host = serving({ 'host/create_session': false });
 
     const refused = await call(door(), 'create_session', {
       relationship: 'independent', prompt: 'Say hello.', title: 'Not allowed', workspace: home, worktree: false,

@@ -866,7 +866,7 @@ export function createAutomations(ctx: HostContext): Automations {
         ...(wanted.userSettings === undefined ? {} : { userSettings: wanted.userSettings }),
       },
     );
-    ctx.oweTree(uri, {}, undefined, () => ({}));
+    ctx.oweTree(uri, {}, () => ({}));
     fireRun(wanted);
     beginIn(uri, wanted);
     return uri;
