@@ -104,6 +104,7 @@ import { createAutomationMethods } from './host/automations.js';
 import { createVscodeMethods } from './host/vscodemethods.js';
 import { createActions } from './host/actions.js';
 import { reservedName } from './plugins/validate.js';
+import { gitSettled } from './repo/hardened.js';
 import type { ConnectionContext, DetachedWorktree, HostContext } from './host/context.js';
 import { HOST_CATALOGS } from './i18n.js';
 import type { Catalogs } from './i18n.js';
@@ -2163,6 +2164,19 @@ export function createHost(options: HostOptions): Host {
         // The file listings still running, as VS Code's host kills its ripgrep
         // children when it is disposed.
         await step('the workspace files', () => options.workspaceFiles?.close?.());
+        /*
+         * And every git still running, last, since the steps above can start
+         * one: a session's close writes its checkpoint and refreshes its
+         * counts. Each runs in a session's folder, which Windows will not
+         * remove while it does. Bounded as the sessions are; a git still
+         * running then is left to its own timeout.
+         */
+        let gits: ReturnType<typeof setTimeout> | undefined;
+        await step('the git it started', () => Promise.race([
+          gitSettled(),
+          new Promise((done) => { gits = setTimeout(done, HOST_CLOSE_WAIT_MS); }),
+        ]));
+        clearTimeout(gits);
       })();
       return closing;
     },

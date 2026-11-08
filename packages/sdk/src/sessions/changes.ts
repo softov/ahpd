@@ -1,6 +1,5 @@
 /** What git says a directory has changed, as a host's `ChangesetSource`. */
 
-import { execFile } from 'node:child_process';
 import { watch, type FSWatcher } from 'node:fs';
 import { lstat, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -11,7 +10,7 @@ import type {
 import type { PullRequests } from '../types/github.js';
 import { commitPrompt, cutDiff, pullRequestPrompt, splitWords } from './changewords.js';
 import { baselineOf, capture, latestOf, removeAll } from './checkpoints.js';
-import { gitArgv } from '../repo/hardened.js';
+import { runGit } from '../repo/hardened.js';
 import { uriOf } from '../resources/fileuri.js';
 import { INVALID_PARAMS } from '../rpc.js';
 
@@ -61,8 +60,8 @@ const quiet = (): NodeJS.ProcessEnv => ({ ...process.env, GIT_OPTIONAL_LOCKS: '0
 /** One `git` run, as text, or nothing when it would not run. */
 const git = (dir: string, args: string[]): Promise<string | undefined> =>
   new Promise((answer) => {
-    execFile('git', gitArgv(dir, args), { timeout: 5000, maxBuffer: 32 * 1024 * 1024, env: quiet(), windowsHide: true },
-      (error, out) => answer(error ? undefined : out.toString()));
+    runGit(dir, args, { timeout: 5000, maxBuffer: 32 * 1024 * 1024, env: quiet(), windowsHide: true },
+      (error, out) => answer(error ? undefined : out));
   });
 
 /**
@@ -76,11 +75,11 @@ const git = (dir: string, args: string[]): Promise<string | undefined> =>
  */
 const run = (dir: string, args: string[]): Promise<{ ok: boolean; out: string; err: string }> =>
   new Promise((answer) => {
-    execFile('git', gitArgv(dir, args), { timeout: 30000, maxBuffer: 32 * 1024 * 1024, env: quiet(), windowsHide: true },
+    runGit(dir, args, { timeout: 30000, maxBuffer: 32 * 1024 * 1024, env: quiet(), windowsHide: true },
       (error, out, errOut) => answer({
         ok: !error,
-        out: out.toString(),
-        err: errOut.toString().trim() || (error ? error.message : ''),
+        out,
+        err: errOut.trim() || (error ? error.message : ''),
       }));
   });
 

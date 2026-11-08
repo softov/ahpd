@@ -1,13 +1,12 @@
 /** What git can say about a directory the host serves. */
 
-import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { ProjectInfo } from '@microsoft/agent-host-protocol';
 import { uriOf } from '../resources/fileuri.js';
 import type { DirectoryFacts } from '../types/host.js';
-import { gitArgv } from './hardened.js';
+import { runGit } from './hardened.js';
 
 /**
  * The environment every `git` here runs with: the inherited one, with
@@ -53,8 +52,8 @@ export function gitBranches(): DirectoryFacts {
         answer(undefined);
         return;
       }
-      execFile('git', gitArgv(dir, args), { timeout: 2000, env: quiet(), windowsHide: true }, (error, out) => {
-        answer(error ? undefined : out.toString().trim());
+      runGit(dir, args, { timeout: 2000, env: quiet(), windowsHide: true }, (error, out) => {
+        answer(error ? undefined : out.trim());
       });
     });
 

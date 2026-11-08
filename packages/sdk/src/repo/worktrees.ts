@@ -1,11 +1,10 @@
 /** Git worktrees, so two sessions in one repository do not edit under each other. */
 
-import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { cp, lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import type { Worktree, Worktrees } from '../types/worktrees.js';
-import { gitArgv } from './hardened.js';
+import { runGit } from './hardened.js';
 
 /**
  * The untracked or ignored entries of a `status --porcelain` answer that are
@@ -46,11 +45,11 @@ const linkType = process.platform === 'win32' ? 'junction' : 'dir';
  */
 const git = (dir: string, args: string[], ms = 60_000, stdin?: string): Promise<string> =>
   new Promise((resolve, reject) => {
-    const child = execFile('git', gitArgv(dir, args), { timeout: ms, maxBuffer: 8 << 20, windowsHide: true }, (error, out, bad) => {
-      if (!error) return resolve(out.toString());
+    const child = runGit(dir, args, { timeout: ms, maxBuffer: 8 << 20, windowsHide: true }, (error, out, bad) => {
+      if (!error) return resolve(out);
       // git's own message, not node's: "fatal: a branch named x already
       // exists" is something a person can act on and `Command failed` is not.
-      const said = bad.toString().trim() || error.message;
+      const said = bad.trim() || error.message;
       reject(new Error(said));
     });
     if (stdin !== undefined) child.stdin?.end(stdin);
