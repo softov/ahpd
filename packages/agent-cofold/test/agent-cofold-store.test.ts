@@ -1117,12 +1117,15 @@ it('leaves a paused run waiting on a stopping close, and cancels it on a delete'
     stream: true,
   });
   const reader = createFileStore({ root });
-  /** The run's status once it leaves `awaiting`, or `awaiting` when it has not within the window. */
-  const moved = async (sessionId: string): Promise<string | undefined> => {
-    const limit = Date.now() + 500;
+  /**
+   * The run's status once it rests: past `awaiting` and the `running` a cancel
+   * passes through, or the last one read when it has not within the window.
+   */
+  const rests = async (sessionId: string, window: number): Promise<string | undefined> => {
+    const limit = Date.now() + window;
     for (;;) {
       const status = (await reader.runs.list({ sessionId }))[0]?.status;
-      if (status !== 'awaiting' || Date.now() > limit) return status;
+      if ((status !== 'awaiting' && status !== 'running') || Date.now() > limit) return status;
       await new Promise((r) => { setTimeout(r, 5); });
     }
   };
@@ -1136,11 +1139,11 @@ it('leaves a paused run waiting on a stopping close, and cancels it on a delete'
 
   const kept = await paused('kept');
   await kept.session.close('stopping');
-  expect(await moved('kept')).toBe('awaiting');
+  expect(await rests('kept', 500)).toBe('awaiting');
 
   const gone = await paused('gone');
   await gone.session.close('dispose');
-  expect(await moved('gone')).toBe('cancelled');
+  expect(await rests('gone', 4000)).toBe('cancelled');
 });
 
 it('runs a new message in place of resuming a paused run, the run let go first', async () => {
