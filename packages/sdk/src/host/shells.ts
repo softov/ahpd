@@ -18,7 +18,7 @@
 import { shellOf } from '../machines/terminals.js';
 import { computerId } from '../machines/computers.js';
 import { localPath } from '../resources/fileuri.js';
-import { ROOT, retainedTerminalUri } from './channels.js';
+import { ROOT } from './channels.js';
 import { executeShellCommand, parseSentinel, shellText, shellTypeForExecutable } from './shellcommand.js';
 import type { Bag } from '../types/common.js';
 import type { Claim, Terminal } from '../types/terminals.js';
@@ -253,7 +253,7 @@ export function createShells(ctx: HostContext): HostShells {
        */
       const machine = machineOf(session);
       let asked: HeldShellOptions = {
-        uri: retainedTerminalUri(claim.chat, key),
+        uri: ctx.nonPtyShellTerminalUri(session, claim.chat, key),
         cwd: whereOf(session, chat),
         claim: wanted,
         name: shellDisplayName(shellType),

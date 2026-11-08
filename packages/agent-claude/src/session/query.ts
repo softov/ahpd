@@ -1050,7 +1050,7 @@ export function createQuery(ctx: SessionContext): Query {
            * transcript records it at, under the same uuid, so the turn read
            * back holds the part the live turn held.
            */
-          if (pending?.steering === true && state === 'started' && pending.lifecycle !== 'started') {
+          if (pending?.steeringPendingId !== undefined && state === 'started' && pending.lifecycle !== 'started') {
             ctx.addPart(ctx.mainScope, steerPart(uuid, str(pending.message.text) ?? ''));
           }
           if (pending !== undefined && (state === 'queued' || state === 'started')) pending.lifecycle = state;

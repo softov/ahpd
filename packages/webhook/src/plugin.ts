@@ -202,7 +202,16 @@ export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout:
   const peer = async (): Promise<PluginPeer> => (await open()).conn;
   const ends = turnEnds();
   host.on('turn_start', (event: TurnStartEvent) => { ends.started(event); });
-  host.on('turn_end', (event: TurnEndEvent) => { ends.heard(event); });
+  host.on('turn_end', (event: TurnEndEvent) => {
+    const { reason } = event;
+    ends.heard({
+      chat: event.channel,
+      turn: event.turnId,
+      ...(reason.kind === 'error' || reason.kind === 'rejected'
+        ? { status: 'error' as const, error: reason.error.message }
+        : { status: reason.kind === 'cancelled' ? 'cancelled' as const : 'complete' as const }),
+    });
+  });
   const problem = (line: string): void => { host.problem(`${name}: ${line}`); };
   /*
    * Each chat's subscription, counted by the turns that need it: taken for a
