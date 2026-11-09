@@ -458,6 +458,8 @@ export function createTerminal(
     environment.DEBIAN_FRONTEND = 'noninteractive';
     if (file === 'zsh' || file === 'zsh.exe') environment.PROMPT_EOL_MARK = '';
   }
+  /** Whether the shell was started with the integration scripts. */
+  let injected = false;
   /*
    * VS Code's shell integration, for a shell opened to sit in.
    *
@@ -478,6 +480,7 @@ export function createTerminal(
       if (asked !== undefined) {
         if (asked.newArgs !== undefined) args = asked.newArgs;
         Object.assign(environment, asked.envMixin);
+        injected = true;
       }
     }
     catch { /* a port that cannot answer leaves the shell as it was */ }
@@ -807,6 +810,7 @@ export function createTerminal(
      */
     isInAltBuffer: () => screen?.isInAltBuffer() ?? false,
     isBracketedPasteMode: () => screen?.isBracketedPasteMode() ?? false,
+    hasShellIntegration: () => injected,
     whenAltBuffer: () => screen?.whenAltBuffer() ?? Promise.resolve(),
     whenScreenSettled: () => screen?.whenSettled?.() ?? Promise.resolve(),
     lifecycle: () => (exitCode === undefined

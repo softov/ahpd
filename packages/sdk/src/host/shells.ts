@@ -79,6 +79,8 @@ interface Heard {
   listeners: Set<(action: Bag) => void>;
   /** Whether the shell has said anything yet, which a new shell is given time to do. */
   spoke: boolean;
+  /** Whether the shell has marked a command boundary, or exited. */
+  marked: boolean;
 }
 
 /** One shell as a session holds it. */
@@ -116,6 +118,7 @@ export interface HostShells {
  */
 const observe = (kept: Heard, action: Bag): void => {
   if (SPOKEN.has(String(action.type))) kept.spoke = true;
+  if (action.type === 'terminal/commandDetectionAvailable' || action.type === 'terminal/exited') kept.marked = true;
   for (const listen of [...kept.listeners]) listen(action);
 };
 
@@ -184,10 +187,13 @@ export function createShells(ctx: HostContext): HostShells {
      *
      * A shell this host opens is handed back at once, so its first command
      * waits here instead. A shell on pipes says nothing until it is given a
-     * command, and is not waited on.
+     * command, and is not waited on. A shell started with the integration is
+     * waited on for its first mark, since its first output can come before
+     * the prompt that marks, and a command typed then ends at a sentinel.
      */
     const spoken = (entry: Entry): Promise<void> => new Promise((resolve) => {
-      if (entry.spoke || entry.terminal.state().isPty !== true) {
+      const ready = (): boolean => (entry.terminal.hasShellIntegration() ? entry.marked : entry.spoke);
+      if (ready() || entry.terminal.state().isPty !== true) {
         resolve();
         return;
       }
@@ -197,7 +203,7 @@ export function createShells(ctx: HostContext): HostShells {
         resolve();
       };
       const timer = setTimeout(done, WAIT_FOR_PROMPT_TIMEOUT);
-      const stop = listen(entry, () => { if (entry.spoke) done(); });
+      const stop = listen(entry, () => { if (ready()) done(); });
     });
 
     /** A hold on one shell, released once, as the reference's `IReference` is. */
@@ -283,7 +289,7 @@ export function createShells(ctx: HostContext): HostShells {
           ...(how.env === undefined ? {} : { env: how.env }),
         };
       }
-      const heard: Heard = { listeners: new Set(), spoke: false };
+      const heard: Heard = { listeners: new Set(), spoke: false, marked: false };
       const terminal = ctx.heldShell(store, {
         ...asked,
         onAction: (action) => { observe(heard, action); },

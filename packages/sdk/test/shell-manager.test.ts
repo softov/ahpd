@@ -124,10 +124,15 @@ interface Made {
  * same block a `!` command does, and the store is the real one on a
  * pseudoterminal the case drives.
  */
-const host = (over: { computers?: ComputerPort; sessions?: Map<string, unknown>; screen?: boolean } = {}): Made => {
+const host = (over: { computers?: ComputerPort; sessions?: Map<string, unknown>; screen?: boolean; integration?: boolean } = {}): Made => {
   const pty = fakePty();
   const { screens, spawn } = fakeScreens();
-  const store = shellTerminals({ pty: pty.spawn, ...(over.screen === false ? {} : { screen: spawn }) });
+  const store = shellTerminals({
+    pty: pty.spawn,
+    ...(over.screen === false ? {} : { screen: spawn }),
+    // A port that starts every shell with the integration, as the daemon's does.
+    ...(over.integration === true ? { shellIntegration: () => ({ envMixin: {} }) } : {}),
+  });
   const terminals = new Map<string, Terminal>();
   const actions: { channel: string; action: Bag }[] = [];
   const kept: { chat: string; key: string; session: string }[] = [];
@@ -271,6 +276,23 @@ describe('running a command', () => {
     marking(made);
     const running = made.shells.run(held.shell, 'echo marked', DEFAULT_SHELL_COMMAND_TIMEOUT_MS);
     await settle();
+    made.pty.say('\u001b]133;C\u0007');
+    made.pty.say('marked output\r\n');
+    made.pty.say('\u001b]133;D;7\u0007');
+    await expect(running).resolves.toEqual({ status: 'completed', exitCode: 7, output: 'marked output' });
+  });
+
+  it('waits for the first mark of a shell started with the integration, and ends its command at D', async () => {
+    const made = host({ integration: true });
+    const held = await made.shells.acquire({ chat: CHAT, toolCallId: 'call-1' });
+    const running = made.shells.run(held.shell, 'echo marked', DEFAULT_SHELL_COMMAND_TIMEOUT_MS);
+    // The terminal's own output, before the shell has drawn a prompt.
+    made.pty.say('\u001b[2J\u001b[H');
+    await settle();
+    expect(made.pty.typed).toEqual([]);
+    marking(made);
+    await settle();
+    expect(made.pty.typed.some((one) => one.includes('COPILOT_SENTINEL'))).toBe(false);
     made.pty.say('\u001b]133;C\u0007');
     made.pty.say('marked output\r\n');
     made.pty.say('\u001b]133;D;7\u0007');

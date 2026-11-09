@@ -224,6 +224,14 @@ export interface Terminal {
   /** Whether the program turned on bracketed paste. `false` with no screen. */
   isBracketedPasteMode(): boolean;
   /**
+   * Whether the host started the shell with VS Code's shell integration.
+   *
+   * Such a shell marks its commands once its first prompt is drawn, so a
+   * command run in it waits for that mark. `false` for a shell started as it
+   * was, which may never mark one.
+   */
+  hasShellIntegration(): boolean;
+  /**
    * Resolves when the alternate screen shows, or at once when it already does.
    *
    * What a caller waits on after starting a full-screen program, rather than
