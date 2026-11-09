@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { loggerOf } from '@ahpd/sdk';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -537,7 +538,7 @@ it('asks Expo for a send\'s receipts three hundred to a request', async () => {
 
   await vi.advanceTimersByTimeAsync(QUARTER_HOUR);
   const asked = (): string[][] => calls.filter((one) => one.url === RECEIPTS).map((one) => (one.body as { ids: string[] }).ids);
-  await vi.waitFor(() => { expect(asked().map((ids) => ids.length)).toEqual([300, 1]); });
+  await vi.waitFor(() => { expect(asked().map((ids) => ids.length)).toEqual([300, 1]); }, { timeout: WAIT_MS });
   expect(asked().flat()).toEqual(messages.map((one) => `ticket-${one.to}`));
   expect(logged).toEqual([]);
 });

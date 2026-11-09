@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { loggerOf } from '@ahpd/sdk';
 import { describe, expect, it } from 'vitest';
 import { memoryRecords, pluginHost, raise } from '@ahpd/sdk';
@@ -101,7 +102,7 @@ describe('the tasks plugin', () => {
     });
     await apply(host, { sweepAfterDays: 30 });
     seal();
-    const until = Date.now() + 5000;
+    const until = Date.now() + WAIT_MS;
     while (!logged.some((line) => line.includes('the sweep did not finish')) && Date.now() < until) {
       await new Promise((resolve) => { setTimeout(resolve, 0); });
     }

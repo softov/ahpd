@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { loggerOf } from '@ahpd/sdk';
 import { createHash } from 'node:crypto';
 import { createServer as createHttpServer, get as httpGet } from 'node:http';
@@ -531,7 +532,7 @@ it('offers its host every protocol version the package speaks, newest first, whe
       id: 'mine', adapter: 'devtunnel', owner: 'host', config: { token: 'token-1', refresh: 'refresh-1' },
     });
     try {
-      await vi.waitFor(() => { expect(offered).toEqual([['1.0.0', '0.9.0']]); });
+      await vi.waitFor(() => { expect(offered).toEqual([['1.0.0', '0.9.0']]); }, { timeout: WAIT_MS });
     }
     finally {
       if (typeof close === 'function') close();

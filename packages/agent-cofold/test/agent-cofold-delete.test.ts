@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +19,7 @@ import { cofoldAgent } from '../src/index.js';
  * would tell a client a session was deleted while its transcript is readable.
  */
 
-const until = async (check: () => boolean, ms = 4000): Promise<void> => {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
   const limit = Date.now() + ms;
   while (!check()) {
     if (Date.now() > limit) throw new Error('timed out waiting');

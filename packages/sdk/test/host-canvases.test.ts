@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { describe, expect, it, vi } from 'vitest';
 import { ROOT } from '../src/host.js';
 import { createCanvases } from '../src/host/canvases.js';
@@ -344,7 +345,7 @@ describe('a canvas whose chat goes', () => {
       const read = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/spare' } }) as { snapshot: { state: { turns: unknown[]; activeTurn?: unknown } } };
       expect(read.snapshot.state.turns.length).toBeGreaterThan(0);
       expect(read.snapshot.state.activeTurn ?? undefined).toBeUndefined();
-    });
+    }, { timeout: WAIT_MS });
     const resource = await calls.open('ahp-chat:/spare', STATE);
     const lists = () => seen.seen.filter((one) => one.method === 'action'
       && one.params.channel === 'ahp-chat:/spare'

@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatState } from '@microsoft/agent-host-protocol';
@@ -490,7 +491,7 @@ describe('the fields a client reads by name', () => {
     const passes = sdk.listed;
     const again = await watching.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: { resource: string }[] };
     expect(again.items.map((one) => one.resource)).toEqual(['ahp-session:/browsed']);
-    await vi.waitFor(() => { expect(sdk.listed).toBeGreaterThan(passes); });
+    await vi.waitFor(() => { expect(sdk.listed).toBeGreaterThan(passes); }, { timeout: WAIT_MS });
     await flushed();
     const after = catalogue(seen).slice(marked);
     expect(after.every((n) => n.params.session === 'ahp-session:/browsed')).toBe(true);

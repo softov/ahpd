@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +20,7 @@ import { startedNow } from '../../sdk/test/support/started.js';
  */
 
 /** Waits for `check` to hold, turning the event loop, and throws once `ms` of wall-clock time has passed. */
-const when = async (check: () => boolean, ms = 5000): Promise<void> => {
+const when = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
   const until = Date.now() + ms;
   while (!check()) {
     if (Date.now() > until) throw new Error('timed out waiting');

@@ -9,6 +9,7 @@
  * backend that answers without a CLI.
  */
 
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1146,7 +1147,7 @@ describe('a turn and a restart that is stopping the daemon', () => {
    */
   const quiet = async (host: ReturnType<typeof createHost>): Promise<void> => {
     // By the clock: a tick is about 15 ms on Windows and about 1 ms elsewhere.
-    const until = Date.now() + 5000;
+    const until = Date.now() + WAIT_MS;
     while (Date.now() < until && host.turning().length > 0) await settle(1);
   };
 

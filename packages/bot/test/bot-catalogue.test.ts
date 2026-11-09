@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { loggerOf } from '@ahpd/sdk';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -163,7 +164,7 @@ async function as(host: Host, token: string, id = token): Promise<Reader> {
  * A membership change is sent to every reader in one pass, so once one line of
  * it has arrived, whatever else that change sent has arrived too.
  */
-const hears = async (reader: Reader, line: string, ms = 5000): Promise<void> => {
+const hears = async (reader: Reader, line: string, ms = WAIT_MS): Promise<void> => {
   const end = Date.now() + ms;
   while (Date.now() < end) {
     if (reader.heard().includes(line)) return;

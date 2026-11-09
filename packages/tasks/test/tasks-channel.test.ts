@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { loggerOf } from '@ahpd/sdk';
 import { describe, expect, it } from 'vitest';
 import { createHost, foldHostOptions, memoryRecords, pluginHost } from '@ahpd/sdk';
@@ -69,7 +70,7 @@ const peer = () => {
 };
 
 /** Waits for `check`, turning the event loop, and throws after `ms`. */
-const when = async (check: () => boolean, ms = 5000): Promise<void> => {
+const when = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
   const until = Date.now() + ms;
   while (!check()) {
     if (Date.now() > until) throw new Error('timed out waiting');

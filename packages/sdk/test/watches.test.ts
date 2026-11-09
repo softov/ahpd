@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,7 +43,7 @@ const changes = (p: ReturnType<typeof peer>, channel: string) => p.notes
   .flatMap((n) => n.action.changes?.items ?? []);
 
 /** Wait for a condition the kernel will make true, or give up loudly. */
-const until = async (what: () => boolean, why: string, ms = 4000): Promise<void> => {
+const until = async (what: () => boolean, why: string, ms = WAIT_MS): Promise<void> => {
   const stop = Date.now() + ms;
   while (Date.now() < stop) {
     if (what()) return;

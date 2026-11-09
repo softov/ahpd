@@ -156,7 +156,7 @@ const cleared = async (repository: string, branch: string): Promise<void> => {
       return false;
     }
   };
-  const limit = Date.now() + 4_000;
+  const limit = Date.now() + WAIT_MS;
   while (!finished()) {
     if (Date.now() > limit) throw new Error(`git never finished removing the worktree on ${branch} in ${repository}`);
     await new Promise((r) => { setTimeout(r, 25); });
@@ -495,7 +495,7 @@ describe('a session with a working tree of its own', () => {
     });
     // Listed once the turn has run, which waits on git making the worktree: slow on Windows.
     let rows: { items: { resource: string }[] } = { items: [] };
-    for (const until = Date.now() + 10_000; rows.items.length === 0 && Date.now() < until;) {
+    for (const until = Date.now() + WAIT_MS; rows.items.length === 0 && Date.now() < until;) {
       await new Promise((resolve) => { setTimeout(resolve, 60); });
       rows = await a.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as typeof rows;
     }
@@ -547,14 +547,14 @@ describe('a session with a working tree of its own', () => {
         .find((one) => one.action?.type === 'session/configChanged');
       expect(said).toBeDefined();
       expect(said?.rejectionReason).toBeUndefined();
-    });
+    }, { timeout: WAIT_MS });
     await firstSent(client, uri);
     const { defaultChat } = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { defaultChat: string } };
     }).snapshot.state;
     const before = starts.length;
     void client.handle({ method: 'dispatchAction', params: { channel: defaultChat, action: { type: 'chat/truncated' } } });
-    await vi.waitFor(() => { expect(starts.length).toBeGreaterThan(before); });
+    await vi.waitFor(() => { expect(starts.length).toBeGreaterThan(before); }, { timeout: WAIT_MS });
     expect(starts.at(-1)?.settings).toMatchObject({ voice: 'plain' });
     expect(starts.at(-1)?.settings).not.toHaveProperty('isolation');
   });

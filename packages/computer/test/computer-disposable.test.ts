@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { machinePathOf } from '@ahpd/sdk';
 import { posix } from '../../../tools/posix.ts';
 import { execFileSync } from 'node:child_process';
@@ -2011,7 +2012,7 @@ const spyingOnGit = (dir: string): { log: string; bin: string } => {
  * `setTimeout`, and a faked one would never let this answer.
  */
 const leftOver = async (): Promise<string[]> => {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + WAIT_MS;
   for (;;) {
     const there = readdirSync(tmpdir()).filter((one) => one.startsWith('ahpd-bringback-'));
     if (there.length === 0 || Date.now() >= deadline) return there;

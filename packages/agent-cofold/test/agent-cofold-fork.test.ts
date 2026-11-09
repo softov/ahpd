@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +33,6 @@ import type { Peer } from '../../sdk/src/types/rpc.js';
  * made a count of ticks the slowest part of every case. A wait that runs out
  * fails, so a condition that can never hold is not passed by waiting.
  */
-const WAIT_MS = 10_000;
 const tick = (): Promise<void> => new Promise((r) => { setImmediate(r); });
 
 const until = async (check: () => boolean): Promise<void> => {
@@ -283,7 +283,7 @@ it('refuses the session when the point is not in the conversation, and leaves th
  * there and every source run that ended inside them has all of its events and
  * steps in the target.
  */
-const landed = async (store: ReturnType<typeof createFileStore>, source: string, target: string, ms = 2000): Promise<void> => {
+const landed = async (store: ReturnType<typeof createFileStore>, source: string, target: string, ms = WAIT_MS): Promise<void> => {
   const limit = Date.now() + ms;
   const runs = await store.runs.list({ sessionId: source });
   const whole = async (): Promise<boolean> => {

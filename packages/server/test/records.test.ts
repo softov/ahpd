@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -116,7 +117,7 @@ describe('fileRecords', () => {
     expect(changes).toEqual([{ id: 'helper', type: 'added' }]);
 
     writeFileSync(join(dir, 'bots', 'helper', 'bot.md'), recordFile({ ...bot, name: 'Edited' }, 'instructions'));
-    await vi.waitFor(() => { expect(changes).toHaveLength(2); });
+    await vi.waitFor(() => { expect(changes).toHaveLength(2); }, { timeout: WAIT_MS });
     expect(changes[1]).toEqual({ id: 'helper', type: 'updated' });
     expect(await bots.get('helper')).toEqual({ ...bot, name: 'Edited' });
   });
@@ -127,11 +128,11 @@ describe('fileRecords', () => {
 
     mkdirSync(join(dir, 'bots', 'helper'));
     writeFileSync(join(dir, 'bots', 'helper', 'bot.md'), recordFile(bot, 'instructions'));
-    await vi.waitFor(() => { expect(changes).toEqual([{ id: 'helper', type: 'added' }]); });
+    await vi.waitFor(() => { expect(changes).toEqual([{ id: 'helper', type: 'added' }]); }, { timeout: WAIT_MS });
     expect(await bots.get('helper')).toEqual(bot);
 
     rmSync(join(dir, 'bots', 'helper'), { recursive: true });
-    await vi.waitFor(() => { expect(changes).toHaveLength(2); });
+    await vi.waitFor(() => { expect(changes).toHaveLength(2); }, { timeout: WAIT_MS });
     expect(changes[1]).toEqual({ id: 'helper', type: 'deleted' });
     expect(await bots.get('helper')).toBeUndefined();
   });
@@ -232,16 +233,16 @@ describe('fileRecords', () => {
     expect(changes).toEqual([{ id: 'helper', type: 'added' }]);
 
     writeFileSync(join(dir, 'bots', 'helper.md'), recordFile({ ...bot, name: 'Edited' }, 'instructions'));
-    await vi.waitFor(() => { expect(changes).toHaveLength(2); });
+    await vi.waitFor(() => { expect(changes).toHaveLength(2); }, { timeout: WAIT_MS });
     expect(changes[1]).toEqual({ id: 'helper', type: 'updated' });
     expect(await bots.get('helper')).toEqual({ ...bot, name: 'Edited' });
 
     writeFileSync(join(dir, 'bots', 'new.md'), '---\nid: new\n---\nhi\n');
-    await vi.waitFor(() => { expect(changes).toHaveLength(3); });
+    await vi.waitFor(() => { expect(changes).toHaveLength(3); }, { timeout: WAIT_MS });
     expect(changes[2]).toEqual({ id: 'new', type: 'added' });
 
     rmSync(join(dir, 'bots', 'new.md'));
-    await vi.waitFor(() => { expect(changes).toHaveLength(4); });
+    await vi.waitFor(() => { expect(changes).toHaveLength(4); }, { timeout: WAIT_MS });
     expect(changes[3]).toEqual({ id: 'new', type: 'deleted' });
   });
 
@@ -251,7 +252,7 @@ describe('fileRecords', () => {
     await bots.put(bot);
 
     writeFileSync(join(dir, 'bots', 'helper.md'), '---\nid: helper\nname: [unclosed\n');
-    await vi.waitFor(() => { expect(problems).toHaveLength(1); });
+    await vi.waitFor(() => { expect(problems).toHaveLength(1); }, { timeout: WAIT_MS });
     expect(problems[0]).toContain('helper.md');
     expect(changes).toEqual([{ id: 'helper', type: 'added' }]);
     expect(await bots.get('helper')).toEqual(bot);
@@ -291,7 +292,7 @@ describe('a collection that keeps JSON records', () => {
     expect(changes).toEqual([{ id: 'first', type: 'added' }]);
 
     writeFileSync(join(dir, 'connectors', 'first.json'), `${JSON.stringify({ ...connector, title: 'Edited' }, null, 2)}\n`);
-    await vi.waitFor(() => { expect(changes).toHaveLength(2); });
+    await vi.waitFor(() => { expect(changes).toHaveLength(2); }, { timeout: WAIT_MS });
     expect(changes[1]).toEqual({ id: 'first', type: 'updated' });
     expect(await connectors.get('first')).toEqual({ ...connector, title: 'Edited' });
   });
@@ -313,7 +314,7 @@ describe('a collection that keeps JSON records', () => {
     await connectors.put(connector);
 
     writeFileSync(join(dir, 'connectors', 'first.json'), '{"id": "first",');
-    await vi.waitFor(() => { expect(problems).toHaveLength(1); });
+    await vi.waitFor(() => { expect(problems).toHaveLength(1); }, { timeout: WAIT_MS });
     expect(problems[0]).toContain('first.json');
     expect(await connectors.get('first')).toEqual(connector);
   });

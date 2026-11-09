@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { describe, expect, it, vi } from 'vitest';
 import { withViewData } from '@ahpd/sdk';
 import { checkView } from '../../sdk/src/plugins/view.js';
@@ -267,7 +268,7 @@ describe('an open connector', () => {
 
     // The open shows the account alone, before its refresh answers.
     expect(shown).toEqual([{ account: 'ana' }]);
-    await vi.waitFor(() => { expect(shown).toHaveLength(2); });
+    await vi.waitFor(() => { expect(shown).toHaveLength(2); }, { timeout: WAIT_MS });
     expect(stored).toHaveLength(1);
     expect(paths).toEqual(['/refreshed']);
     const drawn = shown[1]!;
@@ -289,7 +290,7 @@ describe('an open connector', () => {
 
     const close = adapter.open(connectorOf('ana', { token: 'gho_old', refresh: 'ghr_old' }));
     expect(tunnels.held('ana')).toEqual({ owner: 'host', token: 'gho_old', refresh: 'ghr_old' });
-    await vi.waitFor(() => { expect(sent).toHaveLength(1); });
+    await vi.waitFor(() => { expect(sent).toHaveLength(1); }, { timeout: WAIT_MS });
 
     expect(sent[0]).toEqual({ id: 'ana', values: { token: 'gho_new', refresh: 'ghr_new' } });
     expect(tunnels.held('ana')).toEqual({ owner: 'host', token: 'gho_new', refresh: 'ghr_new' });
@@ -383,7 +384,7 @@ describe('an open connector', () => {
     });
 
     const close = adapter.open(connectorOf('ana', { token: 'gho_old', refresh: 'ghr_old' }));
-    await vi.waitFor(() => { expect(checked).toEqual(['ana']); });
+    await vi.waitFor(() => { expect(checked).toEqual(['ana']); }, { timeout: WAIT_MS });
 
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('could not refresh its token');

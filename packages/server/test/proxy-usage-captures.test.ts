@@ -9,6 +9,7 @@
  * them.
  */
 
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -223,7 +224,7 @@ const replay = async (one: Case): Promise<{ answers: ModelUse[]; sent: number }>
   });
   expect(answered.status).toBe(200);
   expect(answered.text).toBe(textOf(one.file));
-  const until = Date.now() + 1000;
+  const until = Date.now() + WAIT_MS;
   while (usage.entries.length < 1 && Date.now() < until) await pause(10);
   await pause(20);
   return { answers: usage.entries as ModelUse[], sent: usage.entries.length };

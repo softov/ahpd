@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { posix } from '../../../tools/posix.ts';
 import { machinePathOf } from '@ahpd/sdk';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -124,7 +125,7 @@ const dockerHeld = (state: string): DockerHeld => (existsSync(state)
  * is the last thing a call lets go of, on its exit.
  */
 const answered = async (state: string, calls: number): Promise<void> => {
-  const limit = Date.now() + 4_000;
+  const limit = Date.now() + WAIT_MS;
   while (dockerHeld(state).calls.length < calls || existsSync(`${state}.lock`)) {
     if (Date.now() > limit) {
       throw new Error(`the scripted docker never finished ${calls} calls on ${state}: ${dockerHeld(state).calls.length} recorded`);
