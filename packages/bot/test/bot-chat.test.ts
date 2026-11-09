@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { loggerOf } from '@ahpd/sdk';
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1479,7 +1480,7 @@ it('leaves a turn somebody began in a back session in that session\'s own chat',
   const backState = async (): Promise<Bag> => (await client.handle({ method: 'subscribe', params: { channel: backChat } }) as {
     snapshot: { state: Bag };
   }).snapshot.state;
-  await vi.waitFor(async () => { expect((await backState())['turns']).toHaveLength(1); });
+  await vi.waitFor(async () => { expect((await backState())['turns']).toHaveLength(1); }, { timeout: WAIT_MS });
 
   // Watched for as long as a turn of the main chat's own took to open for it.
   let shown = false;
@@ -1544,7 +1545,7 @@ it('offers its host every protocol version the package speaks, newest first, onc
     params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
   });
 
-  await vi.waitFor(() => { expect(offered).toEqual([['1.0.0', '0.9.0']]); });
+  await vi.waitFor(() => { expect(offered).toEqual([['1.0.0', '0.9.0']]); }, { timeout: WAIT_MS });
 });
 
 it('refuses a chat with a bot that is not there', async () => {

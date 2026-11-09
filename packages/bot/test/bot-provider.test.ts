@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { loggerOf } from '@ahpd/sdk';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1345,7 +1346,7 @@ it('opens a chat with a bot by a create, the person\'s own, titled and placed as
     channel: String(opened.snapshot.state['defaultChat']),
     action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } },
   }));
-  await vi.waitFor(async () => { expect(await row(ana, chat)).toBeDefined(); });
+  await vi.waitFor(async () => { expect(await row(ana, chat)).toBeDefined(); }, { timeout: WAIT_MS });
   expect(await row(ana, chat)).toMatchObject({
     title: 'Motion',
     workingDirectories: [uriOf(join(bots, 'motion'))],
@@ -1388,7 +1389,7 @@ it('keeps a bot, its back session rows and its logs in bots/<slug>/', async () =
     expect(reported).toEqual([]);
     expect(readdirSync(join(folder, 'logs'))).toHaveLength(1);
     expect(readdirSync(join(folder, 'sessions'))).toHaveLength(1);
-  });
+  }, { timeout: WAIT_MS });
 
   // The work folder is not data of the daemon's, and is untouched.
   expect(existsSync(join(bots, 'motion', 'AGENTS.md'))).toBe(true);
@@ -1586,7 +1587,7 @@ it('deletes a bot by removing bots/<slug>/, and keeps its work folder', async ()
   }));
 
   const folder = join(configDir, 'bots', 'motion');
-  await vi.waitFor(() => { expect(readdirSync(folder).sort()).toEqual(['bot.md', 'logs', 'sessions']); });
+  await vi.waitFor(() => { expect(readdirSync(folder).sort()).toEqual(['bot.md', 'logs', 'sessions']); }, { timeout: WAIT_MS });
   const work = join(bots, 'motion', 'AGENTS.md');
   expect(existsSync(work)).toBe(true);
 

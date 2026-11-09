@@ -9,6 +9,7 @@
  * session the daemon is running and for one it is not.
  */
 
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { appendFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -152,7 +153,7 @@ it('deletes a running session\'s copy once its agent has stopped, so what the ag
 
   // The process exits only once the host has gone as far as it goes without it.
   const disposing = dispose(client, 'ahp-session:/held');
-  await vi.waitFor(() => { expect(closing).toBe(true); });
+  await vi.waitFor(() => { expect(closing).toBe(true); }, { timeout: WAIT_MS });
   await settle();
   exit();
   await disposing;

@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { loggerOf } from '@ahpd/sdk';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -93,7 +94,7 @@ it('offers its host every protocol version the package speaks, newest first', as
   for (const listener of contribution.events.listening ?? []) {
     await listener.handle({ type: 'listening', runtime: 'node', host: '127.0.0.1', port: 9187, guarded: false }, listener.context);
   }
-  await vi.waitFor(() => { expect(offered).toEqual([['1.0.0', '0.9.0']]); });
+  await vi.waitFor(() => { expect(offered).toEqual([['1.0.0', '0.9.0']]); }, { timeout: WAIT_MS });
 });
 
 it('marks the secret and the verify token secret, so the host keeps them in the vault and not in the record', async () => {

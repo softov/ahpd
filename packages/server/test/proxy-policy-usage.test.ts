@@ -6,6 +6,7 @@
  * memory, and the people are a users file in a temporary folder.
  */
 
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -154,7 +155,7 @@ const setup = async (options: ServeOptions = {}, answer: unknown = COMPLETION) =
 
 /** The records written, once their writes have settled. */
 const settled = async (usage: { entries: unknown[] }, count: number): Promise<ModelUse[]> => {
-  const until = Date.now() + 1000;
+  const until = Date.now() + WAIT_MS;
   while (usage.entries.length < count && Date.now() < until) await pause(10);
   await pause(20);
   return usage.entries as ModelUse[];

@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -457,7 +458,7 @@ describe('a file a person edits while the daemon runs', () => {
 
     hand('one', person(...firing('0 10 * * *')));
 
-    await vi.waitFor(() => { expect(store?.get(ONE)?.nextRunAt).toBe('2026-09-01T10:00:00.000Z'); });
+    await vi.waitFor(() => { expect(store?.get(ONE)?.nextRunAt).toBe('2026-09-01T10:00:00.000Z'); }, { timeout: WAIT_MS });
     // What the person did not touch is still there: a file is the whole
     // definition, so the line they edited did not take the rest away.
     expect(one.get(ONE)?.definition.title).toBe('Nightly review');
@@ -476,7 +477,7 @@ describe('a file a person edits while the daemon runs', () => {
     // A deleted line is a field the automation no longer has, rather than one
     // the file simply did not mention: a patch leaves an absent key alone, and
     // a file is not a patch.
-    await vi.waitFor(() => { expect(store?.get(ONE)?.definition.disableConditions).toBeUndefined(); });
+    await vi.waitFor(() => { expect(store?.get(ONE)?.definition.disableConditions).toBeUndefined(); }, { timeout: WAIT_MS });
     expect(textOf('one')).not.toContain('disableConditions');
   });
 
@@ -500,7 +501,7 @@ describe('a file a person edits while the daemon runs', () => {
 
     // What `cp one.md two.md` leaves behind.
     writeFileSync(fileOf('two'), readFileSync(fileOf('one')));
-    await vi.waitFor(() => { expect(store?.get(TWO)?.definition.title).toBe('Nightly review'); });
+    await vi.waitFor(() => { expect(store?.get(TWO)?.definition.title).toBe('Nightly review'); }, { timeout: WAIT_MS });
     expect(one.list()).toHaveLength(2);
     // An automation of its own, waiting for the occurrence its own schedule
     // gives it rather than carrying anything of the one it was copied from.
@@ -511,7 +512,7 @@ describe('a file a person edits while the daemon runs', () => {
     expect(textOf('two')).toBe(textOf('one'));
 
     rmSync(fileOf('two'));
-    await vi.waitFor(() => { expect(store?.get(TWO)).toBeUndefined(); });
+    await vi.waitFor(() => { expect(store?.get(TWO)).toBeUndefined(); }, { timeout: WAIT_MS });
     expect(one.list()).toHaveLength(1);
     expect(one.get(ONE)?.definition.title).toBe('Nightly review');
   });
@@ -524,7 +525,7 @@ describe('a file a person edits while the daemon runs', () => {
     // A line a person started and did not finish.
     hand('one', '---\ntitle: [unclosed\n');
 
-    await vi.waitFor(() => { expect(told.length).toBeGreaterThan(0); });
+    await vi.waitFor(() => { expect(told.length).toBeGreaterThan(0); }, { timeout: WAIT_MS });
     expect(new Set(told).size).toBe(1);
     expect(told[0]).toContain('one.md');
     expect(told[0]).toContain('cannot be read');
@@ -542,7 +543,7 @@ describe('a file a person edits while the daemon runs', () => {
     // once in one chat: refused wherever it is written, a file included.
     hand('one', person(...firing('0 9 * * *'), '_meta:', '  ahpd:', '    session: pinned', '    overlap: parallel'));
 
-    await vi.waitFor(() => { expect(told.length).toBeGreaterThan(0); });
+    await vi.waitFor(() => { expect(told.length).toBeGreaterThan(0); }, { timeout: WAIT_MS });
     expect(new Set(told).size).toBe(1);
     expect(told[0]).toContain('one.md');
     expect(told[0]).toContain('was not loaded');

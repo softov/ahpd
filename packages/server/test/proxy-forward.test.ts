@@ -7,6 +7,7 @@
  * looking for it.
  */
 
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -310,7 +311,7 @@ describe('a call ends when either side does, and on a timeout', () => {
     const answer = await streaming(served.port, MESSAGES, { 'x-api-key': ROOT_TOKEN }, { model: 'm/x', stream: true });
     expect(await answer.next()).toContain('message_start');
     answer.request.destroy();
-    const until = Date.now() + 1000;
+    const until = Date.now() + WAIT_MS;
     while (provider.received[0]?.closed !== true && Date.now() < until) await pause(20);
     expect(provider.received[0]?.closed).toBe(true);
   });
@@ -337,7 +338,7 @@ describe('a call ends when either side does, and on a timeout', () => {
     const all = `${await answer.next() ?? ''}${await answer.rest()}`;
     expect(all).toBe(first);
     expect(served.log.join('\n')).toContain('p0 sent nothing for 0.2 s; the answer was ended');
-    const until = Date.now() + 1000;
+    const until = Date.now() + WAIT_MS;
     while (provider.received[0]?.closed !== true && Date.now() < until) await pause(20);
     expect(provider.received[0]?.closed).toBe(true);
   });
@@ -516,7 +517,7 @@ describe('a call ends when either side does, and on a timeout', () => {
     request.on('error', () => { /* hung up on purpose */ });
     hangUp = () => { request.destroy(); };
     request.end(JSON.stringify({ model: 'm/x' }));
-    const until = Date.now() + 1000;
+    const until = Date.now() + WAIT_MS;
     while (!served.log.join('\n').includes('caller hung up') && Date.now() < until) await pause(20);
     expect(calls).toBe(1);
     expect(served.log.join('\n')).toContain('p0 503, p1 not tried, the caller hung up');

@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -87,7 +88,7 @@ async function piped(options: { root?: boolean; users?: Users; tap?: (from: stri
 
   const send = (frame: unknown): void => { input.write(`${JSON.stringify(frame)}\n`); };
   const wait = async (count: number): Promise<void> => {
-    const deadline = Date.now() + 3000;
+    const deadline = Date.now() + WAIT_MS;
     while (frames.length < count && Date.now() < deadline) await new Promise((r) => { setTimeout(r, 2); });
   };
   return { listener, frames, send, wait, input, output };

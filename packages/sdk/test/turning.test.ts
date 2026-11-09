@@ -6,6 +6,7 @@
  * before or after.
  */
 
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,7 +40,7 @@ const peer = (seen: Map<string, string[]>, host: () => { turning(): string[] }, 
 
 /** What `turning()` answered when that action arrived, once it has; a failure naming it if it never does. */
 const heard = async (seen: Map<string, string[]>, type: string): Promise<string[]> => {
-  const until = Date.now() + 5000;
+  const until = Date.now() + WAIT_MS;
   while (!seen.has(type)) {
     if (Date.now() > until) throw new Error(`${type} never arrived`);
     await new Promise((done) => { setImmediate(done); });

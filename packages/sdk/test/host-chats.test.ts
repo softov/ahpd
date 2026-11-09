@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1150,7 +1151,7 @@ describe('more than one chat in a session', () => {
       const read = await opened(client, chat);
       expect(read.state.turns.length).toBeGreaterThan(0);
       expect((read.state as { activeTurn?: unknown }).activeTurn ?? undefined).toBeUndefined();
-    });
+    }, { timeout: WAIT_MS });
   };
 
   const send = async (
@@ -1998,7 +1999,7 @@ describe('more than one chat in a session', () => {
 
       // And it is the turn rather than the chat: once the words are out, the
       // same move goes through.
-      const until = Date.now() + 10_000;
+      const until = Date.now() + WAIT_MS;
       while ((await opened(client, THIRD)).state.movable !== true && Date.now() < until)
         await new Promise((r) => { setTimeout(r, 10); });
       expect((await opened(client, THIRD)).state.movable).toBe(true);
@@ -2951,7 +2952,7 @@ describe('a chat of another backend', () => {
     await settle(8);
     // Its first turn, which a chat has run before a move is made of it.
     await send(second.client, THIRD, 't0', 'first');
-    await vi.waitFor(async () => { expect((await opened(second.client, THIRD)).state.turns.length).toBeGreaterThan(0); });
+    await vi.waitFor(async () => { expect((await opened(second.client, THIRD)).state.turns.length).toBeGreaterThan(0); }, { timeout: WAIT_MS });
 
     const here = await opened(second.client, LIVE);
     expect(here.state.chats?.find((chat) => chat.resource === THIRD)?.movable).toBe(true);

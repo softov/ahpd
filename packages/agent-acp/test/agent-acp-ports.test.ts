@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -87,7 +88,7 @@ const running: { client: ReturnType<ReturnType<typeof createHost>['accept']>; ur
  * log. Its last request is `session/list`, which a session's server is never
  * sent.
  */
-const listed = async (log: string, ms = 4000): Promise<void> => {
+const listed = async (log: string, ms = WAIT_MS): Promise<void> => {
   const limit = Date.now() + ms;
   for (;;) {
     if (existsSync(log) && readFileSync(log, 'utf8').includes('"method":"session/list"')) return;

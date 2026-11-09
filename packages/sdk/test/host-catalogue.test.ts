@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -1621,7 +1622,7 @@ describe('a summary that did not change', () => {
     // the source reports: the row is said once, with its own counts, and the
     // same read again says nothing.
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old/changeset/uncommitted' } });
-    await vi.waitFor(() => { expect(counted_.watching).toHaveLength(1); }, { timeout: 3000 });
+    await vi.waitFor(() => { expect(counted_.watching).toHaveLength(1); }, { timeout: WAIT_MS });
     counted_.watching[0]?.();
     await settle(12);
     expect(rowsMoved(p, 'ahp-session:/old')).toEqual([{ status: 1, changes: { files: 2 } }]);
@@ -1881,7 +1882,7 @@ describe("a row's counts are the session's own", () => {
     expect(countsOf(first.peer, 'ahp-session:/live')).toMatchObject({ files: 4 });
     // Written after the change rather than during it, so the next store waits
     // for the file to hold the counts.
-    await vi.waitFor(() => { expect(readFileSync(join(dir, 'live.json'), 'utf8')).toMatch(/"files":\s*4/u); });
+    await vi.waitFor(() => { expect(readFileSync(join(dir, 'live.json'), 'utf8')).toMatch(/"files":\s*4/u); }, { timeout: WAIT_MS });
 
     // The daemon stops here, and starts again over the folder of sessions it
     // left: the session is not running in the new one, so its row has nothing
@@ -1913,7 +1914,7 @@ describe("a row's counts are the session's own", () => {
       sessionSummary: async () => { asked = true; await held; return { files: 4 }; },
     };
     const { client, uri } = await turned({ changes: source, sessions: fileSessions({ dir }) }, 'live');
-    await vi.waitFor(() => { expect(asked).toBe(true); });
+    await vi.waitFor(() => { expect(asked).toBe(true); }, { timeout: WAIT_MS });
 
     await client.handle({ method: 'disposeSession', params: { channel: uri } });
     await settle();

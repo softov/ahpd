@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -140,7 +141,7 @@ const run = async (
     // The client's start, which the host says before it hands the turn over.
     view.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } });
     session.sendMessage(turnId, text);
-    const limit = Date.now() + 4000;
+    const limit = Date.now() + WAIT_MS;
     while (ends() < wanted) {
       if (Date.now() > limit) throw new Error('timed out waiting for the turn');
       await new Promise((r) => { setTimeout(r, 0); });

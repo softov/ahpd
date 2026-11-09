@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { loggerOf } from '@ahpd/sdk';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -79,7 +80,7 @@ const callPi = async (
 };
 
 /** Waits for `check` to hold, turning the event loop, and throws after `ms`. */
-const when = async (check: () => boolean, ms = 5000): Promise<void> => {
+const when = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
   const until = Date.now() + ms;
   while (!check()) {
     if (Date.now() > until) throw new Error('timed out waiting');

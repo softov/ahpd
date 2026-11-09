@@ -50,7 +50,7 @@ const when = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
  * time has passed, inside the case's own limit, so a run that `close` never
  * ends fails on its own message rather than on the folder's removal.
  */
-const settled = async (root: string, sessionId = 'tools', ms = 4000): Promise<string[]> => {
+const settled = async (root: string, sessionId = 'tools', ms = WAIT_MS): Promise<string[]> => {
   const store = createFileStore({ root });
   const limit = Date.now() + ms;
   for (;;) {

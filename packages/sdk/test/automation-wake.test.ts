@@ -840,7 +840,7 @@ const control = async () => {
   store.create(AUTOMATION, watchingSilence());
   return {
     begin: () => begins(one.client, one.chatUri, 't1'),
-    woke: () => until(() => (store.get(AUTOMATION)?.runs ?? []).length === 1, 'the run for a silent turn', 4000),
+    woke: () => until(() => (store.get(AUTOMATION)?.runs ?? []).length === 1, 'the run for a silent turn'),
   };
 };
 

@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { expect, it, vi } from 'vitest';
 import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
@@ -266,7 +267,7 @@ it('clears a watched changeset on its channel before its session is said gone, a
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
   });
-  await vi.waitFor(() => { expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true); });
+  await vi.waitFor(() => { expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true); }, { timeout: WAIT_MS });
   await client.handle({ method: 'disposeSession', params: { channel: uri } });
   const said = p.notes.map((note) => {
     const params = note.params as { channel?: string; session?: string; action?: { type?: string } };
@@ -501,11 +502,11 @@ it('says a list again with a failed operation idle, as VS Code\'s host', async (
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
   });
-  await vi.waitFor(() => { expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true); });
+  await vi.waitFor(() => { expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true); }, { timeout: WAIT_MS });
   await vi.waitFor(() => {
     const last = actions(p, changeset).filter((one) => one.type === 'changeset/operationsChanged').at(-1);
     expect((last?.operations as { id: string; status: string }[] | undefined)?.find((one) => one.id === 'commit')?.status).toBe('idle');
-  });
+  }, { timeout: WAIT_MS });
 });
 
 it('hands the source the request\'s _meta and what the host knows, and passes a coded refusal through', async () => {
@@ -553,7 +554,7 @@ it('disables the verbs while a turn is running, and refuses one sent anyway', as
     const announced = actions(p, changeset).filter((one) => one.type === 'changeset/operationsChanged').pop();
     const offered = announced?.operations as Record<string, unknown>[] | undefined;
     expect(offered?.every((one) => one.status === 'disabled')).toBe(true);
-  }, { timeout: 3000 });
+  }, { timeout: WAIT_MS });
 
   const busy = await refused(client.handle({
     method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' },
@@ -596,7 +597,7 @@ it('gives the verbs back after a turn that ended in an error, and says each list
   });
   await vi.waitFor(() => {
     expect(actions(p, chatUri).some((one) => one.type === 'chat/error')).toBe(true);
-  }, { timeout: 3000 });
+  }, { timeout: WAIT_MS });
   await settle();
   const lists = actions(p, changeset)
     .filter((one) => one.type === 'changeset/operationsChanged')
@@ -615,7 +616,7 @@ it('lists the changesets on the session channel, and not on a catalogue row', as
   });
   await vi.waitFor(() => {
     expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true);
-  }, { timeout: 3000 });
+  }, { timeout: WAIT_MS });
 
   // `SessionState.changesets` is declared, and is where a client reads the
   // scopes it may subscribe to. Both of ahpc's readers take it from here.

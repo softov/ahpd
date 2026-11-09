@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -57,7 +58,7 @@ const said = (p: ReturnType<typeof watching>, uri: string): string => p.seen
 
 /** Wait until the terminal has said it, so a negative can be asserted against a positive. */
 export const until = async (p: ReturnType<typeof watching>, uri: string, text: string): Promise<string> => {
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + WAIT_MS;
   while (Date.now() < deadline) {
     if (said(p, uri).includes(text)) return said(p, uri);
     await new Promise((resolve) => setTimeout(resolve, 25));

@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPeer, receive, RpcClosed, RpcError, RpcTimeout, INVALID_PARAMS, numberParam, optionalStringParam, stringParam } from '../src/rpc.js';
 import type { Wire } from '../src/types/rpc.js';
@@ -233,7 +234,7 @@ describe('an error the handler throws', () => {
     receive(JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'subscribe' }), peer, () => {
       throw new RpcError(-32001, 'Nothing there');
     });
-    await vi.waitFor(() => expect(socket.written).toHaveLength(1));
+    await vi.waitFor(() => expect(socket.written).toHaveLength(1), { timeout: WAIT_MS });
     expect(socket.written[0]).toEqual({
       jsonrpc: '2.0', id: 3, error: { code: -32001, message: 'Nothing there' },
     });
@@ -256,7 +257,7 @@ describe('an error the handler throws', () => {
     receive(JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'subscribe' }), peer, () => {
       throw new CopiedRpcError(-32009, 'Not yours', { uri: 'x' });
     });
-    await vi.waitFor(() => expect(socket.written).toHaveLength(1));
+    await vi.waitFor(() => expect(socket.written).toHaveLength(1), { timeout: WAIT_MS });
     expect(socket.written[0]).toEqual({
       jsonrpc: '2.0', id: 4, error: { code: -32009, message: 'Not yours', data: { uri: 'x' } },
     });
@@ -268,7 +269,7 @@ describe('an error the handler throws', () => {
     receive(JSON.stringify({ jsonrpc: '2.0', id: 6, method: 'subscribe' }), peer, () => {
       throw Object.assign(new Error('Command failed: git status'), { code: 128 });
     });
-    await vi.waitFor(() => expect(socket.written).toHaveLength(1));
+    await vi.waitFor(() => expect(socket.written).toHaveLength(1), { timeout: WAIT_MS });
     expect(socket.written[0]).toEqual({
       jsonrpc: '2.0', id: 6, error: { code: -32603, message: 'Command failed: git status' },
     });
@@ -280,7 +281,7 @@ describe('an error the handler throws', () => {
     receive(JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'subscribe' }), peer, () => {
       throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT', data: 'not for the wire' });
     });
-    await vi.waitFor(() => expect(socket.written).toHaveLength(1));
+    await vi.waitFor(() => expect(socket.written).toHaveLength(1), { timeout: WAIT_MS });
     expect(socket.written[0]).toEqual({
       jsonrpc: '2.0', id: 5, error: { code: -32603, message: 'ENOENT: no such file' },
     });
@@ -299,7 +300,7 @@ describe('the result a handler returned', () => {
     const socket = wire();
     const peer = createPeer(socket);
     receive(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }), peer, async () => returned);
-    await vi.waitFor(() => expect(socket.written).toHaveLength(1));
+    await vi.waitFor(() => expect(socket.written).toHaveLength(1), { timeout: WAIT_MS });
     return socket.written[0];
   };
 
