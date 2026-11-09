@@ -369,7 +369,16 @@ export interface EnsureOptions {
   parts?: Part[];
   /** Where a line the load says goes: the override in use. */
   log?: (line: string) => void;
+  /**
+   * The image a machine runs when its profile names none, which a pulled
+   * part's launchers are run in once: `MACHINE_IMAGE` unless the host was
+   * configured with another.
+   */
+  image?: string;
 }
+
+/** The image a machine runs when its profile names none. */
+export const MACHINE_IMAGE = 'debian:bookworm-slim';
 
 /** Where a workspace package of this repository lives, by the name it publishes under. */
 const workspaceDir = (root: string, name: string): string | undefined => {
@@ -927,6 +936,15 @@ const failedLoads = new WeakMap<ComputerRuntime, Map<string, { error: Error; unt
  * load failed is refused with that failure until `LOAD_FAILURE_HELD_MS` has
  * passed, and loaded again after it.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395
+ *
+ * A pulled part's launchers are each run once with `--version`, and a pull or
+ * a check that fails falls back to the newest earlier image of the part here
+ * whose launchers answer it, as VS Code checks its CLI after an install and
+ * falls back to an older CLI it finds; the image that failed its check loses
+ * its tag, so the next load pulls it again. The answer is the tag of the image
+ * the part is loaded from.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/remoteAgentHostCliInstaller.ts#L102-L123
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/remoteAgentHostCliInstaller.ts#L158-L175
  */
 export const ensurePart = async (id: string, options: EnsureOptions): Promise<string> => {
   const failures = failedLoads.get(options.runtime) ?? new Map<string, { error: Error; until: number }>();
@@ -937,8 +955,10 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
     const parts = options.parts ?? readParts();
     const part = parts.find((one) => one.id === id);
     if (part === undefined) throw new Error(`${versionsPath()} names no ${id} part`);
-    for (const need of part.requires ?? []) {
-      await ensurePart(need, { ...options, parts });
+    const required: MadePart[] = [];
+    for (const need of withRequires([id], parts).slice(1)) {
+      const at = await ensurePart(need, { ...options, parts });
+      required.push({ id: need, tag: at, version: at.slice(at.lastIndexOf(':') + 1) });
     }
     const source = part.kind === 'ahpd' ? await ahpdSourceOf(options.log) : undefined;
     // The Dockerfile is what the image is, so it is written once and is both what
@@ -947,13 +967,44 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
     // lock that moved, whose sums it holds.
     const file = dockerfileOf(part, source, lockOf(part));
     const tag = tagOf(part, source?.hash, file);
-    await once(tag, async () => {
-      if (await options.runtime.hasImage(tag)) return;
-      if (source?.from === 'workspace') await options.runtime.buildImage(tag, contextOf(file, [...source.tarballs, ...source.plugins]));
-      else await options.runtime.pullImage(`${registryOf()}/${tag}`, tag);
+    const checked = (at: string): Promise<string | undefined> => options.runtime.checkPart(
+      { id, tag: at, version: at.slice(at.lastIndexOf(':') + 1), ...(part.requires === undefined ? {} : { requires: part.requires }) },
+      required,
+      part.bin,
+      options.image ?? MACHINE_IMAGE,
+    );
+    const loaded = await once(tag, async (): Promise<string> => {
+      if (await options.runtime.hasImage(tag)) return tag;
+      if (source?.from === 'workspace') {
+        await options.runtime.buildImage(tag, contextOf(file, [...source.tarballs, ...source.plugins]));
+        return tag;
+      }
+      try {
+        await options.runtime.pullImage(`${registryOf()}/${tag}`, tag);
+        const said = await checked(tag);
+        if (said !== undefined) {
+          await options.runtime.removeImage(tag).catch((error: unknown) => {
+            options.log?.(`${tag} keeps its tag: ${error instanceof Error ? error.message : String(error)}`);
+          });
+          throw new Error(said);
+        }
+        return tag;
+      }
+      catch (error) {
+        const reason = (error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, ' ');
+        options.log?.(`could not load ${tag}: ${reason}. Looking for an earlier image of the ${id} part...`);
+        for (const earlier of (await options.runtime.imagesOf(tag.slice(0, tag.lastIndexOf(':')))).filter((one) => one !== tag)) {
+          if (await checked(earlier) === undefined) {
+            options.log?.(`using ${earlier}, an earlier image of the ${id} part, in place of ${tag}`);
+            return earlier;
+          }
+          options.log?.(`${earlier}, an earlier image of the ${id} part, failed its check too`);
+        }
+        throw error;
+      }
     });
     failures.delete(id);
-    return tag;
+    return loaded;
   }
   catch (error) {
     const failed = error instanceof Error ? error : new Error(String(error));
@@ -1167,17 +1218,25 @@ export const refusedWithout = (spec: { sessionParts?: string[] }, failed: readon
 export const JOINED_PACKAGES = 'ca-certificates git ripgrep';
 
 /**
+ * The joined image's base, the image a machine runs when its profile names
+ * none, pinned to the digest of its index, so the same Dockerfile builds on
+ * the same base wherever it is built, as Docker's guidance pins a base image.
+ * https://docs.docker.com/build/building/best-practices/#pin-base-image-versions
+ */
+export const JOINED_BASE = `${MACHINE_IMAGE}@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc`;
+
+/**
  * The Dockerfile of the joined image: a machine with every part in it, at the
- * path each is mounted at, copied from the part images this host has.
+ * path each is mounted at, copied from the part images by their tags.
  *
- * Built only for a runtime that cannot mount image parts, which is why a profile
- * naming no image stays on `debian:bookworm-slim` with its parts mounted
- * instead - a fifteen-part build does not precede the first default machine.
- * The tags are handed in rather than spelled here, because the ahpd part's tag
- * carries the hash of its own source and only the build knows it.
+ * Made for a runtime that cannot mount image parts. A profile naming no image
+ * runs `debian:bookworm-slim` with its parts mounted, so a fifteen-part image
+ * does not precede the first default machine. The tags are handed in, because
+ * the ahpd part's tag carries the hash of its own source and only the build
+ * knows it.
  */
 export const joinedDockerfile = (parts: Part[], tags: ReadonlyMap<string, string>): string => [
-  'FROM debian:bookworm-slim',
+  `FROM ${JOINED_BASE}`,
   `RUN apt-get update \\
  && apt-get install --yes --no-install-recommends ${JOINED_PACKAGES} \\
  && rm -rf /var/lib/apt/lists/*`,
@@ -1192,7 +1251,7 @@ export const joinedDockerfile = (parts: Part[], tags: ReadonlyMap<string, string
 
 /** The joined image: its tag, the parts it holds and the parts it does not. */
 export interface Joined {
-  /** The tag it was built at, `ahpd-agents:<hash of the file and the ahpd part's tag>`. */
+  /** Its tag here, `ahpd-agents:<hash of the file and the ahpd part's tag>`, pulled or built. */
   tag: string;
   /** Every part whose image was here, at the path it is mounted at. */
   parts: Part[];
@@ -1241,12 +1300,25 @@ export const ensureJoined = async (options: EnsureOptions): Promise<Joined> => {
   // is in `missing` with its reason, and asking again here would throw the same
   // refusal out of the whole join: no machine at all would be made, where the
   // point of `missing` is that every machine not needing that part still is.
-  const hash = held.some((one) => one.kind === 'ahpd') ? (await ahpdSourceOf(options.log)).hash : undefined;
+  const source = held.some((one) => one.kind === 'ahpd') ? await ahpdSourceOf(options.log) : undefined;
   const file = joinedDockerfile(held, tags);
-  const tag = `ahpd-agents:${hashOf(hash, named, held.map((part) => part.id), file)}`;
+  const tag = `ahpd-agents:${hashOf(source?.hash, named, held.map((part) => part.id), file)}`;
+  /*
+   * Pulled where the release workflow built it with the parts: every part the
+   * file names loaded at the tag the release published it at, as VS Code's
+   * build produces its agent SDKs once per release. One holding a checkout's
+   * own ahpd part, an earlier image of a part, or none of a part that would
+   * not load is no release's, and is built here from the part images here.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5
+   */
+  const released = missing.length === 0 && source?.from !== 'workspace' && held.every((part) => {
+    const own = part.kind === 'ahpd' ? source : undefined;
+    return tags.get(part.id) === tagOf(part, own?.hash, dockerfileOf(part, own, lockOf(part)));
+  });
   return once(tag, async () => {
     if (!await options.runtime.hasImage(tag)) {
-      await options.runtime.buildImage(tag, contextOf(file));
+      if (released) await options.runtime.pullImage(`${registryOf()}/${tag}`, tag);
+      else await options.runtime.buildImage(tag, contextOf(file));
     }
     return { tag, parts: held, missing };
   });

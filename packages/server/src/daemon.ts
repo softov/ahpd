@@ -11,21 +11,25 @@ import { realManager } from './service.js';
 import type { Manager, Service } from './service.js';
 
 /**
- * Where a daemon on Windows takes a stop and a restart, and the key that proves
- * the request is this user's.
+ * Where a daemon on Windows takes a stop and a restart, and the token that
+ * proves the request is this user's.
  *
  * Windows cannot send `SIGHUP` or `SIGUSR2`, and `SIGTERM` is a hard kill with
  * no `stopping` event, so `stop` and `restart` reach a daemon there through a
- * named pipe rather than a signal. The key is what keeps another user out: a
- * named pipe gives read access to Everyone by default, and the name is random
- * so nobody can make the pipe first and take the key. Both live in the record,
- * which is 0600, as the connect URL's token does.
+ * named pipe. The token is what keeps another user out, as VS Code's local
+ * endpoint leaves its pipe at the platform's default access and requires its
+ * `connectionToken` to connect: a named pipe gives read access to Everyone by
+ * default, and the name is random so nobody can make the pipe first and take
+ * the token. Both live in the record, which is 0600, as the connect URL's
+ * token does.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/LOCAL_ENDPOINT.md?plain=1#L75
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/LOCAL_ENDPOINT.md?plain=1#L157
  */
 export interface Control {
   /** The named pipe the daemon listens on. */
   pipe: string;
-  /** The key a request must carry, 32 random bytes as hex. */
-  key: string;
+  /** The token a request must carry, 32 random bytes as hex, VS Code's name for it. */
+  connectionToken: string;
 }
 
 /** The shape of the record this release writes, as `schemaVersion` names it. */
@@ -142,7 +146,7 @@ export const DETACHED_ENV = 'AHPD_DETACHED';
 
 /**
  * Set in the environment of a daemon `start` spawns on Windows: the pipe and
- * key it takes its stop and restart requests on, as JSON. The child reads it
+ * token it takes its stop and restart requests on, as JSON. The child reads it
  * and deletes it at once, the way it takes `DETACHED_ENV`, so a shell a session
  * runs does not inherit either.
  */
@@ -182,20 +186,24 @@ const PIPE_PREFIX = '\\\\.\\pipe\\ahpd-';
  */
 export type ControlledSignal = 'SIGTERM' | 'SIGHUP' | 'SIGUSR2';
 
-/** The one line a request is: the key, and the signal it stands for. */
+/**
+ * The one line a request is: the token, under VS Code's name for it, and the
+ * signal it stands for.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/LOCAL_ENDPOINT.md?plain=1#L98-L103
+ */
 export const requestLine = (control: Control, signal: ControlledSignal): string =>
-  `${JSON.stringify({ key: control.key, signal })}\n`;
+  `${JSON.stringify({ connectionToken: control.connectionToken, signal })}\n`;
 
 /**
- * The pipe and key a daemon started on `platform` takes its stop and restart
+ * The pipe and token a daemon started on `platform` takes its stop and restart
  * requests on, and nothing on a platform whose signals reach a daemon.
  *
  * Both are new for each start, and so for each successor of a restart, because
  * a name another process could predict is a name another process could take
  * first. The name is the application's and a random UUID, as VS Code's CLI
  * names the pipe its lock file records
- * (cli/src/async_pipe.rs L179-L188 at 6b68d3fe); the key is what a request is
- * checked against.
+ * (cli/src/async_pipe.rs L179-L188 at 6b68d3fe); the token is what a request
+ * is checked against.
  *
  * `pipe` is only for a test: the control path is `node:net` on both platforms,
  * so a case on Linux drives it over a unix socket path rather than a named
@@ -203,7 +211,7 @@ export const requestLine = (control: Control, signal: ControlledSignal): string 
  */
 export function controlFor(platform: NodeJS.Platform, pipe?: string): Control | undefined {
   if (platform !== 'win32') return undefined;
-  return { pipe: pipe ?? `${PIPE_PREFIX}${randomUUID()}`, key: randomBytes(32).toString('hex') };
+  return { pipe: pipe ?? `${PIPE_PREFIX}${randomUUID()}`, connectionToken: randomBytes(32).toString('hex') };
 }
 
 /** Is that process still there? A record outlives a crash, and says nothing about one. */
@@ -364,8 +372,8 @@ export function readyUrl(origin: string, token?: string): string {
  *
  * `control` is what `start` made for a child on Windows, which the child was
  * given in its environment. It is nowhere else in the record, and no line the
- * verbs print comes from it: the key belongs in the 0600 file and nowhere a log
- * would hold it.
+ * verbs print comes from it: the token belongs in the 0600 file and nowhere a
+ * log would hold it.
  *
  * `service` is what a supervised daemon read out of its own environment, and is
  * given by the daemon itself: a record of a daemon a manager started is written
@@ -526,7 +534,7 @@ const rotateLog = (): void => {
  * `replacing` is the pid of a daemon restarting itself, whose record stays
  * until this one's is written, so a stop in between still reaches it.
  *
- * On Windows it also makes the pipe and key the child answers a stop and a
+ * On Windows it also makes the pipe and token the child answers a stop and a
  * restart on, hands them to it in `CONTROL_ENV`, and records them, because the
  * record is what a verb reads and this process is the one that writes it.
  */
@@ -770,7 +778,7 @@ export const throughPipe = (platform: NodeJS.Platform = process.platform): boole
  * `process.kill`, which answers `ESRCH` for a pid that is gone. Windows has no
  * `SIGHUP` or `SIGUSR2` to send, and sends `SIGTERM` as a hard kill that runs
  * no `stopping` handler, so a record holding a `control` is reached over its
- * pipe instead, with the key the record holds.
+ * pipe, with the token the record holds.
  *
  * `platform` is a parameter so a case on Linux drives the Windows path over a
  * unix socket path, which is the same protocol at both ends.

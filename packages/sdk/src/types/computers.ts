@@ -14,6 +14,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { AgentRecord } from './agents.js';
 import type { MachineNeed } from './machine.js';
+import type { SandboxConfigValue } from './sandbox.js';
 import type { Owner } from './usage.js';
 
 /** A command to spawn, and where. */
@@ -137,6 +138,25 @@ export interface SpawnOptions {
   provider?: string;
 }
 
+/** A command or an MCP server to start inside a chat's sandbox. */
+export interface SandboxedSpawn extends SpawnOptions {
+  /** The chat it runs for, whose sandbox it runs in; absent is the chat the backend was started for. */
+  chat?: string;
+  /**
+   * Whether this is an MCP server's launch, which runs inside the sandbox
+   * where the chat's `sandboxMcpServers` says so, as VS Code starts the MCP
+   * servers inside it while that switch is on.
+   */
+  server?: boolean;
+  /**
+   * A command the person let leave the sandbox, which runs outside it where
+   * the chat's `allowUnsandboxedCommands` allows one, and inside it otherwise.
+   */
+  unsandboxed?: boolean;
+  /** The chat's resolved sandbox, which `computersFor` fills from `chat`. */
+  sandbox?: SandboxConfigValue;
+}
+
 /**
  * A setting that names what to make, rather than a machine that exists.
  *
@@ -179,6 +199,13 @@ export interface MachineSource {
   repository?: string;
   /** What the session's agent says a machine needs, as its `machine()` answered. */
   needs?: Record<string, MachineNeed>;
+  /**
+   * Whether the session's sandbox is on as the machine is made, so the
+   * machine is made to host the sandbox runtime, as VS Code prepares a dev
+   * container it starts with the sandbox enabled.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L301-L309
+   */
+  sandbox?: boolean;
   /**
    * Whose the machine is, and who pays for the time it is up.
    *
@@ -434,6 +461,18 @@ export interface ComputerPort {
    */
   takeOut?(id: string, paths: string[]): Promise<void>;
   /**
+   * A folder inside a machine, read as the machine holds it: copied out to a
+   * scratch folder of this host's for the time `read` takes, and gone after,
+   * so a backend reads what a session in the machine named by its path there,
+   * as VS Code reads a plugin's parts where the plugin lives. `read` is handed
+   * the copy's own path. Nothing for a machine that is not there or a folder it
+   * does not hold.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L54-L91
+   *
+   * Absent on a port whose machines no file is read out of.
+   */
+  readFolder?<T>(id: string, folder: string, read: (copy: string) => T | Promise<T>): Promise<T | undefined>;
+  /**
    * Make a machine from a source a session named, and answer its id.
    *
    * The host calls this once, before the session's backend is started, when
@@ -481,4 +520,38 @@ export interface ComputerPort {
    * May be a promise, for the reason `enter`'s is.
    */
   leave?(id: string, session: string): void | Promise<void>;
+  /**
+   * A chat's sandbox, as this host resolves it for the runtime that applies it.
+   *
+   * VS Code's `getSessionSandboxConfig`: the root `sandbox` settings, the
+   * chat's own switch over them (the session's where the chat set none),
+   * within the session's floor. Filled by `computersFor` for the session the
+   * port is handed to; `chat` is one of its chats, and absent is the chat the
+   * backend was started for. A runtime with a sandbox of its own applies this
+   * through it, and `enabled: 'on'` is a sandbox the chat's commands run in
+   * wherever the session runs, this host included.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionSandbox.ts#L17-L69
+   */
+  sandbox?(chat?: string): SandboxConfigValue;
+  /**
+   * Why a computer cannot host the sandbox runtime, or nothing when it can.
+   *
+   * `id` is a machine; absent is this host. Each kind of computer answers for
+   * itself, from the machine as it is: a container's real Docker settings,
+   * and the runtime's own check run inside it. A sentence, which is the
+   * reason a chat's request to turn the sandbox on is rejected with.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerSandbox.ts#L154-L185
+   */
+  sandboxSupport?(id?: string): Promise<string | undefined>;
+  /**
+   * How to start a command or an MCP server inside a chat's sandbox: on this
+   * host when `id` is absent, else inside that machine, the answer a
+   * descriptor like `how`'s whose caller owns the spawn.
+   *
+   * `computersFor` resolves the chat's sandbox into `options.sandbox`, and
+   * answers the command as it was where that sandbox is off, so a backend
+   * asks this for every command it runs for its agent and every MCP server it
+   * starts. A person's terminal and a `!` command are left as they are.
+   */
+  sandboxed?(id: string | undefined, options: SandboxedSpawn): Promise<Spawn>;
 }

@@ -32,6 +32,7 @@ import type { RecordStore } from './records.js';
 import type { Vault } from './vault.js';
 import type { Peer, Request } from './rpc.js';
 import type { ManagedSettingsPermissions } from './permissions.js';
+import type { SessionSandboxPolicy } from './sandbox.js';
 import type { Opened } from './listen.js';
 import type { Summary } from './catalog.js';
 import type { Bag } from './common.js';
@@ -918,6 +919,17 @@ export interface HostOptions {
    * the calls it never asks the host about.
    */
   managedSettingsPermissions?: ManagedSettingsPermissions;
+  /**
+   * The floor the operator sets under every session's sandbox, in VS Code's
+   * floor shape: whether the sandbox must be on, whether a command may leave
+   * it, the hosts allowed and blocked, the paths read-write, read-only and
+   * denied, and whether it fails closed. No chat's selection lowers it, and a
+   * floor that fails closed keeps the sandbox on with no way out. Published on
+   * each session's `_meta` as `vscode.resolvedSandboxPolicy`, as VS Code
+   * publishes the floor its runtime resolved from its managed settings.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/agentSandboxPolicyMeta.ts#L10-L28
+   */
+  managedSettingsSandbox?: SessionSandboxPolicy;
   /**
    * The operator's per-tool approval eligibility, VS Code's
    * `chat.tools.eligibleForAutoApproval` map of tool name to boolean, which

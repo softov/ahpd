@@ -480,6 +480,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * in it: a session that is gone keeps nothing there watched.
      */
     const gone = dirOf(uri);
+    // The sandbox state it published goes with it.
+    ctx.sandbox.forget(uri);
     sessions.delete(uri);
     // And the relaunch it owed, which no backend is left to take.
     ctx.relaunches.delete(uri);

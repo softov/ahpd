@@ -711,7 +711,7 @@ const guardOf = async (
   return { argv, user: at === -1 ? undefined : argv[at + 1] };
 };
 
-it('reads a profile\'s gitGuard as fetch, taking bind as fetch and keeping open', async () => {
+it('reads a profile\'s gitGuard as fetch or open, and refuses any other answer, bind among them', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ahpd-computer-guard-'));
   loose = dir;
   repositoryAt(dir);
@@ -722,38 +722,26 @@ it('reads a profile\'s gitGuard as fetch, taking bind as fetch and keeping open'
   for (const [key, profile] of [
     ['spelled', { image: 'node:22', disposable: true, sessionFolder: true, gitGuard: 'fetch' }],
     ['silent', { image: 'node:22', disposable: true, sessionFolder: true }],
-    ['old', { image: 'node:22', disposable: true, sessionFolder: true, gitGuard: 'bind' }],
   ] as [string, Record<string, unknown>][]) {
     const { user, error } = await guardOf(join(dir, `${key}.json`), { claude: profile });
     expect(error, key).toBeUndefined();
     expect(user, key).toBe(me);
   }
 
-  // And the old word is not silent about it: one line, naming the profile.
-  const lines: string[] = [];
-  await load(
-    { command: process.execPath, args: [FIXTURE], env: { DOCKER_FAKE_STATE: join(dir, 'log.json') },
-      profiles: { claude: { image: 'node:22', gitGuard: 'bind' } } },
-    {},
-    (line) => lines.push(line),
-  );
-  expect(lines.filter((line) => line.includes('profiles.claude.gitGuard is bind'))).toHaveLength(1);
-
-  // `open` is unchanged: at a repository root it keeps the image's user.
+  // `open` at a repository root keeps the image's user.
   const opened = await guardOf(join(dir, 'open.json'), {
     claude: { image: 'node:22', disposable: true, sessionFolder: true, gitGuard: 'open' },
   });
   expect(opened.error).toBeUndefined();
   expect(opened.user).toBeUndefined();
 
-  // And a third answer is refused, naming the three a profile may give.
-  const refused = await guardOf(join(dir, 'closed.json'), {
-    claude: { image: 'node:22', gitGuard: 'closed' },
-  });
-  expect(refused.error).toMatch(/profiles\.claude\.gitGuard/);
-  expect(refused.error).toMatch(/fetch/);
-  expect(refused.error).toMatch(/open/);
-  expect(refused.error).toMatch(/bind/);
+  // Any other answer is refused, naming the two a profile may give.
+  for (const said of ['closed', 'bind']) {
+    const refused = await guardOf(join(dir, `${said}.json`), {
+      claude: { image: 'node:22', gitGuard: said },
+    });
+    expect(refused.error).toContain(`profiles.claude.gitGuard is fetch or open, and ${said} is neither`);
+  }
 });
 
 /*

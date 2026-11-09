@@ -198,15 +198,20 @@ async function room(hostOptions: HostOptions) {
       });
       await client.handle({ method: 'subscribe', params: { channel: uri } });
     },
-    dispose: (uri: string): Promise<unknown> => client.handle({ method: 'disposeSession', params: { channel: uri } }),
-    /** A message sent to a session's default chat, which is when a change of its machine takes effect. */
+    /**
+     * A turn on the session's default chat, the chat the host minted for it,
+     * read off the session's state: a send, at whose turn boundary the host
+     * relaunches a session a change of its computer moved.
+     */
     send: async (uri: string, turnId: string): Promise<void> => {
       const chat = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chat } });
       await client.handle({
         method: 'dispatchAction',
-        params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: turnId } } },
       });
     },
+    dispose: (uri: string): Promise<unknown> => client.handle({ method: 'disposeSession', params: { channel: uri } }),
   };
 }
 
@@ -342,13 +347,15 @@ it('makes the machine when a disposable profile is picked before the first turn'
   const { options: loaded } = await load(options(state, {
     profiles: { claude: { title: 'Claude', disposable: true, disposableDelay: 1000 } },
   }), [agentWith()]);
-  const { client, peer: p, open, dispose, send } = await room(loaded);
+  const { client, peer: p, open, send, dispose } = await room(loaded);
   // New opened before the person decided, so the session has no computer.
   await open('ahp-session:/one', {}, folder);
   expect(held(state).machines).toEqual([]);
 
-  // The profile is picked, and the first send starts the session again into
-  // the machine the profile becomes.
+  // The first send carries the profile that was picked, and the session is
+  // started again into the machine the profile becomes, at that send's turn
+  // boundary, as VS Code relaunches a runtime there (copilotAgentSession.ts
+  // L1095-L1101 at 6b68d3fe).
   await client.handle({
     method: 'dispatchAction',
     params: { channel: 'ahp-session:/one', action: { type: 'session/configChanged', config: { computer: 'disposable:claude' } } },
@@ -363,14 +370,15 @@ it('makes the machine when a disposable profile is picked before the first turn'
   const box = held(state).machines[0]?.name as string;
   expect(held(state).machines[0]?.labels).toMatchObject({ 'ahpd.disposable': 'claude', 'ahpd.agents': 'echo' });
 
-  // The client's pick is said as it sent it, and then the machine the
-  // session actually has, which is what the client holds last: a chip holding
-  // the source would name nothing.
+  // What the client is told last is the machine the session actually has,
+  // after its own change of the source it picked is said back to it: a chip
+  // left holding the source would name nothing.
   const told = actions(p, 'ahp-session:/one')
     .filter((action) => action.type === 'session/configChanged')
-    .map((action) => (action.config as Record<string, unknown>).computer)
-    .filter((one) => one !== undefined);
+    .map((action) => (action.config as Record<string, unknown>).computer);
   expect(told.at(-1)).toBe(`computer://${box}`);
+  const now = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } })) as { snapshot: { state: { config: { values: Record<string, unknown> } } } };
+  expect(now.snapshot.state.config.values.computer).toBe(`computer://${box}`);
 
   // It is a real user, so the delay does not run while the session is in it.
   await vi.advanceTimersByTimeAsync(10000);
@@ -561,9 +569,12 @@ it('a disposable machine that refuses removal is tried again', async () => {
 });
 
 /*
- * Task 05: a session that moves away before its first turn.
+ * Task 05: a session that moves away before its first turn, the move taking
+ * effect at the first send's turn boundary, where the host relaunches it as
+ * VS Code relaunches a runtime (copilotAgentSession.ts L1095-L1101 at
+ * 6b68d3fe).
  */
-it('lets the machine go when the session moves to this host, and makes a new one if it asks again', async () => {
+it('lets the machine go when the session moves to this host at its first send, and keeps it when it asks for the same profile again before that send', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const dir = temp();
   const state = join(dir, 'docker.json');
@@ -573,14 +584,13 @@ it('lets the machine go when the session moves to this host, and makes a new one
   const { options: loaded } = await load(options(state, {
     profiles: { scratch: { title: 'Scratch', disposable: true, disposableDelay: 1000 } },
   }), [agentWith()]);
-  const { client, open, send } = await room(loaded);
+  const { client, peer: p, open, send } = await room(loaded);
   await open('ahp-session:/one', { computer: 'disposable:scratch' }, folder);
   await until(() => held(state).machines.length === 1);
   const first = held(state).machines[0]?.name as string;
   expect(first).toBeDefined();
 
-  // The person changes their mind before the first turn: this host, no
-  // machine, which the first send starts the session on.
+  // The person changes their mind before the first turn: this host, no machine.
   await client.handle({
     method: 'dispatchAction',
     params: { channel: 'ahp-session:/one', action: { type: 'session/configChanged', config: { computer: '' } } },
@@ -593,14 +603,29 @@ it('lets the machine go when the session moves to this host, and makes a new one
   await advanceUntil(() => held(state).machines.length === 0);
   expect(held(state).calls.some((one) => one[0] === 'rm' && one[2] === first)).toBe(true);
 
-  // Its machine is fixed once it has started, so asking for the same profile
-  // again is a session's of its own: a new machine rather than the one that
-  // went, whose id the host still remembered.
+  // A session that moves away and asks for the same profile again before its
+  // first turn made two changes before one turn boundary, which are one
+  // relaunch: it is still in the machine the profile made for it, and nothing
+  // is made or let go.
   await open('ahp-session:/two', { computer: 'disposable:scratch' }, folder);
-  await advanceUntil(() => held(state).machines.length === 1);
-  const second = held(state).machines[0]?.name as string;
-  expect(second).toBeDefined();
-  expect(second).not.toBe(first);
+  await until(() => held(state).machines.length === 1);
+  const kept = held(state).machines[0]?.name as string;
+  expect(kept).not.toBe(first);
+  for (const computer of ['', 'disposable:scratch']) {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/two', action: { type: 'session/configChanged', config: { computer } } },
+    });
+  }
+  await send('ahp-session:/two', 't1');
+  const told = (): unknown[] => actions(p, 'ahp-session:/two')
+    .filter((action) => action.type === 'session/configChanged')
+    .map((action) => (action.config as Record<string, unknown>).computer);
+  await until(() => told().at(-1) === `computer://${kept}`);
+  await vi.advanceTimersByTimeAsync(10000);
+  await settle();
+  expect(held(state).machines.map((one) => one.name)).toEqual([kept]);
+  expect(held(state).calls.some((one) => one[0] === 'rm' && one[2] === kept)).toBe(false);
 });
 
 it('lets the machine go when the new value is refused', async () => {
@@ -616,30 +641,28 @@ it('lets the machine go when the new value is refused', async () => {
       two: { title: 'Two', disposable: true },
     },
   }), [agentWith()]);
-  const { client, open, dispose } = await room(loaded);
+  const { client, open, send } = await room(loaded);
   await open('ahp-session:/one', { computer: 'disposable:one' }, folder);
   await until(() => held(state).machines.length === 1);
   const box = held(state).machines[0]?.name as string;
   expect(box).toBeDefined();
 
   // A session already running in one machine may not switch to another before
-  // its first turn, and the refusal is what it is answered with.
+  // its first turn, and the refusal is what that turn's relaunch is answered
+  // with, at the first send's turn boundary.
   await client.handle({
     method: 'dispatchAction',
     params: { channel: 'ahp-session:/one', action: { type: 'session/configChanged', config: { computer: 'disposable:two' } } },
   });
+  await send('ahp-session:/one', 't1');
   await wait(200);
   await settle();
   // No second machine was made: the refusal is about switching, not about the
   // profile being unknown.
   expect(held(state).machines.map((one) => one.name)).toEqual([box]);
 
-  // The refused session stays in its machine, and once it is disposed, as the
-  // refusal says to, the machine waits out the delay and goes rather than
-  // holding it for the rest of the daemon's life.
-  expect(held(state).machines.map((one) => one.name)).toEqual([box]);
-  await dispose('ahp-session:/one');
-  await settle();
+  // And the session is over, so the machine it was in waits out the delay and
+  // goes rather than holding it for the rest of the daemon's life.
   await advanceUntil(() => held(state).machines.length === 0);
   expect(held(state).calls.some((one) => one[0] === 'rm' && one[2] === box)).toBe(true);
 });

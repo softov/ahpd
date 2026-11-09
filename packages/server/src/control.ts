@@ -4,7 +4,7 @@
  * Windows cannot send `SIGHUP` or `SIGUSR2` to another process, and Node sends
  * `SIGTERM` as a hard kill that runs no `stopping` handler, so `ahpd stop` and
  * `ahpd restart` reach a daemon there as one line of JSON on a named pipe.
- * `start` makes the pipe and the key, hands them to the child in
+ * `start` makes the pipe and the token, hands them to the child in
  * `AHPD_CONTROL`, and records them; this is the other end, the listener.
  *
  * The request path is `node:net` on both platforms, so the pipe name is a
@@ -50,31 +50,31 @@ export function controlIn(said: string | undefined): Control | undefined {
   try { parsed = JSON.parse(said); }
   catch { return undefined; }
   if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const { pipe, key } = parsed as { pipe?: unknown; key?: unknown };
-  if (typeof pipe !== 'string' || pipe === '' || typeof key !== 'string' || key === '') return undefined;
-  return { pipe, key };
+  const { pipe, connectionToken } = parsed as { pipe?: unknown; connectionToken?: unknown };
+  if (typeof pipe !== 'string' || pipe === '' || typeof connectionToken !== 'string' || connectionToken === '') return undefined;
+  return { pipe, connectionToken };
 }
 
 /** The request in that line, or nothing when the line is not one. */
-const requestIn = (line: string): { key: string; signal: string } | undefined => {
+const requestIn = (line: string): { connectionToken: string; signal: string } | undefined => {
   let parsed: unknown;
   try { parsed = JSON.parse(line); }
   catch { return undefined; }
   if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const { key, signal } = parsed as { key?: unknown; signal?: unknown };
-  if (typeof key !== 'string' || typeof signal !== 'string') return undefined;
-  return { key, signal };
+  const { connectionToken, signal } = parsed as { connectionToken?: unknown; signal?: unknown };
+  if (typeof connectionToken !== 'string' || typeof signal !== 'string') return undefined;
+  return { connectionToken, signal };
 };
 
 /**
- * Whether that key is this daemon's, compared in constant time.
+ * Whether that token is this daemon's, compared in constant time.
  *
  * A comparison that stops at the first byte that differs says how much of a
- * guess was right, which is what a key is guessed by. A key of another length
- * is answered without a compare, because two buffers of different lengths are
- * not one key and `timingSafeEqual` throws on them rather than answering false.
+ * guess was right, which is what a token is guessed by. A token of another
+ * length is answered without a compare, because two buffers of different
+ * lengths are two tokens and `timingSafeEqual` throws on them.
  */
-const sameKey = (own: string, said: string): boolean => {
+const sameToken = (own: string, said: string): boolean => {
   const mine = Buffer.from(own, 'utf8');
   const theirs = Buffer.from(said, 'utf8');
   return mine.length === theirs.length && timingSafeEqual(mine, theirs);
@@ -83,27 +83,29 @@ const sameKey = (own: string, said: string): boolean => {
 /**
  * Listen for the stop and the restart of a daemon on Windows.
  *
- * One line of JSON per connection - `{"key": "...", "signal": "SIGTERM"}` - and
- * the connection is closed once the line has been read, so a caller that has
- * written its request has nothing left to wait for. The key decides whether
- * anything runs at all, and the name decides what: a line that is not a request
- * with a key this daemon holds and a signal it takes is logged, and runs
- * nothing.
+ * One line of JSON per connection - `{"connectionToken": "...", "signal":
+ * "SIGTERM"}` - and the connection is closed once the line has been read, so a
+ * caller that has written its request has nothing left to wait for. The token
+ * decides whether anything runs at all, as VS Code's local endpoint refuses a
+ * connection without its token or with the wrong one, and the name decides
+ * what: a line that is not a request with the token this daemon holds and a
+ * signal it takes is logged, and runs nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/LOCAL_ENDPOINT.md?plain=1#L103
  *
- * No line this writes holds the key. A log is a file other things read, and the
- * key is worth what the token in the record's `connectUrl` is worth, which no
- * line prints either.
+ * No line this writes holds the token. A log is a file other things read, and
+ * the token is worth what the token in the record's `connectUrl` is worth,
+ * which no line prints either.
  */
 export function controlServer(control: Control, handlers: ControlHandlers, log: (line: string) => void): ControlServer {
   /** One request, and the only thing that ever runs a handler. */
   const answer = (line: string): void => {
     const request = requestIn(line);
     if (request === undefined) {
-      log('control: refused a request that is not a JSON line with a key and a signal');
+      log('control: refused a request that is not a JSON line with a connectionToken and a signal');
       return;
     }
-    if (!sameKey(control.key, request.key)) {
-      log('control: refused a request with a wrong key');
+    if (!sameToken(control.connectionToken, request.connectionToken)) {
+      log('control: refused a request with the wrong token');
       return;
     }
     if (!isSignal(request.signal)) {

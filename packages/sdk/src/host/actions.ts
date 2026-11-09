@@ -12,6 +12,7 @@ import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './sessionlifecycle.js';
 import { accountKey, RESTART_KEY } from './root.js';
 import { claimOf } from './terminals.js';
+import { SANDBOX_ROOT_KEY } from '../types/sandbox.js';
 import type { HeldCopies, TemplatePlugin } from '../types/clientplugins.js';
 import type { Bag } from '../types/common.js';
 import type { Grant } from '../types/users.js';
@@ -428,6 +429,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         ctx.persistRootConfig();
         // Moving chats turned on or off moves every chat's offer of a move.
         if (Object.hasOwn(config, 'chatMoves.enabled')) for (const chat of byChat.keys()) ctx.updateChatMovability(chat);
+        // The root sandbox settings moved: every session's floor published
+        // and every chat's sandbox applied again, as VS Code's host does on a
+        // root change.
+        if (Object.hasOwn(config, SANDBOX_ROOT_KEY) || action.replace === true) ctx.sandbox.rootChanged();
       };
       /*
        * The daemon's keys, which are not this host's to keep.

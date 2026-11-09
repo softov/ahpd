@@ -1377,8 +1377,11 @@ it('makes the machine without a part whose load fails, and refuses only the sess
   // The healthy part beside it is there, and the machine was made.
   expect(box?.labels?.['ahpd.parts']).toBe(label(['codex', 'node']));
   expect(held.calls.filter((one) => one[0] === 'run').flat().join(' ')).not.toContain('/opt/ahpd/gemini');
-  // One line, naming the part and the pull's own reason.
-  const said = lines.filter((one) => one.includes('gemini'));
+  // The load looks for an earlier image of the part, as VS Code looks for a
+  // fallback CLI, and finds none; then one line for the machine, naming the
+  // part and the pull's own reason.
+  expect(lines.filter((one) => one.includes('Looking for an earlier image of the gemini part'))).toHaveLength(1);
+  const said = lines.filter((one) => one.includes('made without the part gemini'));
   expect(said).toHaveLength(1);
   expect(said[0]).toMatch(/box is made without the part gemini: .*pull access denied/);
   // The codex session runs; the gemini one is refused by name.
@@ -1393,12 +1396,15 @@ it('makes the machine without a part whose load fails, and refuses only the sess
  */
 const GEMINI_FAILS = { failPull: [remote('gemini')] };
 
-/** Nothing of a machine is left in the fake Docker or beside the configuration. */
+/**
+ * Nothing of a machine is left in the fake Docker or beside the configuration:
+ * a container run that removes itself is a loaded part's check.
+ */
 const leftNothing = (state: string): void => {
   const held = JSON.parse(readFileSync(state, 'utf8')) as Held & { volumes?: Record<string, unknown> };
   expect(held.machines).toEqual([]);
   expect(Object.keys(held.volumes ?? {})).toEqual([]);
-  expect(held.calls.filter((one) => ['run', 'create', 'start'].includes(one[0] ?? ''))).toEqual([]);
+  expect(held.calls.filter((one) => ['run', 'create', 'start'].includes(one[0] ?? '') && !one.includes('--rm'))).toEqual([]);
   expect(existsSync(join(configHome(), 'computers.json'))).toBe(false);
 };
 
