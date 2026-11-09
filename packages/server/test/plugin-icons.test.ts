@@ -8,6 +8,7 @@ import { webhookAdapter } from '../../webhook/src/adapter.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { PluginSpec } from '../../sdk/src/types/plugin.js';
+import { fileLinks } from '../../../tools/links.ts';
 
 /*
  * The icons a manifest and an adapter carry.
@@ -240,7 +241,8 @@ describe('ahpd.icons', () => {
     expect(problems[0]).toContain('points outside the plugin package');
   });
 
-  it('drops a symlink that points outside the package with one line, and loads the plugin', async () => {
+  // A link to a file, which a Windows machine makes only with Developer Mode or as an administrator.
+  it.skipIf(!fileLinks)('drops a symlink that points outside the package with one line, and loads the plugin', async () => {
     write('outside.svg', '<svg/>');
     write('icons-link/keep', '');
     symlinkSync(join(home, 'outside.svg'), join(home, 'icons-link', 'icon.svg'));
