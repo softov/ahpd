@@ -46,6 +46,13 @@ const publish = (args: string[], state: Record<string, unknown> = {}): { held: H
   return { held: JSON.parse(readFileSync(path, 'utf8')) as Held, status: ran.status, out: ran.stdout };
 };
 
+/*
+ * Each case runs the release script whole, and every docker call it makes
+ * starts a node process for the stand-in: about five seconds a case, past the
+ * suite's default on a busy machine.
+ */
+const CASE_MS = 20_000;
+
 const parts = readParts();
 const node = parts.find((one) => one.kind === 'node') as Part;
 const codex = parts.find((one) => one.id === 'codex') as Part;
@@ -74,7 +81,7 @@ it.skipIf(!posix)('builds every part for both platforms and pushes it where a ho
   expect(built[0]?.files).toEqual([]);
   // Nothing was built into this host's own images.
   expect(held.builds ?? []).toEqual([]);
-});
+}, CASE_MS);
 
 /*
  * The joined image is built at release with the parts, every part copied in
@@ -95,7 +102,7 @@ it.skipIf(!posix)('builds the joined image last, every part copied in from its p
   expect(joined?.contexts).toHaveLength(parts.length);
   expect(joined?.contexts).toContain(`${tagFor(codex)}=docker-image://${remoteFor(codex)}`);
   expect(joined?.files).toEqual([]);
-});
+}, CASE_MS);
 
 // POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
 it.skipIf(!posix)('leaves a tag already published as it is', () => {
@@ -103,7 +110,7 @@ it.skipIf(!posix)('leaves a tag already published as it is', () => {
   expect((held.buildx ?? []).some((one) => one.tags.includes(remoteFor(codex)))).toBe(false);
   expect(out).toContain(`${remoteFor(codex)} is already published`);
   expect((held.buildx ?? []).some((one) => one.tags.includes(remoteFor(node)))).toBe(true);
-});
+}, CASE_MS);
 
 // POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
 it.skipIf(!posix)('rehearses without pushing, and says which part it cannot build on a node not published yet', () => {
@@ -114,7 +121,7 @@ it.skipIf(!posix)('rehearses without pushing, and says which part it cannot buil
   expect(built.some((one) => one.tags.includes(remoteFor(codex)))).toBe(false);
   expect(out).toContain(`codex is not rehearsed: it copies in ${remoteFor(node)}, not published yet`);
   expect(held.published ?? []).toEqual([]);
-});
+}, CASE_MS);
 
 // POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
 it.skipIf(!posix)('builds every part on this host\'s Docker at the tag its daemon asks for, with --local', () => {
@@ -127,4 +134,4 @@ it.skipIf(!posix)('builds every part on this host\'s Docker at the tag its daemo
   expect(tags).toContain(tagFor(codex));
   expect(tags.at(-1)).toMatch(/^ahpd-agents:[0-9a-f]{12}$/);
   expect(held.buildx ?? []).toEqual([]);
-});
+}, CASE_MS);
