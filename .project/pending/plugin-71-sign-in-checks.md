@@ -22,8 +22,8 @@ node --conditions development --import ./scripts/dev.mjs packages/server/src/mai
 ## Steps
 
 1. In ahpw, add a connector of the `openrouter` adapter, and press the sign-in button.
-2. Sign in to OpenRouter on the page it opens.
-3. Check that the connector row is `ready`.
+2. Sign in to OpenRouter on the page it opens, and copy the code it shows. Paste it in **Code** in ahpw, and press **Finish**.
+3. Check that the connector row shows `Ready`.
 4. Check the record, with the connector's id in place of `<id>`. Expect a `$secret` reference and no key:
 
 ```bash
@@ -31,7 +31,7 @@ cat ~/.config/ahpd/connectors/<id>.json
 ```
 
 5. Check that the daemon's terminal, the answers and every row show no code and no key.
-6. Call a model through the connector, with its name in place of `<model>`, and check that the answer has a reply:
+6. Call a model through the connector, with `openrouter/<id>` in place of `<model>`, and check that the answer has a reply:
 
 ```bash
 curl -s http://127.0.0.1:37537/v1/chat/completions -H "Authorization: Bearer $(cat /home/softov/.vscode/cli/agent-host-token)" -H 'Content-Type: application/json' -d '{"model":"<model>","messages":[{"role":"user","content":"Say ok."}]}'

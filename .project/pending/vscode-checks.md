@@ -19,10 +19,10 @@ source <(git -C /github/ahpd fetch -q origin && git -C /github/ahpd show origin/
 
 Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `settings.json`, set `"chat.remoteAgentHostsEnabled": true`, and reload the window.
 
-## host/104: Disable (Session) on a built-in plugin stays
+## host/104: Disable (Session) on a plugin stays
 
 1. Open a session on `ahpd-check`, and open its customizations list.
-2. Choose "Disable (Session)" on `cc-plugin-agents-md`.
+2. Choose "Disable (Session)" on a plugin installed from a marketplace. A plugin the Claude CLI ships, such as `cc-plugin-agents-md`, has no row and no switch since 0d91c97ab.
 3. Check that the switch stays off and does not flicker back.
 4. Check that the plugin's skills leave the slash list of that session.
 5. Open a new session, and check that the plugin is on there.
@@ -38,8 +38,8 @@ Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `setting
 
 1. Sign in to Codex on this machine with `codex login`, and run `ahpd restart`.
 2. Connect the window to `ahpd-check` with `check-token`.
-3. Open the account menu, and check that it shows the Codex account email.
-4. Connect as a guest without `account:read`, and check that the menu shows no email.
+3. Start a Codex session on `ahpd-check`, then open the account menu, and check that it shows the Codex account email. The ACP backend knows the account only once a session starts.
+4. Add a users file to the test daemon with a guest whose role lacks `account:read`, and `ahpd restart`. Connect as that guest, and check that the menu shows no email.
 
 ## Reply
 

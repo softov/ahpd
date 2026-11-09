@@ -6,7 +6,7 @@ plans:
 
 # Review the owner's command check
 
-One check by hand is left: the `vscode` defaults approve a command in a session from VS Code. The earlier results are in *Earlier results*.
+One check by hand is left: the `vscode` defaults approve a command in a session from VS Code. Since 4c3738f08, every turn reads the host's terminal rules whoever sent it. The session's owner no longer decides this, so [the problem](../problems/a-claude-session-from-vs-code-has-no-owner.md) does not block the check. The earlier results are in *Earlier results*.
 
 ## Set up
 
@@ -30,6 +30,8 @@ Write "pass", or what you saw.
 ## Earlier results
 
 ### Review
+
+Items 1 and 4 no longer hold: the terminal rules are one root value, read for every turn (4c3738f08, 43393ec28).
 
 1. **Pass.** `getAutoApproval` in `spawn.ts` reads the connection that started the session, and only when that connection's person owns the session. A turn from another window does not widen the rules.
 2. **Pass.** A start that no connection asked for, such as an automation, has no rules, so every command asks.

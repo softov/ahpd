@@ -20,10 +20,10 @@ On a test daemon at 8b5423b2, on 2026-11-04, with `openrouter`, `openai` and `an
 
 ## Set up
 
-The daemon needs `modelApi` on, as your `config-dev.json` has since 2026-11-04. It needs an `openai` and an `anthropic` connector. Then, in a second terminal:
+Claude runs this on the test daemon, `source .project/pending/test-daemon.sh`, on port 39200. Its config needs `"modelApi": true`, and the `openai`, `anthropic` and `openrouter` connectors with their keys. Then, in a second terminal:
 
 ```bash
-export AHPD_TOKEN=$(cat /home/softov/.vscode/cli/agent-host-token) B=http://127.0.0.1:37537
+export AHPD_TOKEN=check-token B=http://127.0.0.1:39200
 ```
 
 ## Steps

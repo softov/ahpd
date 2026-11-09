@@ -3,8 +3,6 @@ title: A Claude session from VS Code has no owner, so the owner's command check 
 status: open
 date: 2026-10-20
 severity: major
-blocks:
-  - plans/host/100-p2-a-session-gets-its-owners-command-check/plan.md
 refs:
   - "[code://packages/sdk/src/host/spawn.ts#L932-L933](../../packages/sdk/src/host/spawn.ts#L932-L933) - `getAutoApproval` gives no answer when the sender is not the session's owner"
   - "[code://packages/sdk/src/host/sessionmethods.ts#L1013](../../packages/sdk/src/host/sessionmethods.ts#L1013) - `createSession` passes the connection's owner to `openSession`"
@@ -45,9 +43,9 @@ VS Code makes a provisional session before the first message, so these are likel
 
 ## Impact
 
-host/100 p2 does nothing for a Claude session from VS Code on a host with users.
-Every command asks, including the ones the defaults approve.
-A session from ahpc gets its owner and is not affected.
+Since 4c3738f08, every turn reads the host's terminal rules whoever sent it, so the command check no longer depends on the owner.
+A session from VS Code on a host with users still has no owner.
+What else reads a session's owner was not checked again.
 
 ## Workaround
 

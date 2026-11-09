@@ -23,7 +23,7 @@ ahpd plugin install @ahpd/web && ahpd restart
 
 1. Open http://127.0.0.1:39200/plugins/web/, sign in with `check-token`, and open the plugins page. Expect `agent-claude` and `example-canvas`, each loaded.
 2. In a VS Code chat on `ahpd-check`, ask the agent to call `open_check_canvas`. Expect the page beside the chat.
-3. Ask for the tool a second time. Expect the same canvas drawn again, with a new "Served at" time, and no second canvas.
+3. Ask for the tool a second time. Expect the same resource as the first call, and no second canvas. Expect the canvas left as it is, because the host says nothing for an instance opened again unchanged.
 4. Turn canvases off in the window, and ask for the tool again. Expect the tool to fail with `Canvases are disabled.`
 
 ## Reply

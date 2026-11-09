@@ -12,7 +12,7 @@ plugin/51 is on main. The other checks passed: the webhook, the scope and the pa
 
 ```bash
 source <(git -C /github/ahpd fetch -q origin && git -C /github/ahpd show origin/main:.project/pending/test-daemon.sh) agent-claude
-ahpd plugin install @ahpd/web && ahpd restart
+ahpd plugin install @ahpd/web@next && ahpd restart
 ```
 
 ## Steps

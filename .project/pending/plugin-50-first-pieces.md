@@ -32,14 +32,14 @@ node --conditions development --import ./scripts/dev.mjs packages/server/src/mai
 
 1. Make a connector `tg` of `ap-telegram-bot`, with `secret_text` set to a bot token from BotFather.
 2. Send the bot one message, so that the chat exists.
-3. In a session, call `ap_telegram_bot_send_text_message` with `chat_id` and `message`.
+3. In a session, call `ap_telegram_bot_telegram_send_message` with `chat_id` and `message`.
 4. Check that the message arrives in the chat.
 
 ## Slack
 
 1. Make a connector `work` of `ap-slack`, with `botToken` and `userToken` from a Slack app installed in the workspace.
 2. Check that the app holds the `chat:write` scope, and that the bot is in the channel.
-3. In a session, call `ap_slack_send_channel_message` with `channel` set to the channel id and `text` set to one line.
+3. In a session, call `ap_slack_slack_post_message` with `channel` set to the channel id and `text` set to one line.
 4. Check that the message arrives in the channel.
 
 ## The other pieces
@@ -50,23 +50,24 @@ Check that the answer holds the data the account has, and no secret value.
 
 | Piece | Connector | Action and its inputs |
 | --- | --- | --- |
-| GitHub | a GitHub App installed on one repository | `find_user` with `username` |
+| GitHub | `type` `CUSTOM_AUTH` with `appId`, `installationId` and `privateKey` of a GitHub App on one repository, or `type` `SECRET_TEXT` with a personal access token | `find_user` with `username` |
 | Linear | a personal API key | `linear_viewer_get` |
 | Jira Cloud | the site URL, an email and an API token | `get_current_user` |
 | Discord | a bot token, with the bot in one server | `discord_find_channel` with `guild_id` and `name` |
 | WhatsApp Business | an access token and the business account id | `sendMessage` with `phone_number_id`, `to` and `text`, to a test number |
 | Notion | an internal integration token, shared with one page | `notion_search` with `query` |
-| Airtable | a personal access token with access to one base | `airtable_find_base` with `baseName` |
+| Airtable | a personal access token with access to one base | `list_bases`, no input |
 | SMTP | a mail server's host, port, TLS, email and password | `send-email` to your own address |
-| SendGrid | an API key that may send from a verified sender | `send_email` to your own address |
-| Stripe | a test-mode secret key | `search_customer` with `email` |
+| SendGrid | `type` `SECRET_TEXT`, an API key that may send from a verified sender | `send_email` to your own address |
+| Stripe | a test-mode secret key | `search_customers` with `email` |
 | HubSpot | a private app access token | `get-contact` with `contactId` |
 
 ## A wrong key
 
 1. Change the Resend connector's `secret_text` to a key that is not valid.
-2. Call `ap_resend_send_email` again, and check that the answer is the piece's message about the key.
-3. Check that the daemon log and the answer hold no key value.
+2. Check that the connector row shows `Unauthorized`.
+3. Call `ap_resend_send_email` again, and check that the answer is the piece's message about the key.
+4. Check that the daemon log and the answer hold no key value.
 
 ## Reply
 

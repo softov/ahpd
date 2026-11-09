@@ -13,7 +13,8 @@ plugin/54 is on main (PR 67). These checks need a GitHub repository and a Slack 
 The stored `hook-test` connector is already in the new form: its config holds `bot`, `reply` and `secret`.
 
 1. Make the daemon's webhook port reachable from GitHub and Slack, as "A public port" in `docs/plugins/WEBHOOKS.md` says.
-2. Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
+2. Give the webhook plugin's entry in `config-dev.json` its grants: `"grants": ["session:read", "session:create", "session:write", "chat:create"]`. A bot call opens its own session and chat, and without these grants it answers 409 (`docs/plugins/WEBHOOKS.md`).
+3. Stop your daemon with Ctrl+C in its terminal, then run this in that terminal:
 
 ```bash
 cd /github/ahpd && git pull --ff-only && pnpm install --frozen-lockfile
@@ -50,8 +51,8 @@ node --conditions development --import ./scripts/dev.mjs packages/server/src/mai
 ## A bot connector
 
 1. Make a connector with only `bot` and `secret`.
-2. Send a call to it with that secret.
-3. Check that it answers 202.
+2. Send `{"thread": "t1", "text": "hello"}` to it, with that secret as `Authorization: Bearer`.
+3. Check that it answers 202 with `queuedMessageId`, and a `status` of `sent` or `queued`.
 
 ## Reply
 

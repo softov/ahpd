@@ -6,7 +6,7 @@ plans:
 
 # Check /mcp from a real MCP client
 
-host/20261102-1347 is on main. The daemon serves its sessionless tools at `/mcp` when `httpApi` is on and `mcpTools` is `all`. Your `config-dev.json` sets `http`, the old name of `httpApi`, so the API is on. It does not set `mcpTools`. Do not add `httpApi` too, because the daemon refuses a file that holds both names.
+host/20261102-1347 is on main. The daemon serves its sessionless tools at `/mcp` when `httpApi` is on and `mcpTools` is `all`. Your `config-dev.json` sets `httpApi` and already sets `mcpTools` to `all`. The `node -e` line in *Set up* makes sure of it.
 
 ## Set up
 
@@ -18,10 +18,12 @@ node -e 'const fs=require("fs"),f="/home/softov/.config/ahpd/config-dev.json",c=
 node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /home/softov/.config/ahpd/config-dev.json
 ```
 
-2. In a second terminal, make a member's token, and keep the secret it prints. Put a person from `~/.config/ahpd/users.json` in place of `<member>`:
+2. In a second terminal, add a member and a guest, and make the member's token. Keep the secret it prints. Your `users.json` has no member and no guest yet:
 
 ```bash
-cd /github/ahpd && node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts token mint --user <member> --label mcp-check --config-file /home/softov/.config/ahpd/config-dev.json
+cd /github/ahpd && ahpd() { node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts "$@" --config-file /home/softov/.config/ahpd/config-dev.json; }
+ahpd user add mia --role member && ahpd user add gus
+ahpd token mint --user mia --label mcp-check
 ```
 
 3. Add this to VS Code's `mcp.json`, with the secret in place of `<token>`:
@@ -44,7 +46,7 @@ cd /github/ahpd && node --conditions development --import ./scripts/dev.mjs pack
 2. Ask the chat to list your sessions. Check that the answer holds only that person's sessions.
 3. Ask it to create a session with `relationship: independent` and a named `agent`. Check that the session runs that agent and belongs to that person.
 4. Ask it to send a message to that session. Check that the turn shows that person as the sender.
-5. Mint a guest's token the same way, and put it in `mcp.json`. Check that `/mcp` refuses it with 403, because the built-in `guest` role does not hold `mcp:call`.
+5. Mint `gus`'s token the same way (`ahpd token mint --user gus --label mcp-guest`), and put it in `mcp.json`. Check that `/mcp` refuses it with 403, because the built-in `guest` role does not hold `mcp:call`.
 6. Set `mcpTools` to `none` in `config-dev.json`, and restart the daemon. Check that VS Code cannot reach `/mcp`.
 
 ## Reply

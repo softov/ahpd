@@ -43,7 +43,7 @@ sudo -iu ahpdtest grep -n ahpd .bashrc .profile
 ```
 
 6. Remove the test user with `sudo deluser --remove-home ahpdtest`.
-7. On a daemon built from main that runs under an nvm Node, install a plugin from a client. The `@ahpd/server` that `install.sh` installs from npm is 0.14.0, which does not have this change. While it installs, run `ps -ef | grep npm-cli`, and expect that Node with its own `npm-cli.js`, not `/usr/bin/npm`.
+7. On a daemon built from main that runs under an nvm Node, install a plugin from a client. The `@ahpd/server` that `install.sh` installs by default is 0.14.0, which does not have this change; `--version 0.15.0-rc.1` installs one that does. While it installs, run `ps -ef | grep npm-cli`, and expect that Node with its own `npm-cli.js`, not `/usr/bin/npm`.
 
 ## Reply
 

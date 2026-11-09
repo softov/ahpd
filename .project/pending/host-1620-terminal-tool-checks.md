@@ -12,7 +12,7 @@ The plans of #209, #210 and #211 passed on Linux on 2026-11-04, with the async c
 
 ## Set up
 
-On that machine, start a daemon built from main, as [macos-checks.md](macos-checks.md) and [windows-machine-paths-checks.md](windows-machine-paths-checks.md) do. In the commands below, put that daemon's address and token file in place of `ws://127.0.0.1:37537` and the Linux token path.
+On that machine, start a daemon built from main, as [macos-checks.md](macos-checks.md) and [windows-machine-paths-checks.md](windows-machine-paths-checks.md) do. In the commands below, put that daemon's address, its token file and its checkout in place of `ws://127.0.0.1:37537`, the Linux token path and `/github/ahpd`.
 
 ## Shell integration (#209)
 
@@ -36,7 +36,7 @@ cd /github/ahpd && AHPD_URL=ws://127.0.0.1:37537 AHPD_TOKEN_FILE=/home/softov/.v
 
 2. Open a new Claude session, and send: `Run pwd, then echo hello, with your shell tool.`
 3. Check that the call shows a terminal while it runs, and keeps it when it ends.
-4. Check that the answer has `Shell ID:` and the output.
+4. Check that the answer has `Shell ID:` and the output, with no prompt line and no sentinel line before it.
 5. Type into that terminal from the client, and check that the shell takes it.
 
 ## After the checks

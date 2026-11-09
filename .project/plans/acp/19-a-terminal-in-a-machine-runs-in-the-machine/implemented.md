@@ -23,4 +23,4 @@ A terminal an ACP agent in a machine asks for runs in the machine.
 
 ## Left for later
 
-- none
+- A records follow-up, which waits for Softov to say what it is: see [acp-19-records-follow-up.md](../../../pending/acp-19-records-follow-up.md).

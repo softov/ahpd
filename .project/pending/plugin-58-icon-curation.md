@@ -51,6 +51,7 @@ Nothing else changes, because the manifest of each package names the file, not t
 | dsh | `packages/server/icons/dsh.svg` | none yet: tell me the mark you want | none | please name the vendor's page | to be stated |
 
 The first eleven rows are plugin icons under their package, and the rest are the marks the host ships in `packages/server/icons/`.
+Since 1ea68fcb8, no adapter names the Jira, Linear, Resend, GitHub or WhatsApp mark. Each of those pieces shows its own logo, or none if the logo is over 32 KB. Say whether those five marks stay.
 A plugin, an adapter or an ACP template names a mark as `{ "src": "mark:<name>" }`, and the host resolves it.
 Codex reuses `openai.svg`, which the host ships already.
 The Resend and GitHub marks are black, so each has a dark file in `#E6EDF3`, as Copilot and Cursor have.

@@ -6,7 +6,7 @@ plans:
 
 # Check that the pt catalogs read right
 
-The plan host/20261030-1037 ships Portuguese and Spanish text for the new session form and the plugins screen. An agent wrote the text. Softov reads each `pt.json` and says which entries to change. Each catalog is keyed by field path, so an entry is `session.<key>.title`, `options.<key>.description`, `meta.title` and so on.
+The plan host/20261030-1037 ships Portuguese and Spanish text for the new session form and the plugins screen. An agent wrote the text. Softov reads each `pt.json` and says which entries to change. Each catalog is keyed by field path, so an entry is `session.<key>.title`, `options.<key>.description`, `meta.title`, `views.<id>.text`, `messages.<key>` and so on.
 
 ## The host
 
@@ -33,7 +33,7 @@ The plan host/20261030-1037 ships Portuguese and Spanish text for the new sessio
 
 ```bash
 source <(git -C /github/ahpd fetch -q origin && git -C /github/ahpd show origin/main:.project/pending/test-daemon.sh) agent-claude agent-cofold agent-pi agent-acp bot computer push tasks tunnel-devtunnel webhook activepieces
-ahpd plugin install @ahpd/web && ahpd restart
+ahpd plugin install @ahpd/web@next && ahpd restart
 ```
 
 1. Open http://127.0.0.1:39200/plugins/web/, sign in with `check-token`, and set ahpw to Portuguese.

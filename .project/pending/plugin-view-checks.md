@@ -24,6 +24,8 @@ export AHPD_URL=ws://127.0.0.1:37537 AHPD_TOKEN_FILE=/home/softov/.vscode/cli/ag
 rpc() { node /github/ahpd/.project/pending/rpc.mjs "$@"; }
 ```
 
+If the view is not there, the system tunnel failed at start: see the problem `a-system-tunnel-that-fails-at-start-is-not-retried`. Disable and enable it in ahpw.
+
 ## Results so far
 
 On 2026-11-04 Claude read the view after one disable and one enable of the system tunnel. It held the address, tunnel `swift-fog-zm4rwhl`, port 31546, the relay state and 0 clients. It went away while the tunnel was off, and came back after the enable.

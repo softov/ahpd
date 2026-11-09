@@ -11,6 +11,7 @@ container/02 waits on this run. VS Code on Windows connects to your daemon throu
 ## Set up
 
 1. The tunnel checks of plugin/20261102-1122 passed on 2026-11-04. The `devtunnel` connector must be signed in with the GitHub account that VS Code on Windows uses.
+   Restart your daemon on main, and check that the system tunnel is `running`. If it is in `error`, disable and enable it: see the problem `a-system-tunnel-that-fails-at-start-is-not-retried`.
 2. On this host, check the tools. `devcontainer` and `docker` are installed here:
 
 ```bash
@@ -22,7 +23,7 @@ devcontainer --version && docker ps
 ## The tunnel shows in VS Code
 
 1. Run "Agents: Connect to Remote Agent Host via Dev Tunnel".
-2. Check that the ahpd tunnel is in the list, and connect to it.
+2. Check that this host's tunnel is in the list, under the plugin's `name` option or this machine's hostname, and connect to it.
 
 ## The folder offers "Use Dev Container"
 
@@ -31,7 +32,7 @@ devcontainer --version && docker ps
 
 ## The first send makes the container
 
-1. Pick "Use Dev Container", type a prompt, and send it.
+1. Pick "Use Dev Container", type a prompt, and send it. If VS Code asks whether you trust the folder, trust it.
 2. Check that VS Code shows "Starting Dev Container...", and then a running session.
 3. On the Linux host, check that `docker ps` shows the container.
 
@@ -42,13 +43,13 @@ devcontainer --version && docker ps
 
 ## Stop and remove act on the Linux host
 
-1. Stop the idle dev container from VS Code, and check on the Linux host that `docker ps` no longer shows it.
+1. Stop the idle dev container from VS Code, and check on the Linux host that `docker ps` no longer shows it. If VS Code asks whether you trust the folder, trust it.
 2. Remove it from VS Code, and check that `docker ps -a` no longer shows it.
 
 ## If a step fails
 
 1. Copy VS Code's Agent Host output log.
-2. Copy the lines with `vscode/devContainers/isDockerAvailable` from the daemon's terminal.
+2. Copy the lines with `vscode/devContainers/isDockerAvailable` and `vscode/requestWorkspaceTrust` from the daemon's terminal.
 3. Add both to your reply.
 
 ## Reply

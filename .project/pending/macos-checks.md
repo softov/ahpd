@@ -42,8 +42,8 @@ Write down any error from `node-pty` in `pnpm install`.
 ## Restart
 
 1. Start the daemon as above, and start a turn.
-2. Run `ahpd restart`. It must exit 1 and name the session, and the log must say `restart refused (SIGHUP)`.
-3. Run `ahpd restart --force`. The log must say `restart: stopping (SIGUSR2)`, and the successor must come up.
+2. Run `ahpd restart`. It must print `A turn is running in <session>; it restarts once the turns end, or at once with --force.` and exit 0, and the log must say `restart parked (SIGHUP): ...`. Let the turn end, then check that the log says `restart: the turns have ended, stopping`, and that the successor comes up.
+3. Start a turn again, and run `ahpd restart --force`. The log must say `restart: stopping (SIGUSR2)`, and the successor must come up.
 4. Check that the session resumes with its earlier conversation.
 
 ## Terminals
@@ -57,7 +57,7 @@ Write down any error from `node-pty` in `pnpm install`.
 
 1. Connect VS Code to the daemon as a remote agent host.
 2. Check that VS Code offers the host for a session. It reads the platform as `macos`.
-3. Run `ahpc agents`, and check that the Claude backend lists its models.
+3. Run `ahpc --host ws://127.0.0.1:39111 --connection-token-file /tmp/ahpd-token agents`, and check that the Claude backend lists its models.
 
 ## Worktrees
 

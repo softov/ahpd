@@ -36,14 +36,14 @@ mkdir -p ~/box && node packages/server/dist/main.js join ws://200.11.121.81:3753
 
 1. Check that a client lists the computer `node.box`.
 2. Start a Claude session on `node.box`, and send one turn. Check that it answers.
-3. Run `ahpd restart` in the second terminal on the hub. Check that the node connects again, and that the session continues its conversation.
+3. Stop the hub with Ctrl+C in its terminal, and start it again with the same `node ... main.ts --config-file ...` line. `ahpd restart` refuses a daemon run in the foreground. Check that the node connects again, and that the session continues its conversation.
 4. Check that the node's up time is in `~/.config/ahpd/usage/`, as stretches charged to the host:
 
 ```bash
 tail -3 ~/.config/ahpd/usage/$(date +%Y-%m)-computer.jsonl
 ```
 
-5. Run `ahpd node rm box`. Check that the node's `join` ends, and that the hub refuses a new `join` with the same token.
+5. Run `ahpd --remote http://127.0.0.1:37537 --token-file /home/softov/.vscode/cli/agent-host-token node rm box`. Check that the node's `join` ends, and that the hub refuses a new `join` with the same token. Without `--remote`, the node stays connected: see the problem `node-rm-at-the-terminal-does-not-drop-a-joined-node`.
 
 ## Reply
 

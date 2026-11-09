@@ -12,7 +12,7 @@ plugin/20261031-0804 is on main. A browser subscribes with the host's VAPID key.
 
 ```bash
 source <(git -C /github/ahpd fetch -q origin && git -C /github/ahpd show origin/main:.project/pending/test-daemon.sh) agent-claude push
-ahpd plugin install @ahpd/web && ahpd restart
+ahpd plugin install @ahpd/web@next && ahpd restart
 ```
 
 Open http://127.0.0.1:39200/plugins/web/ in Chrome, and sign in with `check-token`.
@@ -23,11 +23,11 @@ Open http://127.0.0.1:39200/plugins/web/ in Chrome, and sign in with `check-toke
 2. Check that `push://devices` shows the device:
 
 ```bash
-rpc subscribe '{"channel":"push://devices"}'
+rpc resourceList '{"channel":"ahp-root://","uri":"push://devices"}'
 ```
 
-3. Start a session in ahpw, and leave a request waiting. Close the Chrome tab. The test daemon has no users file, so a browser hears only the sessions its own client started or opened. Expect a notification, and a click that opens that session.
-4. Close the tab again, then finish a turn. Expect `A session finished`.
+3. Start a session in ahpw, and leave a request waiting. Close the Chrome tab. Expect a notification, and a click that opens that session. The test daemon has no users file, so a browser with the default audience hears every session. Run "Notify me only about sessions started on this device". Start a session from ahpc, and expect no notification for it. Run "Notify me about all my sessions" to go back.
+4. Close the tab again, then finish a turn. Expect `Session: <title>` with `Completed in work.`
 5. Do steps 1 to 4 in Firefox.
 6. Run the command "Stop notifications when this tab is closed". Send again, and expect the device to leave `push://devices`.
 

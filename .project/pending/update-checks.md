@@ -6,7 +6,7 @@ plans:
 
 # Check ahpd update on Debian and Windows
 
-daemon/35 is on main, and its tests use a fake npm and a fake registry. `ahpd update` came in 0.14.0, and npm has no newer `@ahpd/server` (checked on 2026-11-03). So this check waits on the next release.
+daemon/35 is on main, and its tests use a fake npm and a fake registry. `ahpd update` came in 0.14.0. 0.15.0-rc.1 is on npm under `next`, and `latest` is still 0.14.0, so every update here names `--version 0.15.0-rc.1`.
 
 ## Set up
 
@@ -22,23 +22,28 @@ ahpd start --port 39300
 
 ## The check answers
 
-1. Run `ahpd update --check`.
-2. Check that it prints the installed and the latest version, and that the update may run.
+1. Run `ahpd update --check --version 0.15.0-rc.1`.
+2. Check that it prints `0.14.0 installed; 0.15.0-rc.1 is the target, and ahpd update would install it`.
 3. Run `ahpd update --version 0.13.0`, and check that it is refused.
 
 ## A daemon from ahpd start moves
 
-1. Run `ahpd update`.
-2. Check that `ahpd status` shows the latest version.
-3. Check that `ahpd plugin list` shows `@ahpd/agent-cofold` with the new `@ahpd/sdk`.
+1. Run `ahpd update --version 0.15.0-rc.1`.
+2. Check that `ahpd status` shows `0.15.0-rc.1`.
+3. Check that `ahpd plugin list` shows `@ahpd/agent-cofold` loaded, and that `npm ls --prefix $XDG_CONFIG_HOME/ahpd @ahpd/sdk` shows 0.15.0-rc.1.
 
 ## A daemon under the systemd unit moves
 
-1. Run `npm i -g @ahpd/server@0.14.0` again, then `ahpd service install`.
-2. Run `ahpd update`.
-3. Check that `systemctl --user status ahpd` shows the daemon running, and that `ahpd status` shows the latest version.
+This section waits on a version after 0.15.0-rc.1. 0.14.0 writes its unit under the private `XDG_CONFIG_HOME`, where the user manager does not look. Its unit sets no `XDG_CONFIG_HOME`, so its daemon would use your own `~/.config/ahpd`.
+
+1. Run `ahpd stop`, then `npm i -g @ahpd/server@0.15.0-rc.1`.
+2. Put `"port": 39300` in `$XDG_CONFIG_HOME/ahpd/config.json`, then run `ahpd service install`.
+3. Run `ahpd update --version <next>`.
+4. Check that `systemctl --user status ahpd` shows the daemon running, and that `ahpd status` shows `<next>`.
 
 ## HTTP and AHP
+
+The daemon needs `httpApi`, a token and a person. Before this section, put `{"port": 39300, "connectionTokenFile": "<home>/ahpd-update-check/token", "httpApi": true, "users": "<home>/ahpd-update-check/users.json"}` in `$XDG_CONFIG_HOME/ahpd/config.json`, run `ahpd user add alice` and `ahpd user token alice`, and restart the daemon. This set-up is not run yet.
 
 1. Send `POST http://127.0.0.1:39300/api/update` with `{"check": true}` and a person's token, and check that the answer is 403.
 2. Send the same request with the deployment token, and check that it answers the versions.
@@ -47,9 +52,9 @@ ahpd start --port 39300
 ## Windows
 
 1. On Windows, run `npm i -g @ahpd/server@0.14.0`, then `ahpd start --port 39300`.
-2. Run `ahpd update`.
+2. Run `ahpd update --version 0.15.0-rc.1`.
 3. Wait until `daemon.log` says "the daemon is up".
-4. Check that `ahpd status` shows the latest version.
+4. Check that `ahpd status` shows `0.15.0-rc.1`.
 
 ## Reply
 

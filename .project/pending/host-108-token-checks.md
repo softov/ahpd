@@ -8,7 +8,7 @@ plans:
 
 host/108 is on main (PR 34). A person mints tokens of their own. These checks need a second computer that reaches your daemon on port 37537.
 
-The HTTP API is on already: your `config-dev.json` sets `http`, the old name of `httpApi`. Do not add `httpApi` too, because the daemon refuses a file that holds both names.
+The HTTP API and the model API are on already: your `config-dev.json` sets `httpApi` and `modelApi` to `true`. Step 2's `/v1/models` call needs `modelApi`, because `httpApi` alone no longer serves `/v1`.
 
 ## Set up
 
@@ -37,7 +37,7 @@ The last line adds the person `ana`, whom these checks use. The `member` role ho
 ahpd token mint --user ana --grant proxy:write --label laptop
 ```
 
-2. On the second computer, with the secret in place of `<secret>` and this computer's address in place of `<host>`:
+2. On the second computer, with the secret in place of `<secret>` and in place of `<host>` this computer's address as your `origins` lists it. The daemon refuses a `Host` it does not answer to before it reads the token:
 
 ```bash
 curl -s http://<host>:37537/v1/models -H 'Authorization: Bearer <secret>' | head -c 500

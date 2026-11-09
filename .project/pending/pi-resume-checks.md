@@ -27,7 +27,11 @@ Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `setting
 
 ## A bad key
 
-Not checked yet: where this agent reads its key on a test daemon. Say how you want the key set, or ask me to find it.
+A pi agent record's `config.env`, such as `DEEPSEEK_API_KEY`, sets the key. It wins over pi's `auth.json` and the daemon's environment (`packages/agent-pi/README.md`, *A record that names its own provider key*). The record is `agents/<id>.json` in the config folder. Without a record, pi reads `auth.json` in its agent folder.
+
+A retry does not apply a changed record key. The pi engine reads the record's `env` when it builds the session and on a new send, and `resume` keeps it. So step 2 needs the good key put back and then `ahpd restart`. A key swapped in pi's `auth.json` works only if pi reads that file for each request, which is not checked.
+
+Say which of the two you want for step 2.
 
 ## Reply
 
