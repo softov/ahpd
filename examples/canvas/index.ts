@@ -22,7 +22,7 @@ export const title = 'Example canvas';
 /** The path the page is served at: `/plugins/example-canvas/`. */
 const PREFIX = routePrefix(name);
 
-/** The canvas instance a chat holds; a second open on the same chat draws it again. */
+/** The canvas instance a chat holds; a second open on the same chat answers the same canvas. */
 const INSTANCE = 'check';
 
 /** A bound address that means every interface, which a browser cannot open. */

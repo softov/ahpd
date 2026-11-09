@@ -23,7 +23,7 @@ Then:
 1. Turn canvases on in the client. In VS Code that is `chat.canvases.enabled`. The host refuses the canvas calls until a window turns `canvasesEnabled` on.
 2. In a chat, ask the agent to call `open_check_canvas`. The page opens beside the chat and shows the time it was served.
 
-A second call on the same chat draws the same canvas again, because its instance id is always `check`.
+A second call on the same chat answers the same canvas, because its instance id is always `check`. Its state is the same, so the host says nothing, and the page stays as it is.
 
 ## What it assumes
 
