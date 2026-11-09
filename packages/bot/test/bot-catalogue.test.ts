@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -102,7 +103,7 @@ function made(tokens: Record<string, Grant[]>, members: Record<string, string[]>
   const root = mkdtempSync(join(tmpdir(), 'ahpd-bot-catalogue-'));
   loose.push(root);
   const context: LoaderContext = {
-    path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: join(root, 'config'), log: () => {}, say: () => {},
+    path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: join(root, 'config'), log: loggerOf(() => {}), say: () => {},
     // The host's YAML, which a bot's `AGENTS.md` is read and written with.
     parseYaml, stringifyYaml,
   };

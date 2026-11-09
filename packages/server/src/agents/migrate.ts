@@ -41,6 +41,7 @@ import { bag, isRecord, isRecordSlug, knownAgents, reason, RECORD_SLUG, secretPa
 import type { PluginSpec, RecordCollection, ServedEngine, StoredRecord, Vault } from '@ahpd/sdk';
 import { sourceOf } from '../plugins.js';
 import { readEntry, writeEntry } from '../install.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** The engines whose presets this moves, and the package each ships as. */
 const PRESET_ENGINES = [
@@ -308,7 +309,7 @@ export interface PlanOptions {
   /** The folder the agent records are kept in, where the marker that they were made once lives. */
   recordsDir: string;
   /** One line per preset that cannot become a record, naming the id and no value. */
-  log(message: string): void;
+  log(message: string, level?: LogLevel): void;
 }
 
 /**
@@ -373,12 +374,12 @@ export const planPresets = (options: PlanOptions): PresetPlan => {
     for (const one of described) {
       const { plan } = one;
       if (!isRecordSlug(plan.id)) {
-        options.log(`The ${engine} preset ${plan.id} did not become a record: its id is not a slug: ${RECORD_SLUG}`);
+        options.log(`The ${engine} preset ${plan.id} did not become a record: its id is not a slug: ${RECORD_SLUG}`, 'warn');
         continue;
       }
       const other = named.get(plan.id);
       if (other !== undefined) {
-        options.log(`The ${engine} preset ${plan.id} did not become a record: ${other} already names an agent of that id.`);
+        options.log(`The ${engine} preset ${plan.id} did not become a record: ${other} already names an agent of that id.`, 'warn');
         continue;
       }
       named.set(plan.id, engine);
@@ -619,7 +620,7 @@ export interface SplitOptions {
   /** The vault a model source key written in plain text is moved to. */
   vault?: Vault;
   /** One line per rewrite, naming record ids and no value. */
-  log(message: string): void;
+  log(message: string, level?: LogLevel): void;
 }
 
 /** Whether a record's owner is one a secret name can be made in. */
@@ -646,7 +647,7 @@ export const splitModels = async (options: SplitOptions): Promise<string[]> => {
     records = await options.records.list();
   }
   catch (error) {
-    options.log(`The Claude models were not split: the agent records could not be read: ${reason(error)}`);
+    options.log(`The Claude models were not split: the agent records could not be read: ${reason(error)}`, 'error');
     return [];
   }
   const written: string[] = [];
@@ -654,7 +655,7 @@ export const splitModels = async (options: SplitOptions): Promise<string[]> => {
     if (record.engine !== 'claude') continue;
     const split = splitOf(bag(record.config));
     if (split !== undefined && 'left' in split) {
-      options.log(`The models of ${record.id} were not split: ${split.left}.`);
+      options.log(`The models of ${record.id} were not split: ${split.left}.`, 'warn');
       continue;
     }
     let config = split?.config;
@@ -667,7 +668,7 @@ export const splitModels = async (options: SplitOptions): Promise<string[]> => {
       await options.records.put({ ...record, config });
     }
     catch (error) {
-      options.log(`The models of ${record.id} were not split: ${reason(error)}`);
+      options.log(`The models of ${record.id} were not split: ${reason(error)}`, 'error');
       continue;
     }
     written.push(record.id);
@@ -691,7 +692,7 @@ export interface ApplyOptions {
   /** Where a secret is kept; a host with none writes no record that holds one. */
   vault: Vault | undefined;
   /** One line per thing done, naming record ids and no value. */
-  log(message: string): void;
+  log(message: string, level?: LogLevel): void;
   /** The clock the backup's timestamp is taken from. */
   now?(): Date;
 }
@@ -725,7 +726,7 @@ export const applyPresets = async (options: ApplyOptions): Promise<Applied> => {
       writeEntry(markerOf(options.recordsDir), { version: 1, at: clock().toISOString() });
     }
     catch (error) {
-      options.log(`The presets were moved, but ${markerOf(options.recordsDir)} could not be written: ${reason(error)}`);
+      options.log(`The presets were moved, but ${markerOf(options.recordsDir)} could not be written: ${reason(error)}`, 'warn');
     }
   };
 
@@ -734,7 +735,7 @@ export const applyPresets = async (options: ApplyOptions): Promise<Applied> => {
     present = new Set((await options.records.list()).map((one) => one.id));
   }
   catch (error) {
-    options.log(`The presets were not moved: the agent records could not be read: ${reason(error)}`);
+    options.log(`The presets were not moved: the agent records could not be read: ${reason(error)}`, 'error');
     return { written: [] };
   }
 
@@ -755,7 +756,7 @@ export const applyPresets = async (options: ApplyOptions): Promise<Applied> => {
       // and no plugin serves the record: it stays in the file to try again, and
       // the pass is not one that can say the presets were moved.
       complete = false;
-      options.log(`${agent.id} did not become a record: the engine ${agent.engine} did not load.`);
+      options.log(`${agent.id} did not become a record: the engine ${agent.engine} did not load.`, 'error');
       continue;
     }
     let config: Record<string, unknown>;
@@ -763,14 +764,14 @@ export const applyPresets = async (options: ApplyOptions): Promise<Applied> => {
       config = await withSecretsMoved(agent.config, engine, agent.id, options.vault);
     }
     catch (error) {
-      options.log(`The presets were not moved: ${agent.id} could not be written as a record: ${reason(error)}`);
+      options.log(`The presets were not moved: ${agent.id} could not be written as a record: ${reason(error)}`, 'error');
       return { written };
     }
     try {
       await options.records.put(recordOf({ ...agent, config }));
     }
     catch (error) {
-      options.log(`The presets were not moved: ${agent.id} could not be written as a record: ${reason(error)}`);
+      options.log(`The presets were not moved: ${agent.id} could not be written as a record: ${reason(error)}`, 'error');
       return { written };
     }
     present.add(agent.id);
@@ -780,7 +781,7 @@ export const applyPresets = async (options: ApplyOptions): Promise<Applied> => {
 
   if (plan.unreadable) {
     mark();
-    options.log(`The presets were not taken out of ${plan.configFile}: it could not be read, and is as it was.`);
+    options.log(`The presets were not taken out of ${plan.configFile}: it could not be read, and is as it was.`, 'warn');
     return { written };
   }
 
@@ -797,7 +798,7 @@ export const applyPresets = async (options: ApplyOptions): Promise<Applied> => {
         writeEntry(plan.configFile, taken.entry);
       }
       catch (error) {
-        options.log(`The presets in ${plan.configFile} were not taken out: ${reason(error)}`);
+        options.log(`The presets in ${plan.configFile} were not taken out: ${reason(error)}`, 'error');
         return { written };
       }
     }

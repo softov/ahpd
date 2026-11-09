@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -317,7 +318,7 @@ const CONTEXT: LoaderContext = {
   version: '0.0.0',
   hostName: 'host',
   configDir: '/tmp/signin',
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
 };
 

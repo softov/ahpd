@@ -542,7 +542,7 @@ export function createAutomations(ctx: HostContext): Automations {
         : `${said} and is switched off or gone`);
     }
     catch (error) {
-      log(`${said} and failed: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`${said} and failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -590,7 +590,7 @@ export function createAutomations(ctx: HostContext): Automations {
     said: string,
   ): void => {
     if (flight.run === undefined) {
-      log(`${said} while the chat it runs in was busy, so it was dropped`);
+      log.warn(`${said} while the chat it runs in was busy, so it was dropped`);
       return;
     }
     const held = bag(options.automations?.runOf?.(flight.run)?.notes)['ahpd.dropped'];
@@ -754,7 +754,7 @@ export function createAutomations(ctx: HostContext): Automations {
     if (named !== undefined) {
       try { named(uri); }
       catch (error) {
-        log(`${uri} is being started, but the plugin that asked was not told: ${error instanceof Error ? error.message : String(error)}`);
+        log.warn(`${uri} is being started, but the plugin that asked was not told: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     const config = wanted.config ?? {};
@@ -1276,7 +1276,7 @@ export function createAutomations(ctx: HostContext): Automations {
     const may = recent.length < WAKES_AN_HOUR;
     if (may) recent.push(at);
     wakes.set(automation, recent);
-    if (!may) log(`${automation} woke ${String(recent.length)} times in the last hour, so this wake was dropped`);
+    if (!may) log.warn(`${automation} woke ${String(recent.length)} times in the last hour, so this wake was dropped`);
     return may;
   };
 
@@ -1309,7 +1309,7 @@ export function createAutomations(ctx: HostContext): Automations {
      * every other fire this host will not act on is.
      */
     if (held.by !== by) {
-      log(`${by} fired ${type}, which plugin ${held.by} registered, so this fire was dropped`);
+      log.warn(`${by} fired ${type}, which plugin ${held.by} registered, so this fire was dropped`);
       return;
     }
     const title = eventName(held.definition, event);
@@ -1328,7 +1328,7 @@ export function createAutomations(ctx: HostContext): Automations {
           const said = `${automation}\n${type}\n${wrong}`;
           if (!refusedSaid.has(said)) {
             refusedSaid.add(said);
-            log(`${automation} holds a ${type} trigger its type refuses (${wrong}), so this fire did not wake it`);
+            log.warn(`${automation} holds a ${type} trigger its type refuses (${wrong}), so this fire did not wake it`);
           }
           continue;
         }
@@ -1365,20 +1365,20 @@ export function createAutomations(ctx: HostContext): Automations {
     const resource = automationResource(id);
     const found = options.automations?.get(resource);
     if (found === undefined) {
-      log(`${by} asked for ${resource}, which this host does not hold`);
+      log.warn(`${by} asked for ${resource}, which this host does not hold`);
       return;
     }
     const automationOwner = ownerOf(found as AutomationEntry);
     if (owner !== undefined && !sameOwnerOrHost(owner, automationOwner)) {
-      log(`${by} asked for ${resource} from ${owner}, whose owner is ${automationOwner ?? 'the host'}, so it was not run`);
+      log.warn(`${by} asked for ${resource} from ${owner}, whose owner is ${automationOwner ?? 'the host'}, so it was not run`);
       return;
     }
     if (found.definition.enabled === false) {
-      log(`${by} asked for ${resource}, which is switched off, so it was not run`);
+      log.warn(`${by} asked for ${resource}, which is switched off, so it was not run`);
       return;
     }
     if (!maySee(automationOwner)) {
-      log(`${by} asked for ${resource}, which belongs to ${automationOwner ?? 'nobody to this host'}, so it was not run`);
+      log.warn(`${by} asked for ${resource}, which belongs to ${automationOwner ?? 'nobody to this host'}, so it was not run`);
       return;
     }
     const trigger = eventTrigger(found.definition);

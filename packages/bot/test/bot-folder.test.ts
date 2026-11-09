@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -72,7 +73,7 @@ function loaded(config: string, root = join(temp(), 'bots')): string[] {
   const reported: string[] = [];
   const path = temp();
   const context: LoaderContext = {
-    path, paths: [path], version: sdkVersion(), hostName: 'test', configDir: config, log: () => {}, say: () => {},
+    path, paths: [path], version: sdkVersion(), hostName: 'test', configDir: config, log: loggerOf(() => {}), say: () => {},
   };
   const { host } = pluginHost('bot', context, {
     sessions: () => memorySessions(),

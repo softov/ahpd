@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { WAIT_MS } from '../../../tools/wait.ts';
 import { expect, it } from 'vitest';
 import { tmpdir } from 'node:os';
@@ -59,7 +60,7 @@ const settle = async (times = 12): Promise<void> => {
 
 const wait = async (ms: number): Promise<void> => { await new Promise((r) => { setTimeout(r, ms); }); };
 
-const context = (): LoaderContext => ({ path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {} });
+const context = (): LoaderContext => ({ path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {} });
 
 /** One host, one plugin subscribed to everything, and what it saw. */
 function watched(extra: Partial<HostOptions> = {}, breaks?: EventName) {

@@ -30,6 +30,18 @@ All in `~/.config/ahpd/` (or `$XDG_CONFIG_HOME/ahpd/`):
 tail -f ~/.config/ahpd/daemon.log
 ```
 
+Each line of the log says when and how much it matters, as VS Code's logs do:
+
+```
+2026-11-09 14:02:11.123 [info] created ahp-session:/1f2e in /home/me/app
+2026-11-09 14:02:12.004 [warning] control: refused a request with the wrong token
+2026-11-09 14:02:15.310 [error] could not remove /home/me/.config/ahpd/outputs/1f2e: EBUSY: resource busy or locked
+```
+
+The levels are `trace`, `debug`, `info`, `warning` and `error`. In a terminal the level is in colour: an error red, a warning yellow, trace and debug grey. `daemon.log` holds plain text, and `NO_COLOR=1` turns the colour off in a terminal too.
+
+`logLevel` (`--log-level`) is the lowest level the daemon writes: `info` by default, `debug` or `trace` for more, `warn` or `error` for less, and `off` for none. A client that reads the log as OTLP, on `ahp-otlp://logs/{level}`, chooses its own level and is not bound by it. `logTime` (`--log-time`) is the clock of each line: `local` by default, or `utc`.
+
 ## Restart
 
 `ahpd restart` keeps the sessions, and the port when it is fixed. While a turn runs, the restart waits for the turns to end, as VS Code waits for its turns before it restarts its agent runtime, and says which sessions it waits for. Turns go on meanwhile, and the last one to end starts the restart, which the daemon log says. `--force` restarts at once, as VS Code's CLI replaces a running agent host:

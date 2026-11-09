@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { partTarget } from '@ahpd/sdk';
 import type { ComputerRuntime } from './runtime.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * The parts a machine is made of, and the one file that says what they are.
@@ -368,7 +369,7 @@ export interface EnsureOptions {
   /** The parts to read, which is the shipped file unless a caller says otherwise. */
   parts?: Part[];
   /** Where a line the load says goes: the override in use. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
   /**
    * The image a machine runs when its profile names none, which a pulled
    * part's launchers are run in once: `MACHINE_IMAGE` unless the host was
@@ -463,7 +464,7 @@ let answered: Promise<AhpdSource> | undefined;
  * bytes are what the build context carries and what the tag's hash covers, and
  * two builds in one process have to agree on them.
  */
-export const ahpdSourceOf = async (log?: (line: string) => void): Promise<AhpdSource> => {
+export const ahpdSourceOf = async (log?: (line: string, level?: LogLevel) => void): Promise<AhpdSource> => {
   if (answered === undefined) {
     const asked: Promise<AhpdSource> = (async () => {
       const part = readParts().find((one) => one.kind === 'ahpd');
@@ -984,7 +985,7 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
         const said = await checked(tag);
         if (said !== undefined) {
           await options.runtime.removeImage(tag).catch((error: unknown) => {
-            options.log?.(`${tag} keeps its tag: ${error instanceof Error ? error.message : String(error)}`);
+            options.log?.(`${tag} keeps its tag: ${error instanceof Error ? error.message : String(error)}`, 'warn');
           });
           throw new Error(said);
         }
@@ -992,13 +993,13 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
       }
       catch (error) {
         const reason = (error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, ' ');
-        options.log?.(`could not load ${tag}: ${reason}. Looking for an earlier image of the ${id} part...`);
+        options.log?.(`could not load ${tag}: ${reason}. Looking for an earlier image of the ${id} part...`, 'warn');
         for (const earlier of (await options.runtime.imagesOf(tag.slice(0, tag.lastIndexOf(':')))).filter((one) => one !== tag)) {
           if (await checked(earlier) === undefined) {
-            options.log?.(`using ${earlier}, an earlier image of the ${id} part, in place of ${tag}`);
+            options.log?.(`using ${earlier}, an earlier image of the ${id} part, in place of ${tag}`, 'warn');
             return earlier;
           }
-          options.log?.(`${earlier}, an earlier image of the ${id} part, failed its check too`);
+          options.log?.(`${earlier}, an earlier image of the ${id} part, failed its check too`, 'error');
         }
         throw error;
       }

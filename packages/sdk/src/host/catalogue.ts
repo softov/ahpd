@@ -1155,7 +1155,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const agents = ctx.descriptors();
     if (isDeepStrictEqual(agents, ctx.stateOf(ROOT)?.agents))
       return;
-    ctx.log(`${owner.provider}: ${found.length} model(s): ${found.map((m) => m.id).join(', ')}`);
+    ctx.log.debug(`${owner.provider}: ${found.length} model(s): ${found.map((m) => m.id).join(', ')}`);
     ctx.dispatch(ROOT, { type: 'root/agentsChanged', agents });
   };
 
@@ -1741,7 +1741,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const signature = `${hidden}/${total}/${mode}`;
     if (signature === lastHiddenSessionsLog) return;
     lastHiddenSessionsLog = signature;
-    if (hidden > 0) ctx.log(`listSessions hid ${hidden} of ${total} session(s) (showExternalSessions: '${mode}')`);
+    if (hidden > 0) ctx.log.debug(`listSessions hid ${hidden} of ${total} session(s) (showExternalSessions: '${mode}')`);
   };
   /**
    * The external sessions the mode shows announced where no client holds them,

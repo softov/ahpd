@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
 import { memorySessions } from '../src/sessions/sessions.js';
@@ -34,7 +35,7 @@ const DIR = '/home/softov';
 
 /** The context every plugin in this repository is handed, without a daemon. */
 const context = (): LoaderContext => ({
-  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {},
+  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {},
 });
 
 /**

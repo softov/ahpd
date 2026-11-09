@@ -170,7 +170,7 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
       shown = await options.service.show(at.connector, at.port);
     } catch (error) {
       if (!failing) {
-        plugin.log(`${NAME}: ${reason(error)}`);
+        plugin.log.error(`${NAME}: ${reason(error)}`);
         plugin.alert({ level: 'warning', ref: 'read', text: 'The tunnel\'s status could not be checked, so this page may be out of date.' });
       }
       failing = true;
@@ -239,7 +239,7 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
       return;
     }
     if (!options.open(connector)) {
-      plugin.log(`${NAME}: tunnel ${tunnel.id} was not started: connector ${connector} is not open`);
+      plugin.log.warn(`${NAME}: tunnel ${tunnel.id} was not started: connector ${connector} is not open`);
       report({ status: 'error', error: NOT_OPEN });
       return;
     }
@@ -277,7 +277,7 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
     } catch (error) {
       const message = reason(error);
       await hop?.close();
-      plugin.log(`${NAME}: tunnel ${tunnel.id} did not start: ${message}`);
+      plugin.log.error(`${NAME}: tunnel ${tunnel.id} did not start: ${message}`);
       if (tunnel.purpose === 'system' && port === TUNNEL_PORT) {
         plugin.alert({ level: 'error', ref: REF, text: `The tunnel could not use port ${TUNNEL_PORT}: ${message}` });
       }
@@ -298,7 +298,7 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
       await options.service.remove(one.connector, one.port, options.keep);
     } catch (error) {
       const message = reason(error);
-      plugin.log(`${NAME}: tunnel ${tunnel.id} did not stop: ${message}`);
+      plugin.log.error(`${NAME}: tunnel ${tunnel.id} did not stop: ${message}`);
       report({ status: 'error', error: message });
       return;
     }
@@ -317,7 +317,7 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
       await options.service.restart(one.connector);
     } catch (error) {
       const message = reason(error);
-      plugin.log(`${NAME}: tunnel ${tunnel.id} was not restarted: ${message}`);
+      plugin.log.error(`${NAME}: tunnel ${tunnel.id} was not restarted: ${message}`);
       report({ status: 'error', error: message });
       return;
     }
@@ -335,7 +335,7 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
         await options.service.access(one.connector, one.port, on);
       } catch (error) {
         const message = reason(error);
-        plugin.log(`${NAME}: tunnel ${tunnel.id} kept its access: ${message}`);
+        plugin.log.warn(`${NAME}: tunnel ${tunnel.id} kept its access: ${message}`);
         report({ error: message });
         return;
       }
@@ -365,7 +365,7 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
         // The record is going anyway: a port left on the service is a port the
         // next start writes again, and a person who removed the row asked for
         // the row to go.
-        plugin.log(`${NAME}: tunnel ${tunnel.id} was removed but its port was not: ${reason(error)}`);
+        plugin.log.warn(`${NAME}: tunnel ${tunnel.id} was removed but its port was not: ${reason(error)}`);
       }
     },
 

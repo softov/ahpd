@@ -29,8 +29,8 @@ import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
-import { checkIcons, foldHostOptions, frozenCopy, gapLine, grantProblem, isRecord, isRecordSlug, pluginHost, readSecret, reason, RECORD_SLUG, runtime, schemaGaps, sdkVersion, secretRef, viewDataAt, withViewData } from '@ahpd/sdk';
-import type { Agent, AgentOwner, Alert, Catalogs, InstallAnswer, Contribution, FoldedOptions, Grant, HostOptions, Icon, Loaded, NodeRegistry, Plugin, PluginContext, PluginContracts, PluginHost, PluginLink, PluginManifest, PluginSpec, PluginView, RecordStore, Route, SessionStore, Usage, Vault, ViewSurface } from '@ahpd/sdk';
+import { checkIcons, loggerOf, foldHostOptions, frozenCopy, gapLine, grantProblem, isRecord, isRecordSlug, pluginHost, readSecret, reason, RECORD_SLUG, runtime, schemaGaps, sdkVersion, secretRef, viewDataAt, withViewData } from '@ahpd/sdk';
+import type { Agent, AgentOwner, Alert, Catalogs, InstallAnswer, Contribution, FoldedOptions, Grant, HostOptions, Icon, Loaded, LogLevel, NodeRegistry, Plugin, PluginContext, PluginContracts, PluginHost, PluginLink, PluginManifest, PluginSpec, PluginView, RecordStore, Route, SessionStore, Usage, Vault, ViewSurface } from '@ahpd/sdk';
 import { fetchIcons, ICON_LIMIT, resolveIcons } from './icons.js';
 import type { IconBounds } from './icons.js';
 import { readCatalogs } from './i18n.js';
@@ -869,7 +869,7 @@ export interface LoadOneOptions {
    */
   configDir: string;
   /** One line per notable thing, for the daemon's log. */
-  log(message: string): void;
+  log(message: string, level?: LogLevel): void;
   /**
    * One line in what the daemon announces about itself, for a plugin that
    * made the host reachable somewhere the daemon's own lines do not say.
@@ -1535,7 +1535,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions, impor
     configDir: options.configDir,
     ...(options.users === true ? { hasUsers: true } : {}),
     ...(options.hostId === undefined ? {} : { hostId: options.hostId }),
-    log: options.log,
+    log: loggerOf(options.log),
     say: options.say ?? (() => {}),
     // The host's own YAML subset, so a plugin needs no YAML dependency of its own.
     parseYaml: (text: string) => parseYaml(text),
@@ -1588,7 +1588,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions, impor
   const saying: PluginHost = Object.freeze({
     ...host,
     problem: (line: string) => {
-      if (answered) options.log(line);
+      if (answered) options.log(line, 'error');
       else told.push(line);
       host.problem(line);
     },
@@ -1701,7 +1701,7 @@ export interface LoadOptions {
   /** The bounds a plugin's icons are read within, the daemon's `iconLimitBytes` and `iconTimeoutMs`. */
   icons?: IconBounds;
   /** One line per notable thing. */
-  log(message: string): void;
+  log(message: string, level?: LogLevel): void;
   /** One line in the daemon's announcement; dropped when the caller has none. */
   say?(line: string): void;
   /** Every directory the host serves; defaults to the base's one. */

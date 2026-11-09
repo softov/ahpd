@@ -25,6 +25,7 @@ import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, marke
 import type { ArchiveEntry, MadePart, Tarball } from './parts.js';
 import type { Cli, CliOptions, DevContainerConfiguration, Reach } from './devcontainer.js';
 import type { ServerReport } from './servercheck.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * What a machine is, and what a runtime does with one.
@@ -922,7 +923,7 @@ export interface DockerOptions extends CommandOptions {
    */
   configDir?: string;
   /** Lines worth keeping. A probe that could not be run is said here. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
   /**
    * The command that starts a nested host inside one of a profile's machines,
    * by profile key.
@@ -2087,7 +2088,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         filled.push(part);
       }
       catch (error) {
-        options.log?.(`${name} is made without the part ${part.id}: its volume ${volumeOf(part)} could not be filled: ${(error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, ' ')}`);
+        options.log?.(`${name} is made without the part ${part.id}: its volume ${volumeOf(part)} could not be filled: ${(error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, ' ')}`, 'warn');
       }
     }
     // A part whose requirement was left out cannot run, so it goes too.
@@ -2095,7 +2096,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     for (;;) {
       const next = kept.filter((part) => (part.requires ?? []).every((need) => kept.some((one) => one.id === need)));
       for (const part of kept.filter((one) => !next.includes(one))) {
-        options.log?.(`${name} is made without the part ${part.id}: it requires ${(part.requires ?? []).join(', ')}, which the machine is made without`);
+        options.log?.(`${name} is made without the part ${part.id}: it requires ${(part.requires ?? []).join(', ')}, which the machine is made without`, 'warn');
       }
       if (next.length === kept.length) break;
       kept = next;
@@ -2169,7 +2170,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     if (isRoot(user)) return { uid: 0, gid: 0 };
     const ids = await idsOf(image, user);
     if (ids !== undefined) return ids;
-    options.log?.(`${machine} leaves its state volumes owned by root: the ids of ${user} could not be read from ${image}`);
+    options.log?.(`${machine} leaves its state volumes owned by root: the ids of ${user} could not be read from ${image}`, 'warn');
     return { uid: 0, gid: 0 };
   };
 
@@ -2220,18 +2221,18 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           if (stamp?.[seed.target] === mark) continue;
           const stat = statSync(seed.source, { throwIfNoEntry: false });
           if (stat === undefined) {
-            options.log?.(`${machine} seeds ${state.volume} without ${seed.source}, which is not on this host`);
+            options.log?.(`${machine} seeds ${state.volume} without ${seed.source}, which is not on this host`, 'warn');
             next[seed.target] = mark;
             continue;
           }
           try {
             const found = seedEntries(seed);
             entries.push(...found.entries);
-            for (const link of found.links) options.log?.(`${machine} seeds ${state.volume} without ${link}, a link it does not follow`);
+            for (const link of found.links) options.log?.(`${machine} seeds ${state.volume} without ${link}, a link it does not follow`, 'warn');
             next[seed.target] = mark;
           }
           catch (error) {
-            options.log?.(`${machine} seeds ${state.volume} without ${seed.source}: ${error instanceof Error ? error.message : String(error)}`);
+            options.log?.(`${machine} seeds ${state.volume} without ${seed.source}: ${error instanceof Error ? error.message : String(error)}`, 'warn');
           }
         }
         if (stamp !== undefined && entries.length === 0 && JSON.stringify(next) === JSON.stringify(stamp)) return;
@@ -2305,7 +2306,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     const own = [`--git-dir=${at}`, `--work-tree=${root}`];
     try {
       const ids = await idsOfMachine(spec, container);
-      if (ids === undefined) options.log?.(`${machine} leaves its git directory root's: the ids of its user could not be read inside it`);
+      if (ids === undefined) options.log?.(`${machine} leaves its git directory root's: the ids of its user could not be read inside it`, 'warn');
       else if (ids.uid !== 0 || ids.gid !== 0) {
         // The volume's own mount point, which is the git directory under
         // `shared` and the tree it sits in under `copy`: either way it is what
@@ -2716,14 +2717,14 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        * check below.
        */
       if (hostGit(tree, ['cat-file', '-e', `${mine}^{commit}`]).code !== 0) {
-        options.log?.(`the machine ${id} is not moved: it is at ${mine}, which the host has not fetched`);
+        options.log?.(`the machine ${id} is not moved: it is at ${mine}, which the host has not fetched`, 'warn');
         return;
       }
       // What the host's branch does not lead on from - a person's own rebase,
       // reset or commit of their own - is a history the machine's commit is not
       // in, and moving the machine to the branch would be dropping it.
       if (hostGit(tree, ['merge-base', '--is-ancestor', mine, tip]).code !== 0) {
-        options.log?.(`the machine ${id} is not moved: ${branch === '' ? 'the host is detached' : branch} does not lead on from ${mine}`);
+        options.log?.(`the machine ${id} is not moved: ${branch === '' ? 'the host is detached' : branch} does not lead on from ${mine}`, 'warn');
         return;
       }
     }
@@ -2741,7 +2742,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * standing on.
      */
     if (branch !== '' && !(await movesOver(inMachine, branch, tip))) {
-      options.log?.(`the machine ${id} is not moved: its branch ${branch} holds work the host's does not lead on from`);
+      options.log?.(`the machine ${id} is not moved: its branch ${branch} holds work the host's does not lead on from`, 'warn');
       return;
     }
     if (branch === '') await inMachine('update-ref', '--no-deref', 'HEAD', tip);

@@ -131,7 +131,7 @@ const CONFLICT = -32011;
         ...(excludes.length > 0 ? { excludes: { items: excludes } } : {}),
         ...(includes.length > 0 ? { includes: { items: includes } } : {}),
       });
-      log(`${connection.clientId} may watch ${uri}${params.recursive === true ? ' and under it' : ''} on ${channel}`);
+      log.debug(`${connection.clientId} may watch ${uri}${params.recursive === true ? ' and under it' : ''} on ${channel}`);
       return { channel };
     },
     /*
@@ -189,7 +189,7 @@ const CONFLICT = -32011;
         ...(typeof params.ifMatch === 'string' ? { ifMatch: params.ifMatch } : {}),
       }, owner, writer === '' ? undefined : writer, connection.principal);
       void fire({ type: 'resource_write', uri });
-      log(`${connection.clientId} wrote ${uri}`);
+      log.debug(`${connection.clientId} wrote ${uri}`);
       wroteThrough(uri);
       return {};
     },
@@ -207,7 +207,7 @@ const CONFLICT = -32011;
       await served(need(storeFor(uri), 'resourceDelete').delete, 'delete', uri)(
         uri, params.recursive === true, owner, connection.principal,
       );
-      log(`${connection.clientId} deleted ${uri}`);
+      log.debug(`${connection.clientId} deleted ${uri}`);
       wroteThrough(uri);
       return {};
     },
@@ -232,7 +232,7 @@ const CONFLICT = -32011;
       await served(need(held, 'resourceMove').move, 'move', source)(
         source, destination, params.failIfExists === true,
       );
-      log(`${connection.clientId} moved ${source} to ${destination}`);
+      log.debug(`${connection.clientId} moved ${source} to ${destination}`);
       wroteThrough(source);
       wroteThrough(destination);
       return {};
@@ -281,7 +281,7 @@ const CONFLICT = -32011;
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2493-L2498
        */
       const write = params.write === true;
-      log(`${connection.clientId} may ${write ? 'write' : 'read'} ${uri}`);
+      log.debug(`${connection.clientId} may ${write ? 'write' : 'read'} ${uri}`);
       return {};
     },
     /**
@@ -444,7 +444,7 @@ const CONFLICT = -32011;
               ? { errorType: error.name, message, ...(error.stack === undefined ? {} : { stack: error.stack }) }
               : { errorType: 'Error', message },
           });
-          log(`${operationId} on ${channel} failed: ${message}`);
+          log.error(`${operationId} on ${channel} failed: ${message}`);
           // With the source's code and data when it chose them: a refusal
           // the reference client branches on is more than its message.
           const chosen = error as { code?: unknown; data?: unknown };

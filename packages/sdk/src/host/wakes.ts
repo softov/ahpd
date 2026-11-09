@@ -163,7 +163,7 @@ export function createWakes(ctx: HostContext): Wakes {
       const wake = stored(held.id, chat);
       if (wake === undefined) continue;
       begin(held.id, chat, wake).catch((error: unknown) => {
-        log(`wake of ${chat} failed, kept for the next start: ${error instanceof Error ? error.message : String(error)}`);
+        log.warn(`wake of ${chat} failed, kept for the next start: ${error instanceof Error ? error.message : String(error)}`);
       });
     }
     rearm();

@@ -13,6 +13,7 @@
 import { spawn } from 'node:child_process';
 import { JOINED_PACKAGES } from './parts.js';
 import type { SshReach } from './ssh.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** What a template's name starts with; the rest is the joined image's hash. */
 export const TEMPLATE_PREFIX = 'ahpd-template-';
@@ -78,7 +79,7 @@ const SEAL = ['sudo', 'cloud-init', 'clean', '--logs', '--machine-id'];
  * unused for a week.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L30-L78
  */
-export const templateMaker = (parts: TemplateParts, log?: (line: string) => void, ledger?: TemplateLedger) => {
+export const templateMaker = (parts: TemplateParts, log?: (line: string, level?: LogLevel) => void, ledger?: TemplateLedger) => {
   const building = new Map<string, Promise<string>>();
 
   /** The server's older templates, each removed a week after it was first found with no VM. */
@@ -102,7 +103,7 @@ export const templateMaker = (parts: TemplateParts, log?: (line: string) => void
         log?.(`${server} removed the template ${one}, which no VM has backed onto for over a week`);
       }
       catch (error) {
-        log?.(`${server} did not remove the template ${one}: ${error instanceof Error ? error.message : String(error)}`);
+        log?.(`${server} did not remove the template ${one}: ${error instanceof Error ? error.message : String(error)}`, 'warn');
       }
     }
     ledger?.write(held);
@@ -129,7 +130,7 @@ export const templateMaker = (parts: TemplateParts, log?: (line: string) => void
       }
       catch (error) {
         await steps.drop(name).catch((gone: unknown) => {
-          log?.(`the helper for ${name} on ${server} was not removed: ${gone instanceof Error ? gone.message : String(gone)}`);
+          log?.(`the helper for ${name} on ${server} was not removed: ${gone instanceof Error ? gone.message : String(gone)}`, 'warn');
         });
         throw new Error(`The template ${name} was not made on ${server}: ${error instanceof Error ? error.message : String(error)}`);
       }

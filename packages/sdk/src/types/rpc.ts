@@ -1,3 +1,4 @@
+import type { LogLevel } from '../log.js';
 /** JSON-RPC 2.0 over a single connection. */
 
 /** One decoded JSON-RPC call: a method name and its parameters. */
@@ -50,7 +51,7 @@ export interface Bounding {
    * a listener or a host nobody asked to hear from closes the socket and
    * writes no line.
    */
-  log?(line: string): void;
+  log?(line: string, level?: LogLevel): void;
 }
 
 /**

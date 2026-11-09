@@ -369,7 +369,7 @@ export function createConfig(ctx: SessionContext): Config {
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2231
        */
       if (offeredFor('model')?.includes(chosen.id) !== true) {
-        ctx.options.log?.(`${provider}: the session keeps its model: the server does not offer ${chosen.id}`);
+        ctx.options.log?.(`${provider}: the session keeps its model: the server does not offer ${chosen.id}`, 'warn');
       }
       // A server from before config options has no option to set, and takes
       // the model by the call it knew.
@@ -397,7 +397,7 @@ export function createConfig(ctx: SessionContext): Config {
     const offered = choicesOf(thought).map((one) => one.value);
     const asked = taken ? chosen?.config?.[ReasoningEffortConfigKey] : undefined;
     if (typeof asked === 'string' && !offered.includes(asked)) {
-      ctx.options.log?.(`${provider}: the turn runs at the session's thinking level: the server does not offer ${asked}`);
+      ctx.options.log?.(`${provider}: the turn runs at the session's thinking level: the server does not offer ${asked}`, 'warn');
     }
     const level = typeof asked === 'string' && offered.includes(asked) ? asked : values[keyOf(thought)];
     if (typeof level !== 'string' || level === thought.currentValue || !offered.includes(level)) return;
@@ -631,7 +631,7 @@ export function createConfig(ctx: SessionContext): Config {
       const taken = offered.includes(value)
         ? await applyConfig(held, key, value)
         : `${provider}: the server does not offer ${key} ${JSON.stringify(value)}`;
-      if (taken !== true) ctx.options.log?.(`${taken}, so the session runs with the server's own`);
+      if (taken !== true) ctx.options.log?.(`${taken}, so the session runs with the server's own`, 'warn');
     }
   };
 

@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOST_CATALOGS } from '../src/i18n.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
@@ -145,7 +146,7 @@ describe('the new session form in a locale', () => {
 
 describe('the catalogs a fold keeps', () => {
   const CONTEXT: LoaderContext = {
-    path: '/tmp/i18n', paths: ['/tmp/i18n'], version: '0.0.0', hostName: 'host', configDir: '/tmp/i18n', log: () => {}, say: () => {},
+    path: '/tmp/i18n', paths: ['/tmp/i18n'], version: '0.0.0', hostName: 'host', configDir: '/tmp/i18n', log: loggerOf(() => {}), say: () => {},
   };
 
   it('keeps each plugin catalogs by the key and the agent it registered', () => {

@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +33,7 @@ async function start(options: Record<string, unknown> = {}): Promise<Kept> {
     registerAdapter: (adapter: Adapter) => { kept.adapters.set(adapter.name, adapter); },
     registerClose: (close: () => void | Promise<void>) => { kept.closes.push(close); },
     problem: (line: string) => { kept.problems.push(line); },
-    log: (line: string) => { kept.logged.push(line); },
+    log: loggerOf((line: string) => { kept.logged.push(line); }),
   } as unknown as PluginHost;
   await apply(host, { pieces: [PIECE], ...options });
   return kept;

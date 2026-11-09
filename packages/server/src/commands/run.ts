@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { canonicalFromCli, check, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, JsonSchema, Registry } from '@cofold/commands';
-import type { Agent, Alert, AutomationStore, AutomationsOptions, ClientCounts, ClientRegistry, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, PluginContext, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, Alert, LogLevel, AutomationStore, AutomationsOptions, ClientCounts, ClientRegistry, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, PluginContext, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Vault } from '@ahpd/sdk';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import {
   adaptersChannel,
@@ -67,7 +67,9 @@ import {
   usageMethods,
   usageProvider,
   AGENT_RECORD_VARIABLE,
+  loggerOf,
 } from '@ahpd/sdk';
+import { logLine, written } from '../logline.js';
 import { CONTROL_ENV, DETACHED_ENV, SERVICE_ENV, claim, forget, recordOf, running, serviceIn, start as startDaemon, sweepTemps } from '../daemon.js';
 import { controlIn, controlServer } from '../control.js';
 import type { ControlServer } from '../control.js';
@@ -332,8 +334,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * starting. It is also what makes this log line up against a client's, since
    * the two are separate programs and the only thing they share is a clock.
    */
-  const stamp = (line: string): void => { process.stderr.write(`${new Date().toISOString()} ${line}\n`); };
-  for (const warning of options.warnings) stamp(warning);
+  const stamp = (line: string, level: LogLevel = 'info'): void => {
+    if (written(level, options.logLevel)) process.stderr.write(`${logLine(line, level, options.logTime, process.stderr)}\n`);
+  };
+  for (const warning of options.warnings) stamp(warning, 'warn');
 
   /*
    * What this host calls its own sign-in resource.
@@ -394,7 +398,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       ...(options.issuerVerify === undefined ? {} : { issuerVerify: options.issuerVerify }),
       requireIssuer: options.requireIssuer,
       tokensPerPerson: options.tokensPerPerson,
-      onProblem: (line) => process.stderr.write(`${line}\n`),
+      onProblem: (line) => { stamp(line, 'warn'); },
     });
 
   /*
@@ -506,7 +510,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     // is kept under and the day it is read over are the same day.
     ...(options.usageTimezone === undefined ? {} : { timezone: options.usageTimezone }),
     meter,
-    onProblem: (message) => process.stderr.write(`${message}\n`),
+    onProblem: (message) => { stamp(message, 'warn'); },
   });
   // This daemon's own once a plugin has folded in a store of its own; before
   // the host is built, a request finds the daemon's.
@@ -541,7 +545,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    */
   const policies = filePolicies({
     file: policiesPath(),
-    onProblem: (message) => process.stderr.write(`${message}\n`),
+    onProblem: (message) => { stamp(message, 'warn'); },
   });
   /*
    * What a daemon with the checks on says once at start.
@@ -851,7 +855,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * daemon stdout is the protocol, and a line there is a frame a client cannot
    * parse.
    */
-  const listProblem = (message: string): void => { process.stderr.write(`${message}\n`); };
+  const listProblem = (message: string): void => { stamp(message, 'warn'); };
   const policyLists = policyChannels(policies, {
     onProblem: listProblem,
     // The limits of a row are read from the same usage store the scheme is, so
@@ -1222,7 +1226,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    */
   const filed = memory
     ? undefined
-    : daemonAutomations((message) => process.stderr.write(`${message}\n`), {
+    : daemonAutomations((message) => { stamp(message, 'warn'); }, {
       pluginTypes: () => pluginTypes,
       connectors: () => connectorLists.refs(),
       agents: () => agentLists.owners(),
@@ -1248,7 +1252,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     configDir: configDir(),
     hostId: hostId(),
     ...(users === undefined ? {} : { hasUsers: true }),
-    log: stamp,
+    log: loggerOf(stamp),
     say: stamp,
     parseYaml: (text: string) => parseYaml(text),
     stringifyYaml,
@@ -1535,7 +1539,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     rootConfigStore: fileRootConfigStore({
       file: rootConfigPath(),
-      onProblem: (message) => process.stderr.write(`${message}\n`),
+      onProblem: (message) => { stamp(message, 'warn'); },
     }),
     /*
      * What this host adds on top of a backend, kept between restarts.
@@ -1547,7 +1551,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     sessions: options.sessions === 'memory'
       ? memorySessions()
-      : daemonSessions((message) => process.stderr.write(`${message}\n`)),
+      : daemonSessions((message) => { stamp(message, 'warn'); }),
     /*
      * Automations, with a clock unless asked otherwise.
      *
@@ -1573,7 +1577,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     enablement: fileEnablement({
       file: customizationStatePath(),
-      onProblem: (message) => process.stderr.write(`${message}\n`),
+      onProblem: (message) => { stamp(message, 'warn'); },
     }),
     /*
      * What an automation that names no owner wakes on, which is a decision
@@ -1675,7 +1679,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     meter,
     // The titles a pool is named with, read from the same directory the gate asks.
     ...(users === undefined ? {} : { titles: users }),
-    onProblem: (message) => process.stderr.write(`${message}\n`),
+    onProblem: (message) => { stamp(message, 'warn'); },
   });
   base.resourceProviders = { ...base.resourceProviders, usage: usageScheme };
   // The usage commands, which answer what the scheme's reads answer, as values.

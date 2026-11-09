@@ -379,7 +379,7 @@ export function createShells(ctx: HostContext): HostShells {
       catch (error) {
         // The command is over either way, and its row is already down; what
         // did not happen is the turn that would have read the end.
-        log(`could not wake ${session} after the command in ${shell.id}: ${error instanceof Error ? error.message : String(error)}`);
+        log.error(`could not wake ${session} after the command in ${shell.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
       return result;
     };

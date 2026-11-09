@@ -24,6 +24,7 @@ import type { Part, Tarball } from './parts.js';
 import type { ComputerRuntime, ExecResult, Machine, MachineStats, RuntimeCapabilities } from './runtime.js';
 import { checkServer, SERVER_CHECK } from './servercheck.js';
 import type { ServerReport } from './servercheck.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** What `capabilities` reports for this runtime. */
 const CAPABILITIES: RuntimeCapabilities = {
@@ -115,7 +116,7 @@ export interface SshOptions {
   /** The ahpd part's lock that install runs `npm ci` from, the one beside `versions.json` when absent. */
   lock?: Tarball[];
   /** Where an ahpd installed on a box, or one run in its place, is said. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
 }
 
 /**
@@ -515,7 +516,7 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
       if (said.has('installed')) options.log?.(`ahpd ${install.version} was installed on ${name} at ${host}`);
       // VS Code's warning when its pinned CLI was not installed and another one
       // runs, which is the install's own last line.
-      if (said.has('fallback')) options.log?.(`ahpd ${install.version} was not installed on ${name}, so ${host} there starts its sessions' host: ${why}`);
+      if (said.has('fallback')) options.log?.(`ahpd ${install.version} was not installed on ${name}, so ${host} there starts its sessions' host: ${why}`, 'warn');
       return ['env', `AHPD_PLUGIN_ROOT=${dir}/ahpd/plugins`, host];
     })();
     installing.set(name, made);

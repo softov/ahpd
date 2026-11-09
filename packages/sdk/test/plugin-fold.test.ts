@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -442,7 +443,7 @@ const ADAPTER_CONTEXT: LoaderContext = {
   version: '0.0.0',
   hostName: 'host',
   configDir: '/tmp/fold',
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
 };
 

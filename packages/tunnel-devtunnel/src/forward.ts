@@ -27,6 +27,7 @@ import { createServer as createHttpServer, request as httpRequest } from 'node:h
 import type { IncomingMessage } from 'node:http';
 import { createServer, connect } from 'node:net';
 import type { AddressInfo, Server, Socket } from 'node:net';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** A forwarder, for as long as the daemon runs. */
 export interface Forward {
@@ -52,7 +53,7 @@ const withToken = (url: string | undefined, token: string): string => {
  * open against a daemon that is not answering is one nothing ever closes. A
  * request that cannot reach it is answered 503, as VS Code's CLI answers one.
  */
-export function forward(from: number, to: number, log: (line: string) => void, token?: string): Promise<Forward> {
+export function forward(from: number, to: number, log: (line: string, level?: LogLevel) => void, token?: string): Promise<Forward> {
   const open = new Set<Socket>();
 
   /** Two sockets copied into each other, both dropped when either goes. */
@@ -67,7 +68,7 @@ export function forward(from: number, to: number, log: (line: string) => void, t
     };
     inbound.on('error', drop);
     outbound.on('error', (error) => {
-      log(`forward to 127.0.0.1:${to} failed: ${error.message}`);
+      log(`forward to 127.0.0.1:${to} failed: ${error.message}`, 'error');
       drop();
     });
     inbound.on('close', drop);
@@ -84,7 +85,7 @@ export function forward(from: number, to: number, log: (line: string) => void, t
         said.pipe(answer);
       });
       upstream.on('error', (error) => {
-        log(`forward to 127.0.0.1:${to} failed: ${error.message}`);
+        log(`forward to 127.0.0.1:${to} failed: ${error.message}`, 'error');
         answer.writeHead(503).end(`Error connecting to the daemon: ${error.message}`);
       });
       asked.pipe(upstream);
@@ -105,7 +106,7 @@ export function forward(from: number, to: number, log: (line: string) => void, t
       // Read back rather than echoed: `from` is zero when the caller wanted
       // any free port, and the number it got is the only one worth reporting.
       const bound = (server.address() as AddressInfo | null)?.port ?? from;
-      server.on('error', (error) => { log(`forwarder on ${bound}: ${error.message}`); });
+      server.on('error', (error) => { log(`forwarder on ${bound}: ${error.message}`, 'error'); });
       resolve({
         port: bound,
         close: () => new Promise<void>((done) => {

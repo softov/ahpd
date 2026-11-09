@@ -29,6 +29,7 @@ import type { NestedHost, NestedStart, NestedStarted } from './types/computers.j
 import type { NodeChange } from './types/host.js';
 import type { Connected, Raw } from './types/listen.js';
 import type { Peer } from './types/rpc.js';
+import type { LogLevel } from './log.js';
 
 /** One node: its name, and the hash of the token it joins with. */
 export interface NodeRecord {
@@ -280,7 +281,7 @@ export interface LiveOptions {
   /** The file `ahpd node add` wrote, which says who may join. */
   file: Nodes;
   /** One line worth keeping: a session a node would not open. Nothing is said without one. */
-  log?(line: string): void;
+  log?(line: string, level?: LogLevel): void;
   /**
    * How long `connect` waits for a node that is not connected now, in
    * milliseconds. Default `RECONNECT_WAIT_MS`; a test names a shorter one.
@@ -401,7 +402,7 @@ export function liveNodes(options: LiveOptions): LiveNodes {
         one(change);
       }
       catch (error: unknown) {
-        options.log?.(`a node watch failed on ${change.id}: ${error instanceof Error ? error.message : String(error)}`);
+        options.log?.(`a node watch failed on ${change.id}: ${error instanceof Error ? error.message : String(error)}`, 'error');
       }
     }
   };
@@ -553,7 +554,7 @@ export function liveNodes(options: LiveOptions): LiveNodes {
       opening.delete(open);
       clearTimeout(timer);
       const said = error instanceof Error ? error.message : String(error);
-      options.log?.(`node ${id} did not open a session: ${said}`);
+      options.log?.(`node ${id} did not open a session: ${said}`, 'error');
       throw new Error(`node ${id} did not open a session: ${said}`);
     }
     return arrived;

@@ -1,7 +1,7 @@
 ---
 title: A log line says its level
 domain: daemon
-status: planned
+status: active
 priority: medium
 created: 2026-11-09
 revalidated: 2026-11-09
@@ -67,6 +67,7 @@ a call site -> ctx.log.<level>(line) -> telemetry log(line, level)
 | The time is a setting, `logTime`, `local` or `utc`, default local | "config. defaults to local.", 2026-11-09 | 02 |
 | Colour only where `util.styleText` allows it: the tag of each level, and an error's whole line; error red, warning yellow, debug and trace grey, info plain | "ok acceptable" to colour on a terminal only, 2026-11-09; colours (defaulted: the usual meanings) | 02 |
 | The startup lines on stdout keep their shape | (defaulted: `ahpd status` and `skippedOf` parse them) | 02 |
+| An ACP server's stderr line is logged at the level it says, without its own time; a line with no level is info | "in that PR can we do the log interpret for better logging?", 2026-11-09 | 04 |
 
 ## Proposed architecture
 
@@ -83,9 +84,10 @@ a call site -> ctx.log.<level>(line) -> telemetry log(line, level)
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host's log takes a level](task-01-the-hosts-log-takes-a-level.md) | todo | - |
-| [02 - The daemon writes the level](task-02-the-daemon-writes-the-level.md) | todo | 01 |
-| [03 - Every line has its level](task-03-every-line-has-its-level.md) | todo | 01 |
+| [01 - The host's log takes a level](task-01-the-hosts-log-takes-a-level.md) | doing | - |
+| [02 - The daemon writes the level](task-02-the-daemon-writes-the-level.md) | doing | 01 |
+| [03 - Every line has its level](task-03-every-line-has-its-level.md) | doing | 01 |
+| [04 - A server's line keeps its level](task-04-a-servers-line-keeps-its-level.md) | doing | 01 |
 
 ## Risks and tradeoffs
 
@@ -95,8 +97,8 @@ a call site -> ctx.log.<level>(line) -> telemetry log(line, level)
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-hosts-log-takes-a-level.md](task-01-the-hosts-log-takes-a-level.md).
+- **Done so far:** tasks 01 to 04 are built and wait for review, 2026-11-09.
+- **Next action:** review of the PR.
 - **Open questions:** none.
 - **Watch out for:** callers outside this repository pass a backend's `log` option as a plain function. Wrap it with `loggerOf`, and keep the option's type.
 

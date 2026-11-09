@@ -1,6 +1,7 @@
 /** The protocol server: channels, subscriptions and requests. */
 
 import type { ProjectInfo, ToolDefinition, ToolResultContent } from '@microsoft/agent-host-protocol';
+import type { LogLevel } from '../log.js';
 import type { OnWire } from './wire.js';
 import type { Agent, BoundTool, McpServer, ToolEffects } from './agent.js';
 import type { ToolsServers } from '../tools/server.js';
@@ -1093,8 +1094,8 @@ export interface HostOptions {
    * of these, and the daemon fills in its own.
    */
   diagnostics?: Diagnostics;
-  /** Called with one line per notable event, for a log. */
-  onEvent?(message: string): void;
+  /** Called with one line per notable event and the line's level, for a log. */
+  onEvent?(message: string, level?: LogLevel): void;
   /**
    * What plugins subscribed to, by event, in registration order.
    *

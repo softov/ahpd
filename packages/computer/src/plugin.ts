@@ -39,6 +39,7 @@ import {
 } from './sandbox.js';
 import { guardFor, hostUser, runsAsHost } from './gitdir.js';
 import type { GitGuard, SessionTree } from './gitdir.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * The package as a plugin.
@@ -482,7 +483,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   for (const [key, one] of Object.entries(profiles ?? {})) {
     if (one.parts === undefined || partIds === undefined) continue;
     for (const id of one.parts.filter((part) => !partIds.has(part))) {
-      host.log(`${name}: profiles.${key}.parts names ${id}, which the versions file does not, so its machines are made without it`);
+      host.log.warn(`${name}: profiles.${key}.parts names ${id}, which the versions file does not, so its machines are made without it`);
     }
     one.parts = one.parts.filter((part) => partIds.has(part));
   }
@@ -493,7 +494,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   for (const [key, one] of Object.entries(profiles ?? {})) {
     if (one.server === undefined || ssh?.machines[one.server] !== undefined) continue;
-    host.log(`${name}: profiles.${key} names the server ${one.server}, which ssh.machines does not, so the profile is left out`);
+    host.log.warn(`${name}: profiles.${key} names the server ${one.server}, which ssh.machines does not, so the profile is left out`);
     delete profiles?.[key];
   }
   /*
@@ -629,7 +630,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   };
 
   /** What the daemon's own record said, in this plugin's own log. */
-  const noted = (line: string): void => { host.log(`${name}: ${line}`); };
+  const noted = (line: string, level?: LogLevel): void => { host.log(`${name}: ${line}`, level); };
 
   /*
    * The Docker this plugin runs, as one set of options.
@@ -699,17 +700,17 @@ export const apply: Plugin['apply'] = (host, options) => {
     const box = one.server === undefined ? undefined : ssh?.machines[one.server];
     if (one.runtime === 'proxmox') {
       if (proxmoxSaid === undefined) {
-        host.log(`${name}: profiles.${key} makes Proxmox VMs, and the proxmox option does not name its url, tokenId, secret, node, storage and bridge, so the profile is left out`);
+        host.log.warn(`${name}: profiles.${key} makes Proxmox VMs, and the proxmox option does not name its url, tokenId, secret, node, storage and bridge, so the profile is left out`);
         delete profiles?.[key];
         continue;
       }
       if (one.server !== undefined && box === undefined) {
-        host.log(`${name}: profiles.${key} reaches its VMs through ${one.server}, which is not in ssh.machines, so the profile is left out`);
+        host.log.warn(`${name}: profiles.${key} reaches its VMs through ${one.server}, which is not in ssh.machines, so the profile is left out`);
         delete profiles?.[key];
         continue;
       }
       if (box?.identity !== undefined) {
-        host.log(`${name}: profiles.${key} names the server ${one.server as string}, whose identity ssh -J cannot be given; name the key for ${box?.destination as string} in ssh's own configuration instead, so the profile is left out`);
+        host.log.warn(`${name}: profiles.${key} names the server ${one.server as string}, whose identity ssh -J cannot be given; name the key for ${box?.destination as string} in ssh's own configuration instead, so the profile is left out`);
         delete profiles?.[key];
         continue;
       }
@@ -718,12 +719,12 @@ export const apply: Plugin['apply'] = (host, options) => {
     }
     if (one.runtime === 'libvirt') {
       if (box === undefined || one.server === undefined) {
-        host.log(`${name}: profiles.${key} makes VMs and names no server to make them on, so the profile is left out`);
+        host.log.warn(`${name}: profiles.${key} makes VMs and names no server to make them on, so the profile is left out`);
         delete profiles?.[key];
         continue;
       }
       if (box.identity !== undefined) {
-        host.log(`${name}: profiles.${key} names the server ${one.server}, whose identity ssh -J cannot be given; name the key for ${box.destination} in ssh's own configuration instead, so the profile is left out`);
+        host.log.warn(`${name}: profiles.${key} names the server ${one.server}, whose identity ssh -J cannot be given; name the key for ${box.destination} in ssh's own configuration instead, so the profile is left out`);
         delete profiles?.[key];
         continue;
       }
@@ -732,12 +733,12 @@ export const apply: Plugin['apply'] = (host, options) => {
     }
     if (box === undefined) continue;
     if (key.includes('.')) {
-      host.log(`${name}: profiles.${key} names a server, and a dot in its name would read as part of its machines' ids, so the profile is left out`);
+      host.log.warn(`${name}: profiles.${key} names a server, and a dot in its name would read as part of its machines' ids, so the profile is left out`);
       delete profiles?.[key];
       continue;
     }
     if (box.identity !== undefined) {
-      host.log(`${name}: profiles.${key} names the server ${one.server}, whose identity Docker cannot be given; name the key for ${box.destination} in ssh's own configuration instead, so the profile is left out`);
+      host.log.warn(`${name}: profiles.${key} names the server ${one.server}, whose identity Docker cannot be given; name the key for ${box.destination} in ssh's own configuration instead, so the profile is left out`);
       delete profiles?.[key];
       continue;
     }
@@ -794,7 +795,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       proxmoxCa = readFileSync(proxmoxSaid.ca, 'utf8');
     }
     catch (error) {
-      host.log(`${name}: proxmox.ca ${proxmoxSaid.ca} could not be read (${error instanceof Error ? error.message : String(error)}), so the Proxmox profiles are left out`);
+      host.log.error(`${name}: proxmox.ca ${proxmoxSaid.ca} could not be read (${error instanceof Error ? error.message : String(error)}), so the Proxmox profiles are left out`);
       for (const key of Object.keys(proxmoxProfiles)) {
         delete proxmoxProfiles[key];
         delete profiles?.[key];
@@ -1052,7 +1053,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       });
     }
     catch (error) {
-      host.log(`${name}: could not write the up time of ${id}: ${error instanceof Error ? error.message : String(error)}`);
+      host.log.error(`${name}: could not write the up time of ${id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -1091,7 +1092,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * without telling it.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostCatalogReconciliationService.ts#L22
    */
-  const catalogue = computerCatalogue(computerRouter, (line) => { host.log(`${name}: ${line}`); });
+  const catalogue = computerCatalogue(computerRouter, (line: string, level?: LogLevel) => { host.log(`${name}: ${line}`, level); });
   catalogue.bind(host.registerChannel(COMPUTERS_SCHEME, catalogue.channel));
   // A reader whose grants changed is sent what they gained and lost.
   host.on('users_changed', () => { void catalogue.refresh(); });
@@ -1329,7 +1330,7 @@ export const apply: Plugin['apply'] = (host, options) => {
         await close(id, await claimOf(id));
       }
       catch (error) {
-        host.log(`${name}: could not close the up time of ${id}: ${error instanceof Error ? error.message : String(error)}`);
+        host.log.error(`${name}: could not close the up time of ${id}: ${error instanceof Error ? error.message : String(error)}`);
         stretches.delete(id);
       }
     }
@@ -1423,7 +1424,7 @@ export const apply: Plugin['apply'] = (host, options) => {
            * A daemon that is stopping arms nothing, so it is left for whoever
            * starts next.
            */
-          host.log(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+          host.log.error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
           arm(id);
         },
       );
@@ -1494,7 +1495,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       await made.remove(id);
     }
     catch (error) {
-      host.log(`${name}: could not remove ${id}: ${error instanceof Error ? error.message : String(error)}`);
+      host.log.error(`${name}: could not remove ${id}: ${error instanceof Error ? error.message : String(error)}`);
     }
     return true;
   };
@@ -1844,7 +1845,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   const onlyAttachments = (paths: string[], refusing: (one: string) => string): string[] =>
     paths.filter((one) => {
       if (underAttachments(one)) return true;
-      host.log(refusing(one));
+      host.log.warn(refusing(one));
       return false;
     });
 

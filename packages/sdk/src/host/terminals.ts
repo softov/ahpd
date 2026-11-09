@@ -759,7 +759,7 @@ export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext
       const given = typeof params.cwd === 'string' ? localPath(params.cwd) : '';
       const folder = given !== '' && given !== '/' && await stat(given).then((found) => found.isDirectory(), () => false);
       const asked = folder ? given : process.env.HOME || process.env.USERPROFILE || process.cwd();
-      if (!folder && given !== '') log(`${uri}: ${given} is not a folder here, so it opens in ${asked}`);
+      if (!folder && given !== '') log.warn(`${uri}: ${given} is not a folder here, so it opens in ${asked}`);
       /*
        * The host's `defaultShell` where a client pushed one this machine can
        * run, and the system's shell otherwise, as VS Code's terminal manager
@@ -772,7 +772,7 @@ export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext
       const shell = configured === undefined ? undefined : await access(configured, constants.X_OK).then(
         () => configured,
         (error: unknown) => {
-          log(`the defaultShell ${configured} cannot run here, so ${uri} opens the system shell: ${reason(error)}`);
+          log.warn(`the defaultShell ${configured} cannot run here, so ${uri} opens the system shell: ${reason(error)}`);
           return undefined;
         },
       );
@@ -860,7 +860,7 @@ export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext
       const terminal = terminals.get(uri);
       if (!terminal) return null;
       if (ctx.dropOutputTerminal(uri)) {
-        log(`dropped the output terminal ${uri}`);
+        log.debug(`dropped the output terminal ${uri}`);
         return null;
       }
       terminals.delete(uri);

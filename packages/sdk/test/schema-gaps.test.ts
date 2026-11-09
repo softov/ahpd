@@ -7,6 +7,7 @@
  * that names every JSON value, and is not a hole.
  */
 
+import { loggerOf } from '../src/log.js';
 import { describe, expect, it } from 'vitest';
 import { gapLine, schemaGaps } from '../src/plugins/schemagaps.js';
 import { pluginHost } from '../src/plugins/plugins.js';
@@ -15,7 +16,7 @@ import type { Engine, LoaderContext } from '../src/index.js';
 
 /** What a plugin is handed, without the YAML the daemon would give it. */
 const context = (): LoaderContext => ({
-  path: '/tmp/acme', paths: ['/tmp/acme'], version: sdkVersion(), hostName: 'test', configDir: '/tmp/acme', log: () => {}, say: () => {},
+  path: '/tmp/acme', paths: ['/tmp/acme'], version: sdkVersion(), hostName: 'test', configDir: '/tmp/acme', log: loggerOf(() => {}), say: () => {},
 });
 
 /** One engine with the schema a case gives it. */

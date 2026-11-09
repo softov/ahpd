@@ -8,6 +8,7 @@ import { createWebSender } from './webpush.js';
 import type { Device, DeviceStore } from './provider.js';
 import type { PushMessage } from './send.js';
 import type { Bag, Plugin, PluginPeer } from '@ahpd/sdk';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * The package as a plugin.
@@ -149,8 +150,8 @@ export const apply: Plugin['apply'] = (host, options) => {
   // A record that is not a device is left out with a line to the log, as VS
   // Code's host drops a malformed stored entry with a warning.
   // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1298-L1299
-  const store: DeviceStore = deviceStore(host.configDir, (line) => { host.log(`${name}: ${line}`); });
-  const vapid = loadVapid(host.configDir, (line) => { host.log(`${name}: ${line}`); });
+  const store: DeviceStore = deviceStore(host.configDir, (line: string, level?: LogLevel) => { host.log(`${name}: ${line}`, level); });
+  const vapid = loadVapid(host.configDir, (line: string, level?: LogLevel) => { host.log(`${name}: ${line}`, level); });
   const webPushHosts = Array.isArray(options['webPushHosts'])
     ? options['webPushHosts'].filter((one): one is string => typeof one === 'string' && one.trim() !== '')
     : [...WEB_PUSH_HOSTS];
@@ -171,7 +172,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   };
 
   const sender = createSender({
-    log: (line) => { host.log(`${name}: ${line}`); },
+    log: (line: string, level?: LogLevel) => { host.log(`${name}: ${line}`, level); },
     gone: (token) => {
       for (const id of store.ids()) {
         const device = store.get(id);
@@ -182,7 +183,7 @@ export const apply: Plugin['apply'] = (host, options) => {
 
   const contact = str(options['contact']);
   const webSender = vapid === undefined ? undefined : createWebSender({
-    log: (line) => { host.log(`${name}: ${line}`); },
+    log: (line: string, level?: LogLevel) => { host.log(`${name}: ${line}`, level); },
     gone: (id) => { store.remove(id); },
     vapid,
     ...(contact === undefined || contact.trim() === '' ? {} : { contact: contact.trim() }),
@@ -263,7 +264,7 @@ export const apply: Plugin['apply'] = (host, options) => {
         token = await tokenNow();
       }
       catch (error) {
-        host.log(`${name}: accessToken could not be read, so no phone was sent to: ${reason(error)}`);
+        host.log.error(`${name}: accessToken could not be read, so no phone was sent to: ${reason(error)}`);
         sent = false;
       }
       if (sent) {
@@ -289,7 +290,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   };
 
   const tell = (session: string, status: Told): void => {
-    notify(session, status).catch((error: unknown) => { host.log(`${name}: ${session} could not be told: ${reason(error)}`); });
+    notify(session, status).catch((error: unknown) => { host.log.error(`${name}: ${session} could not be told: ${reason(error)}`); });
   };
 
   /** A session the list no longer holds, with its completed notice dropped. */
@@ -380,7 +381,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       conn = host.connect();
     }
     catch (error) {
-      host.log(`${name}: no connection to this host, so no session is told: ${reason(error)}`);
+      host.log.warn(`${name}: no connection to this host, so no session is told: ${reason(error)}`);
       return;
     }
     conn.onMessage(take);
@@ -397,7 +398,7 @@ export const apply: Plugin['apply'] = (host, options) => {
         }
         cursor = str(page['nextCursor']);
       } while (cursor !== undefined && cursor !== '');
-    })().catch((error: unknown) => { host.log(`${name}: the host's session list could not be read: ${reason(error)}`); });
+    })().catch((error: unknown) => { host.log.error(`${name}: the host's session list could not be read: ${reason(error)}`); });
   });
 
   host.registerClose(() => {

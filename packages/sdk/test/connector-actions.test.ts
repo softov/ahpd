@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -25,7 +26,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** The context every plugin in this repository is handed, without a daemon. */
 const context = (): LoaderContext => ({
-  path: HERE, paths: [HERE], version: sdkVersion(), hostName: 'test', configDir: HERE, log: () => {}, say: () => {},
+  path: HERE, paths: [HERE], version: sdkVersion(), hostName: 'test', configDir: HERE, log: loggerOf(() => {}), say: () => {},
 });
 
 /** One tool as the backend was handed it, which is how a model calls it. */

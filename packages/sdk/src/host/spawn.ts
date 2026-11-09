@@ -979,7 +979,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       lines = await plan.read(session);
     }
     catch (error: unknown) {
-      log(`plugin ${plan.by}: the plan of ${session} was not read: ${reason(error)}`);
+      log.error(`plugin ${plan.by}: the plan of ${session} was not read: ${reason(error)}`);
       return;
     }
     // A later change asked while this read ran, and its lines are the ones to show.
@@ -1439,7 +1439,7 @@ export function createSpawn(ctx: HostContext): Spawn {
             ctx.forgetKeys(String(action.turnId ?? ''));
           }
           const by = [...ctx.connections].find((one) => one.clientId === origin.clientId);
-          if (by === undefined) log(`${uri}: the host running it refused ${String(action.type)}, and its client has gone: ${rejectionReason}`);
+          if (by === undefined) log.warn(`${uri}: the host running it refused ${String(action.type)}, and its client has gone: ${rejectionReason}`);
           else ctx.refuse(by.peer, channel === 'chat' ? chatUri : uri, action, origin, rejectionReason);
           return;
         }
@@ -1481,7 +1481,7 @@ export function createSpawn(ctx: HostContext): Spawn {
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
          */
         if ((action.type === 'chat/backgroundWorkSet' || action.type === 'chat/backgroundWorkRemoved') && ctx.backendBackgroundWork === 'drop') {
-          log(`dropped ${action.type} from ${agent.provider}: the host draws background work`);
+          log.debug(`dropped ${action.type} from ${agent.provider}: the host draws background work`);
           return;
         }
         /*
@@ -1817,10 +1817,10 @@ export function createSpawn(ctx: HostContext): Spawn {
           for (const one of sessions.get(uri)?.chats.keys() ?? []) updateChatMovability(one);
           if (action.type === 'chat/turnComplete') {
             void ctx.moveSession(uri, move).catch((error: unknown) => {
-              log(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);
+              log.error(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);
             });
           }
-          else log(`${uri} dropped its move to ${move.directory}: its turn did not complete`);
+          else log.warn(`${uri} dropped its move to ${move.directory}: its turn did not complete`);
         }
       },
       /*
@@ -1973,7 +1973,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     queueMicrotask(() => {
       ctx.sandbox.publish(uri);
       void ctx.sandbox.check(uri, chatUri).catch((error: unknown) => {
-        log(`${chatUri}: the sandbox was not applied: ${error instanceof Error ? error.message : String(error)}`);
+        log.error(`${chatUri}: the sandbox was not applied: ${error instanceof Error ? error.message : String(error)}`);
       });
     });
     /*

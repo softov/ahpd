@@ -3,6 +3,8 @@ import { idOf } from '../sessions/catalog.js';
 import type { Bag } from '../types/common.js';
 import type { SessionAbout, SessionEvent, SessionEventKind, SessionTurn } from '../types/triggers.js';
 import type { HostContext } from './context.js';
+import { loggerOf } from '../log.js';
+import type { LogLevel, Logger } from '../log.js';
 
 /**
  * What a session does, as one stream anything outside a session may read.
@@ -81,7 +83,7 @@ export function createSessionEvents(ctx: HostContext): SessionEvents {
   const { byChat, subagents, sessions, kept, leadOf, origins } = ctx;
   // Read when called: the areas that add them to `ctx` are built after this one.
   const nameOf = (id: string): string => ctx.nameOf(id);
-  const log = (line: string): void => { ctx.log(line); };
+  const log: Logger = loggerOf((line: string, level: LogLevel) => { ctx.log(line, level); });
   /** Who reads the stream. The wake rules, once they are wired. */
   const readers = new Set<(event: SessionEvent) => void>();
   /** Who reads a turn starting, which is the wake rules too. */
@@ -148,7 +150,7 @@ export function createSessionEvents(ctx: HostContext): SessionEvents {
   const offer = <T>(to: Set<(one: T) => void>, what: T, name: string): void => {
     for (const reader of [...to]) {
       try { reader(what); }
-      catch { log(`${name} was dropped: a wake rule threw`); }
+      catch { log.error(`${name} was dropped: a wake rule threw`); }
     }
   };
 
@@ -172,7 +174,7 @@ export function createSessionEvents(ctx: HostContext): SessionEvents {
     if (!ctx.owners.has(at)) return;
     void ctx.wake(at).then(
       () => { read('childFinished', at, { child, ...stateOf(at) }); },
-      (error: unknown) => { log(`childFinished for ${at} was dropped: ${error instanceof Error ? error.message : String(error)}`); },
+      (error: unknown) => { log.warn(`childFinished for ${at} was dropped: ${error instanceof Error ? error.message : String(error)}`); },
     );
   };
 

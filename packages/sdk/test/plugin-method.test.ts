@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { expect, it } from 'vitest';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
 import { sdkVersion } from '../src/version.js';
@@ -9,7 +10,7 @@ import type { LoaderContext, PluginMethod, ServedMethod } from '../src/types/plu
  * `HostOptions.methods` beside the daemon's own.
  */
 
-const context = (): LoaderContext => ({ path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: root, log: () => {}, say: () => {} });
+const context = (): LoaderContext => ({ path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: root, log: loggerOf(() => {}), say: () => {} });
 
 const echo: PluginMethod = { grant: 'session:list', handle: (params) => params };
 

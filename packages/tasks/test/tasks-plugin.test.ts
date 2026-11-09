@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { describe, expect, it } from 'vitest';
 import { memoryRecords, pluginHost, raise } from '@ahpd/sdk';
 import { apply, defaults, name, settingsOf, title } from '../src/plugin.js';
@@ -18,7 +19,7 @@ const context = (): LoaderContext => ({
   version: '0.12.0',
   hostName: 'tasks-test',
   configDir: '/tmp/tasks',
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
 });
 
@@ -94,7 +95,7 @@ describe('the tasks plugin', () => {
         return named === 'plans' ? { ...collection, list: async () => { throw new Error('the disk went away'); } } : collection;
       },
     };
-    const { host, contribution, seal } = pluginHost(name, { ...context(), log: (line) => { logged.push(line); } }, {
+    const { host, contribution, seal } = pluginHost(name, { ...context(), log: loggerOf((line: string) => { logged.push(line); }) }, {
       records: () => failing,
       alert: (alert) => { problems.push(alert.text); },
     });

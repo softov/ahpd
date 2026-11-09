@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,7 +30,7 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
 const wait = async (ms: number): Promise<void> => { await new Promise((r) => { setTimeout(r, ms); }); };
 
-const context = (): LoaderContext => ({ path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: root, log: () => {}, say: () => {} });
+const context = (): LoaderContext => ({ path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: root, log: loggerOf(() => {}), say: () => {} });
 
 /** A host over `users`, with one plugin that keeps what it heard. */
 function listening(users: Users, listen = true) {

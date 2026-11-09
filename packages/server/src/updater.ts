@@ -97,6 +97,18 @@ export interface HelperFacts {
   log(line: string): void;
 }
 
+/**
+ * One line of the daemon log as the daemon writes it: the local time, the level
+ * and the line, as `logline.ts` writes a line with no colour. Written out here
+ * rather than imported, for the reason at the top of this file.
+ */
+const logLine = (at: Date, level: 'info' | 'error', line: string): string => {
+  const two = (n: number): string => String(n).padStart(2, '0');
+  const time = `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} `
+    + `${two(at.getHours())}:${two(at.getMinutes())}:${two(at.getSeconds())}.${String(at.getMilliseconds()).padStart(3, '0')}`;
+  return `${time} [${level}] ${line}`;
+};
+
 /** How long a daemon is given to go before the log says it is late: a minute. */
 const WAIT_MS = 60_000;
 
@@ -146,7 +158,7 @@ const pluginEnv = (manifest: HelperManifest, env: NodeJS.ProcessEnv): NodeJS.Pro
  * copy that is being replaced.
  */
 export async function updateOnce(manifest: HelperManifest, facts: HelperFacts): Promise<number> {
-  const say = (line: string): void => { facts.log(`${new Date(facts.now()).toISOString()} update: ${line}`); };
+  const say = (line: string): void => { facts.log(logLine(new Date(facts.now()), 'info', `update: ${line}`)); };
   const limit = manifest.waitMs ?? WAIT_MS;
   const cwd = manifest.cwd ?? dirname(manifest.log);
   say(`waiting for pid ${String(manifest.pid)} to stop`);
@@ -247,7 +259,7 @@ if (direct) {
     try { code = await updateOnce(manifest, realFacts(manifest)); }
     catch (error) {
       const why = error instanceof Error ? error.message : String(error);
-      try { appendFileSync(manifest.log, `${new Date().toISOString()} update: the helper stopped: ${why}\n`); }
+      try { appendFileSync(manifest.log, `${logLine(new Date(), 'error', `update: the helper stopped: ${why}`)}\n`); }
       catch { /* nothing else to do */ }
     }
     // The folder is this helper's own, and the daemon it started runs from the

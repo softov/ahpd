@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
@@ -24,7 +25,7 @@ const context = (): LoaderContext => ({
   version: sdkVersion(),
   hostName: 'test',
   configDir: '/tmp/validate',
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
 });
 

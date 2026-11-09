@@ -20,6 +20,7 @@ import type { BroughtBack } from '@ahpd/sdk';
 import { bundleOfTree, cloneUrl, originOf, SEED_BUNDLE, SEED_REF } from './clone.js';
 import { seedOf } from './gitdir.js';
 import type { GitSeed } from './gitdir.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** What one command in a machine printed, and what it exited with. */
 export interface Ran {
@@ -45,7 +46,7 @@ export interface MachineGit {
   git(args: string[]): Promise<Ran>;
   /** The same, with what it writes to stdout landing in `path` byte for byte. */
   pour(args: string[], path: string): Promise<{ code: number; stderr: string }>;
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
 }
 
 /**
@@ -316,7 +317,7 @@ const bringBackBranch = async (machine: MachineGit, branch: string, onHost: stri
     // A machine on no branch has no branch of the host's to move: its work
     // waits where it landed, and the next turn or a person picks it up.
     if (branch === '') {
-      machine.log?.(`the work of ${id} waits in ${hidden}: the machine is on no branch`);
+      machine.log?.(`the work of ${id} waits in ${hidden}: the machine is on no branch`, 'warn');
       return { moved: false, waiting: hidden };
     }
     const old = hostRef(tree, ref);
@@ -342,7 +343,7 @@ const bringBackBranch = async (machine: MachineGit, branch: string, onHost: stri
       }
       const merged = hostGit(tree, ['merge', '--ff-only', arrived]);
       if (merged.code !== 0) {
-        machine.log?.(`the work of ${id} waits in ${hidden}: ${branch} does not lead on from it, or the tree holds changes the merge would write over`);
+        machine.log?.(`the work of ${id} waits in ${hidden}: ${branch} does not lead on from it, or the tree holds changes the merge would write over`, 'warn');
         return { moved: false, waiting: hidden };
       }
       // The work is on the branch now, so the ref that held it keeps nothing.
@@ -358,7 +359,7 @@ const bringBackBranch = async (machine: MachineGit, branch: string, onHost: stri
      * what is not its own.
      */
     if (old !== '' && hostGit(tree, ['merge-base', '--is-ancestor', old, arrived]).code !== 0) {
-      machine.log?.(`the work of ${id} waits in ${hidden}: ${branch} moved on the host`);
+      machine.log?.(`the work of ${id} waits in ${hidden}: ${branch} moved on the host`, 'warn');
       return { moved: false, waiting: hidden };
     }
     /*
@@ -367,7 +368,7 @@ const bringBackBranch = async (machine: MachineGit, branch: string, onHost: stri
      * the index is reset below for that branch alone.
      */
     if (branch === onHost && hostGit(tree, ['diff', '--cached', '--quiet']).code !== 0) {
-      machine.log?.(`the work of ${id} waits in ${hidden}: the index holds staged changes`);
+      machine.log?.(`the work of ${id} waits in ${hidden}: the index holds staged changes`, 'warn');
       return { moved: false, waiting: hidden };
     }
     if (old === arrived) {
@@ -462,7 +463,7 @@ export const keepUncommitted = async (machine: MachineGit): Promise<void> => {
   const made = await inMachine('stash', 'create');
   const commit = made.stdout.trim();
   if (made.code !== 0 || commit === '') {
-    machine.log?.(`what ${id} never committed is not kept: git stash in it exited ${String(made.code)}${commit === '' && made.code === 0 ? ', holding nothing it takes' : ''}`);
+    machine.log?.(`what ${id} never committed is not kept: git stash in it exited ${String(made.code)}${commit === '' && made.code === 0 ? ', holding nothing it takes' : ''}`, 'warn');
     return;
   }
   const branch = (await inMachine('symbolic-ref', '-q', '--short', 'HEAD')).stdout.trim();
@@ -559,11 +560,11 @@ export const followOfCopy = async (machine: MachineGit): Promise<void> => {
      * branch still does not lead on from it, which is the check below.
      */
     if (hostGit(tree, ['cat-file', '-e', `${mine}^{commit}`]).code !== 0) {
-      machine.log?.(`the machine ${id} is not moved: it is at ${mine}, which the host has not fetched`);
+      machine.log?.(`the machine ${id} is not moved: it is at ${mine}, which the host has not fetched`, 'warn');
       return;
     }
     if (hostGit(tree, ['merge-base', '--is-ancestor', mine, tip]).code !== 0) {
-      machine.log?.(`the machine ${id} is not moved: ${branch === '' ? 'the host is detached' : branch} does not lead on from ${mine}`);
+      machine.log?.(`the machine ${id} is not moved: ${branch === '' ? 'the host is detached' : branch} does not lead on from ${mine}`, 'warn');
       return;
     }
     /*
@@ -573,7 +574,7 @@ export const followOfCopy = async (machine: MachineGit): Promise<void> => {
      * costs a turn rather than the work.
      */
     if ((await inMachine('status', '--porcelain')).stdout.trim() !== '') {
-      machine.log?.(`the machine ${id} is not moved: its tree holds changes nobody committed`);
+      machine.log?.(`the machine ${id} is not moved: its tree holds changes nobody committed`, 'warn');
       return;
     }
   }
@@ -600,14 +601,14 @@ export const followOfCopy = async (machine: MachineGit): Promise<void> => {
    * own `HEAD` gets above.
    */
   if (onBranch !== branch && !(await movesOver(inMachine, branch, mine))) {
-    machine.log?.(`the machine ${id} is not moved: its branch ${branch} holds work it is not on top of`);
+    machine.log?.(`the machine ${id} is not moved: its branch ${branch} holds work it is not on top of`, 'warn');
     return;
   }
   if (onBranch !== branch) await inMachine('checkout', '-q', '-B', branch, mine);
   if (mine !== tip) {
     const merged = await inMachine('merge', '--ff-only', tip);
     if (merged.code !== 0) {
-      machine.log?.(`the machine ${id} is not moved: ${branch} could not be merged into its tree`);
+      machine.log?.(`the machine ${id} is not moved: ${branch} could not be merged into its tree`, 'error');
       return;
     }
   }

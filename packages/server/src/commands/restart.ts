@@ -25,6 +25,7 @@ import type { Manager, Service } from '../service.js';
 import { conflict } from './options.js';
 import { deploymentOnly } from './scopes.js';
 import type { ServedFacts } from './served.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * How long the terminal waits for the successor, counted from the daemon's
@@ -167,7 +168,7 @@ export interface InPlace {
   stop(successor: Running): void;
   /** Drop this daemon's record. */
   forget(): void;
-  log(line: string): void;
+  log(line: string, level?: LogLevel): void;
   exit(code: number): void;
 }
 
@@ -186,7 +187,7 @@ export async function restartInPlace(argv: string[], steps: InPlace): Promise<vo
     await steps.close();
     if (steps.stopped()) {
       steps.forget();
-      steps.log(`${COULD_NOT}it was stopped first, so none was started.`);
+      steps.log(`${COULD_NOT}it was stopped first, so none was started.`, 'error');
       steps.exit(0);
       return;
     }
@@ -196,14 +197,14 @@ export async function restartInPlace(argv: string[], steps: InPlace): Promise<vo
       begun = await steps.start(argv);
     }
     catch (error) {
-      steps.log(`${COULD_NOT}${wordsOf(error)}`);
+      steps.log(`${COULD_NOT}${wordsOf(error)}`, 'error');
       steps.forget();
       steps.exit(1);
       return;
     }
     if (steps.stopped()) {
       steps.stop(begun);
-      steps.log(`${COULD_NOT}it was stopped while pid ${String(begun.pid)} started, so that one was stopped too.`);
+      steps.log(`${COULD_NOT}it was stopped while pid ${String(begun.pid)} started, so that one was stopped too.`, 'error');
       steps.exit(0);
       return;
     }
@@ -211,7 +212,7 @@ export async function restartInPlace(argv: string[], steps: InPlace): Promise<vo
     steps.exit(0);
   }
   catch (error) {
-    steps.log(`${COULD_NOT}${wordsOf(error)}`);
+    steps.log(`${COULD_NOT}${wordsOf(error)}`, 'error');
     steps.exit(1);
   }
 }
@@ -224,7 +225,7 @@ export interface Managed {
   hand(): Promise<void>;
   /** Drop this daemon's record. */
   forget(): void;
-  log(line: string): void;
+  log(line: string, level?: LogLevel): void;
   exit(code: number): void;
 }
 
@@ -253,7 +254,7 @@ export async function restartUnderManager(steps: Managed): Promise<void> {
   }
   catch (error) {
     drop();
-    steps.log(`${COULD_NOT}${wordsOf(error)}`);
+    steps.log(`${COULD_NOT}${wordsOf(error)}`, 'error');
     steps.exit(1);
     return;
   }
@@ -262,7 +263,7 @@ export async function restartUnderManager(steps: Managed): Promise<void> {
     await steps.hand();
   }
   catch (error) {
-    steps.log(`${COULD_NOT}${wordsOf(error)}`);
+    steps.log(`${COULD_NOT}${wordsOf(error)}`, 'error');
     steps.exit(1);
     return;
   }
@@ -344,7 +345,7 @@ export function lifecycle(steps: LifecycleSteps): Lifecycle {
         catch { /* the record is not this daemon's to remove, or cannot be */ }
         steps.exit(0);
       }, (error: unknown) => {
-        steps.log(`${COULD_NOT_STOP}${wordsOf(error)}`);
+        steps.log(`${COULD_NOT_STOP}${wordsOf(error)}`, 'error');
         try { steps.forget(); }
         catch { /* as above */ }
         steps.exit(1);
@@ -526,7 +527,7 @@ export const checkedRestart = (
   way: Pick<Lifecycle, 'restart'>,
   hold: (why: string | undefined) => void,
   parked: Pick<Parking, 'park'>,
-  log: (line: string) => void,
+  log: (line: string, level?: LogLevel) => void,
 ): ((argv: string[], force: boolean) => Promise<RestartOutcome>) => {
   const restart = async (argv: string[], force: boolean): Promise<RestartOutcome> => {
     hold(RESTARTING);
@@ -544,7 +545,7 @@ export const checkedRestart = (
       parked.park(() => {
         void restart(argv, false).then(
           (outcome) => { if ('restartDelayMs' in outcome) log(RESUMED); },
-          (error: unknown) => { log(`${COULD_NOT}${wordsOf(error)}`); },
+          (error: unknown) => { log(`${COULD_NOT}${wordsOf(error)}`, 'error'); },
         );
       });
       return { parked: now };
@@ -566,7 +567,7 @@ export interface SignalFacts {
   /** This process's pid, which the record must name. */
   self: number;
   recorded(): Running | undefined;
-  log(line: string): void;
+  log(line: string, level?: LogLevel): void;
   /**
    * Read that line and begin the restart, forced or not, or park it until the
    * turns end; throws, or rejects, with why it will not, and the daemon runs on.
@@ -584,7 +585,7 @@ export interface SignalFacts {
  */
 export async function answerRestartSignal(forced: boolean, facts: SignalFacts, piped = false): Promise<void> {
   const came = cameBy(piped, forced);
-  const refuse = (why: string): void => { facts.log(`${refusedTo(came)}${why}`); };
+  const refuse = (why: string): void => { facts.log(`${refusedTo(came)}${why}`, 'warn'); };
   const record = facts.recorded();
   const refused = notRestartable(record, facts.self);
   if (refused !== undefined) {

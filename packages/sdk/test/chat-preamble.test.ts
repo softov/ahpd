@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -200,7 +201,7 @@ describe('a chat the host opens for itself', () => {
 });
 
 describe('registerChatPreamble', () => {
-  const context = (): LoaderContext => ({ path: '/tmp', paths: ['/tmp'], version: sdkVersion(), hostName: 'test', configDir: '/tmp', log: () => {}, say: () => {} });
+  const context = (): LoaderContext => ({ path: '/tmp', paths: ['/tmp'], version: sdkVersion(), hostName: 'test', configDir: '/tmp', log: loggerOf(() => {}), say: () => {} });
 
   it('keeps a preamble in the plugin\'s contribution', async () => {
     const { host, contribution } = pluginHost('@ahpd/bot', context());

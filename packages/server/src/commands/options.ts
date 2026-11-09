@@ -224,6 +224,10 @@ export interface Options {
   servicePath: 'shell' | 'manager';
   /** A file every frame is appended to, both directions, one JSON line each. */
   wire?: string;
+  /** The lowest level of line the daemon writes to its log, or none at all. */
+  logLevel: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'off';
+  /** The clock the log's times are read on. */
+  logTime: 'local' | 'utc';
   /**
    * Whether the HTTP API is served, and where.
    *
@@ -910,6 +914,18 @@ export const serverFields = {
     },
     description: 'How a turn is written down: per "turn" writes one record when the turn ends, which is the default, and per "report" writes one record for every usage report a turn sends. timezone names, as Intl names one, the zone a day and a week start in and the zone the store keeps its days in, and is the system\'s own zone when it is absent. Set in the configuration file only.',
   },
+  logLevel: {
+    type: 'string',
+    enum: ['trace', 'debug', 'info', 'warn', 'error', 'off'],
+    title: 'Log level',
+    description: 'The lowest level of line the daemon writes to its log: trace, debug, info (the default), warn or error, or off for none. Clients that read the log as OTLP choose their own level.',
+  },
+  logTime: {
+    type: 'string',
+    enum: ['local', 'utc'],
+    title: 'Log time',
+    description: 'The clock the log\'s times are on: local, the default, as VS Code writes its logs, or utc.',
+  },
   wire: {
     type: 'string',
     title: 'Wire capture',
@@ -1500,6 +1516,8 @@ const noCwd = input['noCwd'] === true;
     sessionTools: given('sessionTools') ?? true,
     sessionToolsProviders: given('sessionToolsProviders') ?? [],
     closedChats: given('closedChats') ?? 'hidden',
+    logLevel: given('logLevel') ?? 'info',
+    logTime: given('logTime') ?? 'local',
     unofferedModel: given('unofferedModel') ?? 'fail',
     workspacelessFolder: given('workspacelessFolder') ?? 'first',
     rootOwner: given('rootOwner') ?? 'host',

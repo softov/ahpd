@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { expect, it } from 'vitest';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
 import { memoryRecords } from '../src/resources/records.js';
@@ -16,7 +17,7 @@ const context = (logged: string[] = []): LoaderContext => ({
   version: '0.0.0',
   hostName: 'host',
   configDir: '/tmp/plugin-records',
-  log: (line) => { logged.push(line); },
+  log: loggerOf((line: string) => { logged.push(line); }),
   say: () => {},
 });
 

@@ -1,6 +1,7 @@
 import { createCipheriv, createECDH, createHash, hkdfSync, randomBytes, sign } from 'node:crypto';
 import { reason } from '@ahpd/sdk';
 import type { Vapid } from './vapid.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * Web Push, as this plugin sends it.
@@ -148,7 +149,7 @@ export interface WebMessage {
 /** What a web sender is built with. */
 export interface WebSendOptions {
   /** One line per failure, for the daemon's log. */
-  log(line: string): void;
+  log(line: string, level?: LogLevel): void;
   /** A device whose subscription a push service no longer knows. */
   gone(id: string): void;
   /** The host's key pair, which every request is signed with. */
@@ -199,7 +200,7 @@ export const createWebSender = (options: WebSendOptions): WebSender => {
       aud = new URL(message.endpoint).origin;
     }
     catch (error) {
-      options.log(`${message.id} has an endpoint that is not a URL: ${reason(error)}`);
+      options.log(`${message.id} has an endpoint that is not a URL: ${reason(error)}`, 'warn');
       return;
     }
 
@@ -223,7 +224,7 @@ export const createWebSender = (options: WebSendOptions): WebSender => {
       });
     }
     catch (error) {
-      options.log(`a message for ${message.id} could not be sealed: ${reason(error)}`);
+      options.log(`a message for ${message.id} could not be sealed: ${reason(error)}`, 'error');
       return;
     }
 
@@ -245,7 +246,7 @@ export const createWebSender = (options: WebSendOptions): WebSender => {
       });
     }
     catch (error) {
-      options.log(`the push service could not be reached for ${message.id}: ${reason(error)}`);
+      options.log(`the push service could not be reached for ${message.id}: ${reason(error)}`, 'error');
       return;
     }
 
@@ -255,7 +256,7 @@ export const createWebSender = (options: WebSendOptions): WebSender => {
       options.gone(message.id);
       return;
     }
-    if (!response.ok) options.log(`the push service answered ${response.status} for ${message.id}`);
+    if (!response.ok) options.log(`the push service answered ${response.status} for ${message.id}`, 'warn');
   };
 
   return {

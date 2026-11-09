@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -129,7 +130,7 @@ function made(more: Partial<HostOptions> = {}, grants: `${string}:${string}`[] =
     version: sdkVersion(),
     hostName: 'test',
     configDir,
-    log: () => {},
+    log: loggerOf(() => {}),
     say: () => {},
     parseYaml,
     stringifyYaml,

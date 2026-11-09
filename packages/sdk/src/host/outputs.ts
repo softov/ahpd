@@ -164,7 +164,7 @@ export function createOutputs(ctx: HostContext): Outputs {
       return true;
     }
     catch (error) {
-      ctx.log(`could not keep the output of ${nonPtyShellTerminalUri(session, chat, key)}: ${reason(error)}`);
+      ctx.log.error(`could not keep the output of ${nonPtyShellTerminalUri(session, chat, key)}: ${reason(error)}`);
       return false;
     }
   };
@@ -291,7 +291,7 @@ export function createOutputs(ctx: HostContext): Outputs {
           const file = fileOf(session, chat, named.toolCallId);
           if (file === undefined) continue;
           try { rmSync(file, { force: true }); }
-          catch (error) { ctx.log(`could not remove ${file}: ${reason(error)}`); }
+          catch (error) { ctx.log.error(`could not remove ${file}: ${reason(error)}`); }
         }
       }
     }
@@ -301,7 +301,7 @@ export function createOutputs(ctx: HostContext): Outputs {
     const folder = folderOf(session, chat);
     if (folder === undefined) return;
     try { rmSync(folder, { recursive: true, force: true }); }
-    catch (error) { ctx.log(`could not remove ${folder}: ${reason(error)}`); }
+    catch (error) { ctx.log.error(`could not remove ${folder}: ${reason(error)}`); }
   };
 
   const moveChatOutputs = (from: string, to: string, chat: string): void => {
@@ -315,7 +315,7 @@ export function createOutputs(ctx: HostContext): Outputs {
       for (const name of readdirSync(was)) renameSync(join(was, name), join(now, name));
       rmSync(was, { recursive: true, force: true });
     }
-    catch (error) { ctx.log(`could not move ${was} to ${now}: ${reason(error)}`); }
+    catch (error) { ctx.log.error(`could not move ${was} to ${now}: ${reason(error)}`); }
   };
 
   return { nonPtyShellTerminalUri, outputsFor, keepExited, retainedState, forgetTurnOutputs, forgetChatOutputs, moveChatOutputs };

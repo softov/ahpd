@@ -238,7 +238,7 @@ export function createChangesets(ctx: HostContext): Changesets {
       // Zero is no limit at all, which is how `clientToolTimeoutMs` reads it.
       if (limit <= 0) return;
       late = setTimeout(() => {
-        ctx.log(`${uri} had not answered after ${limit}ms, so the turn was stopped`);
+        ctx.log.warn(`${uri} had not answered after ${limit}ms, so the turn was stopped`);
         /*
          * A backend that throws here is a line in the log and nothing else.
          * The throw would otherwise leave the timer, where nothing catches
@@ -246,7 +246,7 @@ export function createChangesets(ctx: HostContext): Changesets {
          * one thing this limit exists to prevent.
          */
         const stopped = (error: unknown): void => {
-          ctx.log(`${uri} could not be stopped: ${error instanceof Error ? error.message : String(error)}`);
+          ctx.log.error(`${uri} could not be stopped: ${error instanceof Error ? error.message : String(error)}`);
         };
         try { void Promise.resolve(session.abort()).catch(stopped); }
         catch (error) { stopped(error); }
@@ -284,14 +284,14 @@ export function createChangesets(ctx: HostContext): Changesets {
       const refused = ctx.beginOrRun(lead, provider, turnId, prompt, { id: model }, { origin: { kind: 'systemNotification' } });
       const why = refused instanceof Promise ? await refused : refused;
       if (why !== undefined) {
-        ctx.log(`${provider} was asked for the words of ${dir} and refused: ${why}`);
+        ctx.log.warn(`${provider} was asked for the words of ${dir} and refused: ${why}`);
         return undefined;
       }
       if (!await watching.ended) return undefined;
       return answerOf(lead);
     }
     catch (error) {
-      ctx.log(`${provider} could not write the words of ${dir}: ${error instanceof Error ? error.message : String(error)}`);
+      ctx.log.error(`${provider} could not write the words of ${dir}: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
     }
     finally {
@@ -349,14 +349,14 @@ export function createChangesets(ctx: HostContext): Changesets {
       const refused = ctx.beginOrRun(chat, held.agent.provider, turnId, prompt, undefined, { origin: { kind: 'systemNotification' } });
       const why = refused instanceof Promise ? await refused : refused;
       if (why !== undefined) {
-        ctx.log(`${chatUri} was asked for the words and refused: ${why}`);
+        ctx.log.warn(`${chatUri} was asked for the words and refused: ${why}`);
         return undefined;
       }
       if (!await watching.ended) return undefined;
       return answerOf(chat);
     }
     catch (error) {
-      ctx.log(`${chatUri} could not write the words: ${error instanceof Error ? error.message : String(error)}`);
+      ctx.log.error(`${chatUri} could not write the words: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
     }
     finally { watching?.stop(); }

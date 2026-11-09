@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { expect, it } from 'vitest';
 import { pluginHost, raise } from '../src/plugins/plugins.js';
 import type { LoaderContext } from '../src/types/plugin.js';
@@ -19,7 +20,7 @@ const context = (over: Partial<LoaderContext> = {}): LoaderContext => ({
   version: '0.6.3',
   hostName: 'test',
   configDir: '/work',
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
   ...over,
 });
@@ -91,7 +92,7 @@ it('keeps say apart from log, because only one of them is announced', () => {
   const logged: string[] = [];
   const said: string[] = [];
   const { host } = pluginHost('tunnel', context({
-    log: (line) => { logged.push(line); },
+    log: loggerOf((line: string) => { logged.push(line); }),
     say: (line) => { said.push(line); },
   }));
 

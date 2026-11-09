@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -39,7 +40,7 @@ interface Ready {
 }
 
 const context = (): LoaderContext => ({
-  path: HERE, paths: [HERE], version: sdkVersion(), hostName: 'test', configDir: HERE, log: () => {}, say: () => {},
+  path: HERE, paths: [HERE], version: sdkVersion(), hostName: 'test', configDir: HERE, log: loggerOf(() => {}), say: () => {},
 });
 
 /** A plugin's contribution, as `apply` would have made it. */

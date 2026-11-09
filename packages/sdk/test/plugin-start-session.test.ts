@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { idOf } from '../src/sessions/catalog.js';
 import { ROOT } from '../src/host.js';
@@ -35,7 +36,7 @@ const DIR = '/home/softov';
 
 /** The context every plugin in this repository is handed, without a daemon. */
 const context = (): LoaderContext => ({
-  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {},
+  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {},
 });
 
 /** Yield between looks until `done` says so, so a fast run is not timed by ticks. */

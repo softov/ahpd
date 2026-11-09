@@ -85,7 +85,7 @@ export function createFacts(ctx: HostContext): Facts {
           value = one.read(uri);
         }
         catch (error) {
-          log(`plugin ${served.by}: the value of ${one.key} for ${uri} was not read: ${reason(error)}`);
+          log.error(`plugin ${served.by}: the value of ${one.key} for ${uri} was not read: ${reason(error)}`);
           continue;
         }
         if (value !== undefined) values[one.key] = value;
@@ -652,7 +652,7 @@ export function createFacts(ctx: HostContext): Facts {
         : await options.github.forBranch({ owner, repo }, branch, token, dir);
     }
     catch (error) {
-      log(`${dir}: GitHub did not answer for ${branch}: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`${dir}: GitHub did not answer for ${branch}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
     if (answered) {

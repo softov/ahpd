@@ -3,13 +3,15 @@ import { idOf } from '../sessions/catalog.js';
 import type { Bag } from '../types/common.js';
 import type { HostEvent } from '../types/events.js';
 import type { HostContext } from './context.js';
+import { LOG_LEVELS, LOG_SEVERITY, loggerOf } from '../log.js';
+import type { LogLevel, Logger } from '../log.js';
 
 /** What the host says about itself: its own log, and turns as spans and histograms. */
 export interface Telemetry {
   LOGS: string;
   TRACES: string;
   METRICS: string;
-  log(message: string): void;
+  log: Logger;
   fire(event: HostEvent): Promise<void>;
   telemetered(channel: string, action: Record<string, unknown>): void;
 }
@@ -100,15 +102,15 @@ export function createTelemetry(ctx: HostContext): Telemetry {
    * chain.
    */
   let logging = false;
-  const log = (message: string): void => {
-    options.onEvent?.(message);
+  const write = (message: string, level: LogLevel): void => {
+    options.onEvent?.(message, level);
     // The line is also an event, raised from the one place every notable line
     // already passes through, so a plugin reads the log without a second
     // mechanism and without having to be the embedder.
     if (options.events?.log !== undefined && !logging) {
       logging = true;
       try {
-        void fire({ type: 'log', line: message });
+        void fire({ type: 'log', line: message, level });
       }
       finally {
         logging = false;
@@ -135,11 +137,8 @@ export function createTelemetry(ctx: HostContext): Telemetry {
           logRecords: [{
             timeUnixNano: at,
             observedTimeUnixNano: at,
-            // One severity, because this host has one kind of line. A `log`
-            // that took a level would be a second thing to keep in step with
-            // every call site, and every call site here is an event.
-            severityNumber: 9,
-            severityText: 'INFO',
+            severityNumber: LOG_SEVERITY[level],
+            severityText: level.toUpperCase(),
             body: { stringValue: message },
           }],
         }],
@@ -149,11 +148,11 @@ export function createTelemetry(ctx: HostContext): Telemetry {
      * To every logs channel a connection watches whose level the record
      * reaches, the level read case-blind, under the channel's own name, as VS
      * Code's host fans a record out to each subscription whose band includes
-     * its severity: an INFO line reaches `trace`, `debug` and `info`.
+     * its severity: a WARN line reaches `trace` to `warn`, and not `error`.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4529-L4558
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/otlp/otlpLogEmitter.ts#L28-L61
      */
-    const reached = ['trace', 'debug', 'info'];
+    const reached: string[] = LOG_LEVELS.slice(0, LOG_LEVELS.indexOf(level) + 1);
     for (const connection of connections) {
       for (const channel of connection.activeSubscriptions) {
         const level = channel.startsWith(`${LOGS}/`) ? channel.slice(LOGS.length + 1).toLowerCase() : undefined;
@@ -164,6 +163,9 @@ export function createTelemetry(ctx: HostContext): Telemetry {
       }
     }
   };
+
+  /** The host's log, called as a function at info and by a method at any other level. */
+  const log = loggerOf(write);
 
   /**
    * Turns and tool calls, as OTLP spans and counters.

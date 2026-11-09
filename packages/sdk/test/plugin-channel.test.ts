@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
@@ -21,7 +22,7 @@ import type { Grant, Principal } from '../src/types/users.js';
 
 const URI = 'x-demo://all';
 
-const context = (): LoaderContext => ({ path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: root, log: () => {}, say: () => {} });
+const context = (): LoaderContext => ({ path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: root, log: loggerOf(() => {}), say: () => {} });
 
 const settle = async (): Promise<void> => { await new Promise((resolve) => { setTimeout(resolve, 20); }); };
 

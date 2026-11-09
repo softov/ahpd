@@ -183,7 +183,7 @@ export function createSandbox(ctx: HostContext): Sandbox {
   /** A chat's sandbox applied, a failure to apply it logged. */
   const applyTo = (session: string, chat: string, origin?: Origin, requested?: unknown): void => {
     void check(session, chat, origin, requested).catch((error: unknown) => {
-      log(`${chat}: the sandbox was not applied: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`${chat}: the sandbox was not applied: ${error instanceof Error ? error.message : String(error)}`);
     });
   };
 

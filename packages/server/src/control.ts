@@ -17,6 +17,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:net';
 import type { Socket } from 'node:net';
 import type { Control, ControlledSignal } from './daemon.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** What each one runs: the handler `process.on` binds for that signal. */
 export type ControlHandlers = Readonly<Record<ControlledSignal, () => void>>;
@@ -96,20 +97,20 @@ const sameToken = (own: string, said: string): boolean => {
  * the token is worth what the token in the record's `connectUrl` is worth,
  * which no line prints either.
  */
-export function controlServer(control: Control, handlers: ControlHandlers, log: (line: string) => void): ControlServer {
+export function controlServer(control: Control, handlers: ControlHandlers, log: (line: string, level?: LogLevel) => void): ControlServer {
   /** One request, and the only thing that ever runs a handler. */
   const answer = (line: string): void => {
     const request = requestIn(line);
     if (request === undefined) {
-      log('control: refused a request that is not a JSON line with a connectionToken and a signal');
+      log('control: refused a request that is not a JSON line with a connectionToken and a signal', 'warn');
       return;
     }
     if (!sameToken(control.connectionToken, request.connectionToken)) {
-      log('control: refused a request with the wrong token');
+      log('control: refused a request with the wrong token', 'warn');
       return;
     }
     if (!isSignal(request.signal)) {
-      log(`control: refused a request naming ${oneLine(request.signal)}`);
+      log(`control: refused a request naming ${oneLine(request.signal)}`, 'warn');
       return;
     }
     handlers[request.signal]();
@@ -135,7 +136,7 @@ export function controlServer(control: Control, handlers: ControlHandlers, log: 
   // still serves, and this is the one line that says why a verb cannot reach it.
   // Told on an error too, so a daemon waiting for the pipe is not held by one it will never have.
   const listening = new Promise<void>((done) => {
-    server.on('error', (error: Error) => { log(`control: ${oneLine(error.message)}`); done(); });
+    server.on('error', (error: Error) => { log(`control: ${oneLine(error.message)}`, 'error'); done(); });
     server.listen(control.pipe, done);
   });
 

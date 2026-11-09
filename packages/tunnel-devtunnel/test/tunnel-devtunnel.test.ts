@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { createHash } from 'node:crypto';
 import { createServer as createHttpServer, get as httpGet } from 'node:http';
 import type { IncomingMessage } from 'node:http';
@@ -31,7 +32,7 @@ import type { Cloud, Host, Kept, Remote, Service } from '../src/service.js';
  */
 
 const context = (over: Partial<LoaderContext> = {}): LoaderContext => ({
-  path: '/work', paths: ['/work'], version: '0.6.3', hostName: 'test', configDir: '/work', log: () => {}, say: () => {}, ...over,
+  path: '/work', paths: ['/work'], version: '0.6.3', hostName: 'test', configDir: '/work', log: loggerOf(() => {}), say: () => {}, ...over,
 });
 
 // The convention ----------------------------------------------------------
@@ -280,7 +281,7 @@ const kindFor = (service: Service, over: Partial<KindOptions> = {}) => {
   const cleared: string[] = [];
   const { host } = pluginHost('tunnel', context({
     say: (line) => { said.push(line); },
-    log: (line) => { logged.push(line); },
+    log: loggerOf((line: string) => { logged.push(line); }),
   }), {
     alert: (alert) => { alerts.push(alert); },
     clearAlert: (ref) => { cleared.push(ref); },

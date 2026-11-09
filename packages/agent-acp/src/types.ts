@@ -48,6 +48,7 @@ import type {
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import type { Account, Bag, MessageAttachment, MessageFrom, SecretRef, Seed, ToolsChanged } from '@ahpd/sdk';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * What a machine needs for one agent to run in it, as the agent declares it.
@@ -251,7 +252,7 @@ export interface AcpOptions {
    * A server left out of its MCP list, and a `tools/call` the agent reported no
    * call for and this bridge therefore names itself.
    */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
   /**
    * What a machine needs to run this agent, which `machine()` answers.
    *
@@ -363,7 +364,7 @@ export interface AcpConnectionOptions {
   cwd?: string;
   handlers: AcpHandlers;
   /** Where each line the server writes on stderr goes. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
   /** The record's `exitGraceMs`, `stderrBytes` and `killGraceMs`. */
   exitGraceMs?: number;
   stderrBytes?: number;

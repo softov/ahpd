@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1089,7 +1090,7 @@ describe('a tool a person calls with no session', () => {
 
   /** A loader context for the probe plugin, which reads no files. */
   const loader = (): LoaderContext => ({
-    path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: root, log: () => {}, say: () => {},
+    path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: root, log: loggerOf(() => {}), say: () => {},
   });
 
   /**

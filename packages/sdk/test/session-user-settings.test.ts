@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,7 +31,7 @@ const DIR = mkdtempSync(join(tmpdir(), 'ahpd-session-user-settings-'));
 
 /** The context every plugin in this repository is handed, without a daemon. */
 const context = (): LoaderContext => ({
-  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {},
+  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {},
 });
 
 /**

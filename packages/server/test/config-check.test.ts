@@ -630,6 +630,13 @@ describe('a key that was renamed', () => {
 });
 
 describe('the daemon', () => {
+  it('writes the lines at logLevel and above, each with its level', async () => {
+    const said = await run({ plugin: [], logLevel: 'warn' });
+    expect(said.code).toBe(0);
+    expect(said.stderr).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[warning\] .*plugin is not a setting ahpd knows; ignored$/mu);
+    expect(said.stderr).not.toContain('[info]');
+  }, 20000);
+
   it('starts with an unknown key and says so in its log', async () => {
     const said = await run({ plugin: [] });
     expect(said.code).toBe(0);

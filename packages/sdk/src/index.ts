@@ -43,6 +43,8 @@ export {
 } from './rpc.js';
 export { gitBranches } from './repo/git.js';
 export { gitArgv } from './repo/hardened.js';
+export { LOG_LEVELS, LOG_SEVERITY, levelIn, loggerOf } from './log.js';
+export type { LogLevel, Logger, LogWrite } from './log.js';
 export { gitChanges } from './sessions/changes.js';
 export { fileResources } from './resources/resources.js';
 export { ripgrepFiles } from './resources/workspacefiles.js';

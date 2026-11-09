@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
@@ -2364,7 +2365,7 @@ describe('a client\'s call, held by the backend', () => {
   }
 
   const context = (): LoaderContext => ({
-    path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {},
+    path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {},
   });
 
   /** The example backend with the holder bolted on, and a listener on the events. */
@@ -3477,7 +3478,7 @@ describe('a harness list handed to the host', () => {
     };
     const context = (): LoaderContext => ({
       path: '/home/softov', paths: ['/home/softov'], version: sdkVersion(), hostName: 'test',
-      configDir: '/home/softov', log: () => {}, say: () => {},
+      configDir: '/home/softov', log: loggerOf(() => {}), say: () => {},
     });
     const { host: plugin, contribution } = pluginHost('probe', context());
     plugin.on('plan_update', (event) => {

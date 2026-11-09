@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -86,7 +87,7 @@ const served: ConnectorRef[] = [
 const store = () => memoryAutomations({ pluginTypes: () => [DEPLOY], connectors: () => served });
 
 const context = (): LoaderContext => ({
-  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {},
+  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {},
 });
 
 /** The value as a keyed object, for reading what a run was told. */

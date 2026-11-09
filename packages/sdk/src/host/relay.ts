@@ -109,7 +109,7 @@ export function createRelay(ctx: HostContext): Relay {
     return await held.peer.request(method, { ...params, channel: ROOT }).catch((error: unknown) => {
       const code = (error as { code?: unknown }).code;
       const said = error instanceof Error ? error.message : String(error);
-      log(`${client} refused ${method} for ${about}${typeof code === 'number' ? ` (${String(code)})` : ''}: ${said}`);
+      log.warn(`${client} refused ${method} for ${about}${typeof code === 'number' ? ` (${String(code)})` : ''}: ${said}`);
       throw error;
     });
   };
@@ -225,7 +225,7 @@ export function createRelay(ctx: HostContext): Relay {
       const again = (): void => {
         if (closed || (live !== undefined && connections.has(live.connection))) return;
         live = undefined;
-        attach().catch((error: unknown) => { log(`${at.client} would not watch ${at.original} again: ${String(error)}`); });
+        attach().catch((error: unknown) => { log.warn(`${at.client} would not watch ${at.original} again: ${String(error)}`); });
       };
       await attach();
       reattach.set(at.client, (reattach.get(at.client) ?? new Set<() => void>()).add(again));

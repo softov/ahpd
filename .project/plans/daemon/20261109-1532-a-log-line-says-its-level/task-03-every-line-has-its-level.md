@@ -1,6 +1,6 @@
 ---
 title: Every line has its level
-status: todo
+status: doing
 depends: [task-01-the-hosts-log-takes-a-level.md]
 layer: "sdk, server, backends, plugins"
 refs:
@@ -42,4 +42,12 @@ The words of each line do not change.
 - By hand: a refused session shows `[warning]`, a failed plugin load shows `[error]`, a session start shows `[info]`.
 
 ## Resume
+
+Built on 2026-11-09 and waits for review.
+
+- 392 calls were read: 121 error, 141 warn, 14 debug, and the rest info, which stays a plain call.
+- A module that takes a plain log callback passes the level as the second argument, as VS Code's `ILogger.log` takes one. Its callback type is `(line: string, level?: LogLevel) => void`, so a one-argument callback still fits.
+- Each wrapper that prefixes a forwarded line passes the level through.
+- The Windows update helper writes the same line shape, inline, because it imports nothing from the daemon.
+- An ACP server's stderr lines stay info: the level the server wrote inside the line is not read.
 
