@@ -10,7 +10,7 @@ Current progress and pending items only, as of 2026-11-09. *Outside this reposit
 ## Main
 
 - The last release is 0.14.0 (`v0.14.0`). `0.15.0-rc.1` is on npm `next` (`v0.15.0-rc.1`, #231). What the release needs is in [pending/release.md](../pending/release.md).
-- Main's code is at `10ed70e69`, the merge of #259. CI passed every job on `d097edfd9`, in run 42659078870.
+- Main's code is at `8060ecd9b`, the merge of #261. CI passed every job on it, in run 42676342725.
 - On 2026-11-08 and 2026-11-09, these PRs merged:
   - #252: MayCXC's three audit branches (0210 at `b67a59acb`, 1647 at `93bda3612`, 2330 at `1f643e14a`) merged with main. `effortLevel` stays on Claude and cofold, `chatMutable`.
   - #254: a closed host waits for the git it started, so Windows can remove a session's folder after `host.close()`.
@@ -19,13 +19,13 @@ Current progress and pending items only, as of 2026-11-09. *Outside this reposit
   - #257: MayCXC's 0340 at `20e812035`, the computer sandboxes its commands.
   - #258: the process tests run in two shards.
   - #259: plan daemon/20261109-1532, a log line says its level. It is `built`.
-- Two PRs are open, each waiting for Softov's review and his word to merge:
-  - #260: every clock wait for an event in the tests waits `WAIT_MS`. CI passed every job, after one rerun of `linux (2/2)`.
-  - #261: a command in a shell started with the integration waits for its first mark, so a Windows `!command` answers its output alone. The real PowerShell case passed on Windows CI. `windows (4/4)` failed once in plugin-load, "loads computer with the options schema", at 20 s. GitHub refused to rerun that job, so the PR needs a new run.
+  - #260: every clock wait for an event in the tests waits `WAIT_MS`.
+  - #261: a command in a shell started with the integration waits for its first mark, so a Windows `!command` answers its output alone.
+- No PR is open on `softov/ahpd`.
 - MayCXC said on 2026-11-09 not to wait for him. His branches 0210, 1647, 2330 and 0340 are all on main, and he has pushed nothing since 0340.
 - CI shards: `linux (1/2)`, `linux (2/2)`, `processes (1/2)`, `processes (2/2)` and `windows (1/4)` to `windows (4/4)`. `check` and `check-windows` are the checks the `main` ruleset requires; each is green only when every shard of its job is.
 - A slow runner can still fail a job with nothing wrong in the code. Rerun the failed jobs once with `gh run rerun <id> -R softov/ahpd --failed`; a second failure needs a look.
-- Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`. It started at 13:26 on 2026-11-09, on `e388d12f5`. The checkout was then moved to main at `d097edfd9`, and `pnpm install` ran. A restart in his terminal runs main. Never restart it or use the ports 5180 and 37537 yourself.
+- Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`. It started at 13:38 on 2026-11-09, on `d097edfd9`. The checkout is now at `8060ecd9b`. A restart in his terminal wires in #261, and nothing else since changes the daemon. Never restart it or use the ports 5180 and 37537 yourself.
 - `/github/ahpd` keeps a cleanup of 2026-11-06 that is not committed: nine host plans link `maycxc-union-20261101-review.md` by `git://f48055f0`, and that file is deleted. The whole edit, with the handoff of 2026-11-06, is saved in `/github/ahpd.worktrees/ahpd-local-edits-2026-11-06.patch`.
 - Code goes through a PR on `softov/ahpd`. Plan-only commits go to main. A PR merges with `gh pr merge <n> -R softov/ahpd --admin --merge`, only on Softov's word. Show a PR's text in chat before opening it.
 - `gh pr checks` has no `--json` here, and `gh pr edit` fails on the Projects classic deprecation. Read a job's log with `gh api repos/softov/ahpd/actions/jobs/<id>/logs`, and set a PR body with `gh api repos/softov/ahpd/pulls/<n> -X PATCH -F body=@<file>`.
@@ -38,7 +38,7 @@ Current progress and pending items only, as of 2026-11-09. *Outside this reposit
   - `base-0210`, `base-1647`, `base-2330` and `base-main`: detached, at the bases of the audit merge.
   - `briefs-commit`, `plan-mcp` and `pending-check`: detached, for plan-only commits and checks.
   - `build-agents-057f374c`, `build-agents-3795760c`, `build-agents-ae3197fe`, `build-agents-e6611632`, `build-agents-ed43acf5`, `devtunnel-key-values` and `usage-task-03`: build sessions' worktrees.
-  - `wait-ms` (#260) and `win-command` (#261): the open PRs.
+  - `wait-ms` (#260) and `win-command` (#261): merged.
   - `release-prerelease`: merged in #163.
   - Merged branches: `build-agents-6c0a50f2` (#199), `build-agents-74d376da` (#196), `build-agents-9b7dd5b5` (#197), `build-agents-b6d26e50` (#187), `build-agents-cba21cdc` (#198), `canvas-example` (#194), `grants-follow-the-answers` (#192), `maycxc-union` and `union-ad15488a`.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334` (merged), `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`. Delete them only on his word.
@@ -46,6 +46,7 @@ Current progress and pending items only, as of 2026-11-09. *Outside this reposit
 
 ## Left open on 2026-11-09
 
+- `@` lists nothing on a daemon whose PATH has no `rg`, and no client says why. [briefs/at-lists-files-without-rg-on-the-path.md](../briefs/at-lists-files-without-rg-on-the-path.md) holds the ways to fix it.
 - An ACP server's stderr line that says no level, such as gemini's, is logged at info.
 - Some test helpers and loops give up after a count of event-loop turns, not after a time. Examples are the `until(check, times)` of cofold-turn, nested-proxy and computer-disposable. #260 left them as they are.
 - agent-cofold-fork's "keeps the chat going when the store cannot truncate the conversation" failed once on Linux CI in #260.
