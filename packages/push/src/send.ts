@@ -1,4 +1,5 @@
 import { bag, reason, str } from '@ahpd/sdk';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * Expo's push service, as this plugin uses it.
@@ -59,7 +60,7 @@ export interface PushMessage {
 /** What a sender is built with. */
 export interface SendOptions {
   /** One line per failure, for the daemon's log. */
-  log(line: string): void;
+  log(line: string, level?: LogLevel): void;
   /** A token the service no longer knows, which is a device to forget. */
   gone(token: string): void;
   /** Where the messages go, when it is not the service's own address. */
@@ -129,7 +130,7 @@ export const createSender = (options: SendOptions): Sender => {
       const again = answered === undefined || answered.status === 429 || answered.status >= 500;
       if (!again || attempt >= waits.length) {
         if (answered === undefined) {
-          options.log(`the push service could not be reached: ${reason(failure)}`);
+          options.log(`the push service could not be reached: ${reason(failure)}`, 'error');
           return undefined;
         }
         response = answered;
@@ -139,14 +140,14 @@ export const createSender = (options: SendOptions): Sender => {
       await wait(waits[attempt] ?? 0);
     }
     if (!response.ok) {
-      options.log(`the push service answered ${response.status}`);
+      options.log(`the push service answered ${response.status}`, 'warn');
       return undefined;
     }
     try {
       return await response.json() as unknown;
     }
     catch (error) {
-      options.log(`the push service answered something that is not JSON: ${reason(error)}`);
+      options.log(`the push service answered something that is not JSON: ${reason(error)}`, 'warn');
       return undefined;
     }
   };
@@ -165,7 +166,7 @@ export const createSender = (options: SendOptions): Sender => {
       return;
     }
     const why = str(details['error']) ?? str(said['message']) ?? 'no reason was given';
-    options.log(`Expo refused a notification for ${token}: ${why}`);
+    options.log(`Expo refused a notification for ${token}: ${why}`, 'warn');
   };
 
   /**
@@ -183,7 +184,7 @@ export const createSender = (options: SendOptions): Sender => {
       for (const ticket of chunk) {
         const receipt = data[ticket.id];
         if (receipt === undefined) {
-          options.log(`Expo has no receipt for the notification to ${ticket.token} fifteen minutes on`);
+          options.log(`Expo has no receipt for the notification to ${ticket.token} fifteen minutes on`, 'warn');
           continue;
         }
         const one = bag(receipt);

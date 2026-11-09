@@ -25,6 +25,7 @@ import { probe, PROBE_TIMEOUT_MS, reason } from '@ahpd/sdk';
 import type {
   Adapter, CheckResult, Connector, ConnectorOwner, DeviceSignInPoll, DeviceSignInStart, PluginView,
 } from '@ahpd/sdk';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * The Dev Tunnels service's GitHub app, from the SDK's
@@ -207,7 +208,7 @@ export interface DevtunnelAdapterOptions {
   /** Ask the host to check one connector again, as `x-ahpd/connectors/check` does. */
   check?: (id: string) => void | Promise<void>;
   /** Where the one line of a failed refresh goes. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
 }
 
 /** A non-empty string, or nothing. */
@@ -485,7 +486,7 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
             await options.secret?.(id, { token: next.token, refresh: next.refresh });
           }
           catch (error) {
-            log(`${NAME}: connector ${id} keeps its refreshed token but the vault was not written: ${reason(error)}`);
+            log(`${NAME}: connector ${id} keeps its refreshed token but the vault was not written: ${reason(error)}`, 'warn');
           }
           if (stopped) return;
           const still = tunnels.held(id);
@@ -495,7 +496,7 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
           again(next.expires === undefined ? DEFAULT_REFRESH_MS : next.expires * 1000 * 2 / 3);
         }
         catch (error) {
-          log(`${NAME}: connector ${id} could not refresh its token: ${reason(error)}`);
+          log(`${NAME}: connector ${id} could not refresh its token: ${reason(error)}`, 'error');
           checkNow();
           if (!(error instanceof StatusError && error.status >= 400 && error.status < 500)) again(MIN_REFRESH_MS);
         }

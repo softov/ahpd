@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -384,7 +385,7 @@ describe("a turn's login", () => {
     const adapters: { name: string; open: (connector: unknown) => unknown }[] = [];
     const host = {
       paths: [mkdtempSync(join(tmpdir(), 'ahpd-logins-plugin-'))],
-      log: () => {},
+      log: loggerOf(() => {}),
       registerAdapter: (adapter: { name: string; open: (connector: unknown) => unknown }) => { adapters.push(adapter); },
       registerEngine: (engine: Engine) => { engines.push(engine); },
     } as unknown as PluginHost;
@@ -968,7 +969,7 @@ describe('the plugin', () => {
     let connects = 0;
     const host = {
       paths: [mkdtempSync(join(tmpdir(), 'ahpd-logins-plugin-'))],
-      log: (line: string) => { logged.push(line); },
+      log: loggerOf((line: string) => { logged.push(line); }),
       registerAdapter: (adapter: Adapter) => { adapters.push(adapter); },
       registerEngine: (engine: Engine) => { engines.push(engine); },
       connect: () => {

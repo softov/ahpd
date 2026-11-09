@@ -1008,7 +1008,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // catalogue past the bound is one this host can no longer hand over
       // whole, and neither client that connects to it reads `nextCursor`.
       if (limit === PAGE_MOST && rows.length - after > PAGE_MOST) {
-        log(`${String(rows.length)} sessions is past ${String(PAGE_MOST)}: paging, which no client here asks for`);
+        log.warn(`${String(rows.length)} sessions is past ${String(PAGE_MOST)}: paging, which no client here asks for`);
       }
       const last = items[items.length - 1];
       return {
@@ -1363,7 +1363,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
              * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7424-L7476
              */
             if (point === undefined || started === undefined) {
-              ctx.log(`${String(source.chat ?? '')}: its backend names no point for ${turnId}, so the fork begins a conversation of its own`);
+              ctx.log.warn(`${String(source.chat ?? '')}: its backend names no point for ${turnId}, so the fork begins a conversation of its own`);
               made = { seed: all.slice(0, at + 1) as Bag[] };
             }
             else made = { resume: started, forkAt: point, seed: all.slice(0, at + 1) as Bag[] };
@@ -1828,7 +1828,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       if (!walked.has(agent)) {
         walked.add(agent);
-        for (const gap of schemaGaps(theirs)) log(gapLine(agent.provider, 'session config', gap));
+        for (const gap of schemaGaps(theirs)) log.warn(gapLine(agent.provider, 'session config', gap));
       }
       /*
        * A contributed key's own values, asked for here rather than left

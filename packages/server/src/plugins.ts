@@ -1588,7 +1588,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions, impor
   const saying: PluginHost = Object.freeze({
     ...host,
     problem: (line: string) => {
-      if (answered) options.log(line);
+      if (answered) options.log(line, 'error');
       else told.push(line);
       host.problem(line);
     },

@@ -603,7 +603,7 @@ export function createTooling(ctx: HostContext): Tooling {
         // that ran as the daemon would pass every connector's check.
         return person === undefined && owner?.startsWith('user:') === true ? 'nobody' : person;
       },
-      onProblem: (message) => log(message),
+      onProblem: (message) => log.warn(message),
     });
   ctx.contributing = permitted([...ctx.contributed, ...ctx.actionTools]);
   /** What one session brings to a tool asking about it. */
@@ -2560,7 +2560,7 @@ export function createTooling(ctx: HostContext): Tooling {
       // A rule with nothing written in it says nothing to a model.
       if (part.alwaysApply !== true || body === '') return [];
       if (body.length > RULE_MOST) {
-        log(`the rule ${str(part.name) ?? path} in ${path} is over ${String(RULE_MOST)} characters, so it was dropped`);
+        log.warn(`the rule ${str(part.name) ?? path} in ${path} is over ${String(RULE_MOST)} characters, so it was dropped`);
         return [];
       }
       return [body];

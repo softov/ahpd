@@ -22,6 +22,7 @@ import { bag, fromEnvRef, secretRef } from '@ahpd/sdk';
 import { acpAgent } from './agent.js';
 import { KEY_VARIABLES, presets as shipped, templates } from './presets.js';
 import type { AcpMachine, AcpOptions } from './types.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
 export const name = 'agent-acp';
@@ -229,7 +230,7 @@ const changedOf = (value: unknown): ToolsChanged | undefined =>
  * so a line from a record is said where the plugin's is.
  */
 interface Shared {
-  log: (line: string) => void;
+  log: (line: string, level?: LogLevel) => void;
   hostTools?: boolean;
   toolsChanged?: ToolsChanged;
 }
@@ -239,7 +240,7 @@ const defaultsOf = (host: PluginHost, values: Record<string, unknown>): Shared =
   const hostTools = typeof values.hostTools === 'boolean' ? values.hostTools : undefined;
   const toolsChanged = changedOf(values.toolsChanged);
   return {
-    log: (line) => host.log(line),
+    log: (line, level) => host.log(line, level),
     ...(hostTools === undefined ? {} : { hostTools }),
     ...(toolsChanged === undefined ? {} : { toolsChanged }),
   };

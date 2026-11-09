@@ -47,6 +47,7 @@ import { sshReach } from './ssh.js';
 import type { SshMachine, SshProgram, SshReach } from './ssh.js';
 import { TEMPLATE_PACKAGES, templateMaker } from './template.js';
 import type { TemplateLedger, TemplateParts, TemplateSteps } from './template.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** Where a VM's tree is, which is the session's repository at its own path. */
 const MACHINE_TREE = 'ahpd.tree';
@@ -194,7 +195,7 @@ export interface VmOptions {
   /** The daemon's own id, which a VM is recorded under and listed by. */
   hostId?: string;
   keygen?: Keygen;
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
   /** The bounds on a VM's boot and shutdown, in milliseconds, for a test. */
   waits?: { boot?: number; ready?: number; every?: number; shutdown?: number };
 }
@@ -457,7 +458,7 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
       return { ...(now === undefined || now.state === 'stopped' ? { value: true } : {}), said: now?.status ?? 'gone' };
     });
     if (off.value !== undefined) return;
-    options.log?.(`${name} did not shut down within ${Math.round(shutdown / 1000)} s, so it is cut off`);
+    options.log?.(`${name} did not shut down within ${Math.round(shutdown / 1000)} s, so it is cut off`, 'warn');
     await maker.cut(server, name);
   };
 
@@ -644,7 +645,7 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
       }
       catch (error) {
         await shutDown(server, spec.name).catch((stuck: unknown) => {
-          options.log?.(`${spec.name} was not stopped after it failed to come up: ${stuck instanceof Error ? stuck.message : String(stuck)}`);
+          options.log?.(`${spec.name} was not stopped after it failed to come up: ${stuck instanceof Error ? stuck.message : String(stuck)}`, 'error');
         });
         throw error;
       }

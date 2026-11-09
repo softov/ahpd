@@ -8,6 +8,7 @@ import { HOST_TOOLS } from '../mapping.js';
 import type { AcpConnection, AcpOptions } from '../types.js';
 import { messageOf } from './common.js';
 import type { SessionContext } from './context.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** Spawning the server, signing in and opening the one session on it. */
 export interface Opening {
@@ -487,7 +488,7 @@ export function createOpening(ctx: SessionContext): Opening {
         agentCapabilities,
         options.hostTools !== false,
         moved === undefined ? undefined : machineAsked(start),
-        (line) => options.log?.(line),
+        (line: string, level?: LogLevel) => options.log?.(line, level),
       );
       /*
        * The conversation to continue: the one this session already had when

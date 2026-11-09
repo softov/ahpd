@@ -9,6 +9,7 @@ import { byName } from './byname.js';
 import { sameHostPath } from './hostpath.js';
 import { userLabelOf } from './gitdir.js';
 import { IMAGE_PATH, MACHINE_PARTS, partsSaid, pathWith } from './parts.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * Dev containers, by the CLI that defines them.
@@ -451,7 +452,7 @@ const between = (text: string, marker: string): string | undefined => {
 export const probeEnv = async (
   docker: Cli,
   found: Record<string, unknown>,
-  log: (line: string) => void = (): void => { /* nothing is kept without one */ },
+  log: (line: string, level?: LogLevel) => void = (): void => { /* nothing is kept without one */ },
 ): Promise<Record<string, string>> => {
   const flags = PROBES[last(entriesOf(found), 'userEnvProbe') ?? 'loginInteractiveShell'];
   const id = String(found.Id ?? '');
@@ -459,7 +460,7 @@ export const probeEnv = async (
   const user = reachOf(found, undefined).user;
   /** One `docker exec` into this container, answering nothing when it cannot be run. */
   const exec = async (argv: string[]) => runCli(docker, argv).catch((error: unknown) => {
-    log(`could not probe ${id} as ${user}: ${error instanceof Error ? error.message : String(error)}`);
+    log(`could not probe ${id} as ${user}: ${error instanceof Error ? error.message : String(error)}`, 'error');
     return undefined;
   });
   const passwd = await exec(['exec', '-i', '-u', user, id, 'getent', 'passwd', user]);
@@ -472,7 +473,7 @@ export const probeEnv = async (
   ]);
   const said = ran === undefined ? undefined : between(ran.stdout, marker);
   if (said === undefined) {
-    log(`could not probe ${id} as ${user}: its shell printed no environment`);
+    log(`could not probe ${id} as ${user}: its shell printed no environment`, 'error');
     return {};
   }
   // `PWD` is dropped, as the CLI drops it: it is the probe's own working
@@ -635,7 +636,7 @@ export interface DevContainerOptions {
    */
   version?: string;
   /** Lines worth keeping. Nothing is logged without one. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
 }
 
 /** One line at a time, with the half of a line that has not arrived yet held. */
@@ -964,7 +965,7 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
      */
     available: async () => {
       if (plugins.length === 0) {
-        log('no devcontainer.plugins, so the host inside would have no backend: the capability is not advertised');
+        log('no devcontainer.plugins, so the host inside would have no backend: the capability is not advertised', 'warn');
         return false;
       }
       return (await there(docker.command, [...docker.args, '--version'])) && (await there(command, [...base, '--version']));

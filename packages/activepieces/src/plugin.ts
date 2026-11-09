@@ -302,11 +302,11 @@ export function engine(host: PluginHost, settings: EngineSettings = {}): Engine 
       if (!unexpected) return;
       exited = true;
       if (restarts < MAX_RESTARTS) {
-        host.log(`${name}: the engine process terminated unexpectedly with code ${said}`);
+        host.log.warn(`${name}: the engine process terminated unexpectedly with code ${said}`);
         return;
       }
       limitReached = true;
-      host.log(`${name}: the engine process terminated with code ${said}, giving up after ${MAX_RESTARTS} restarts`);
+      host.log.error(`${name}: the engine process terminated with code ${said}, giving up after ${MAX_RESTARTS} restarts`);
     });
 
     running = opened;

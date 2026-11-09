@@ -1301,7 +1301,7 @@ export function piSession(
            * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2235
            */
           if (!await backend.setModel(wanted, model?.config)) {
-            options.log?.(`${provider}: chat ${start.chatUri} keeps its model: pi does not offer ${wanted}`);
+            options.log?.(`${provider}: chat ${start.chatUri} keeps its model: pi does not offer ${wanted}`, 'warn');
           }
           if (stopped()) return;
         }

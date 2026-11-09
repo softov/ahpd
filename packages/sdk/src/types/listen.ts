@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Readable, Writable } from 'node:stream';
 import type { Peer, Request } from './rpc.js';
 import type { Principal } from './users.js';
+import type { LogLevel } from '../log.js';
 
 /** One accepted client, for as long as its connection lasts. */
 export interface Connected {
@@ -119,7 +120,7 @@ export interface Bounds {
    * for being behind by this limit or by no reason at all, and nothing is
    * written without a log to write to.
    */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
 }
 
 /** Where to accept connections, and who may open one. */

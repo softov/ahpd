@@ -415,7 +415,7 @@ export function createSleep(ctx: HostContext): Sleep {
     const served = recorded.flatMap((one): { one: StoredChat; agent: Agent }[] => {
       const agent = one.provider === undefined ? owner : ctx.agents.get(one.provider);
       if (agent !== undefined) return [{ one, agent }];
-      log(`${one.uri}: ${one.provider} is not loaded on this host, so the chat is left where it is`);
+      log.warn(`${one.uri}: ${one.provider} is not loaded on this host, so the chat is left where it is`);
       return [];
     });
     const lead = served.find(({ one }) => one.default === true);

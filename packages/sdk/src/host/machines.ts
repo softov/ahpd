@@ -179,7 +179,7 @@ export function createMachines(ctx: HostContext): Machines {
     const done: Promise<void> = Promise.resolve()
       .then(work)
       .catch((error: unknown) => {
-        ctx.log(`computers: ${what} failed: ${error instanceof Error ? error.message : String(error)}`);
+        ctx.log.error(`computers: ${what} failed: ${error instanceof Error ? error.message : String(error)}`);
       })
       .then(() => { inFlight.delete(done); });
     inFlight.add(done);
@@ -214,7 +214,7 @@ export function createMachines(ctx: HostContext): Machines {
       await options.computers?.putIn?.(id, paths);
     }
     catch (error) {
-      ctx.log(`computers: putting a message's attachments into ${id} for ${named} failed: ${error instanceof Error ? error.message : String(error)}`);
+      ctx.log.error(`computers: putting a message's attachments into ${id} for ${named} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -271,7 +271,7 @@ export function createMachines(ctx: HostContext): Machines {
       return await options.computers?.bringBack?.(id);
     }
     catch (error) {
-      ctx.log(`computers: bringing the work of ${id} back for ${uri} failed: ${error instanceof Error ? error.message : String(error)}`);
+      ctx.log.error(`computers: bringing the work of ${id} back for ${uri} failed: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
     }
   };
@@ -314,7 +314,7 @@ export function createMachines(ctx: HostContext): Machines {
         await options.computers?.follow?.(id);
       }
       catch (error) {
-        ctx.log(`computers: setting ${id} to the host's branch for ${named} failed: ${error instanceof Error ? error.message : String(error)}`);
+        ctx.log.error(`computers: setting ${id} to the host's branch for ${named} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     })());
   };

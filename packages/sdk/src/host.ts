@@ -732,7 +732,7 @@ export function createHost(options: HostOptions): Host {
         }
         catch (error) {
           // A test that throws shows the action to nobody, as one that refused.
-          log(`${given.channel}: a visible test threw: ${reason(error)}`);
+          log.error(`${given.channel}: a visible test threw: ${reason(error)}`);
           return undefined;
         }
       }
@@ -821,7 +821,7 @@ export function createHost(options: HostOptions): Host {
      */
     const kind = states.get(channel)?.kind ?? (sessions.has(channel) ? 'session' : undefined);
     if (refused === undefined && kind !== undefined && kind !== 'chat' && String(action.type ?? '').startsWith('chat/')) {
-      log(`${channel}: ${String(action.type)} is a chat's action and ${channel} holds no chat, so it is not said`);
+      log.warn(`${channel}: ${String(action.type)} is a chat's action and ${channel} holds no chat, so it is not said`);
       return;
     }
     ctx.serverSeq += 1;
@@ -866,10 +866,10 @@ export function createHost(options: HostOptions): Host {
       const open = states.get(channel);
       if (open !== undefined) {
         const type = String(action.type ?? '');
-        if (!type.startsWith(`${open.kind}/`)) log(`${channel}: ${type} is not a ${open.kind} action, so its state is as it was`);
+        if (!type.startsWith(`${open.kind}/`)) log.warn(`${channel}: ${type} is not a ${open.kind} action, so its state is as it was`);
         else {
           try { open.state = reduced(open, held.action); }
-          catch (error) { log(`${channel}: ${type} was not reduced: ${reason(error)}`); }
+          catch (error) { log.error(`${channel}: ${type} was not reduced: ${reason(error)}`); }
         }
       }
       ctx.telemetered(channel, action);
@@ -1193,7 +1193,7 @@ export function createHost(options: HostOptions): Host {
       if (one.clientId === client && [...one.activeSubscriptions].some((uri) => servedIn(options.channels, uri) === served)) return;
     }
     try { served.channel.left(client); }
-    catch (error) { log(`plugin ${served.by}: left on ${served.scheme} failed: ${reason(error)}`); }
+    catch (error) { log.error(`plugin ${served.by}: left on ${served.scheme} failed: ${reason(error)}`); }
   };
   /**
    * A client's action, refused.
@@ -1237,7 +1237,7 @@ export function createHost(options: HostOptions): Host {
     origin: Origin | undefined,
     reason: string,
   ): void => {
-    log(`${channel}: ${reason}`);
+    log.warn(`${channel}: ${reason}`);
     if (origin !== undefined && said.has(origin)) return;
     if (origin !== undefined) said.add(origin);
     deltas.flush();
@@ -1272,7 +1272,7 @@ export function createHost(options: HostOptions): Host {
         one.watcher.close();
         held.watchers.delete(reader);
         if (held.watchers.size === 0 && watches.get(channel) === held) watches.delete(channel);
-        log(`released ${channel}${reader === '' ? '' : ` for ${reader}`}`);
+        log.debug(`released ${channel}${reader === '' ? '' : ` for ${reader}`}`);
       }, RESOURCE_WATCH_GRACE_MS);
     }
   };
@@ -1319,7 +1319,7 @@ export function createHost(options: HostOptions): Host {
         visible: (one) => (one?.id ?? '') === reader,
       });
     }, principal).catch((error: unknown) => {
-      log(`could not watch ${descriptor.root} for ${channel}: ${reason(error)}`);
+      log.error(`could not watch ${descriptor.root} for ${channel}: ${reason(error)}`);
       return undefined;
     });
     if (watcher === undefined) return undefined;
@@ -1334,7 +1334,7 @@ export function createHost(options: HostOptions): Host {
     }
     held.watchers.set(reader, { watcher });
     watches.set(channel, held);
-    log(`watching ${descriptor.root}${descriptor.recursive ? ' and under it' : ''} for ${channel}${reader === '' ? '' : ` as ${reader}`}`);
+    log.debug(`watching ${descriptor.root}${descriptor.recursive ? ' and under it' : ''} for ${channel}${reader === '' ? '' : ` as ${reader}`}`);
     return held.state;
   };
   /**
@@ -1755,7 +1755,7 @@ export function createHost(options: HostOptions): Host {
         if (now !== undefined && !ctx.closed) probeAgent(now);
       }));
     }
-    catch (error) { log(`${provider}: no watch of what it offers: ${reason(error)}`); }
+    catch (error) { log.warn(`${provider}: no watch of what it offers: ${reason(error)}`); }
   };
   /** Stop the watch of each backend no longer in `agents`, or of every one. */
   const unwatchProbes = (all: boolean): void => {
@@ -1795,7 +1795,7 @@ export function createHost(options: HostOptions): Host {
        * anywhere else and nothing has to tell the two apart.
        */
       if (offered.account !== undefined) publishAccountInfo(agent.provider, offered.account);
-      log(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s), ${held.customizations.length} customization(s)`);
+      log.debug(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s), ${held.customizations.length} customization(s)`);
       ctx.publishAgentInfos();
       watchProbe(agent);
     }).catch(() => { }).finally(() => {
@@ -2073,7 +2073,7 @@ export function createHost(options: HostOptions): Host {
         // logged: the plugin is going either way, and a session left behind is
         // worse said than silently kept.
         try { await removeSession(uri); }
-        catch (error) { log(`ending ${uri} for ${provider} failed: ${reason(error)}`); }
+        catch (error) { log.error(`ending ${uri} for ${provider} failed: ${reason(error)}`); }
       }
     },
     connections: () => connections.size,
@@ -2105,7 +2105,7 @@ export function createHost(options: HostOptions): Host {
         /** One step of the close, logged rather than thrown, so a failed one does not skip the rest. */
         const step = async (what: string, run: () => unknown): Promise<void> => {
           try { await run(); }
-          catch (error) { log(`closing ${what} failed: ${reason(error)}`); }
+          catch (error) { log.error(`closing ${what} failed: ${reason(error)}`); }
         };
         const going: Promise<void>[] = [];
         // Stopped rather than disposed: a daemon going down is a host that
@@ -2237,7 +2237,7 @@ export function createHost(options: HostOptions): Host {
        */
       peer.bounded?.({
         limit: () => clientQueueBytes(ctx.rootConfig),
-        log: (line) => { ctx.log(`${connection.clientId || 'a client'}: ${line}`); },
+        log: (line, level) => { ctx.log(`${connection.clientId || 'a client'}: ${line}`, level); },
       });
       /*
        * A person or a plugin this host was given rather than one that signed in.
@@ -2291,7 +2291,7 @@ export function createHost(options: HostOptions): Host {
        */
       const refuseFailed = (params: Record<string, unknown>, origin: Origin, error: unknown): void => {
         const reason = error instanceof Error ? error.message : String(error);
-        log(`a dispatch from ${connection.clientId || 'anonymous'} failed: ${reason}`);
+        log.error(`a dispatch from ${connection.clientId || 'anonymous'} failed: ${reason}`);
         const action = (typeof params.action === 'object' && params.action !== null ? params.action : {}) as Record<string, unknown>;
         refuse(connection.peer, meantBy(String(params.channel ?? '')), action, origin, reason);
       };

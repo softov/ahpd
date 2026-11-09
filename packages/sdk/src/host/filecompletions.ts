@@ -24,6 +24,7 @@ import { shorten } from '../vscode/labels.js';
 import { compare } from '../vscode/strings.js';
 import type { Bag } from '../types/common.js';
 import type { WorkspaceFiles } from '../types/host.js';
+import type { LogLevel } from '../log.js';
 
 /** Maximum number of completion items returned per call. */
 const MAX_RESULTS = 50;
@@ -100,7 +101,7 @@ const deepestOwner = (path: string, roots: readonly string[]): string | undefine
 const enumerateRootFiles = async (
   roots: { logicalRoots: string[]; enumerationRoots: string[] },
   workspaceFiles: WorkspaceFiles,
-  log: (line: string) => void,
+  log: (line: string, level?: LogLevel) => void,
 ): Promise<string[][]> => {
   const filesByRoot: string[][] = [];
   const queuedRoots = new Set(roots.enumerationRoots.map(keyOf));
@@ -114,7 +115,7 @@ const enumerateRootFiles = async (
         return { root, files: result.files, needsFallback: result.isTruncated };
       }
       catch (err) {
-        log(`Failed to enumerate ${root}: ${err instanceof Error ? err.message : String(err)}`);
+        log(`Failed to enumerate ${root}: ${err instanceof Error ? err.message : String(err)}`, 'error');
         return { root, files: [], needsFallback: true };
       }
     }));
@@ -176,7 +177,7 @@ export const fileCompletions = async (
   workingDirectories: readonly string[],
   at: AtToken,
   workspaceFiles: WorkspaceFiles,
-  log: (line: string) => void,
+  log: (line: string, level?: LogLevel) => void,
 ): Promise<Bag[]> => {
   const roots = rootsOf(workingDirectories);
   if (roots.enumerationRoots.length === 0) return [];

@@ -26,6 +26,7 @@ import type { ClaudeOptions } from './claude.js';
 import { sharedCatalogue as oneListing } from './catalog.js';
 import { OpenLogins } from './logins.js';
 import { kindSchema } from './options.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
 export const name = 'agent-claude';
@@ -70,7 +71,7 @@ const defaultsOf = (host: PluginHost, values: Record<string, unknown>) => {
   const paths = said.paths ?? host.paths;
   const hostTools = typeof values['hostTools'] === 'boolean' ? values['hostTools'] : undefined;
   const shared = {
-    log: (line: string) => host.log(line),
+    log: (line: string, level?: LogLevel) => host.log(line, level),
     // The host's YAML, which a customization file's frontmatter is read with.
     parseYaml: (text: string) => host.parseYaml(text),
     // One listing for all of them, and one load's worth of it: every record
@@ -194,12 +195,12 @@ const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall'>
   };
   return {
     onFailure: (id, why) => {
-      host.log(`${name}: login ${id} failed: ${why}`);
+      host.log.error(`${name}: login ${id} failed: ${why}`);
     },
     onCall: (id, outcome) => {
       void connection()
         .then((conn) => conn.request('x-ahpd/connectors/note', { id, ...outcome }))
-        .catch((error: unknown) => { host.log(`${name}: the host did not note a call of login ${id}: ${reason(error)}`); });
+        .catch((error: unknown) => { host.log.warn(`${name}: the host did not note a call of login ${id}: ${reason(error)}`); });
     },
   };
 };

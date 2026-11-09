@@ -420,7 +420,7 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
         const said = `${agent.provider}\u0000${key}`;
         if (!completionsSaid.has(said)) {
           completionsSaid.add(said);
-          ctx.log(`${agent.provider}: completions names ${key}, which its schema does not declare`);
+          ctx.log.warn(`${agent.provider}: completions names ${key}, which its schema does not declare`);
         }
         continue;
       }
@@ -588,7 +588,7 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
       const said = `${id}\u0000${key}\u0000${JSON.stringify(value)}`;
       if (droppedSaid.has(said)) continue;
       droppedSaid.add(said);
-      ctx.log(`${ctx.nameOf(id)}: stored ${key} ${JSON.stringify(value)} is not offered; using the default`);
+      ctx.log.warn(`${ctx.nameOf(id)}: stored ${key} ${JSON.stringify(value)} is not offered; using the default`);
     }
     return held;
   };

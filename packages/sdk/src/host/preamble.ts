@@ -1,5 +1,6 @@
 import { reason } from '../utils/values.js';
 import type { ChatPreamble, OpenedChat } from '../types/plugin.js';
+import type { LogLevel } from '../log.js';
 
 /**
  * The text the plugins give a new chat, or `undefined` when none gave any.
@@ -11,7 +12,7 @@ import type { ChatPreamble, OpenedChat } from '../types/plugin.js';
 export async function preambleOf(
   preambles: readonly ChatPreamble[],
   opened: OpenedChat,
-  log: (message: string) => void,
+  log: (message: string, level?: LogLevel) => void,
 ): Promise<string | undefined> {
   const answers = await Promise.all(preambles.map(async (preamble) => {
     try {
@@ -19,7 +20,7 @@ export async function preambleOf(
       return typeof text === 'string' ? text : undefined;
     }
     catch (error) {
-      log(`a chat preamble for ${opened.chat} failed: ${reason(error)}`);
+      log(`a chat preamble for ${opened.chat} failed: ${reason(error)}`, 'error');
       return undefined;
     }
   }));

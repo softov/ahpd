@@ -140,7 +140,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       await host.planChanged(event.session);
     }
     catch (error: unknown) {
-      host.log(`${name}: the Plan call of ${event.session} was not redrawn: ${reason(error)}`);
+      host.log.error(`${name}: the Plan call of ${event.session} was not redrawn: ${reason(error)}`);
     }
   }));
   /*
@@ -224,7 +224,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   });
   const countMoved = (): void => {
     void recount().catch((error: unknown) => {
-      host.log(`${name}: the open tasks of a session were not counted: ${reason(error)}`);
+      host.log.error(`${name}: the open tasks of a session were not counted: ${reason(error)}`);
     });
   };
   countMoved();
@@ -241,7 +241,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   planOnChannel.bind(host.registerChannel(PLAN_SCHEME, planOnChannel.channel));
   const channelMoved = (publish: () => Promise<void>, what: string): void => {
     void oneAtATime(publish).catch((error: unknown) => {
-      host.log(`${name}: ${what} was not published: ${reason(error)}`);
+      host.log.error(`${name}: ${what} was not published: ${reason(error)}`);
     });
   };
   taskRecords.watch((change) => {
@@ -273,7 +273,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       }
       for (const uri of sessions) await host.planChanged(uri);
     })().catch((error: unknown) => {
-      host.log(`${name}: the Plan call was not redrawn: ${reason(error)}`);
+      host.log.error(`${name}: the Plan call was not redrawn: ${reason(error)}`);
     });
   };
   taskRecords.watch(planMoved);
@@ -289,7 +289,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   if (settings.sweepAfterDays !== undefined) {
     const look = (): void => {
       void oneAtATime(() => store.sweep()).catch((error: unknown) => {
-        host.log(`${name}: the sweep did not finish: ${reason(error)}`);
+        host.log.error(`${name}: the sweep did not finish: ${reason(error)}`);
       });
     };
     let sweeping: ReturnType<typeof setInterval> | undefined = setInterval(look, SWEEP_MS);

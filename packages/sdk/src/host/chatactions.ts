@@ -238,7 +238,7 @@ export const settledMessage = async (
     store: ctx.kept,
     connection,
     ...(ctx.options.attachmentFetchLimitBytes === undefined ? {} : { limit: ctx.options.attachmentFetchLimitBytes }),
-    onProblem: (line) => ctx.log(`${uri}: ${line}`),
+    onProblem: (line) => { ctx.log.warn(`${uri}: ${line}`); },
   });
   const dir = ctx.kept.attachmentsDir?.(idOf(uri));
   if (dir !== undefined) await ctx.putIn(uri, filesOf(settled, dir));
@@ -711,7 +711,7 @@ export function chatAction(
         for (const key of [...Object.keys(config), ...dropped]) {
           const answer = await Promise.resolve(chat.setConfig?.(key, effective[key]))
             .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
-          if (answer !== true) log(`${channel}: ${key} was not taken by its backend: ${typeof answer === 'string' ? answer : 'no answer'}`);
+          if (answer !== true) log.warn(`${channel}: ${key} was not taken by its backend: ${typeof answer === 'string' ? answer : 'no answer'}`);
         }
       })();
     };
@@ -978,7 +978,7 @@ export function chatAction(
   };
   /** `running`'s backend told to stop what it runs; one that cannot is a line in the log. */
   const aborted = (running: NonNullable<typeof held>): void => {
-    const failed = (error: unknown): void => { log(`${running.chatUri} could not be stopped: ${error instanceof Error ? error.message : String(error)}`); };
+    const failed = (error: unknown): void => { log.error(`${running.chatUri} could not be stopped: ${error instanceof Error ? error.message : String(error)}`); };
     try { void Promise.resolve(running.abort()).catch(failed); }
     catch (error) { failed(error); }
   };
@@ -1035,7 +1035,7 @@ export function chatAction(
       text: ok ? text : (wrong || text || 'The tool failed'),
       content: content as ClientCallAnswer['content'],
     });
-    if (took !== true) log(`${held?.chatUri ?? channel}: the backend holds no call ${toolCallId} of ${clientId}'s to complete`);
+    if (took !== true) log.warn(`${held?.chatUri ?? channel}: the backend holds no call ${toolCallId} of ${clientId}'s to complete`);
   };
   switch (type) {
     case 'chat/turnStarted': {
@@ -1639,7 +1639,7 @@ export function chatAction(
           if (!unschemed.some(([one]) => one === key) && follows(session.chatUri)) {
             const answer = await Promise.resolve(session.setConfig?.(key, value))
               .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
-            if (answer !== true) log(`${session.chatUri}: ${key} was not taken by its backend: ${typeof answer === 'string' ? answer : 'no answer'}`);
+            if (answer !== true) log.warn(`${session.chatUri}: ${key} was not taken by its backend: ${typeof answer === 'string' ? answer : 'no answer'}`);
           }
           const everywhere = (owning ? [...owning.chats].filter(([chat]) => !owning.backends.has(chat)).map(([, chat]) => chat) : [])
             .filter((chat) => chat !== session && follows(chat.chatUri));
@@ -2103,7 +2103,7 @@ export function chatAction(
        */
       if (under !== undefined) ctx.recordCustomizationEnablement(session.uri, id, asked);
       void session.setCustomizationEnabled(id, onFor(session.uri, asked)).then((took) => {
-        if (!took) log(`${session.uri}: ${id} has no runtime switch`);
+        if (!took) log.warn(`${session.uri}: ${id} has no runtime switch`);
       });
       if (under !== undefined) ctx.publishSessionCustomizations(session.uri);
       break;
@@ -2121,7 +2121,7 @@ export function chatAction(
       const id = String(action.id ?? '');
       dispatch(channel, action, origin);
       const failed = (why: string): void => {
-        log(`${session.uri}: ${id} would not start: ${why}`);
+        log.warn(`${session.uri}: ${id} would not start: ${why}`);
         const listed = session.customizations() as Bag[];
         const found = listed.find((one) => one.id === id)
           ?? listed.flatMap((one) => one.type === 'mcpServer' ? [] : (one.children as Bag[] | undefined) ?? []).find((one) => one.id === id);
@@ -2139,8 +2139,8 @@ export function chatAction(
       const id = String(action.id ?? '');
       dispatch(channel, action, origin);
       void session.stopMcpServer(id).then(
-        (took) => { if (!took) log(`${session.uri}: ${id} would not stop`); },
-        (error: unknown) => { log(`${session.uri}: ${id} would not stop: ${error instanceof Error ? error.message : String(error)}`); },
+        (took) => { if (!took) log.warn(`${session.uri}: ${id} would not stop`); },
+        (error: unknown) => { log.warn(`${session.uri}: ${id} would not stop: ${error instanceof Error ? error.message : String(error)}`); },
       );
       break;
     }
@@ -2156,8 +2156,8 @@ export function chatAction(
       const id = String(action.id ?? '');
       dispatch(channel, action, origin);
       void session.backgroundMcpServerStartup?.(id).then(
-        (took) => { if (!took) log(`${session.uri}: ${id} kept its startup`); },
-        (error: unknown) => { log(`${session.uri}: ${id} kept its startup: ${error instanceof Error ? error.message : String(error)}`); },
+        (took) => { if (!took) log.warn(`${session.uri}: ${id} kept its startup`); },
+        (error: unknown) => { log.warn(`${session.uri}: ${id} kept its startup: ${error instanceof Error ? error.message : String(error)}`); },
       );
       break;
     }
@@ -2447,7 +2447,7 @@ export function chatAction(
           () => { if (restarting.get(uri) === held) restarting.delete(uri); },
           (error: unknown) => {
             if (restarting.get(uri) === held) restarting.delete(uri);
-            log(`${chatUri} kept its conversation: ${error instanceof Error ? error.message : String(error)}`);
+            log.warn(`${chatUri} kept its conversation: ${error instanceof Error ? error.message : String(error)}`);
           },
         );
       };
@@ -2462,7 +2462,7 @@ export function chatAction(
         dispatch(session.chatUri, action, origin);
         ctx.forgetTurnOutputs(session.uri, session.chatUri, dropped);
         ctx.deleteLocalTurns(session.uri, session.chatUri, dropped);
-        log(`${session.chatUri} keeps the history after ${turnId ?? 'its start'}: ${why}`);
+        log.warn(`${session.chatUri} keeps the history after ${turnId ?? 'its start'}: ${why}`);
       };
       // Every turn: the action's `turnId` is optional, and its absence means
       // "clear the whole conversation".
@@ -2560,7 +2560,7 @@ export function chatAction(
       const work = restartedAt({ resume: started, rewindAt: point, seed: all.slice(0, at + 1) as Bag[] }).then(
         () => { log(`truncated ${chatUri} to ${turnId}`); },
         async (error: unknown) => {
-          log(`${chatUri} keeps the history after ${turnId}: ${error instanceof Error ? error.message : String(error)}`);
+          log.warn(`${chatUri} keeps the history after ${turnId}: ${error instanceof Error ? error.message : String(error)}`);
           await restartedAt({ resume: started, seed: all as Bag[] });
         },
       );
@@ -2572,7 +2572,7 @@ export function chatAction(
         () => { if (restarting.get(uri) === held) restarting.delete(uri); },
         (error: unknown) => {
           if (restarting.get(uri) === held) restarting.delete(uri);
-          log(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
+          log.error(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
         },
       );
       break;

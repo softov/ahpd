@@ -126,7 +126,7 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
           if (now?.activeTurn !== undefined) handSteering(chat);
           else tryConsume(chat);
         },
-        (error: unknown) => { log(`${chat}: steering ${id} was not handed on: ${error instanceof Error ? error.message : String(error)}`); },
+        (error: unknown) => { log.error(`${chat}: steering ${id} was not handed on: ${error instanceof Error ? error.message : String(error)}`); },
       );
     }
   };

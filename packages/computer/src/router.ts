@@ -16,6 +16,7 @@
  */
 
 import type { ComputerRuntime, Machine, MachineSpec } from './runtime.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /** The runtime a machine with a bare name is on: the Docker on this host. */
 export const BARE = 'docker';
@@ -50,7 +51,7 @@ const LIST_TIMEOUT = 10_000;
 /** What a routed runtime may be given beside the runtimes it serves. */
 export interface RoutedOptions {
   /** Lines worth keeping: one per runtime whose listing threw or ran out of time. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
   /** How long one runtime's listing is given before it is cut off, in milliseconds. */
   listTimeout?: number;
   /**
@@ -202,7 +203,7 @@ export const routed = (
         }
         catch (error) {
           const kept = lastRows.get(value) ?? [];
-          options.log?.(`Could not list the ${value} machines, so the ${String(kept.length)} it last listed are kept: ${reasonOf(error)}`);
+          options.log?.(`Could not list the ${value} machines, so the ${String(kept.length)} it last listed are kept: ${reasonOf(error)}`, 'warn');
           options.listed?.(value, undefined);
           return kept;
         }

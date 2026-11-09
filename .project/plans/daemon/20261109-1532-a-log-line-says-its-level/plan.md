@@ -85,7 +85,7 @@ a call site -> ctx.log.<level>(line) -> telemetry log(line, level)
 | --- | --- | --- |
 | [01 - The host's log takes a level](task-01-the-hosts-log-takes-a-level.md) | doing | - |
 | [02 - The daemon writes the level](task-02-the-daemon-writes-the-level.md) | doing | 01 |
-| [03 - Every line has its level](task-03-every-line-has-its-level.md) | todo | 01 |
+| [03 - Every line has its level](task-03-every-line-has-its-level.md) | doing | 01 |
 
 ## Risks and tradeoffs
 
@@ -95,8 +95,8 @@ a call site -> ctx.log.<level>(line) -> telemetry log(line, level)
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02 are built and wait for review, 2026-11-09.
-- **Next action:** [task-03-every-line-has-its-level.md](task-03-every-line-has-its-level.md).
+- **Done so far:** tasks 01, 02 and 03 are built and wait for review, 2026-11-09.
+- **Next action:** review of the PR.
 - **Open questions:** none.
 - **Watch out for:** callers outside this repository pass a backend's `log` option as a plain function. Wrap it with `loggerOf`, and keep the option's type.
 

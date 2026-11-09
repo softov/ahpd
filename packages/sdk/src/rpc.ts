@@ -178,7 +178,7 @@ export function createPeer(wire: Wire, bounding?: Bounding): Peer {
          * more for somebody who has stopped. What it missed is what a
          * reconnect is answered with.
          */
-        bound?.log?.(`held ${queued} bytes for a client that is not reading, past the ${bound.limit()} it is allowed, and was closed`);
+        bound?.log?.(`held ${queued} bytes for a client that is not reading, past the ${bound.limit()} it is allowed, and was closed`, 'warn');
         peer.close();
         return;
       }

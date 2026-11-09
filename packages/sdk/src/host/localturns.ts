@@ -327,7 +327,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     let names: string[];
     try { names = readdirSync(folder); }
     catch (error) {
-      ctx.log(`could not read ${folder}: ${reason(error)}`);
+      ctx.log.error(`could not read ${folder}: ${reason(error)}`);
       return [];
     }
     return names.flatMap((name) => {
@@ -345,7 +345,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
       writeJsonAtomic(join(folder, `${hashOf(recorded.transcriptId)}.json`), { version: 1, ...recorded }, { dirMode: 0o700 });
     }
     catch (error) {
-      ctx.log(`could not record the turn ${recorded.turnId} of ${chat}: ${reason(error)}`);
+      ctx.log.error(`could not record the turn ${recorded.turnId} of ${chat}: ${reason(error)}`);
     }
   };
   /** The records of a chat that name one of `turns`, by the transcript's id for it or the client's. */
@@ -365,7 +365,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     let names: string[];
     try { names = readdirSync(folder); }
     catch (error) {
-      ctx.log(`could not read ${folder}: ${reason(error)}`);
+      ctx.log.error(`could not read ${folder}: ${reason(error)}`);
       return [];
     }
     return names.flatMap((name) => {
@@ -421,7 +421,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
       }, { dirMode: 0o700 });
     }
     catch (error) {
-      ctx.log(`could not keep the turn ${turnId} of ${chat}: ${reason(error)}`);
+      ctx.log.error(`could not keep the turn ${turnId} of ${chat}: ${reason(error)}`);
     }
   };
   const recordLocalTurn = (session: string, chat: string, turns: readonly Bag[], turnId: string): void => {
@@ -458,7 +458,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
       const file = fileOf(session, chat, one.turnId);
       if (file !== undefined) {
         try { rmSync(file, { force: true }); }
-        catch (error) { ctx.log(`could not remove ${file}: ${reason(error)}`); }
+        catch (error) { ctx.log.error(`could not remove ${file}: ${reason(error)}`); }
       }
       return false;
     });
@@ -627,7 +627,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     for (const file of files) {
       if (file === undefined) continue;
       try { rmSync(file, { force: true }); }
-      catch (error) { ctx.log(`could not remove ${file}: ${reason(error)}`); }
+      catch (error) { ctx.log.error(`could not remove ${file}: ${reason(error)}`); }
     }
   };
 
@@ -647,7 +647,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
         mkdirSync(folder, { recursive: true, mode: 0o700 });
         copyFileSync(was, now);
       }
-      catch (error) { ctx.log(`could not copy ${was} to ${now}: ${reason(error)}`); }
+      catch (error) { ctx.log.error(`could not copy ${was} to ${now}: ${reason(error)}`); }
     }
     if (copied.size > 0) recordedAs.set(to, copied);
     for (const one of recordedFor(session, from, turns)) record(session, to, one);
@@ -659,7 +659,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     for (const folder of [folderOf(session, chat), recordOf(session, chat)]) {
       if (folder === undefined) continue;
       try { rmSync(folder, { recursive: true, force: true }); }
-      catch (error) { ctx.log(`could not remove ${folder}: ${reason(error)}`); }
+      catch (error) { ctx.log.error(`could not remove ${folder}: ${reason(error)}`); }
     }
   };
 
@@ -675,7 +675,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
       for (const name of readdirSync(was)) renameSync(join(was, name), join(now, name));
       rmSync(was, { recursive: true, force: true });
     }
-    catch (error) { ctx.log(`could not move ${was} to ${now}: ${reason(error)}`); }
+    catch (error) { ctx.log.error(`could not move ${was} to ${now}: ${reason(error)}`); }
   };
 
   const moveChatLocalTurns = (from: string, to: string, chat: string): void => {
@@ -690,7 +690,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     let chats: string[];
     try { chats = readdirSync(turns); }
     catch (error) {
-      ctx.log(`could not read ${turns}: ${reason(error)}`);
+      ctx.log.error(`could not read ${turns}: ${reason(error)}`);
       return [];
     }
     return chats.flatMap((chat) => keptInFolder(join(turns, chat)).map((kept) => kept.turn));

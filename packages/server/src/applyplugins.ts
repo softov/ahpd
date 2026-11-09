@@ -2,6 +2,7 @@ import type { Agent, Alert, Host, HostHandlers, Loaded, PluginSpec, Route } from
 import { specsIn } from './install.js';
 import { runPlugins, sourceOf } from './plugins.js';
 import type { Planned, PluginSet } from './plugins.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * What one live change did, for the caller that asked for it.
@@ -44,7 +45,7 @@ export interface ApplyPluginsOptions {
    */
   host?(): Host | undefined;
   /** One line for each problem, as the daemon reports them. */
-  log?(message: string): void;
+  log?(message: string, level?: LogLevel): void;
   /**
    * The agents made from records, as the last fold took them.
    *
@@ -104,8 +105,8 @@ const unfixable = (ports: object, providers: object): boolean =>
  * The line goes to `log`, and the plugin's row gets an `error` alert a person
  * can read. The `ref` is the event, so a second throw at it replaces the first.
  */
-export const eventFailed = (set: PluginSet, log: (line: string) => void, type: 'listening' | 'stopping') => (line: string, by: string): void => {
-  log(line);
+export const eventFailed = (set: PluginSet, log: (line: string, level?: LogLevel) => void, type: 'listening' | 'stopping') => (line: string, by: string): void => {
+  log(line, 'error');
   const when = type === 'listening' ? 'when ahpd started' : 'when ahpd stopped it';
   set.alert(by, { level: 'error', ref: `event:${type}`, text: `This plugin failed ${when}, and the ahpd log has the details.` });
 };
@@ -119,7 +120,7 @@ export const applyPlugins = async (options: ApplyPluginsOptions): Promise<Applie
   const started: string[] = [];
   const trouble = (line: string): void => {
     problems.push(line);
-    options.log?.(line);
+    options.log?.(line, 'error');
   };
 
   if (options.noPlugins === true) {

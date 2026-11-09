@@ -7,6 +7,7 @@
 
 import type { Bag } from '@ahpd/sdk';
 import type { BackendOptions, PiBackend } from './backend.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * The title a pi conversation carries until something names it: empty, which
@@ -165,7 +166,7 @@ export interface PiOptions {
    */
   open?: (options: BackendOptions) => Promise<PiBackend>;
   /** Where a line for the daemon's log goes; the plugin hands the host's. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
 }
 
 /** One tool call inside a running turn, as far as the wire cares. */

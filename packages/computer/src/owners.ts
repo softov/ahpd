@@ -3,6 +3,7 @@ import { readJsonObject, writeJsonAtomic } from '@ahpd/sdk';
 import type { Owner } from '@ahpd/sdk';
 import type { Probe } from './devcontainer.js';
 import { ownerSaid } from './runtime.js';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * The halves of a machine that live beside the daemon's own configuration.
@@ -67,8 +68,8 @@ interface Entry {
 }
 
 /** One line, for a file that could not be read or written. */
-const complain = (log: (line: string) => void, what: string, why: unknown): void =>
-  log(`${what} ${OWNERS_FILE}: ${why instanceof Error ? why.message : String(why)}`);
+const complain = (log: (line: string, level?: LogLevel) => void, what: string, why: unknown): void =>
+  log(`${what} ${OWNERS_FILE}: ${why instanceof Error ? why.message : String(why)}`, 'error');
 
 /** The file itself. */
 const at = (configDir: string): string => join(configDir, OWNERS_FILE);
@@ -130,7 +131,7 @@ const entry = (said: unknown): Entry | undefined => {
  * over. A caller that only asks may take both for nothing; one that writes has
  * to know which it has.
  */
-const read = (configDir: string, log: (line: string) => void): Record<string, Entry> | undefined => {
+const read = (configDir: string, log: (line: string, level?: LogLevel) => void): Record<string, Entry> | undefined => {
   const outcome = readJsonObject(at(configDir));
   // No file is a file with no entries, which is every host that has not
   // written one yet.
@@ -161,10 +162,10 @@ const read = (configDir: string, log: (line: string) => void): Record<string, En
  * them has to remember: a write is the whole file, and one made over a file
  * nobody could read would drop every machine it names.
  */
-const writable = (configDir: string, log: (line: string) => void): Record<string, Entry> | undefined => {
+const writable = (configDir: string, log: (line: string, level?: LogLevel) => void): Record<string, Entry> | undefined => {
   const held = read(configDir, log);
   if (held !== undefined) return held;
-  log(`not writing ${at(configDir)}: it is there and could not be read, so the records it holds would go with the write`);
+  log(`not writing ${at(configDir)}: it is there and could not be read, so the records it holds would go with the write`, 'error');
   return undefined;
 };
 
@@ -176,7 +177,7 @@ const writable = (configDir: string, log: (line: string) => void): Record<string
  * dropped: the machine is already made, and failing the create over a record of
  * who made it would be worse than the record.
  */
-const write = (configDir: string, held: Record<string, Entry>, log: (line: string) => void): void => {
+const write = (configDir: string, held: Record<string, Entry>, log: (line: string, level?: LogLevel) => void): void => {
   const path = at(configDir);
   try {
     // 0600, as the daemon's own records are: who owns a machine is not
@@ -190,7 +191,7 @@ const write = (configDir: string, held: Record<string, Entry>, log: (line: strin
 };
 
 /** Who a machine is recorded as belonging to, or nothing when it is not in the file. */
-export const ownedOf = (configDir: string, id: string, log: (line: string) => void): Owned | undefined => {
+export const ownedOf = (configDir: string, id: string, log: (line: string, level?: LogLevel) => void): Owned | undefined => {
   const held = read(configDir, log)?.[id];
   return held?.owner === undefined ? undefined : {
     owner: held.owner,
@@ -208,7 +209,7 @@ export const ownedOf = (configDir: string, id: string, log: (line: string) => vo
  * left exactly as it is, which is what a machine a session made earlier is
  * charged to.
  */
-export const claimOwned = (configDir: string, id: string, said: Owned, log: (line: string) => void): void => {
+export const claimOwned = (configDir: string, id: string, said: Owned, log: (line: string, level?: LogLevel) => void): void => {
   const held = writable(configDir, log);
   if (held === undefined) return;
   if (held[id]?.owner !== undefined) return;
@@ -224,7 +225,7 @@ export const claimOwned = (configDir: string, id: string, said: Owned, log: (lin
  * makes it listed and inspected like any other machine, under the person whose
  * connect adopted it.
  */
-export const adoptedOf = (configDir: string, log: (line: string) => void): string[] =>
+export const adoptedOf = (configDir: string, log: (line: string, level?: LogLevel) => void): string[] =>
   Object.entries(read(configDir, log) ?? {})
     .flatMap(([id, held]) => held.adopted === true ? [id] : []);
 
@@ -243,7 +244,7 @@ export const claimAdopted = (
   configDir: string,
   id: string,
   said: Partial<Owned>,
-  log: (line: string) => void,
+  log: (line: string, level?: LogLevel) => void,
 ): void => {
   const held = writable(configDir, log);
   if (held === undefined) return;
@@ -256,7 +257,7 @@ export const claimAdopted = (
  * What one userEnvProbe run found for a machine, or nothing when this file has
  * none for it.
  */
-export const probeOf = (configDir: string, id: string, log: (line: string) => void): Probe | undefined =>
+export const probeOf = (configDir: string, id: string, log: (line: string, level?: LogLevel) => void): Probe | undefined =>
   read(configDir, log)?.[id]?.probe;
 
 /**
@@ -271,7 +272,7 @@ export const keepProbe = (
   configDir: string,
   id: string,
   probe: Probe,
-  log: (line: string) => void,
+  log: (line: string, level?: LogLevel) => void,
 ): void => {
   const held = writable(configDir, log);
   if (held === undefined) return;
@@ -282,7 +283,7 @@ export const keepProbe = (
  * The vault-named needs a machine was made with, or nothing when this file has
  * none for it: a machine made with none, or made before they were recorded.
  */
-export const madeNeedsOf = (configDir: string, id: string, log: (line: string) => void): MadeNeed[] | undefined =>
+export const madeNeedsOf = (configDir: string, id: string, log: (line: string, level?: LogLevel) => void): MadeNeed[] | undefined =>
   read(configDir, log)?.[id]?.needs;
 
 /**
@@ -294,7 +295,7 @@ export const keepMadeNeeds = (
   configDir: string,
   id: string,
   needs: readonly MadeNeed[],
-  log: (line: string) => void,
+  log: (line: string, level?: LogLevel) => void,
 ): void => {
   const held = writable(configDir, log);
   if (held === undefined) return;
@@ -307,7 +308,7 @@ export const keepMadeNeeds = (
 };
 
 /** Forget a machine, which is what its being removed means. */
-export const forgetOwned = (configDir: string, id: string, log: (line: string) => void): void => {
+export const forgetOwned = (configDir: string, id: string, log: (line: string, level?: LogLevel) => void): void => {
   const held = writable(configDir, log);
   if (held === undefined) return;
   if (held[id] === undefined) return;

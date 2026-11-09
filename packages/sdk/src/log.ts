@@ -18,11 +18,13 @@ export const LOG_LEVELS: readonly LogLevel[] = ['trace', 'debug', 'info', 'warn'
 export const LOG_SEVERITY: Readonly<Record<LogLevel, number>> = { trace: 1, debug: 5, info: 9, warn: 13, error: 17 };
 
 /**
- * A log: called as a function it writes at info, and each method writes at its
- * own level, as VS Code's `ILogService` is called.
+ * A log: each method writes at its own level, as VS Code's `ILogService` is
+ * called, and called as a function it writes at the level given, info when none
+ * is, as VS Code's `ILogger.log` takes one. A function form is what lets a
+ * module that is handed a plain `(line) => void` pass a line's level through.
  */
 export interface Logger {
-  (line: string): void;
+  (line: string, level?: LogLevel): void;
   trace(line: string): void;
   debug(line: string): void;
   info(line: string): void;
@@ -44,7 +46,7 @@ export type LogWrite = (line: string, level: LogLevel) => void;
 export const loggerOf = (write: LogWrite | ((line: string) => void) | Logger): Logger => {
   if (isLogger(write)) return write;
   const to = write as LogWrite;
-  const logger = ((line: string) => { to(line, 'info'); }) as Logger;
+  const logger = ((line: string, level: LogLevel = 'info') => { to(line, level); }) as Logger;
   for (const level of LOG_LEVELS) logger[level] = (line: string) => { to(line, level); };
   return logger;
 };

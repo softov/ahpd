@@ -61,6 +61,7 @@ import type { BackgroundTask } from '../types/background.js';
 import type { Bag } from '../types/common.js';
 import type { ComputerPort, HandedAgent, HandedRecord, NestedHost, NestedStarted } from '../types/computers.js';
 import type { Chosen, MessageAttachment, MessageFrom, Session, SessionChannel, SteeringMessage, SubagentChat } from '../types/session.js';
+import type { LogLevel } from '../log.js';
 
 /** How many of the inner host's own lines are kept for a failure's sentence. */
 const TAIL = 12;
@@ -162,7 +163,7 @@ export interface NestedOptions {
    */
   start?: (asked: NestedAsked) => NestedHost | NestedStarted | undefined | Promise<NestedHost | NestedStarted | undefined>;
   /** One line worth keeping. Nothing is logged without one. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
   /**
    * What the session does when a host that `start` answered goes while it is ready.
    *
@@ -574,7 +575,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     // A session that ended carries nothing: the host answers a turn on it with
     // the sentence `ended` gives, before the turn would reach this session.
     if (closed || ended !== undefined) {
-      log(`${provider} in computer://${id}: ${String(action.type)} was not carried: ${ended ?? 'the session has closed'}`);
+      log(`${provider} in computer://${id}: ${String(action.type)} was not carried: ${ended ?? 'the session has closed'}`, 'warn');
       return;
     }
     gate(() => {
@@ -583,7 +584,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         client?.dispatch(to, action as unknown as StateAction);
       }
       catch (error) {
-        log(`${provider}: could not reach the host inside computer://${id}: ${reason(error)}`);
+        log(`${provider}: could not reach the host inside computer://${id}: ${reason(error)}`, 'error');
         unstarted(action, `${provider}'s host inside computer://${id} could not be reached: ${reason(error)}`);
       }
     });
@@ -688,7 +689,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     ready = false;
     exited = false;
     resuming = true;
-    log(`${provider} in computer://${id} lost the host it was running on${why === '' ? '' : ` (${why})`}; opening the session again there`);
+    log(`${provider} in computer://${id} lost the host it was running on${why === '' ? '' : ` (${why})`}; opening the session again there`, 'warn');
     try {
       await bringUp();
     }
@@ -767,7 +768,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         }
       }
       catch (error) {
-        log(`${provider} in computer://${id}: could not copy the terminal ${inner}: ${reason(error)}`);
+        log(`${provider} in computer://${id}: could not copy the terminal ${inner}: ${reason(error)}`, 'error');
       }
     })();
     return copy.uri;
@@ -875,7 +876,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     let watched: Awaited<ReturnType<AhpClient['subscribe']>>;
     try { watched = await held.subscribe(inner); }
     catch (error) {
-      log(`${provider} in computer://${id}: could not read the worker chat ${inner}: ${reason(error)}`);
+      log(`${provider} in computer://${id}: could not read the worker chat ${inner}: ${reason(error)}`, 'error');
       return;
     }
     if (ended !== undefined || closed) return;
@@ -919,7 +920,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       catch { /* the session's own subscriptions say why it ended */ }
     }
     catch (error) {
-      log(`${provider} in computer://${id}: the worker chat ${inner} could not be opened: ${reason(error)}`);
+      log(`${provider} in computer://${id}: the worker chat ${inner} could not be opened: ${reason(error)}`, 'error');
     }
   };
 
@@ -992,7 +993,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         return answer?.stopped === true;
       }
       catch (error) {
-        log(`${provider} in computer://${id}: could not stop ${taskId} inside: ${reason(error)}`);
+        log(`${provider} in computer://${id}: could not stop ${taskId} inside: ${reason(error)}`, 'error');
         return false;
       }
     };
@@ -1039,7 +1040,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     if (channel === 'session' && CATALOGUE.has(String(action.type)) && workers.has(String(action.chat ?? ''))) return undefined;
     const stray = channel === 'session' && CATALOGUE.has(String(action.type)) ? strayIn(action) : undefined;
     if (stray !== undefined) {
-      if (!unserved.has(stray)) log(`${provider} in computer://${id}: ${stray} is a chat of the host inside, which this host does not serve`);
+      if (!unserved.has(stray)) log(`${provider} in computer://${id}: ${stray} is a chat of the host inside, which this host does not serve`, 'warn');
       unserved.add(stray);
       return undefined;
     }
@@ -1075,7 +1076,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
          * out here said and the host inside would not start ends in an error.
          */
         if (rejectionReason !== undefined) {
-          log(`${provider} in computer://${id}: the host inside refused ${action.type}: ${rejectionReason}`);
+          log(`${provider} in computer://${id}: the host inside refused ${action.type}: ${rejectionReason}`, 'warn');
           if (answering !== undefined) start.answer?.(answering.channel, served(channel, action as unknown as Bag) ?? action as unknown as Bag, answering.origin, rejectionReason);
           else if (ours) unstarted(action as unknown as Bag, rejectionReason);
           continue;
@@ -1115,7 +1116,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
           }
         }
         catch (error) {
-          log(`${provider}: kept the inner ${channel} action ${action.type} out of the snapshot: ${reason(error)}`);
+          log(`${provider}: kept the inner ${channel} action ${action.type} out of the snapshot: ${reason(error)}`, 'warn');
         }
         if (channel === 'chat') {
           if (action.type === 'chat/turnStarted') turn = action.turnId;
@@ -1141,7 +1142,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       for await (const event of subscription) {
         if (closed || event.type !== 'action' || root === undefined) continue;
         try { root = rootReducer(root, event.params.action as RootAction); }
-        catch (error) { log(`${provider}: kept the inner root action ${event.params.action.type} out of the snapshot: ${reason(error)}`); }
+        catch (error) { log(`${provider}: kept the inner root action ${event.params.action.type} out of the snapshot: ${reason(error)}`, 'warn'); }
       }
     }
     catch { /* the session's own subscriptions say why it ended */ }
@@ -1160,7 +1161,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         if (event.type !== 'action') continue;
         const { action, origin, rejectionReason } = event.params;
         if (rejectionReason !== undefined) {
-          log(`${provider} in computer://${id}: the host inside refused ${action.type}: ${rejectionReason}`);
+          log(`${provider} in computer://${id}: the host inside refused ${action.type}: ${rejectionReason}`, 'warn');
           continue;
         }
         try {
@@ -1169,7 +1170,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
             : canvasReducer(relay.state as unknown as CanvasState, action as CanvasAction)) as unknown as Bag;
         }
         catch (error) {
-          log(`${provider}: kept the inner ${relay.kind} action ${action.type} out of the snapshot: ${reason(error)}`);
+          log(`${provider}: kept the inner ${relay.kind} action ${action.type} out of the snapshot: ${reason(error)}`, 'warn');
         }
         if (origin?.clientId !== clientId) start.emitOn?.(outer, outward(action) as Bag);
       }
@@ -1279,7 +1280,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
      * unanswered or unknown.
      */
     held.setServerRequestHandler(async (method: string) => {
-      log(`${provider} in computer://${id}: the host inside asked for ${method}, which this host does not serve it`);
+      log(`${provider} in computer://${id}: the host inside asked for ${method}, which this host does not serve it`, 'warn');
       throw new Error(`this host publishes no resources to the host inside computer://${id}, so ${method} is not answered`);
     });
     held.connect();
@@ -1345,7 +1346,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     if (!resuming) await make();
     const lead = await held.subscribe(innerSession).catch(async (error: unknown) => {
       if (!resuming || !(error instanceof RpcError) || error.code !== NO_AGENT) throw error;
-      log(`the host inside computer://${id} holds no session ${sessionId} to resume, so one was made`);
+      log(`the host inside computer://${id} holds no session ${sessionId} to resume, so one was made`, 'warn');
       await make();
       return await held.subscribe(innerSession);
     });
@@ -1397,7 +1398,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     // And each changeset and canvas a client out here watches, from the host now running the session.
     for (const [outer, relay] of relays) {
       relay.ready = follow(outer, relay, true);
-      relay.ready.catch((error: unknown) => { log(`${provider} in computer://${id}: could not follow ${relay.inner} again: ${reason(error)}`); });
+      relay.ready.catch((error: unknown) => { log(`${provider} in computer://${id}: could not follow ${relay.inner} again: ${reason(error)}`, 'error'); });
     }
     ready = true;
     halted = undefined;
@@ -1584,7 +1585,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
           if (origin !== undefined && sent !== undefined) answers.set(sent.clientSeq, { channel, origin });
         }
         catch (error) {
-          log(`${provider}: could not reach the host inside computer://${id}: ${reason(error)}`);
+          log(`${provider}: could not reach the host inside computer://${id}: ${reason(error)}`, 'error');
           if (origin !== undefined) start.answer?.(channel, action, origin, `${provider}'s host inside computer://${id} could not be reached: ${reason(error)}`);
         }
       });
@@ -1775,7 +1776,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         return true;
       }
       catch (error) {
-        log(`${provider} in computer://${id}: the host inside did not take the token for ${resource}: ${reason(error)}`);
+        log(`${provider} in computer://${id}: the host inside did not take the token for ${resource}: ${reason(error)}`, 'error');
         return false;
       }
     },
@@ -1823,7 +1824,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
          */
         if (!removing && host === undefined) {
           const settled = await bounded(starting.then(() => true, () => true), HANDOVER_WAIT);
-          if (settled !== true) log(`${provider}: the host inside computer://${id} had not started ${HANDOVER_WAIT}ms after this session was closed, and it is started again without it`);
+          if (settled !== true) log(`${provider}: the host inside computer://${id} had not started ${HANDOVER_WAIT}ms after this session was closed, and it is started again without it`, 'warn');
         }
         const held = client;
         /*
@@ -1855,7 +1856,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
          */
         if (!removing && host !== undefined) {
           const goneYet = await bounded(gone.then(() => true), HANDOVER_WAIT);
-          if (goneYet !== true) log(`${provider}: the host inside computer://${id} is still there ${HANDOVER_WAIT}ms after it was stopped, and it is started again without it`);
+          if (goneYet !== true) log(`${provider}: the host inside computer://${id} is still there ${HANDOVER_WAIT}ms after it was stopped, and it is started again without it`, 'warn');
         }
       })();
       return closing;
@@ -1876,7 +1877,7 @@ export interface NestedDeleteAsked {
   /** The session's port, which is where the host inside is started. */
   computers?: ComputerPort;
   /** One line worth keeping, for the copy that could not be reached. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
 }
 
 /**

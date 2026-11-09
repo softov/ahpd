@@ -1,3 +1,4 @@
+import type { LogLevel } from '@ahpd/sdk';
 /**
  * The models a Claude harness offers, when its operator names them.
  *
@@ -118,7 +119,7 @@ export const tokenOf = (key: ModelKey | undefined): string | undefined => {
 /** One source's models; nothing, and a line said, when the endpoint fails. */
 const fetched = async (
   entry: ModelSource,
-  log: (line: string) => void,
+  log: (line: string, level?: LogLevel) => void,
   get: typeof fetch,
 ): Promise<OfferedModel[]> => {
   const token = tokenOf(entry.key);
@@ -136,7 +137,7 @@ const fetched = async (
     // A fetch layer may quote what it was handed, so the token never reaches the
     // line even when it is in the error's own words.
     const said = error instanceof Error ? error.message : String(error);
-    log(`models from ${entry.fetch} could not be read: ${token === undefined || token === '' ? said : said.replaceAll(token, '<redacted>')}`);
+    log(`models from ${entry.fetch} could not be read: ${token === undefined || token === '' ? said : said.replaceAll(token, '<redacted>')}`, 'error');
     return [];
   }
 };
@@ -148,7 +149,7 @@ const fetched = async (
 export const ownModels = async (
   models: readonly ModelEntry[] = [],
   sources: readonly ModelSource[] = [],
-  log: (line: string) => void = () => {},
+  log: (line: string, level?: LogLevel) => void = () => {},
   get: typeof fetch = fetch,
 ): Promise<OfferedModel[]> => {
   const lists = await Promise.all([

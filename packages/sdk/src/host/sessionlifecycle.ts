@@ -183,13 +183,13 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
       else {
         if (ctx.pullRequestLookup === 'url' && !saidNoUrl) {
           saidNoUrl = true;
-          log('merged sessions: the GitHub port cannot look a pull request up by its URL, so it is asked by branch');
+          log.warn('merged sessions: the GitHub port cannot look a pull request up by its URL, so it is asked by branch');
         }
         found = await byBranch(row, dir);
       }
     }
     catch (error) {
-      log(`merged sessions: GitHub did not answer for ${row.resource}: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`merged sessions: GitHub did not answer for ${row.resource}: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
     }
     if (found === undefined) return undefined;
@@ -245,7 +245,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
       await ctx.removeSession(row.resource);
     }
     catch (error) {
-      log(`could not delete ${row.resource}: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`could not delete ${row.resource}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
     log(`deleted ${row.resource}: archived at ${at}, its pull requests are merged (${related.map((one) => one.url).join(', ')})`);
@@ -289,7 +289,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
       do {
         chained = false;
         await run().catch((error: unknown) => {
-          log(`merged sessions: ${error instanceof Error ? error.message : String(error)}`);
+          log.error(`merged sessions: ${error instanceof Error ? error.message : String(error)}`);
         });
       } while (chained && !ctx.closed);
     })();

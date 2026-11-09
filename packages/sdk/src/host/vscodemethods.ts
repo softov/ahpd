@@ -308,13 +308,13 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
       }
       const failed = await port.commit(held.path, ARCHIVE_COMMIT_MESSAGE, held.linked).then(() => undefined, reason);
       if (failed !== undefined || !await clean()) {
-        log(`kept ${held.path}: ${failed === undefined ? 'it still has changes after the commit' : `could not commit its changes: ${failed}`}`);
+        log.warn(`kept ${held.path}: ${failed === undefined ? 'it still has changes after the commit' : `could not commit its changes: ${failed}`}`);
         return false;
       }
     }
     return port.remove(held.repository, held.path, undefined, held.linked).then(
       () => { log(`removed ${held.path} for ${handle}, keeping ${held.branch ?? held.base}`); return true; },
-      (error: unknown) => { log(`kept ${held.path}: ${reason(error)}`); return false; },
+      (error: unknown) => { log.warn(`kept ${held.path}: ${reason(error)}`); return false; },
     );
   };
 
@@ -417,7 +417,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
         ...(held.linked.length > 0 ? { symlink: held.linked } : {}),
       })
         .then(() => { log(`put ${held.path} back on ${held.branch ?? ''} for ${handle}`); })
-        .catch((error: unknown) => { log(`could not put ${held.path} back: ${reason(error)}`); });
+        .catch((error: unknown) => { log.error(`could not put ${held.path} back: ${reason(error)}`); });
       return {};
     },
     /*
@@ -637,7 +637,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
       if (end !== undefined) {
         setTimeout(() => {
           Promise.resolve().then(end).catch((error: unknown) => {
-            log(`shutdown did not end the process: ${error instanceof Error ? error.message : String(error)}`);
+            log.warn(`shutdown did not end the process: ${error instanceof Error ? error.message : String(error)}`);
           });
         }, 0);
       }
@@ -821,7 +821,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
         // had begun, and the name is free again.
         conn.containers.delete(one.connectionId);
         try { await launcher.disconnect(one.connectionId); } catch { /* already gone */ }
-        log(`dev container ${one.connectionId} failed: ${reason(error)}`);
+        log.error(`dev container ${one.connectionId} failed: ${reason(error)}`);
         throw error;
       }
       if (!conn.alive) {

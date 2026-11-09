@@ -17,6 +17,7 @@
 import type { Bag } from '../types/common.js';
 import type { ShellCommandResult, ShellType } from '../types/shells.js';
 import type { Terminal } from '../types/terminals.js';
+import type { LogLevel } from '../log.js';
 
 /**
  * The most output a command result hands a model, in characters.
@@ -181,7 +182,7 @@ export interface ShellCommandAsk {
   untilItEnds?: boolean;
   /** Hear each action the terminal sends, and answer the stop. */
   listen(onAction: (action: Bag) => void): () => void;
-  log(message: string): void;
+  log(message: string, level?: LogLevel): void;
   /**
    * The command ended while still running, with what the shell will say when
    * it is over: the manager keeps the shell busy until then.
@@ -331,7 +332,7 @@ export async function executeShellCommand(asked: ShellCommandAsk): Promise<Shell
     }));
     if (asked.timeoutMs !== undefined) {
       const timer = setTimeout(() => {
-        log(`the command in ${terminal.uri} ran past ${String(asked.timeoutMs)} ms`);
+        log(`the command in ${terminal.uri} ran past ${String(asked.timeoutMs)} ms`, 'warn');
         finish({ status: 'timeout', output: partial(commandId) });
       }, asked.timeoutMs);
       stops.push(() => { clearTimeout(timer); });
@@ -348,7 +349,7 @@ export async function executeShellCommand(asked: ShellCommandAsk): Promise<Shell
      */
     if (asked.untilItEnds !== true) void terminal.whenAltBuffer().then(() => {
       if (done || !terminal.isInAltBuffer()) return;
-      log(`the command in ${terminal.uri} entered the alternate screen`);
+      log(`the command in ${terminal.uri} entered the alternate screen`, 'debug');
       finish({ status: 'altBuffer', output: '' });
     });
     // A shell that exited while it was waited on sends no exit again, and

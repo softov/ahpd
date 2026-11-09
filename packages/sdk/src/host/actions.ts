@@ -409,7 +409,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         if (rootConfig.showExternalSessions !== showing) void ctx.reconcileExternalSessions();
         // A merged sessions key moved: the pass runs now, with the new days.
         if (Object.prototype.hasOwnProperty.call(config, AUTO_ARCHIVE_KEY) || Object.prototype.hasOwnProperty.call(config, AUTO_DELETE_KEY)) ctx.scheduleSessionLifecycle();
-        log(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
+        log.debug(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
         /*
          * Said back whole, like every other action a client originates:
          * nothing in a client applies its own dispatch, and a second client

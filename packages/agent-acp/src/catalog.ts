@@ -573,7 +573,7 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
       const nextCursor = page.nextCursor ?? undefined;
       if (nextCursor === undefined) break;
       if (seenCursors.has(nextCursor) || pages >= pagesMost) {
-        options.log?.(`${provider}: session/list stopped before the end of the catalogue after ${sessions.length} sessions (at most ${pagesMost} pages); some sessions may be missing`);
+        options.log?.(`${provider}: session/list stopped before the end of the catalogue after ${sessions.length} sessions (at most ${pagesMost} pages); some sessions may be missing`, 'warn');
         break;
       }
       seenCursors.add(nextCursor);
@@ -586,7 +586,7 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
   }
   catch (error) {
     dropListing(options, held);
-    options.log?.(`${provider}: session/list failed: ${error instanceof Error ? error.message : String(error)}`);
+    options.log?.(`${provider}: session/list failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
     throw error;
   }
   finally {

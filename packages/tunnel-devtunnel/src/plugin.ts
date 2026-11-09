@@ -148,7 +148,7 @@ const throughHost = (host: PluginHost): {
     check: (id) => {
       void connection()
         .then((conn) => conn.request('x-ahpd/connectors/check', { id }))
-        .catch((error: unknown) => { host.log(`${name}: the host did not check connector ${id}: ${reason(error)}`); });
+        .catch((error: unknown) => { host.log.warn(`${name}: the host did not check connector ${id}: ${reason(error)}`); });
     },
   };
 };
@@ -177,7 +177,7 @@ export const apply: Plugin['apply'] = (plugin, options) => {
   const through = throughHost(plugin);
   plugin.registerAdapter(devtunnelAdapter(tunnels, {
     allowAccountChange,
-    log: (line) => { plugin.log(line); },
+    log: (line, level) => { plugin.log(line, level); },
     secret: through.secret,
     check: through.check,
   }));

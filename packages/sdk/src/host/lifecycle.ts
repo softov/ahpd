@@ -471,7 +471,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         await port.remove(one.repository, one.path, one.branch, linked)
           .then(() => { log(`removed ${one.path}`); })
           .catch((error: unknown) => {
-            log(`kept ${one.path}: ${error instanceof Error ? error.message : String(error)}`);
+            log.warn(`kept ${one.path}: ${error instanceof Error ? error.message : String(error)}`);
           });
       })();
     }
@@ -628,7 +628,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       let machine: SessionMachine | undefined;
       if (ran !== undefined) {
         if (options.computers === undefined) {
-          log(`${ran.session} asked for computer://${ran.id}, and this host has no computer plugin, so nothing of it there was deleted`);
+          log.warn(`${ran.session} asked for computer://${ran.id}, and this host has no computer plugin, so nothing of it there was deleted`);
           return undefined;
         }
         machine = { id: ran.id, computers: computersFor(options.computers, agent.provider, ran.session, ran.owner) };
@@ -637,7 +637,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       return undefined;
     }
     catch (error) {
-      log(`could not delete ${uri} from ${agent.provider}: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`could not delete ${uri} from ${agent.provider}: ${error instanceof Error ? error.message : String(error)}`);
       return error;
     }
   };
@@ -690,7 +690,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const handed = own === undefined ? await options.handedAgent?.(record.provider).catch(() => undefined) : undefined;
     const plugin = own ?? handed?.plugin;
     if (plugin === undefined) {
-      log(`${record.inner} is inside computer://${record.machine}, and this host does not know which plugin serves ${record.provider}, so nothing was deleted there`);
+      log.warn(`${record.inner} is inside computer://${record.machine}, and this host does not know which plugin serves ${record.provider}, so nothing was deleted there`);
       return;
     }
     await deleteNested({
@@ -731,12 +731,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (acting === undefined) return;
     if (typeof acting === 'string') {
       if (acting.startsWith('root:') || kept.owner(idOf(uri)) === acting) return;
-      log(`${acting} tried to delete ${uri}, which is not theirs`);
+      log.warn(`${acting} tried to delete ${uri}, which is not theirs`);
       throw new RpcError(-32009, "Only the session's owner can delete it.");
     }
     if (kept.owner(idOf(uri)) === `user:${acting.id}`) return;
     if (acting.can('session:*')) return;
-    log(`${acting.id} tried to delete ${uri}, which is not theirs`);
+    log.warn(`${acting.id} tried to delete ${uri}, which is not theirs`);
     throw new RpcError(-32009, "Only the session's owner can delete it.");
   };
 
@@ -855,7 +855,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const scratch = workspacelessScratchDir(uri);
     if (scratch !== undefined && directory === scratch) {
       await rm(scratch, { recursive: true, force: true })
-        .catch((error: unknown) => log(`${uri}: its scratch folder ${scratch} was not removed: ${error instanceof Error ? error.message : String(error)}`));
+        .catch((error: unknown) => log.warn(`${uri}: its scratch folder ${scratch} was not removed: ${error instanceof Error ? error.message : String(error)}`));
     }
     // Every other client is told, because the session was theirs too.
     // `session`, which is the name the protocol gives it. Under
@@ -939,7 +939,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       await options.worktrees?.remove(was.repository, was.path, was.branch, linkedOf(uri))
         .then(() => { log(`removed ${was.path}`); })
         .catch((error: unknown) => {
-          log(`kept ${was.path}: ${error instanceof Error ? error.message : String(error)}`);
+          log.warn(`kept ${was.path}: ${error instanceof Error ? error.message : String(error)}`);
         });
     }
     const to = await isolated(uri, mine, from, before);
@@ -1173,7 +1173,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        */
       const failure = (error instanceof Error ? error.message : String(error)).replace(/\.+$/, '');
       const back = await ctx.wake(uri, ctx.defaultChatFor(uri)).catch((unopened: unknown) => {
-        log(`${uri} did not open again after its move failed: ${unopened instanceof Error ? unopened.message : String(unopened)}`);
+        log.error(`${uri} did not open again after its move failed: ${unopened instanceof Error ? unopened.message : String(unopened)}`);
         return undefined;
       });
       if (back !== undefined) {
@@ -1251,7 +1251,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     ctx.restarting.set(uri, held);
     try { await work; }
     catch (error) {
-      log(`${uri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`${uri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
       // Owed again to the next turn, which tries it again.
       if (sessions.has(uri)) ctx.relaunches.set(uri, due);
       throw error;
@@ -1324,7 +1324,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     ).then(
       () => { keepPlace(); log(`restarted ${chatUri}`); },
       (error: unknown) => {
-        log(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
+        log.error(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
       },
     );
@@ -1567,7 +1567,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   const runExclusive = (uri: string, step: () => Promise<void>): Promise<void> => {
     const id = idOf(uri);
     const next = (worktreeLocks.get(id) ?? Promise.resolve()).then(step).catch((error: unknown) => {
-      log(`worktree of ${uri}: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`worktree of ${uri}: ${error instanceof Error ? error.message : String(error)}`);
     });
     worktreeLocks.set(id, next);
     void next.then(() => { if (worktreeLocks.get(id) === next) worktreeLocks.delete(id); });
@@ -1678,14 +1678,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
           continue;
         }
         if (port.commit === undefined) {
-          log(`kept ${tree.path}: it has changes nobody committed, and this host cannot commit them`);
+          log.warn(`kept ${tree.path}: it has changes nobody committed, and this host cannot commit them`);
           continue;
         }
         if (sessions.has(uri) || !archivedNow(uri)) return;
         const failed = await port.commit(tree.path, ARCHIVE_COMMIT_MESSAGE, linked).then(() => undefined, (error: unknown) =>
           error instanceof Error ? error.message : String(error));
         if (failed !== undefined) {
-          log(`kept ${tree.path}: could not commit its changes: ${failed}`);
+          log.warn(`kept ${tree.path}: could not commit its changes: ${failed}`);
           continue;
         }
         if (!await clean()) {
@@ -1700,7 +1700,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       await port.remove(tree.repository, tree.path, undefined, linked)
         .then(() => { log(`removed ${tree.path} for the archived ${uri}, keeping ${tree.branch ?? ''}`); })
         .catch((error: unknown) => {
-          log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
+          log.warn(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
         });
     }
   });
@@ -1721,7 +1721,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     for (const tree of treesOf(uri)) {
       if (await present(tree.path)) continue;
       if (tree.branch === undefined) {
-        log(`could not put ${tree.path} back: it has no branch of its own`);
+        log.error(`could not put ${tree.path} back: it has no branch of its own`);
         continue;
       }
       await port.create({
@@ -1732,7 +1732,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       })
         .then(() => { log(`put ${tree.path} back on ${tree.branch ?? ''} for ${uri}`); })
         .catch((error: unknown) => {
-          log(`could not put ${tree.path} back: ${error instanceof Error ? error.message : String(error)}`);
+          log.error(`could not put ${tree.path} back: ${error instanceof Error ? error.message : String(error)}`);
         });
     }
   });
@@ -1829,10 +1829,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       return undefined;
     }
     const applicable = model !== undefined && (!unoffered || held?.backends.has(session.chatUri) !== true) ? model : undefined;
-    if (model !== undefined && applicable === undefined) log(`Chat ${session.chatUri} keeps its model: its agent ${provider} does not offer the turn's model ${model.id}`);
+    if (model !== undefined && applicable === undefined) log.warn(`Chat ${session.chatUri} keeps its model: its agent ${provider} does not offer the turn's model ${model.id}`);
     const { agent, ...sent } = from ?? {};
     const unchanged = (error: unknown): void => {
-      log(`${session.chatUri}: the agent was not changed: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`${session.chatUri}: the agent was not changed: ${error instanceof Error ? error.message : String(error)}`);
     };
     const send = (): Promise<void> | undefined => {
       if (stopped?.() === true) return undefined;

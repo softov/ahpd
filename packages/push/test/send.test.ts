@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,7 +124,7 @@ const node = (configDir: string, said: HostSays): Node => {
     configDir,
     ...(said.hasUsers === undefined ? {} : { hasUsers: said.hasUsers }),
     i18n: { pt, es },
-    log: (line: string) => { made.logged.push(line); },
+    log: loggerOf((line: string) => { made.logged.push(line); }),
     say: () => {},
     problem: (line: string) => { made.problems.push(line); },
     secret: async (name: string) => {

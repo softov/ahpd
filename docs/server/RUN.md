@@ -33,9 +33,9 @@ tail -f ~/.config/ahpd/daemon.log
 Each line of the log says when and how much it matters, as VS Code's logs do:
 
 ```
-2026-11-09 14:02:11.123 [info] plugin computer loaded
-2026-11-09 14:02:12.004 [warning] ahp-session:/one: the model gpt-x is not offered, so the chat keeps its own
-2026-11-09 14:02:15.310 [error] plugin tunnel-devtunnel failed to start: devtunnel was not found
+2026-11-09 14:02:11.123 [info] created ahp-session:/1f2e in /home/me/app
+2026-11-09 14:02:12.004 [warning] control: refused a request with the wrong token
+2026-11-09 14:02:15.310 [error] could not remove /home/me/.config/ahpd/outputs/1f2e: EBUSY: resource busy or locked
 ```
 
 The levels are `trace`, `debug`, `info`, `warning` and `error`. In a terminal the level is in colour: an error red, a warning yellow, trace and debug grey. `daemon.log` holds plain text, and `NO_COLOR=1` turns the colour off in a terminal too.

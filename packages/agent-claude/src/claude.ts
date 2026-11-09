@@ -19,6 +19,7 @@ import { fromEnvRef, machineAsked, refuseComputer } from '@ahpd/sdk';
 import { spawnInside } from './spawn.js';
 import type { Asked, SpawnedProcess } from './spawn.js';
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@ahpd/sdk';
+import type { LogLevel } from '@ahpd/sdk';
 
 /**
  * The host's Claude Code CLI, as the installer leaves it.
@@ -177,7 +178,7 @@ export interface ClaudeOptions {
   /** With either list, add them to the CLI's list rather than replace it. */
   keepCliModels?: boolean;
   /** Where a model list that could not be fetched is said. */
-  log?: (line: string) => void;
+  log?: (line: string, level?: LogLevel) => void;
   /**
    * The Claude logins this plugin keeps open, and whose agent this is.
    *

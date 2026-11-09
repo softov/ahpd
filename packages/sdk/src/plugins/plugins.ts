@@ -222,7 +222,7 @@ export async function eachPreset<T>(
       // they read: the line says why one entry went, the throw below names the
       // entries, and neither repeats the other's message.
       const line = `${name}: ${reason(error)}`;
-      if (log === true) host.log(line);
+      if (log === true) host.log.warn(line);
       host.problem(line);
       dropped.push(id);
     }
@@ -1369,7 +1369,7 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
         let stopped = false;
         opened().then(
           (one) => { if (!stopped) stop = one.watch(onChange); },
-          (error: unknown) => { context.log(`plugin ${by}: records ${name} cannot be watched: ${reason(error)}`); },
+          (error: unknown) => { context.log.error(`plugin ${by}: records ${name} cannot be watched: ${reason(error)}`); },
         );
         return () => {
           stopped = true;

@@ -119,13 +119,13 @@ describe('start, stop and status', () => {
     expect(began.code).toBe(0);
     spawned.push(recordOf().pid);
 
-    // Each line is stamped, so the time it was written is in front of it and
+    // Each line is stamped, so the time and the level are in front of it and
     // the stage is what is left. `daemon.ts` waits `READY_TIMEOUT_MS` for the
     // announcement, and a start that never reaches it is read from these: the
     // last stage in the log is the one that did not finish.
     const log = readFileSync(join(home, 'ahpd', 'daemon.log'), 'utf8');
     const stages = log.split('\n')
-      .map((one) => one.replace(/^\S+ /u, ''))
+      .map((one) => one.replace(/^\S+ \S+ \[\w+\] /u, ''))
       .filter((one) => one.startsWith('start: '));
     expect(stages).toEqual(['start: terminals', 'start: plugins', 'start: listen', 'start: listening', 'start: checks']);
     // And before it, since a stage line after the announcement would be about

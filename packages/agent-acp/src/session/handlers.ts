@@ -618,7 +618,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1739-L1748
      */
     if (ctx.mapping === undefined) {
-      ctx.options.log?.(`${ctx.provider}: refusing a permission with no turn running: ${request.toolCall.toolCallId}`);
+      ctx.options.log?.(`${ctx.provider}: refusing a permission with no turn running: ${request.toolCall.toolCallId}`, 'warn');
       return 'cancelled';
     }
     const offered = request.toolCall.kind === 'switch_mode' ? confirmationOptions(request.options) : [];
