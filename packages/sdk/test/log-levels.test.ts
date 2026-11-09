@@ -9,7 +9,7 @@
 
 import { expect, it } from 'vitest';
 import { createTelemetry } from '../src/host/telemetry.js';
-import { LOG_SEVERITY, loggerOf } from '../src/log.js';
+import { LOG_SEVERITY, levelIn, loggerOf } from '../src/log.js';
 import type { HostContext } from '../src/host/context.js';
 import type { LogEvent } from '../src/types/events.js';
 import type { LogLevel } from '../src/log.js';
@@ -78,4 +78,31 @@ it('makes a logger of a plain writer, and keeps a logger as it is', () => {
   plain('b');
   expect(lines).toEqual(['a', 'b']);
   expect(loggerOf(plain)).toBe(plain);
+});
+
+/*
+ * The level another program's line says it is: what an ACP server writes on its
+ * stderr, read so the line keeps its level in this host's log.
+ */
+it('reads a Rust line\'s level, and drops the time the server put on it', () => {
+  expect(levelIn('2026-11-09T16:18:54.636915Z  WARN chisel_agent::fd_binary: fd: managed install does not run; discarding it'))
+    .toEqual({ level: 'warn', text: 'chisel_agent::fd_binary: fd: managed install does not run; discarding it' });
+  expect(levelIn('2026-11-09T16:18:54.601709Z  INFO toolbox::tools::mcp: Connecting to MCP server \'tasker\'')?.level).toBe('info');
+});
+
+it('reads a level in brackets, a leading level word, logfmt and JSON', () => {
+  expect(levelIn('[ERROR] the socket closed')).toEqual({ level: 'error', text: 'the socket closed' });
+  expect(levelIn('2026-11-09 14:02:11.123 [warning] refused a request')).toEqual({ level: 'warn', text: 'refused a request' });
+  expect(levelIn('WARNING:root:no config')?.level).toBe('warn');
+  expect(levelIn('Error: Authentication required')).toEqual({ level: 'error', text: 'Authentication required' });
+  expect(levelIn('time=2026-11-09T16:18:54Z level=debug msg="tick"')?.level).toBe('debug');
+  expect(levelIn('{"level":40,"msg":"slow"}')?.level).toBe('warn');
+  expect(levelIn('{"level":"error","msg":"down"}')?.level).toBe('error');
+});
+
+it('says nothing about a line that names no level', () => {
+  expect(levelIn('Ripgrep is not available. Falling back to GrepTool.')).toBeUndefined();
+  expect(levelIn('Skipping project agents due to untrusted folder.')).toBeUndefined();
+  expect(levelIn('info about the folder')).toBeUndefined();
+  expect(levelIn('MCP server tasker is ready')).toBeUndefined();
 });

@@ -39,7 +39,7 @@ import type {
   SetSessionModeRequest,
   SetSessionModeResponse,
 } from '@agentclientprotocol/sdk';
-import { bag, isRecord, sdkVersion, str } from '@ahpd/sdk';
+import { bag, isRecord, levelIn, sdkVersion, str } from '@ahpd/sdk';
 import type { Account } from '@ahpd/sdk';
 import type { AcpConnection, AcpConnectionOptions } from './types.js';
 
@@ -240,6 +240,15 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2716
    */
   let partial = '';
+  /**
+   * One line of the server's stderr, in this host's log at the level the line
+   * says it is, without the time the server put on it, and at info when it
+   * says none.
+   */
+  const said = (line: string): void => {
+    const read = levelIn(line);
+    options.log?.(`${options.command} stderr: ${read?.text ?? line}`, read?.level ?? 'info');
+  };
   let stderr = Buffer.alloc(0);
   /** Whether the ring has dropped bytes, and so may hold half a line. */
   let stderrCut = false;
@@ -250,13 +259,13 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
     stderr = held.length > stderrBytes ? held.subarray(held.length - stderrBytes) : held;
     const lines = `${partial}${chunk}`.split('\n');
     partial = lines.pop() ?? '';
-    for (const line of lines) if (line.trim() !== '') options.log?.(`${options.command} stderr: ${line}`);
+    for (const line of lines) if (line.trim() !== '') said(line);
   });
   /** Settles when the server's stderr has been read to its end. */
   let readStderr: () => void = () => {};
   const drained = new Promise<void>((resolve) => { readStderr = resolve; });
   child.stderr.on('end', () => {
-    if (partial.trim() !== '') options.log?.(`${options.command} stderr: ${partial}`);
+    if (partial.trim() !== '') said(partial);
     partial = '';
     readStderr();
   });

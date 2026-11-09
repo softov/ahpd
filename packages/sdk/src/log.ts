@@ -54,3 +54,55 @@ export const loggerOf = (write: LogWrite | ((line: string) => void) | Logger): L
 /** Whether a log already has the methods of every level. */
 const isLogger = (log: unknown): log is Logger => typeof log === 'function'
   && LOG_LEVELS.every((level) => typeof (log as unknown as Record<string, unknown>)[level] === 'function');
+
+/** The words programs write for a level, by the level each one is here. */
+const WORDS: Readonly<Record<string, LogLevel>> = {
+  trace: 'trace', debug: 'debug', info: 'info', notice: 'info',
+  warn: 'warn', warning: 'warn', error: 'error', err: 'error', fatal: 'error', critical: 'error', crit: 'error', panic: 'error',
+};
+
+/** pino's numbered levels, which a JSON line may carry in place of a word. */
+const NUMBERED: Readonly<Record<number, LogLevel>> = { 10: 'trace', 20: 'debug', 30: 'info', 40: 'warn', 50: 'error', 60: 'error' };
+
+/** A time a program put at the front of its own line: ISO or spdlog's, with a zone or none. */
+const STAMP = String.raw`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?`;
+
+/** A level in brackets, or as a word after the program's own time: either case. */
+const LEADING = new RegExp(String.raw`^\s*(?:${STAMP}\s+)?(?:\[(\w+)\]|(\w+)(?=[:\s]))[:\s]\s*`, 'u');
+
+/** A level word that opens a line with no time before it: `WARN x`, `WARNING:x` or `Warning: x`, and not `info about`. */
+const BARE = /^\s*([A-Z]+(?=[:\s])|[A-Z][a-z]+(?=:))[:\s]\s*/u;
+
+/**
+ * The level a line another program wrote says it is, and the line without the
+ * time and the level it opened with.
+ *
+ * A server's stderr is a log of its own, and the common shapes say their level:
+ * Rust's `2026-11-09T16:18:54Z  WARN target: message`, `[WARN] message`,
+ * `Warning: message`, logfmt's `level=warn`, and a JSON line's `level`. A line
+ * that says none answers nothing, and its caller logs it at the level it
+ * chooses: a level read from the words of a sentence would be wrong too often.
+ */
+export const levelIn = (line: string): { level: LogLevel; text: string } | undefined => {
+  const trimmed = line.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed) as { level?: unknown };
+      const said = typeof parsed.level === 'number' ? NUMBERED[parsed.level] : typeof parsed.level === 'string' ? WORDS[parsed.level.toLowerCase()] : undefined;
+      if (said !== undefined) return { level: said, text: trimmed };
+    }
+    catch { /* not JSON after all; read on */ }
+  }
+  const stamped = new RegExp(`^\\s*${STAMP}\\s+`, 'u').test(trimmed);
+  const leading = LEADING.exec(trimmed);
+  const word = leading?.[1] ?? (stamped ? leading?.[2] : undefined);
+  const known = word === undefined ? undefined : WORDS[word.toLowerCase()];
+  if (leading !== null && known !== undefined) return { level: known, text: trimmed.slice(leading[0].length) };
+  const bare = BARE.exec(trimmed);
+  const plain = bare === null ? undefined : WORDS[(bare[1] as string).toLowerCase()];
+  if (bare !== null && plain !== undefined) return { level: plain, text: trimmed.slice(bare[0].length) };
+  const logfmt = /(?:^|\s)level=("?)(\w+)\1(?=\s|$)/u.exec(trimmed);
+  const field = logfmt === null ? undefined : WORDS[(logfmt[2] as string).toLowerCase()];
+  if (field !== undefined) return { level: field, text: trimmed };
+  return undefined;
+};

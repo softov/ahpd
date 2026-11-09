@@ -601,7 +601,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     if (ended !== undefined || closed) return;
     ended = message;
     halted = undefined;
-    log(`${provider} in computer://${id}: ${message}`);
+    log(`${provider} in computer://${id}: ${message}`, 'error');
     for (const relay of relays.values()) relay.refuse?.(message);
     start.emit('session', { type: 'session/creationFailed', error: { errorType: 'sessionStartFailed', message } });
     if (turn !== undefined) {
@@ -631,7 +631,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     if (ended !== undefined || halted !== undefined || closed) return;
     halted = message;
     ready = false;
-    log(`${provider} in computer://${id}: ${message}`);
+    log(`${provider} in computer://${id}: ${message}`, 'warn');
     for (const relay of relays.values()) relay.refuse?.(message);
     start.emit('session', { type: 'session/creationFailed', error: { errorType: 'sessionStartFailed', message } });
     if (turn !== undefined) {
