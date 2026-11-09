@@ -13,6 +13,7 @@ import { Status } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { ToolsEndpoint, ToolsServers } from '../../sdk/src/tools/server.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A client's tool, called by an ACP agent through the host's own MCP server.
@@ -43,12 +44,13 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
 }
 
 /** Let the subprocess's work finish, up to a point; the fixture never sleeps. */
-const until = async (check: () => boolean, times = 4000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 type Note = { channel: string; action: Record<string, unknown> };
@@ -657,7 +659,7 @@ it('answers the request with isError when nobody answers in time', async () => {
     't1',
     'client tool mrep=call-1=a__openFile={"path":"/a.txt"} mreq=a__openFile={"path":"/a.txt"}=-',
   );
-  await until(() => ended(p, chatUri), 8000);
+  await until(() => ended(p, chatUri));
 
   expect(results(p, chatUri)).toEqual([{
     isError: true,

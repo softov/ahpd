@@ -8,6 +8,7 @@ import type { JsonSchema } from '@cofold/commands';
 import { createHost } from '../../sdk/src/host.js';
 import { connectorsChannel } from '../../sdk/src/connectors/channel.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { applyPlugins, eventFailed, type Applied } from '../src/applyplugins.js';
 import { memoryAutomations } from '../../sdk/src/automations/automations.js';
 import { loadPlugins, pluginSet } from '../src/plugins.js';
@@ -50,12 +51,13 @@ const settle = async (times = 12): Promise<void> => {
 };
 
 /** Yield between looks until `done` says so, so a fast run is not timed by ticks. */
-const until = async (done: () => boolean, what: string, tries = 600): Promise<void> => {
-  for (let i = 0; i < tries; i++) {
+const until = async (done: () => boolean, what: string, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (done()) return;
     await new Promise((done) => { setTimeout(done, 1); });
   }
-  throw new Error(`${what} never happened`);
+  throw new Error(`${what} never happened in ${ms} ms`);
 };
 
 /** The file a plugin is loaded from, by the name it writes into its own log. */

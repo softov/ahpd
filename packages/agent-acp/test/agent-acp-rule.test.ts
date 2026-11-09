@@ -12,6 +12,7 @@ import { anyone, signIn } from './people.js';
 import type { Bag, HostTool } from '@ahpd/sdk';
 import type { ToolsServers } from '../../sdk/src/tools/server.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A tool the operator's rule makes ask every time, on an ACP session.
@@ -42,12 +43,13 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
 }
 
 /** Let the subprocess's work finish, up to a point; the fixture never sleeps. */
-const until = async (check: () => boolean, times = 4000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 type Note = { channel: string; action: Record<string, unknown> };

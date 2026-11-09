@@ -12,6 +12,7 @@ import { fileSessions } from '../../sdk/src/sessions/sessions.js';
 import { cofoldAgent } from '../src/index.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { HostTool } from '../../sdk/src/types/host.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A cofold turn reads its message's attachments.
@@ -52,12 +53,13 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
  * `partsOf` reads real bytes off the disk, so a turn here settles over a few
  * turns of the event loop rather than on the first one.
  */
-const until = async (check: () => boolean, times = 2000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 0); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** A fixed number of turns of the event loop, for work with nothing to watch. */

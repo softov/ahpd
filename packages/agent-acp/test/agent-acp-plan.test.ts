@@ -15,6 +15,7 @@ import { anyone, signIn } from './people.js';
 import type { PlanUpdateEvent } from '../../sdk/src/types/events.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A plan written by an ACP server, as the host hears it.
@@ -41,12 +42,13 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
 }
 
 /** Let the subprocess's work finish, up to a point; the fixture never sleeps. */
-const until = async (check: () => boolean, times = 2000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 type Note = { channel: string; action: Record<string, unknown> };
@@ -273,7 +275,7 @@ it('ends the turn as its backend says it when a plan update never settles', asyn
   const { client, peer: p, chatUri, heard } = await planning(true, true);
   begin(client, chatUri, 't1', 'plan it');
   await until(() => heard.length >= 2);
-  await until(() => finished(p, chatUri, 1), 1000);
+  await until(() => finished(p, chatUri, 1));
 
   // Nothing of the turn is said after its end: a call for a turn the protocol
   // has seen end is one no client draws.

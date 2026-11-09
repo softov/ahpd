@@ -6,6 +6,7 @@ import type { Peer } from '../../sdk/src/types/rpc.js';
 import { piAgent } from '../src/agent.js';
 import { piSession } from '../src/session.js';
 import { fakePi, root, streamed } from './fake-pi.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * Steering and stops, through the host, in a pi session.
@@ -19,12 +20,13 @@ import { fakePi, root, streamed } from './fake-pi.js';
  */
 
 /** Let a run's zero-delay work finish; nothing here waits on a real model. */
-const until = async (check: () => boolean, times = 2000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((done) => { setTimeout(done, 0); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 it('refuses to take back a steering message pi holds, and keeps it in the chat', async () => {

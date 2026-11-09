@@ -22,6 +22,7 @@ import type { HostOptions, HostTool } from '../../sdk/src/types/host.js';
 import type { MachineNeed } from '../../sdk/src/types/machine.js';
 import type { Usage, UsageEntry, UsageTotal } from '../../sdk/src/types/usage.js';
 import type { Vault } from '../../sdk/src/types/vault.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A machine on another box, reached over a scripted `ssh`.
@@ -159,12 +160,14 @@ const temp = (): string => (loose = mkdtempSync(join(tmpdir(), 'ahpd-ssh-')));
  */
 const realSetTimeout = setTimeout;
 const wait = (ms: number): Promise<void> => new Promise((resolve) => { realSetTimeout(resolve, ms); });
-const until = async (check: () => boolean, times = 1000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+/** By `performance.now()`, which no case here fakes: some fake `Date`, and a deadline on a still clock never comes. */
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = performance.now() + ms;
+  while (performance.now() < end) {
     if (check()) return;
     await wait(5);
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 // POSIX-only: the scripted ssh stands in for a Linux box by running the

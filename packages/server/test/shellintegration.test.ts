@@ -24,6 +24,7 @@ import { getShellIntegrationInjection, shellIntegrationOf } from '../src/shellin
 /** The port as the daemon builds it under its default `zshFolder`. */
 const shellIntegration = shellIntegrationOf('owned');
 import { pty } from '../src/pty.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /** The folder the scripts are in: this package's root, from `test` and from `dist` alike. */
 const scripts = fileURLToPath(new URL('../shellintegration', import.meta.url));
@@ -158,9 +159,10 @@ describe('a real shell given the integration', () => {
     return { terminal, seen };
   };
 
-  /** Wait for `what`, for a few seconds, and answer whether it came. */
+  /** Wait for `what`, until `WAIT_MS` by the clock, and answer whether it came. */
   const until = async (what: () => boolean): Promise<boolean> => {
-    for (let tries = 0; tries < 60; tries += 1) {
+    const end = Date.now() + WAIT_MS;
+    while (Date.now() < end) {
       if (what()) return true;
       await new Promise((resolve) => { setTimeout(resolve, 50); });
     }

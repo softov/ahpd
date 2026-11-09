@@ -17,6 +17,7 @@ import type { PluginView, ViewHandle } from '../src/types/plugin.js';
 import type { RecordCollection } from '../src/types/records.js';
 import type { Vault } from '../src/types/vault.js';
 import type { Icon } from '@microsoft/agent-host-protocol';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * The agents channel over a store in memory and a vault that is a map.
@@ -334,12 +335,13 @@ const as = async (host: Host, users: Users, id: string) => {
 };
 
 /** Wait until `check` holds, or give up: an action may land after the answer. */
-const until = async (check: () => boolean, times = 400): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((done) => { setTimeout(done, 5); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 it('puts a record, lists it ready, and answers with no config of another engine', async () => {

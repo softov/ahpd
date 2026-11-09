@@ -10,6 +10,7 @@ import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * How the computers port starts a whole host inside a machine.
@@ -65,12 +66,13 @@ const providerOf = (options: HostOptions) => options.resourceProviders?.computer
 type Bag = Record<string, any>;
 
 /** Wait for something the host does asynchronously, without a fixed sleep. */
-const until = async (check: () => boolean, times = 600): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((resolve) => { setTimeout(resolve, 5); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** A peer that keeps what the host told it, for the half that answers with a notification. */

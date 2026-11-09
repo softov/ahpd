@@ -18,6 +18,7 @@ import type { BackgroundTask, BackgroundTasks } from '../src/types/background.js
 import type { NestedHost } from '../src/sessions/nested.js';
 import type { Handler, Peer, Wire } from '../src/types/rpc.js';
 import { startedNow } from './support/started.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 const PROVIDER = 'cofold';
 const PLUGINS = ['@ahpd/agent-cofold'];
@@ -26,12 +27,13 @@ const REPO_ROOT = '/tmp/ahpd-nested-background';
 type Bag = Record<string, any>;
 
 /** Wait for something the proxy does asynchronously, without a fixed sleep. */
-const until = async (check: () => boolean, times = 600): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((resolve) => { setTimeout(resolve, 5); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** What a session emitted, in order, with the channel it came out on. */

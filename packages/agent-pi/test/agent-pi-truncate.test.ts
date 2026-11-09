@@ -12,6 +12,7 @@ import type { BackendOptions, PiBackend } from '../src/backend.js';
 import type { PiModel } from '../src/models.js';
 import { piSession } from '../src/session.js';
 import type { OpenPi } from '../src/session.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A truncation asked for by a client, through the host.
@@ -28,12 +29,13 @@ beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ahpd-pi-truncate-')); });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); forget(); });
 
 /** Let a run's zero-delay work finish; nothing here waits on a real model. */
-const until = async (check: () => boolean, times = 400): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((done) => { setTimeout(done, 0); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** A pi that ends every turn at once and records the truncation it was asked for. */

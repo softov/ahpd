@@ -8,6 +8,7 @@ import { echo } from '../../../examples/echo/agent.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import type { Agent } from '@ahpd/sdk';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A session in the middle of a restart.
@@ -29,9 +30,13 @@ beforeEach(() => { folder = mkdtempSync(join(tmpdir(), 'ahpd-restarting-')); });
 afterEach(async () => { await rm(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
 
 /** Ticks until this is true, or long enough that it plainly is not. */
-const until = async (wanted: () => boolean): Promise<void> => {
-  for (let i = 0; i < 500 && !wanted(); i++) await settle(2);
-  if (!wanted()) throw new Error('still waiting');
+const until = async (wanted: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (wanted()) return;
+    await settle(2);
+  }
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 it('keeps the record of a session a listing finds mid-restart', async () => {

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createClaudeCustomizationWatcher } from '../src/session/watch.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * The watcher of a session's Claude folders, on real folders.
@@ -27,9 +28,10 @@ const fresh = (): string => {
 
 const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
-/** Wait until `count()` is at least `want`, or until a few seconds passed. */
+/** Wait until `count()` is at least `want`, or until `WAIT_MS` passed by the clock. */
 async function until(count: () => number, want: number): Promise<void> {
-  for (let waited = 0; waited < 5000 && count() < want; waited += 50) await pause(50);
+  const end = Date.now() + WAIT_MS;
+  while (count() < want && Date.now() < end) await pause(50);
 }
 
 /** Watch `roots`, counting the calls, after the watch had time to start. */
