@@ -29,7 +29,7 @@
     "id": "claude",
     "name": "Claude",
     "kind": "npm",
-    "version": "0.99.1",
+    "version": "0.101.0",
     "requires": ["node"],
     "packages": [
       "@agentclientprotocol/claude-agent-acp",
@@ -41,7 +41,7 @@
     "id": "codex",
     "name": "Codex",
     "kind": "npm",
-    "version": "2.5.0",
+    "version": "2.6.0",
     "requires": ["node"],
     "packages": ["@agentclientprotocol/codex-acp"],
     "bin": ["codex-acp"]
@@ -50,7 +50,7 @@
     "id": "gemini",
     "name": "Gemini",
     "kind": "npm",
-    "version": "0.66.0",
+    "version": "0.67.0",
     "requires": ["node"],
     "packages": ["@google/gemini-cli"],
     "bin": ["gemini"]
@@ -59,7 +59,7 @@
     "id": "copilot",
     "name": "Copilot",
     "kind": "npm",
-    "version": "1.0.105",
+    "version": "1.0.107",
     "requires": ["node"],
     "packages": ["@github/copilot"],
     "updates": { "COPILOT_AUTO_UPDATE": "false" },
@@ -69,15 +69,15 @@
     "id": "opencode",
     "name": "OpenCode",
     "kind": "archive",
-    "version": "2.2.5",
+    "version": "2.2.6",
     "archives": {
       "linux-x64": {
-        "url": "https://github.com/anomalyco/opencode/releases/download/v2.2.5/opencode-linux-x64.tar.gz",
-        "sha256": "09f44302c10fd036912f59c81fd1aef5df45dd06f649197f9dfc9bbe2a79614e"
+        "url": "https://github.com/anomalyco/opencode/releases/download/v2.2.6/opencode-linux-x64.tar.gz",
+        "sha256": "08bb21d6326ce740d91cce7ebe88a6536933f6e1e30353b91a06b01f25da306c"
       },
       "linux-arm64": {
-        "url": "https://github.com/anomalyco/opencode/releases/download/v2.2.5/opencode-linux-arm64.tar.gz",
-        "sha256": "5a528f42caf576c6cdece6a191eb273d3db54effa5518e0402684d8f8026aeb6"
+        "url": "https://github.com/anomalyco/opencode/releases/download/v2.2.6/opencode-linux-arm64.tar.gz",
+        "sha256": "f2d27600c367e45057d6a16f6a5c2aa8d77b41a9b10d4bc3d849c2f88870e944"
       }
     },
     "updates": { "OPENCODE_DISABLE_AUTOUPDATE": "1" },
@@ -88,7 +88,7 @@
     "id": "kilo",
     "name": "Kilo",
     "kind": "npm",
-    "version": "7.8.18",
+    "version": "7.8.27",
     "requires": ["node"],
     "packages": ["@kilocode/cli"],
     "updates": { "OPENCODE_DISABLE_AUTOUPDATE": "1" },
@@ -134,15 +134,15 @@
     "id": "devin",
     "name": "Devin",
     "kind": "archive",
-    "version": "3000.11.234",
+    "version": "3000.12.28",
     "archives": {
       "linux-x64": {
-        "url": "https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-x86_64-unknown-linux.tar.gz",
-        "sha256": "201370cddd2924294e3ca6b46fd8ece49b5763953b644a1dd823fce5490cb41a"
+        "url": "https://static.devin.ai/cli/3000.12.28/devin-3000.12.28-x86_64-unknown-linux.tar.gz",
+        "sha256": "8bc952667502ac1175997364500b0d24c15fe35c8ebfd915dc1712d4211166d6"
       },
       "linux-arm64": {
-        "url": "https://static.devin.ai/cli/3000.11.234/devin-3000.11.234-aarch64-unknown-linux.tar.gz",
-        "sha256": "438ca7f8280b3ef0747afc406e827d9e182156000277a1660358ac4fbd04156e"
+        "url": "https://static.devin.ai/cli/3000.12.28/devin-3000.12.28-aarch64-unknown-linux.tar.gz",
+        "sha256": "b8e2f450744b994b1a4b8db137d4026c0e1e65b29526a04f780c6e1125888a61"
       }
     },
     "bin": ["devin"],
@@ -152,15 +152,15 @@
     "id": "cursor",
     "name": "Cursor",
     "kind": "archive",
-    "version": "2026.10.22",
+    "version": "2026.11.05",
     "archives": {
       "linux-x64": {
-        "url": "https://downloads.cursor.com/lab/2026.10.22-27dcf5f/linux/x64/agent-cli-package.tar.gz",
-        "sha256": "85296944e4600a83c4b764f578d1502bf9c416db200d33a593e8f3ecabfdc294"
+        "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/linux/x64/agent-cli-package.tar.gz",
+        "sha256": "170b77786cbf4c93064d64fff12b71a178b968730561c64afc2e8e752535442e"
       },
       "linux-arm64": {
-        "url": "https://downloads.cursor.com/lab/2026.10.22-27dcf5f/linux/arm64/agent-cli-package.tar.gz",
-        "sha256": "22a36df9720830668ccd4d707e5190204ab9c8a0efb2f068cc914895f804d3ec"
+        "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/linux/arm64/agent-cli-package.tar.gz",
+        "sha256": "131554bfdbf683d8ebfef83a2bb46ac4e5d060f198711040b07ed063c2471871"
       }
     },
     "bin": ["cursor-agent"],
@@ -190,7 +190,7 @@
     "id": "qwen",
     "name": "Qwen Code",
     "kind": "npm",
-    "version": "0.26.5",
+    "version": "0.27.0",
     "requires": ["node"],
     "packages": ["@qwen-code/qwen-code"],
     "bin": ["qwen"]
