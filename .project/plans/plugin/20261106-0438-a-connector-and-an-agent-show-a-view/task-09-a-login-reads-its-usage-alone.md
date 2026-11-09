@@ -1,6 +1,6 @@
 ---
 title: A login reads its usage alone
-status: implemented
+status: done
 depends: [task-07-a-login-asks-the-profile-scope.md]
 layer: "agent-claude"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Claude takes the record's model
-status: implemented
+status: done
 depends: []
 layer: agent-claude
 refs:

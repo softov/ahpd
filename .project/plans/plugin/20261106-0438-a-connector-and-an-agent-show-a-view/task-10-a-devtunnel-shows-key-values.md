@@ -1,6 +1,6 @@
 ---
 title: A devtunnel shows key values
-status: implemented
+status: done
 depends: [task-08-a-view-draws-a-gauge-and-a-time.md]
 layer: "tunnel-devtunnel, sdk"
 refs:

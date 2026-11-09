@@ -1,6 +1,6 @@
 ---
 title: The back session checks pass
-status: implemented
+status: done
 depends: []
 layer: bot, sdk
 refs:

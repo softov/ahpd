@@ -1,7 +1,7 @@
 ---
 title: A bot chat follows its back session
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -90,9 +90,9 @@ back session turn starts -> host raises turn_start -> bot plugin: not a waiting 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the back session checks pass](task-01-the-back-session-checks-pass.md) | implemented | - |
-| [02 - a withdrawn copy clears at once](task-02-a-withdrawn-copy-clears-at-once.md) | implemented | - |
-| [03 - a back turn opens a main turn](task-03-a-back-turn-opens-a-main-turn.md) | implemented | 02 |
+| [01 - the back session checks pass](task-01-the-back-session-checks-pass.md) | done | - |
+| [02 - a withdrawn copy clears at once](task-02-a-withdrawn-copy-clears-at-once.md) | done | - |
+| [03 - a back turn opens a main turn](task-03-a-back-turn-opens-a-main-turn.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -102,19 +102,9 @@ back session turn starts -> host raises turn_start -> bot plugin: not a waiting 
 
 ## Resume state
 
-- **Done so far:** [task-02-a-withdrawn-copy-clears-at-once.md](task-02-a-withdrawn-copy-clears-at-once.md) and [task-03-a-back-turn-opens-a-main-turn.md](task-03-a-back-turn-opens-a-main-turn.md) are implemented, with their cases in the bot package tests.
-  [task-01-the-back-session-checks-pass.md](task-01-the-back-session-checks-pass.md) passed on a test daemon on 2026-11-05.
-  The back session held no `InProgress` after the approval.
-  The second main message ran as a back turn with no notice.
-  No "Steering" message stayed, before or after a reload.
-  The turn ids are in that task's *Resume*.
-- **Next action:** none of the three tasks is open. Closing the plan needs `implemented.md`, the `ahpw` check in the final checklist, and `pnpm --filter @ahpd/bot test` run alone.
-- **Open questions:** none. The plan's Answers table covered every choice the two built tasks met.
-- **Watch out for:** a test daemon writes Softov's `~/.config/ahpd` unless `XDG_CONFIG_HOME` points at a scratch folder. Never use ports 5180 or 37537.
-  A direct `subscribe` to a session reports `status` 8 after the host removes its last `inputNeeded` entry.
-  Its chats and its catalogue row say 1, so read the catalogue row for the session status.
-  Task 03's `began` also takes the main chat's session and the back session's chat, more than the four parameters of its step 6.
-  `stopped` matches on the first, and `working` shows the second.
+- **Done so far:** every task is done. The plan merged in #199, and it was closed as built on 2026-11-09.
+- **Next action:** none.
+- **Open questions:** none.
 
 ## Final verification checklist
 

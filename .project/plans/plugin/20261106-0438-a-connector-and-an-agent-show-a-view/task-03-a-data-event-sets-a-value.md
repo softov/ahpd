@@ -1,6 +1,6 @@
 ---
 title: A data event sets a value
-status: implemented
+status: done
 depends: [task-02-a-record-shows-its-views.md]
 layer: "sdk, server"
 refs:

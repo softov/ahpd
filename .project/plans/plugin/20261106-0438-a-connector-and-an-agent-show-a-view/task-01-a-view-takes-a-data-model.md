@@ -1,6 +1,6 @@
 ---
 title: A view takes a data model
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

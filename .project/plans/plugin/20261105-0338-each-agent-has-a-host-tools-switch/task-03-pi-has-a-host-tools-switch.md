@@ -1,6 +1,6 @@
 ---
 title: pi has a host tools switch
-status: implemented
+status: done
 depends: []
 layer: agent-pi
 refs:

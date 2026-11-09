@@ -1,6 +1,6 @@
 ---
 title: A login asks the profile scope
-status: implemented
+status: done
 depends: [task-04-claude-shows-plan-usage.md]
 layer: "agent-claude"
 refs:

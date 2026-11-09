@@ -1,6 +1,6 @@
 ---
 title: The docs say how a view is made
-status: implemented
+status: done
 depends: [task-03-a-data-event-sets-a-value.md]
 layer: "docs"
 refs:

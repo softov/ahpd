@@ -1,6 +1,6 @@
 ---
 title: cofold has a host tools switch
-status: implemented
+status: done
 depends: []
 layer: agent-cofold
 refs:

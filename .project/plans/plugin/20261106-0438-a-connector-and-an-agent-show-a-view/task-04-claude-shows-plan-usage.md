@@ -1,6 +1,6 @@
 ---
 title: Claude shows plan usage
-status: implemented
+status: done
 depends: [task-03-a-data-event-sets-a-value.md]
 layer: "agent-claude"
 refs:

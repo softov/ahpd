@@ -1,7 +1,7 @@
 ---
 title: Claude starts on the record's model
 domain: claude
-status: planned
+status: built
 priority: medium
 created: 2026-11-05
 revalidated: 2026-11-05
@@ -46,14 +46,13 @@ record.model -> open -> claude({ model }) -> session start, when settings name n
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Claude takes the record's model](task-01-claude-takes-the-record-model.md) | implemented | - |
+| [01 - Claude takes the record's model](task-01-claude-takes-the-record-model.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** [task-01-claude-takes-the-record-model.md](task-01-claude-takes-the-record-model.md) is implemented on 2026-11-05. A record's `model` reaches the session from `open`, and a session whose settings name none starts on it when the agent offers it. `defaults` is still the mode alone.
-- **Next action:** review task 01. It is the plan's only task.
+- **Done so far:** every task is done. The plan merged in #245, and it was closed as built on 2026-11-09.
+- **Next action:** none.
 - **Open questions:** none.
-- **Watch out for:** the copy PR edits `packages/agent-claude/package.json`; this plan does not.
 
 ## Final verification checklist
 

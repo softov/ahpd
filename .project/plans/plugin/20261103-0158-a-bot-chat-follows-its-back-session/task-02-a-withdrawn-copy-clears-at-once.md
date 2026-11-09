@@ -1,6 +1,6 @@
 ---
 title: A withdrawn copy clears at once
-status: implemented
+status: done
 depends: []
 layer: bot
 refs:

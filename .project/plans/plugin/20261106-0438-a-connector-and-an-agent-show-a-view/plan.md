@@ -1,7 +1,7 @@
 ---
 title: A connector and an agent show a view
 domain: plugin
-status: planned
+status: built
 priority: medium
 created: 2026-11-06
 revalidated: 2026-11-06
@@ -164,16 +164,16 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a view takes a data model](task-01-a-view-takes-a-data-model.md) | implemented | - |
-| [02 - a record shows its views](task-02-a-record-shows-its-views.md) | implemented | 01 |
-| [03 - a data event sets a value](task-03-a-data-event-sets-a-value.md) | implemented | 02 |
-| [04 - claude shows plan usage](task-04-claude-shows-plan-usage.md) | implemented | 03 |
-| [05 - devtunnel shows its account](task-05-devtunnel-shows-its-account.md) | implemented | 03 |
-| [06 - the docs say how a view is made](task-06-the-docs-say-how-a-view-is-made.md) | implemented | 03 |
-| [07 - a login asks the profile scope](task-07-a-login-asks-the-profile-scope.md) | implemented | 04 |
-| [08 - a view draws a gauge and a time](task-08-a-view-draws-a-gauge-and-a-time.md) | implemented | 07 |
-| [09 - a login reads its usage alone](task-09-a-login-reads-its-usage-alone.md) | implemented | 07 |
-| [10 - a devtunnel shows key values](task-10-a-devtunnel-shows-key-values.md) | implemented | 08 |
+| [01 - a view takes a data model](task-01-a-view-takes-a-data-model.md) | done | - |
+| [02 - a record shows its views](task-02-a-record-shows-its-views.md) | done | 01 |
+| [03 - a data event sets a value](task-03-a-data-event-sets-a-value.md) | done | 02 |
+| [04 - claude shows plan usage](task-04-claude-shows-plan-usage.md) | done | 03 |
+| [05 - devtunnel shows its account](task-05-devtunnel-shows-its-account.md) | done | 03 |
+| [06 - the docs say how a view is made](task-06-the-docs-say-how-a-view-is-made.md) | done | 03 |
+| [07 - a login asks the profile scope](task-07-a-login-asks-the-profile-scope.md) | done | 04 |
+| [08 - a view draws a gauge and a time](task-08-a-view-draws-a-gauge-and-a-time.md) | done | 07 |
+| [09 - a login reads its usage alone](task-09-a-login-reads-its-usage-alone.md) | done | 07 |
+| [10 - a devtunnel shows key values](task-10-a-devtunnel-shows-key-values.md) | done | 08 |
 
 ## Risks and tradeoffs
 
@@ -183,10 +183,9 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 09 are `implemented` on 2026-11-06 and merged in #249; task 10 is `implemented`.
-- **Next action:** ahpw draws `Progress`, `DateTime` and `KeyValue`, in Softov's other session.
+- **Done so far:** every task is done. The plan merged in #249 and #251, and it was closed as built on 2026-11-09.
+- **Next action:** none.
 - **Open questions:** none.
-- **Watch out for:** a plugin, a connector and an agent must stay one structure. A change to one needs the same change to the others.
 
 ## Final verification checklist
 

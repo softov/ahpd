@@ -1,6 +1,6 @@
 ---
 title: Claude has a host tools switch
-status: implemented
+status: done
 depends: []
 layer: agent-claude
 refs:

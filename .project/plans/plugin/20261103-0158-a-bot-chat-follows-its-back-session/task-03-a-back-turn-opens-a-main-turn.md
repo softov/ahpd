@@ -1,6 +1,6 @@
 ---
 title: A back turn opens a main turn
-status: implemented
+status: done
 depends:
   - task-02-a-withdrawn-copy-clears-at-once.md
 layer: bot

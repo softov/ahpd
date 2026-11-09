@@ -1,6 +1,6 @@
 ---
 title: A record shows its views
-status: implemented
+status: done
 depends: [task-01-a-view-takes-a-data-model.md]
 layer: "sdk"
 refs:

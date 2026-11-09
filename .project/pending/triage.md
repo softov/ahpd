@@ -31,6 +31,7 @@ Restart the daemon on main first. Do them from the top down.
 - [host-108-token-checks.md](host-108-token-checks.md) - 25 min, a second computer that reaches port 37537.
 - [plugin-54-webhook-checks.md](plugin-54-webhook-checks.md) - 60 min, a public port, a GitHub repo, a Slack app, and users `alice` and `bob`.
 - [plugin-50-first-pieces.md](plugin-50-first-pieces.md) - 60 to 120 min, one account per piece.
+- [update-checks.md](update-checks.md) - Debian here, then Windows. A release candidate goes to `next`, so use `ahpd update --version 0.15.0-rc.1`.
 
 ## Claude can run these on a test daemon
 
@@ -53,10 +54,9 @@ Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 - [macos-checks.md](macos-checks.md) - a Mac with VS Code, 90 min.
 - [vm-01-dev02-libvirt.md](vm-01-dev02-libvirt.md) - dev02 with sudo, and a choice on the iptables rules, 15 min.
 - [vm-06-proxmox-node.md](vm-06-proxmox-node.md) - a Proxmox node, not named yet, 45 min.
+- [container-05-p10-hub-checks.md](container-05-p10-hub-checks.md) - a node behind NAT, such as the Windows VM. Step 3's `ahpd restart` fails on a hub that runs in the foreground: stop it with Ctrl+C and start it again.
 
 ## Blocked
 
-- [container-05-p10-hub-checks.md](container-05-p10-hub-checks.md) - a hub refuses a node older than 0.14.1, and main is 0.14.0. Step 3's `ahpd restart` also fails on a hub that runs in the foreground: stop it with Ctrl+C and start it again.
-- [update-checks.md](update-checks.md) - needs a published version newer than 0.14.0. A release candidate goes to `next`, so use `ahpd update --version <rc>`.
 - [host-100-p2-review.md](host-100-p2-review.md) - fails until the problem `a-claude-session-from-vs-code-has-no-owner` is fixed.
-- [release.md](release.md) - 0.15.0-rc.1 is on npm under `next`. Left: ahpw on the candidate.
+- [release.md](release.md) - 0.15.0-rc.1 is on npm under `next`, and ahpw is on it. Left: a working day on the daemon, and the checks before 0.15.0.

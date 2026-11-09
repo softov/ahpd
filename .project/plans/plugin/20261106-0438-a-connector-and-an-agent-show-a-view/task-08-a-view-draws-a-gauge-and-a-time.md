@@ -1,6 +1,6 @@
 ---
 title: A view draws a gauge and a time
-status: implemented
+status: done
 depends: [task-07-a-login-asks-the-profile-scope.md]
 layer: "sdk, agent-claude"
 refs:

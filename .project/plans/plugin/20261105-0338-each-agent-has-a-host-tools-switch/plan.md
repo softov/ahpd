@@ -1,7 +1,7 @@
 ---
 title: Each agent has a host tools switch
 domain: plugin
-status: planned
+status: built
 priority: medium
 created: 2026-11-05
 revalidated: 2026-11-05
@@ -54,16 +54,15 @@ host -> start.tools -> session wires them in; acp: hostTools ?? plugin hostTools
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Claude has a host tools switch](task-01-claude-has-a-host-tools-switch.md) | implemented | - |
-| [02 - cofold has a host tools switch](task-02-cofold-has-a-host-tools-switch.md) | implemented | - |
-| [03 - pi has a host tools switch](task-03-pi-has-a-host-tools-switch.md) | implemented | - |
+| [01 - Claude has a host tools switch](task-01-claude-has-a-host-tools-switch.md) | done | - |
+| [02 - cofold has a host tools switch](task-02-cofold-has-a-host-tools-switch.md) | done | - |
+| [03 - pi has a host tools switch](task-03-pi-has-a-host-tools-switch.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** task 01, Claude's switch; task 02, cofold's switch; task 03, pi's switch.
-- **Next action:** none; the plan's tasks are implemented.
+- **Done so far:** every task is done. The plan merged in #247, and it was closed as built on 2026-11-09.
+- **Next action:** none.
 - **Open questions:** none.
-- **Watch out for:** the copy PR edits each plugin's `package.json` and `i18n` files. Build on main after it merges.
 
 ## Final verification checklist
 
