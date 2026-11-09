@@ -20,8 +20,6 @@ Restart the daemon on main first. Do them from the top down.
 - [plugin-71-sign-in-checks.md](plugin-71-sign-in-checks.md) - 15 min, an OpenRouter account.
 - [canvas-example-checks.md](canvas-example-checks.md) - 15 min, VS Code.
 - [host-1347-mcp-checks.md](host-1347-mcp-checks.md) - 25 min, VS Code as the MCP client. It adds a member and a guest.
-- [host-100-p2-review.md](host-100-p2-review.md) - 10 min, VS Code.
-- [host-103-drawing-checks.md](host-103-drawing-checks.md) - 30 min.
 - [plugin-view-checks.md](plugin-view-checks.md) - 10 min, VS Code through the system tunnel, and the network off for a minute.
 - [push-web-checks.md](push-web-checks.md) - 25 min, Chrome and Firefox. The Apple question needs a Mac and the daemon over https, such as the system tunnel.
 - [the-pt-catalogs-read-right.md](the-pt-catalogs-read-right.md) - 30 min.
@@ -51,7 +49,7 @@ Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 - [daemon-41-windows-checks.md](daemon-41-windows-checks.md) - Windows with Bun 1.3.14 and 1.3.13, 45 min.
 - [devcontainer-checks.md](devcontainer-checks.md) - VS Code on Windows, your daemon on main with the `devtunnel` connector signed in to that VS Code's GitHub account, 45 min.
 - [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md) - Windows and a Mac, 20 min each. It passed on Linux.
-- [daemon-31-service-checks.md](daemon-31-service-checks.md) - a Mac, the launchd sections, 25 min.
+- [macos-service-checks.md](macos-service-checks.md) - a Mac, the launchd sections, 25 min.
 - [macos-checks.md](macos-checks.md) - a Mac with VS Code, 90 min.
 - [vm-01-dev02-libvirt.md](vm-01-dev02-libvirt.md) - dev02 with sudo, and a choice on the iptables rules, 15 min.
 - [vm-06-proxmox-node.md](vm-06-proxmox-node.md) - a Proxmox node, not named yet, 45 min.
