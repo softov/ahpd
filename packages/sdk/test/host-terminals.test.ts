@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
 import { shellOf } from '../src/machines/terminals.js';
-import type { OpenedTerminal, SpawnPty, SpawnScreen } from '../src/types/terminals.js';
+import type { OpenedTerminal, ShellIntegration, SpawnPty, SpawnScreen } from '../src/types/terminals.js';
 import { DEFAULT_SHELL_COMMAND_TIMEOUT_MS } from '../src/machines/shellcommand.js';
 import { uriOf } from '../src/resources/resources.js';
 import { localPath } from '../src/resources/fileuri.js';
@@ -15,6 +15,9 @@ import {
   resetSdk, actions, claude, createHost, defaultChatOf, emit, hello, machine,
   peer, sdk, settle, shellTerminals,
 } from './support/host.js';
+import { pty as loadPty } from '../../server/src/pty.js';
+import { screen } from '../../server/src/screen.js';
+import { shellIntegrationOf } from '../../server/src/shellintegration.js';
 import { fakePty } from './support/pty.js';
 import { callsIn, openedFrom, replayed } from './support/replay.js';
 import { undeclaredIn } from './support/wire.js';
@@ -37,14 +40,26 @@ beforeEach(resetSdk);
  * absence says it recognises nothing. The turn is still the chat's, because a
  * transcript that lost the command would be a conversation with a gap in it.
  */
+/** `node-pty`, loaded as the daemon loads it, on Windows only. */
+const windowsPty = process.platform === 'win32' ? (await loadPty()).pty : undefined;
+
 describe('a command typed into the conversation', () => {
-  /** A Claude session on a host with a shell: pipes, or the pseudoterminal `pty` binds, with `screen` where one is given. */
-  const shelled = async (pty?: SpawnPty, screen?: SpawnScreen) => {
+  /**
+   * A Claude session on a host with a shell: pipes, or the pseudoterminal `pty`
+   * binds, with `screen` and `shellIntegration` where they are given.
+   */
+  const shelled = async (pty?: SpawnPty, screen?: SpawnScreen, shellIntegration?: ShellIntegration) => {
     const host = createHost({
       path: tmpdir(),
       agents: [claude({ paths: [tmpdir()] })],
       ...machine(),
-      ...(pty === undefined ? {} : { terminals: shellTerminals({ pty, ...(screen === undefined ? {} : { screen }) }) }),
+      ...(pty === undefined ? {} : {
+        terminals: shellTerminals({
+          pty,
+          ...(screen === undefined ? {} : { screen }),
+          ...(shellIntegration === undefined ? {} : { shellIntegration }),
+        }),
+      }),
     });
     const p = peer();
     const client = host.accept(p);
@@ -241,6 +256,51 @@ describe('a command typed into the conversation', () => {
     const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
     expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
     expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
+  });
+
+  /*
+   * A shell started with the integration is typed its command once it marks,
+   * not once it prints: ConPTY draws the screen before PowerShell has read the
+   * scripts, and a command typed then would end at a sentinel, its result
+   * holding the prompt and the sentinel's own line.
+   */
+  it('types the command into a shell started with the integration once it marks, and ends it at its marks', async () => {
+    const pty = fakePty();
+    const integration: ShellIntegration = () => ({ newArgs: ['--init-file', '/opt/ahpd/shellIntegration-bash.sh'], envMixin: {} });
+    const { client, peer: p, chatUri } = await shelled(pty.spawn, undefined, integration);
+    bang(client, chatUri, 'make preview');
+    await until(() => pty.started.length > 0);
+    expect(pty.started.at(-1)?.args).toEqual(['--init-file', '/opt/ahpd/shellIntegration-bash.sh']);
+
+    // The terminal's own output, before the shell has drawn a prompt.
+    pty.say('\u001b[?25l\u001b[2J\u001b[H');
+    await settle();
+    expect(pty.typed).toEqual([]);
+
+    pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
+    await until(() => pty.typed.length > 0);
+    // The command alone, and no sentinel line after it.
+    expect(pty.typed).toEqual([`${HISTORY_SPACE}make preview\r`]);
+
+    pty.say('\u001b]633;C\u0007built\r\n\u001b]633;D;0\u0007\u001b]633;A\u0007$ ');
+    const said = await ended(p, chatUri, 't1');
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { success: boolean; content: unknown[] };
+    expect(done.success).toBe(true);
+    expect(done.content.at(-1)).toEqual({ type: 'text', text: 'built' });
+  });
+
+  /*
+   * The same in PowerShell under ConPTY, with the daemon's own integration:
+   * the result is what the command printed, with no prompt and no sentinel.
+   * Only on Windows, where `node-pty` loads.
+   */
+  it.runIf(process.platform === 'win32' && windowsPty !== undefined)('answers a PowerShell command with its output alone', async () => {
+    const { client, peer: p, chatUri } = await shelled(windowsPty, screen, shellIntegrationOf('owned'));
+    bang(client, chatUri, 'echo by-hand');
+    const said = await ended(p, chatUri, 't1');
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { success: boolean; content: unknown[] };
+    expect(done.success).toBe(true);
+    expect(done.content.at(-1)).toEqual({ type: 'text', text: 'by-hand' });
   });
 
   /*

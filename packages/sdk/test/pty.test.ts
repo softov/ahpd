@@ -576,6 +576,14 @@ describe('the shell integration a terminal asks for', () => {
     expect(fake.started.at(-1)?.env).toMatchObject({ VSCODE_INJECTION: '1', VSCODE_NONCE: 'the-terminal-nonce' });
   });
 
+  it('says it was started with the integration only when the port answered', () => {
+    const answered = began(() => ({ newArgs: ['-i'], envMixin: {} }));
+    expect(answered.terminal.hasShellIntegration()).toBe(true);
+    expect(began(() => undefined).terminal.hasShellIntegration()).toBe(false);
+    expect(began(() => { throw new Error('no scripts here'); }).terminal.hasShellIntegration()).toBe(false);
+    expect(began(() => ({ envMixin: {} }), { command: 'echo hi' }).terminal.hasShellIntegration()).toBe(false);
+  });
+
   it('asks no port for a shell given a command, on pipes, or in a machine', () => {
     // A command runs and the shell exits: there is no prompt to mark.
     expect(began(undefined, { command: 'echo hi' }).calls).toHaveLength(0);

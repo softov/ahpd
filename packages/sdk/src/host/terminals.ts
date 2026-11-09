@@ -272,6 +272,8 @@ export function createTerminals(ctx: HostContext): Terminals {
     hearing.set(uri, hears);
     let spoke: () => void = () => {};
     const spoken = new Promise<void>((done) => { spoke = done; });
+    let marked: () => void = () => {};
+    const firstMark = new Promise<void>((done) => { marked = done; });
     const terminal = shells.create({
       uri,
       cwd,
@@ -284,6 +286,7 @@ export function createTerminals(ctx: HostContext): Terminals {
         dispatch(uri, action);
         const type = (action as Bag).type;
         if (type === 'terminal/data' || type === 'terminal/exited') spoke();
+        if (type === 'terminal/commandDetectionAvailable' || type === 'terminal/exited') marked();
         heard(uri, action as Bag);
         if (type !== 'terminal/exited') return;
         hearing.delete(uri);
@@ -292,9 +295,17 @@ export function createTerminals(ctx: HostContext): Terminals {
     });
     terminals.set(uri, terminal);
     log(`opened ${uri} for ${command}`);
+    /*
+     * A shell started with the integration is waited on for its first mark,
+     * so the command ends at its own marks. Its first output can come before
+     * the prompt that marks: ConPTY draws the screen before PowerShell has
+     * read the scripts, and a command typed then is followed by a sentinel
+     * whose result holds the prompt and the sentinel's own line.
+     */
     if (terminal.state().isPty === true) {
       let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([spoken, new Promise<void>((done) => { timer = setTimeout(done, PROMPT_WAIT_MS); })]);
+      const ready = terminal.hasShellIntegration() ? firstMark : spoken;
+      await Promise.race([ready, new Promise<void>((done) => { timer = setTimeout(done, PROMPT_WAIT_MS); })]);
       clearTimeout(timer);
     }
     if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
@@ -652,6 +663,7 @@ export function createTerminals(ctx: HostContext): Terminals {
         // wait on: the text is all there is of it.
         isInAltBuffer: () => false,
         isBracketedPasteMode: () => false,
+        hasShellIntegration: () => false,
         whenAltBuffer: () => Promise.resolve(),
         whenScreenSettled: () => Promise.resolve(),
       };
