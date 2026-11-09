@@ -8,6 +8,8 @@ import { chatUriFor } from '../src/host/channels.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import type { Agent, Listed, SessionAt } from '@ahpd/sdk';
 import type { SessionStore } from '../src/types/sessions.js';
+import { WORK } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
 
 /*
  * Sessions in folders no backend lists.
@@ -24,8 +26,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 beforeEach(resetSdk);
 
-const PATH = '/home/softov';
-const BOT = '/home/softov/.bots/ember';
+const PATH = WORK;
+const BOT = join(WORK, '.bots/ember');
 const WORKTREE = '/srv/worktrees/fix';
 
 /** One row, as a backend answers it. */
@@ -34,7 +36,7 @@ const row = (id: string, title: string, folder = PATH): Listed => ({
   title,
   createdAt: '2026-10-18T00:00:00.000Z',
   modifiedAt: '2026-10-18T09:00:00.000Z',
-  workingDirectories: [`file://${folder}`],
+  workingDirectories: [uriOf(folder)],
 });
 
 interface Store {

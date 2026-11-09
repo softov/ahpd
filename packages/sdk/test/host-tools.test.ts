@@ -30,6 +30,7 @@ import {
   resetSdk, actions, builtServer, claude, createHost, defaultChatOf, echo, emit, firstMessage, hello, hostTools,
   machine, peer, sdk, sendAnswered, serving, sessionQueries, settle, running,
 } from './support/host.js';
+import { WORK, WORK_URI } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -85,7 +86,7 @@ describe('tools the host contributes', () => {
     // an empty list - which is the difference between "no tools" and "a host
     // that has not said".
     const { client: bare, uri: other } = await (async () => {
-      const host = serving('/home/softov');
+      const host = serving(WORK);
       const client_ = host.accept(peer());
       await client_.handle(hello(['0.9.0']));
       await client_.handle({ method: 'createSession', params: { channel: 'ahp-session:/bare', provider: 'claude' } });
@@ -105,7 +106,7 @@ describe('tools the host contributes', () => {
     });
     const names = async (advancedTools: boolean) => {
       const host = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+        path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
         tools: [tool('launch_rocket', true), tool('peek')],
         advancedTools,
       });
@@ -393,7 +394,7 @@ describe('tools the host contributes', () => {
     it('moves the session once the turn that asked is over, and continues the task there in VS Code\'s words', async () => {
       const { client, peer: p, uri, chatUri } = await (async () => {
         const host = createHost({
-          path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+          path: WORK, agents: [claude({ paths: [WORK, '/tmp'] })], ...machine(), tools: hostTools(),
         });
         const p_ = peer();
         // The window vouches for the folder it is moving into, which is asked
@@ -423,7 +424,7 @@ describe('tools the host contributes', () => {
       await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
       await settle(8);
       const moved = actions(p, uri).find((one) => one.action.type === 'session/workingDirectoryReplaced');
-      expect(moved?.action).toMatchObject({ directory: uriOf('/home/softov'), replacement: uriOf('/tmp') });
+      expect(moved?.action).toMatchObject({ directory: WORK_URI, replacement: uriOf('/tmp') });
       // Restarted there, resumed, and told so in a turn the window will not
       // draw as somebody's request, will list under a label rather than the
       // prompt, and will still credit with the file changes made in it: the
@@ -451,7 +452,7 @@ describe('tools the host contributes', () => {
      */
     it('drops a move whose turn was cancelled, as VS Code\'s host', async () => {
       const host = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+        path: WORK, agents: [claude({ paths: [WORK, '/tmp'] })], ...machine(), tools: hostTools(),
       });
       const p = peer();
       p.request = async () => ({ trusted: true });
@@ -487,7 +488,7 @@ describe('tools the host contributes', () => {
      */
     it('tells the agent a move did not complete, in the turn that continues it, as VS Code\'s host', async () => {
       const host = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+        path: WORK, agents: [claude({ paths: [WORK, '/tmp'] })], ...machine(), tools: hostTools(),
       });
       const p = peer();
       // The window does not vouch for the folder, which fails the move.
@@ -528,13 +529,13 @@ describe('tools the host contributes', () => {
     it('names a folder with a # in the worktree message as a valid URI', async () => {
       /*
        * The answer names the folder as a URI, and a `#` in a path is where a
-       * URI's fragment begins: `file:///home/softov/a#b` is the folder `a`
+       * URI's fragment begins: `${WORK_URI}/a#b` is the folder `a`
        * with a fragment, and a client that opens it opens the wrong place.
        * The folder is signed in with the trust port either way, which is why
        * only the words of the answer are under test here.
        */
       const host = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+        path: WORK, agents: [claude({ paths: [WORK, '/tmp'] })], ...machine(), tools: hostTools(),
       });
       const p = peer();
       p.request = async () => ({ trusted: true });
@@ -551,10 +552,10 @@ describe('tools the host contributes', () => {
         params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work in the hashed folder' } } },
       });
       await settle();
-      const worktree = await call('set_workspace', { workspaceFolder: 'file:///home/softov/a%23b', isolation: true });
-      expect(worktree).toContain(`An isolated worktree will be created from ${uriOf('/home/softov/a#b')} and set as the workspace`);
-      const direct = await call('set_workspace', { workspaceFolder: '/home/softov/a#b', isolation: false });
-      expect(direct).toContain(`Workspace will be set to ${uriOf('/home/softov/a#b')} after this turn ends`);
+      const worktree = await call('set_workspace', { workspaceFolder: `${WORK_URI}/a%23b`, isolation: true });
+      expect(worktree).toContain(`An isolated worktree will be created from ${uriOf(join(WORK, 'a#b'))} and set as the workspace`);
+      const direct = await call('set_workspace', { workspaceFolder: join(WORK, 'a#b'), isolation: false });
+      expect(direct).toContain(`Workspace will be set to ${uriOf(join(WORK, 'a#b'))} after this turn ends`);
     });
   });
 
@@ -589,7 +590,7 @@ describe('tools the host contributes', () => {
 
   it('reads a client\'s resource from that client, about the URI as it knows it', async () => {
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), tools: hostTools(),
     });
     /*
      * A second client, serving something this machine has no copy of.
@@ -627,7 +628,7 @@ describe('tools the host contributes', () => {
       method: 'createTerminal',
       // `echo` is a command a POSIX shell and PowerShell both run; `true` is a
       // program only the first has.
-      params: { channel: 'ahp-terminal:/t1', cwd: 'file:///home/softov', command: 'echo' },
+      params: { channel: 'ahp-terminal:/t1', cwd: WORK_URI, command: 'echo' },
     });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/asks', provider: 'claude' } });
     const host = builtServer('host') as { tools: {
@@ -651,7 +652,7 @@ describe('tools the host contributes', () => {
     /** A host with the `who` tool, and one session of it, with somebody where `people` says so. */
     const opened = async (people: boolean) => {
       const host = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: [who],
+        path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), tools: [who],
         ...(people ? { users } : {}),
       });
       const client = host.accept(peer(), people ? ana : undefined);
@@ -699,7 +700,7 @@ describe('tools the host contributes', () => {
       verify: async () => ana,
     } as unknown as Users;
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: [teams], users,
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), tools: [teams], users,
     });
     const client = host.accept(peer(), ana);
     await client.handle(hello(['0.9.0']));
@@ -770,7 +771,7 @@ describe('the session tools, which an install may switch off', () => {
    * rather than one it is refused at call time.
    */
   const recording = () => {
-    const base = echo({ path: '/home/softov', pace: 0 });
+    const base = echo({ path: WORK, pace: 0 });
     const seen: Start[] = [];
     const agent: Agent = {
       ...base,
@@ -788,7 +789,7 @@ describe('the session tools, which an install may switch off', () => {
   it('are all left out when the option is false, and the host\'s own still offered', async () => {
     const { seen, agent } = recording();
     const host = createHost({
-      path: '/home/softov', agents: [agent], ...machine(), tools: hostTools(), sessionTools: false,
+      path: WORK, agents: [agent], ...machine(), tools: hostTools(), sessionTools: false,
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
@@ -804,7 +805,7 @@ describe('the session tools, which an install may switch off', () => {
   it('are offered to the providers a list names and to no others', async () => {
     const { seen, agent } = recording();
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] }), agent], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] }), agent], ...machine(),
       tools: hostTools(), sessionToolsProviders: ['claude'],
     });
     const client = host.accept(peer());
@@ -845,7 +846,7 @@ describe('the session tools, which an install may switch off', () => {
       },
     };
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(), rootConfig,
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), tools: hostTools(), rootConfig,
     });
     const p = peer();
     const client = host.accept(p);
@@ -918,7 +919,7 @@ describe('the session tools, which an install may switch off', () => {
       },
     };
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), tools: hostTools(),
       rootConfig, sessionTools: false,
     });
     const p = peer();
@@ -945,7 +946,7 @@ describe('the MCP servers a session is offered', () => {
    * declare with them.
    */
   const recording = (pace = 0) => {
-    const base = echo({ path: '/home/softov', pace });
+    const base = echo({ path: WORK, pace });
     const seen: Start[] = [];
     const agent: Agent = {
       ...base,
@@ -961,7 +962,7 @@ describe('the MCP servers a session is offered', () => {
   const offered = async (mcpServers: Record<string, McpServer> | undefined) => {
     const { seen, agent } = recording();
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [agent],
       ...machine(),
       ...(mcpServers === undefined ? {} : { mcpServers }),
@@ -973,7 +974,7 @@ describe('the MCP servers a session is offered', () => {
   };
 
   it('are the host\'s own, in both shapes and under the names they were given', async () => {
-    const files: McpServer = { type: 'stdio', command: 'mcp-files', args: ['--root', '/home/softov'] };
+    const files: McpServer = { type: 'stdio', command: 'mcp-files', args: ['--root', WORK] };
     const api: McpServer = { type: 'http', url: 'https://example.test/mcp', headers: { authorization: 'Bearer k' } };
     expect(await offered({ files, api })).toEqual({ files, api });
   });
@@ -1000,7 +1001,7 @@ describe('the MCP servers a session is offered', () => {
     // daemon hands: the key is read at the start rather than held at the boot.
     let held: Record<string, McpServer> = files;
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [agent],
       ...machine(),
       get mcpServers() { return held; },
@@ -3460,7 +3461,7 @@ describe('a harness list handed to the host', () => {
    * `holds` is set.
    */
   const speaking = (untitled = false, holds = false) => {
-    const base = echo({ path: '/home/softov', pace: 60 });
+    const base = echo({ path: WORK, pace: 60 });
     const heard: HostEvent[] = [];
     let update: Start['planUpdate'];
     let backendChat = '';
@@ -3477,8 +3478,8 @@ describe('a harness list handed to the host', () => {
       },
     };
     const context = (): LoaderContext => ({
-      path: '/home/softov', paths: ['/home/softov'], version: sdkVersion(), hostName: 'test',
-      configDir: '/home/softov', log: loggerOf(() => {}), say: () => {},
+      path: WORK, paths: [WORK], version: sdkVersion(), hostName: 'test',
+      configDir: WORK, log: loggerOf(() => {}), say: () => {},
     });
     const { host: plugin, contribution } = pluginHost('probe', context());
     plugin.on('plan_update', (event) => {
@@ -3486,7 +3487,7 @@ describe('a harness list handed to the host', () => {
       return holds ? new Promise<void>(() => {}) : undefined;
     });
     const { options } = foldHostOptions({
-      path: '/home/softov',
+      path: WORK,
       agents: [agent],
       // A directory, because `sender` is what the host knows and not the backend.
       users: {

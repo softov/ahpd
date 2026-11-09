@@ -7,6 +7,8 @@ import {
 } from './support/host.js';
 import { undeclaredIn } from './support/wire.js';
 import { callsIn, openedFrom, replayed } from './support/replay.js';
+import { join } from 'node:path';
+import { WORK } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -946,7 +948,7 @@ describe('what a Claude session sends', () => {
     await emit(
       {
         type: 'assistant', parent_tool_use_id: null, uuid: 'a1',
-        message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: '/home/softov/a' } }] },
+        message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: join(WORK, 'a') } }] },
       },
       { type: 'user', parent_tool_use_id: null, uuid: 'u1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_read', content: 'a b c' }] } },
       { type: 'assistant', parent_tool_use_id: null, uuid: 'a2', message: { id: 'm2', content: [{ type: 'text', text: 'Read.' }] } },

@@ -22,13 +22,15 @@ import {
   claude, createHost, hello, machine, peer, resetSdk, actions, emit, running, sdk, settle,
 } from './support/host.js';
 import type { HostOptions } from '../src/types/host.js';
+import { join } from 'node:path';
+import { WORK } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
 beforeEach(resetSdk);
 
 /** A session's directory, and the one the catalogue row lists. */
-const DIR = '/home/softov/project';
+const DIR = join(WORK, 'project');
 
 /** A promise a test finishes by hand, so a read can be held open across an emit. */
 function deferred<T>() {

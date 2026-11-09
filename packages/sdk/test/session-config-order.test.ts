@@ -2,6 +2,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import type { HostOptions } from '../src/types/host.js';
 import type { Worktrees } from '../src/types/worktrees.js';
 import { hello, peer, resetSdk, serving } from './support/host.js';
+import { join } from 'node:path';
+import { WORK, WORK_URI } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -27,7 +29,7 @@ const TAIL = [
 
 /** A repository the form can read, without git: nothing here makes a tree. */
 const repository = (): Worktrees => ({
-  repository: async () => '/home/softov/project',
+  repository: async () => join(WORK, 'project'),
   branches: async () => ['main', 'release'],
   create: async () => {},
   dirty: async () => false,
@@ -39,7 +41,7 @@ const COMPUTER = { computer: { type: 'string', title: 'Computer', sessionMutable
 
 /** The keys a new session form offers, in the order it draws them. */
 const form = async (over: Partial<HostOptions> = {}): Promise<string[]> => {
-  const client = serving('/home/softov', [], over).accept(peer());
+  const client = serving(WORK, [], over).accept(peer());
   await client.handle(hello(['0.9.0']));
   const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
     schema: { properties: Record<string, unknown> };
@@ -62,14 +64,14 @@ it('starts with isolation on a host that serves no computer plugin', async () =>
 });
 
 it('reports a running session in the same order', async () => {
-  const client = serving('/home/softov', [], { worktrees: repository(), sessionConfig: COMPUTER }).accept(peer());
+  const client = serving(WORK, [], { worktrees: repository(), sessionConfig: COMPUTER }).accept(peer());
   await client.handle(hello(['0.9.0']));
   // A folder given, because isolation is what a session in a repository is
   // offered: a session with none has no isolation to show.
   const uri = 'ahp-session:/ordered';
   await client.handle({
     method: 'createSession',
-    params: { channel: uri, provider: 'claude', workingDirectories: ['file:///home/softov/project'] },
+    params: { channel: uri, provider: 'claude', workingDirectories: [`${WORK_URI}/project`] },
   });
   const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
     snapshot: { state: { config: { schema: { properties: Record<string, unknown> } } } };

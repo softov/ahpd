@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '@microsoft/agent-host-protocol';
 import { resetSdk, hello, peer, serving } from './support/host.js';
+import { WORK } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -8,7 +9,7 @@ beforeEach(resetSdk);
 
 /** A host and one client on it, introduced with what `extra` adds to `initialize`. */
 const introduced = async (extra: Record<string, unknown> = {}) => {
-  const host = serving('/home/softov');
+  const host = serving(WORK);
   const client = host.accept(peer());
   await client.handle(hello([PROTOCOL_VERSION], extra));
   return { host, client };

@@ -34,6 +34,7 @@ import {
 } from '@microsoft/agent-host-protocol';
 import { localPath } from '../src/resources/fileuri.js';
 import type { Peer } from '../src/types/rpc.js';
+import { WORK } from './support/work.js';
 
 const sdk = vi.hoisted(() => ({ queries: [] as { frames: Record<string, unknown>[]; wake: (() => void) | undefined; closed: boolean }[] }));
 
@@ -120,9 +121,9 @@ afterEach(async () => {
 const aHost = (seeded?: { channel?: string; initial: Record<string, unknown> }) => {
   let taken = false;
   const host = createHost({
-    path: '/home/softov',
+    path: WORK,
     // A CLI started by a send, so a case's session holds what its case gave it.
-    agents: [claude({ paths: ['/home/softov'], preset: { cliStart: 'send' } })],
+    agents: [claude({ paths: [WORK], preset: { cliStart: 'send' } })],
     ...(seeded === undefined ? {} : {
       opening: (opened: string, kind: 'root' | 'session' | 'chat') => {
         const wanted = seeded.channel === undefined ? kind === 'chat' && !taken : opened === seeded.channel;

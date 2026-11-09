@@ -15,6 +15,8 @@ import { chatUriFor } from '../src/host/channels.js';
 import { undeclaredIn } from './support/wire.js';
 import { startedNow } from './support/started.js';
 import type { Agent, Bag, HostOptions, Session, Start } from '@ahpd/sdk';
+import { WORK } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -22,7 +24,7 @@ beforeEach(resetSdk);
 
 describe('two people on one chat', () => {
   it('shows each other what is being typed', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const one = peer();
     const a = host.accept(one);
     const two = peer();
@@ -61,7 +63,7 @@ describe('two people on one chat', () => {
   });
 
   it('says a draft the chat already holds to everybody on the chat, as the sender\'s own action', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const one = peer();
     const a = host.accept(one);
     const two = peer();
@@ -759,7 +761,7 @@ describe('more than one chat in a session', () => {
   });
 
   it('hands the backend a first message\'s model, as VS Code\'s host sends a turn with the model it names', async () => {
-    const base = echo({ path: '/home/softov', pace: 0 });
+    const base = echo({ path: WORK, pace: 0 });
     const models: unknown[] = [];
     const agent: Agent = {
       ...base,
@@ -768,7 +770,7 @@ describe('more than one chat in a session', () => {
         return { ...session, changeModel: (model) => { models.push(model); return session.changeModel(model); } };
       },
     };
-    const host = createHost({ path: '/home/softov', agents: [agent] });
+    const host = createHost({ path: WORK, agents: [agent] });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
@@ -862,9 +864,9 @@ describe('more than one chat in a session', () => {
      * URI.
      */
     const starts: { chatId?: string }[] = [];
-    const base = claude({ paths: ['/home/softov'] });
+    const base = claude({ paths: [WORK] });
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [{ ...base, create: (start) => { starts.push(start); return base.create(start); } }],
       ...machine(),
     });
@@ -966,7 +968,7 @@ describe('more than one chat in a session', () => {
    * The store is a folder, because what a restart leaves behind is exactly
    * what was written down.
    */
-  const DIR = '/home/softov';
+  const DIR = WORK;
   const UUID = '0f8fad5b-d9cb-469f-a165-70867728950e';
   const PEER = `ahp-chat:/${UUID}`;
   const THIRD = 'ahp-chat:/third';
@@ -975,8 +977,8 @@ describe('more than one chat in a session', () => {
   const TAIL = 'ahp-chat:/tail';
   const OTHERS = 'ahp-session:/others';
   const ONBOX = 'ahp-session:/onbox';
-  const EXTRA = `${DIR}/extra`;
-  const MORE = `${DIR}/more`;
+  const EXTRA = join(DIR, 'extra');
+  const MORE = join(DIR, 'more');
 
   const backend = (starts: Start[], pace = 0): Agent => {
     const base = echo({ path: DIR, pace });
@@ -1091,12 +1093,12 @@ describe('more than one chat in a session', () => {
      */
     await client.handle({
       method: 'createSession',
-      params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`, ...beside.map((one) => `file://${one}`)] },
+      params: { channel: LIVE, provider: 'echo', workingDirectories: [uriOf(DIR), ...beside.map((one) => uriOf(one))] },
     });
     await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
     await client.handle({
       method: 'createSession',
-      params: { channel: TWO, provider: 'echo', workingDirectories: [`file://${DIR}`] },
+      params: { channel: TWO, provider: 'echo', workingDirectories: [uriOf(DIR)] },
     });
     await client.handle({ method: 'createChat', params: { channel: TWO, chat: TAIL } });
     await settle();
@@ -1184,7 +1186,7 @@ describe('more than one chat in a session', () => {
     try {
       const starts: Start[] = [];
       const { client } = await hostAt(join(root, 'sessions'), backend(starts));
-      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`] } });
+      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
       await settle();
       await send(client, LIVE, 't1', 'first');
@@ -1196,7 +1198,7 @@ describe('more than one chat in a session', () => {
       // there, resumed: the in-process restart.
       void client.handle({
         method: 'dispatchAction',
-        params: { channel: LIVE, action: { type: 'session/workingDirectoryReplaced', directory: `file://${DIR}`, replacement: `file://${DIR}/extra` } },
+        params: { channel: LIVE, action: { type: 'session/workingDirectoryReplaced', directory: uriOf(DIR), replacement: uriOf(join(DIR, 'extra')) } },
       });
       await settle(20);
 
@@ -1391,7 +1393,7 @@ describe('more than one chat in a session', () => {
       const first = await hostAt(dir, agent);
       await first.client.handle({
         method: 'createSession',
-        params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`] },
+        params: { channel: LIVE, provider: 'echo', workingDirectories: [uriOf(DIR)] },
       });
       await first.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
       // The default chat the host minted for the session, which its record keeps.
@@ -1557,7 +1559,7 @@ describe('more than one chat in a session', () => {
         title: 'In a machine',
         createdAt: at,
         modifiedAt: at,
-        workingDirectories: [`file://${DIR}`],
+        workingDirectories: [uriOf(DIR)],
       });
       seeding.setChats('inner', [
         { uri: chatUriFor('echo:/inner'), backendId: 'inner', default: true },
@@ -2110,7 +2112,7 @@ describe('more than one chat in a session', () => {
         method: 'createChat',
         params: {
           channel: LIVE, chat: 'ahp-chat:/forked', source: { kind: 'fork', chat: PEER, turnId: 't1' },
-          workingDirectories: [`file://${DIR}`, `file://${EXTRA}`],
+          workingDirectories: [uriOf(DIR), uriOf(EXTRA)],
         },
       });
       await settle(20);
@@ -2654,7 +2656,7 @@ describe('a session renamed on its own channel', () => {
 });
 
 describe('a chat of another backend', () => {
-  const DIR = '/home/softov';
+  const DIR = WORK;
   const LIVE = 'ahp-session:/live';
   // The name this host calls the session once a backend has it: the client's
   // alias is a spelling, and the row, the logs and the refusals use this one.
@@ -2663,7 +2665,7 @@ describe('a chat of another backend', () => {
   const THIRD = 'ahp-chat:/third';
   const UUID = '0f8fad5b-d9cb-469f-a165-70867728950e';
   const PEER = `ahp-chat:/${UUID}`;
-  const EXTRA = `${DIR}/extra`;
+  const EXTRA = join(DIR, 'extra');
 
   /** The turn the peer chat already had on the backend that wrote it. */
   const SECOND = [
@@ -2817,7 +2819,7 @@ describe('a chat of another backend', () => {
     }).snapshot.state.workingDirectories?.[0];
     second.client.handle({
       method: 'dispatchAction',
-      params: { channel: LIVE, action: { type: 'session/workingDirectoryReplaced', directory: first, replacement: `file://${EXTRA}` } },
+      params: { channel: LIVE, action: { type: 'session/workingDirectoryReplaced', directory: first, replacement: uriOf(EXTRA) } },
     });
     await settle(20);
     expect(resuming(startsTwo.slice(beganTwo))).toEqual([{ chatId: UUID, resume: UUID, first: 'second' }]);
@@ -3058,7 +3060,7 @@ describe('a turn naming a model its agent does not offer', () => {
 
   /** The example backend under `provider`, offering `m1` alone. */
   const offering = (provider: string, handed: Handed): Agent => {
-    const base = echo({ path: '/home/softov', pace: 0 });
+    const base = echo({ path: WORK, pace: 0 });
     return {
       ...base,
       provider,
@@ -3081,7 +3083,7 @@ describe('a turn naming a model its agent does not offer', () => {
   /** A host with an `echo` session, and a client watching its chat. */
   const started = async (over: Partial<HostOptions> = {}) => {
     const handed: Handed = { models: [], sent: [] };
-    const host = createHost({ path: '/home/softov', agents: [offering('echo', handed)], ...over });
+    const host = createHost({ path: WORK, agents: [offering('echo', handed)], ...over });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0']));

@@ -8,6 +8,8 @@ import type { HostOptions } from '../src/types/host.js';
 import type { LoaderContext } from '../src/types/plugin.js';
 import type { Worktrees } from '../src/types/worktrees.js';
 import { hello, peer, resetSdk, serving } from './support/host.js';
+import { join } from 'node:path';
+import { WORK, WORK_URI } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -44,7 +46,7 @@ afterEach(() => {
 
 /** A repository the form can read, without git. */
 const repository = (): Worktrees => ({
-  repository: async () => '/home/softov/project',
+  repository: async () => join(WORK, 'project'),
   branches: async () => ['main', 'Pasta'],
   create: async () => {},
   dirty: async () => false,
@@ -55,11 +57,11 @@ type Property = { title?: string; description?: string; enum?: string[]; enumLab
 
 /** The new session form one client draws, introduced with `extra`. */
 const form = async (extra: Record<string, unknown>, over: Partial<HostOptions> = {}): Promise<Record<string, Property>> => {
-  const client = serving('/home/softov', [], { worktrees: repository(), ...over }).accept(peer());
+  const client = serving(WORK, [], { worktrees: repository(), ...over }).accept(peer());
   await client.handle(hello(['0.9.0'], extra));
   const cfg = await client.handle({
     method: 'resolveSessionConfig',
-    params: { provider: 'claude', workingDirectory: 'file:///home/softov/project' },
+    params: { provider: 'claude', workingDirectory: `${WORK_URI}/project` },
   }) as { schema: { properties: Record<string, Property> } };
   return cfg.schema.properties;
 };

@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import type { Agent, Listed, SessionAt } from '@ahpd/sdk';
 import type { SessionStore } from '../src/types/sessions.js';
+import { WORK } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
 
 /*
  * Opening a session this host is not running.
@@ -23,7 +25,7 @@ import type { SessionStore } from '../src/types/sessions.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
-const DIR = '/home/softov/project';
+const DIR = join(WORK, 'project');
 
 const HOUR = 60 * 60 * 1000;
 /** When a row was made and last written, inside the window of the mode that shows it. */
@@ -35,7 +37,7 @@ const row = (id: string, title: string): Listed => ({
   title,
   createdAt: CREATED,
   modifiedAt: MODIFIED,
-  workingDirectories: [`file://${DIR}`],
+  workingDirectories: [uriOf(DIR)],
 });
 
 interface Counting {
@@ -211,7 +213,7 @@ describe('opening a past session', () => {
   });
 
   it('tells the backend the folder the record names, and opens a session found only there', async () => {
-    const BOT = '/home/softov/.bots/support';
+    const BOT = join(WORK, '.bots/support');
     const asked: (SessionAt | undefined)[] = [];
     const read: (SessionAt | undefined)[] = [];
     const agent: Agent = {
@@ -220,7 +222,7 @@ describe('opening a past session', () => {
       // a session that ran outside every path this backend serves.
       find: async (id: string, at?: SessionAt) => {
         asked.push(at);
-        return id === 'bot' && at?.workingDirectory === BOT ? { ...row('bot', 'Bot'), workingDirectories: [`file://${BOT}`] } : undefined;
+        return id === 'bot' && at?.workingDirectory === BOT ? { ...row('bot', 'Bot'), workingDirectories: [uriOf(BOT)] } : undefined;
       },
       transcript: async (_id: string, at?: SessionAt) => {
         read.push(at);

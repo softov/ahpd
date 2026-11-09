@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHost, hello, machine, peer, resetSdk, settle, showExternal } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Listed } from '@ahpd/sdk';
+import { WORK } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
 
 /*
  * Asking the backends at once.
@@ -19,7 +21,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 beforeEach(resetSdk);
 
-const PATH = '/home/softov';
+const PATH = WORK;
 const HOUR = 60 * 60 * 1000;
 
 /** How many `list` calls were in flight at once, and how many there have been. */
@@ -31,7 +33,7 @@ const row = (id: string, modified: number): Listed => ({
   title: `A row for ${id}`,
   createdAt: '2026-09-27T00:00:00.000Z',
   modifiedAt: new Date(modified).toISOString(),
-  workingDirectories: [`file://${PATH}`],
+  workingDirectories: [uriOf(PATH)],
 });
 
 /** A backend whose `list` takes `wait` milliseconds and counts its overlap. */
