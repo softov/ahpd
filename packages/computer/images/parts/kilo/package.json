@@ -2,6 +2,6 @@
   "name": "ahpd-part-kilo",
   "private": true,
   "dependencies": {
-    "@kilocode/cli": "7.8.18"
+    "@kilocode/cli": "7.8.27"
   }
 }
