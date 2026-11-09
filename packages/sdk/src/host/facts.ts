@@ -385,8 +385,10 @@ export function createFacts(ctx: HostContext): Facts {
       // chat with no workspace.
       ...(isWorkspaceless(uri, dir) ? { [SESSION_META_WORKSPACELESS_KEY]: true } : {}),
     };
+    // The sandbox's floor and each chat's applied state, the host's own keys.
+    const sandbox = ctx.sandbox.meta(uri);
     if (dir === undefined) {
-      const meta = { ...byAgent, ...pluginMeta(uri), ...sent, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };
+      const meta = { ...byAgent, ...pluginMeta(uri), ...sandbox, ...sent, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };
       return Object.keys(meta).length === 0 ? {} : { _meta: meta };
     }
     /*
@@ -399,7 +401,7 @@ export function createFacts(ctx: HostContext): Facts {
      */
     const project = options.directories?.project?.(dir);
     const told = metaOf(uri);
-    const meta = { ...byAgent, ...told, ...sent, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };
+    const meta = { ...byAgent, ...told, ...sandbox, ...sent, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };
     return {
       ...(project === undefined ? {} : { project }),
       ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),

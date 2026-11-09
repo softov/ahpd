@@ -503,6 +503,20 @@ describe('the eligibleForAutoApproval key', () => {
 });
 
 /*
+ * The floor under every session's sandbox is a daemon setting beside the
+ * managed permissions, in VS Code's floor shape, key for key.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/agentSandboxPolicyMeta.ts#L10-L28
+ */
+describe('the managedSettingsSandbox key', () => {
+  it('takes VS Code\'s floor and refuses a key the floor does not have', () => {
+    const floor = { enabled: true, allowBypass: false, allowedHosts: ['example.com'], deniedPaths: ['/secrets'], failClosed: true };
+    expect(folded({ managedSettingsSandbox: floor }).managedSettingsSandbox).toEqual(floor);
+    expect(refusal({ managedSettingsSandbox: { enabled: true, mode: 'strict' } })).toContain('managedSettingsSandbox');
+    expect(refusal({ managedSettingsSandbox: { allowBypass: true } })).toContain('managedSettingsSandbox');
+  });
+});
+
+/*
  * Who checks the managed rules is a daemon setting: this host's own check, or
  * VS Code's, which hands them to the backends and checks none.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47

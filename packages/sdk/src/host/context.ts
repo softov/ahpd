@@ -43,6 +43,7 @@ import type { Wakes } from './wakes.js';
 import type { QueueDrain } from './queuedrain.js';
 import type { SessionLifecycle } from './sessionlifecycle.js';
 import type { Canvases } from './canvases.js';
+import type { Sandbox } from './sandbox.js';
 import type { Asking } from './asking.js';
 
 /**
@@ -81,6 +82,8 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   canvases: Canvases;
   /** The shells each chat's agent runs its commands in, one set a chat. */
   shells: HostShells;
+  /** Each chat's sandbox: its selection, the floor it is resolved within, and what was applied. */
+  sandbox: Sandbox;
   /** The content backends hand this host to keep, and the provider a client reads it back through. */
   toolResults: ToolResultResources;
   /** The options `createHost` was given. */

@@ -14,6 +14,7 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 /*
  * A Docker on another box is another daemon, so a `DOCKER_HOST` keeps its own
@@ -125,6 +126,27 @@ if (verb === 'image') {
    */
   const tag = args[args.length - 1];
   const images = held.images ?? [];
+  /*
+   * `docker image ls --format {{.Tag}} <name>`: the tags of that name in
+   * `images`, the newest first, which is the last one put there.
+   */
+  if (args[1] === 'ls') {
+    keep();
+    for (const one of [...images].reverse().filter((image) => image.startsWith(`${tag}:`))) process.stdout.write(`${one.slice(tag.length + 1)}\n`);
+    process.exit(0);
+  }
+  // `docker image rm <tag>`: the tag gone from `images`, and recorded in `removed`.
+  if (args[1] === 'rm') {
+    if (!images.includes(tag)) {
+      keep();
+      process.stderr.write(`Error response from daemon: No such image: ${tag}\n`);
+      process.exit(1);
+    }
+    held.images = images.filter((one) => one !== tag);
+    (held.removed ??= []).push(tag);
+    keep();
+    process.exit(0);
+  }
   if (args[1] === 'inspect' && images.includes(tag)) {
     const env = (held.imageEnv ?? {})[tag] ?? ['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'];
     // The user its containers run as: `imageUser` by tag, else root's empty one.
@@ -732,6 +754,22 @@ if (verb === 'run' || verb === 'create') {
     const ids = (held.users ?? {})[user] ?? { uid: 0, gid: 0 };
     if (command[0] === 'id') process.stdout.write(`${command[1] === '-g' ? ids.gid : ids.uid}\n`);
     if (command[0] === 'chown') (held.chowns ??= []).push(command);
+    /*
+     * A part's check, its launchers run with `--version` in turn: recorded in
+     * `checks` with the image it ran in, the part images mounted and the
+     * launchers, and failed as VS Code words a CLI that fails its check when
+     * a part image mounted is in `failCheck`.
+     */
+    if (command[0] === 'sh' && command[1] === '-c' && String(command[2]).includes('--version')) {
+      const parts = images.map((one) => field(one, 'source'));
+      const launchers = command.slice(4);
+      (held.checks ??= []).push({ image, parts, launchers });
+      if (parts.some((one) => (held.failCheck ?? []).includes(one))) {
+        keep();
+        process.stdout.write(`CLI at ${launchers[0]} failed --version check after install (exit code 1)\n`);
+        process.exit(1);
+      }
+    }
     keep();
     process.exit(0);
   }
@@ -851,6 +889,34 @@ if (verb === 'cp') {
       bytes.copy(padded);
       process.stdout.write(Buffer.concat([header, padded, Buffer.alloc(1024)]));
     }
+    process.exit(0);
+  }
+  /*
+   * A path out to a folder of this host's, as `docker cp <id>:<path> <dir>`
+   * copies one: each file `files` holds for that machine under the path,
+   * keyed `<machine>:<path>`, written under `<dir>/<the path's last name>`,
+   * and the copy recorded in `copiedOut`; a path it holds nothing under is
+   * Docker's words for a file it cannot find.
+   */
+  const source = String(args[1]);
+  const machine = source.indexOf(':') > 0 ? named(source.slice(0, source.indexOf(':'))) : undefined;
+  if (machine !== undefined && args[2] !== undefined && args[2] !== '-') {
+    const path = source.slice(source.indexOf(':') + 1).replace(/\/$/, '');
+    const prefix = `${machine.name}:${path}/`;
+    const under = Object.entries(held.files ?? {}).filter(([key]) => key.startsWith(prefix));
+    if (under.length === 0) {
+      keep();
+      process.stderr.write(`Error response from daemon: Could not find the file ${path} in container ${machine.name}\n`);
+      process.exit(1);
+    }
+    const root = join(String(args[2]), path.slice(path.lastIndexOf('/') + 1));
+    for (const [key, text] of under) {
+      const file = join(root, ...key.slice(prefix.length).split('/'));
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, String(text));
+    }
+    (held.copiedOut ??= []).push(source);
+    keep();
     process.exit(0);
   }
   keep();

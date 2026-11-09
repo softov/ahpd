@@ -1,8 +1,10 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, resolve, sep } from 'node:path';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, posix, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork } from '@ahpd/sdk';
+import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork, SpawnOptions } from '@ahpd/sdk';
 import { AGENT_RECORD_VARIABLE, resolveNeeds, secretRef, strings } from '@ahpd/sdk';
 import { cliOf, devContainer, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
@@ -31,6 +33,10 @@ import { serverGate } from './servercheck.js';
 import { NODE_RUNTIME, nodeRuntime } from './node.js';
 import { claimAdopted, claimOwned, forgetOwned, keepMadeNeeds, keepProbe, madeNeedsOf, ownedOf, probeOf } from './owners.js';
 import { computerTools } from './tools.js';
+import {
+  hostSandboxPlace, hostSandboxRefusal, isSandboxSupported, MACHINE_SANDBOX_CHECK, MACHINE_SANDBOX_START, sandboxConfiguration,
+  sandboxedCommand, sandboxedServer, sandboxSettingsOf, sandboxTempDir, writeSandboxSettings,
+} from './sandbox.js';
 import { guardFor, hostUser, runsAsHost } from './gitdir.js';
 import type { GitGuard, SessionTree } from './gitdir.js';
 
@@ -169,12 +175,8 @@ export const profilesOf = (value: unknown): Record<string, Profile> | undefined 
       // is `volume` and `owner`.
       ...(said.state === 'volume' || said.state === 'host' ? { state: said.state } : {}),
       ...(said.stateScope === 'owner' || said.stateScope === 'shared' ? { stateScope: said.stateScope } : {}),
-      // How a git directory in its machines is guarded. Absent is `fetch`, and
-      // `bind` - the guard this plan removes - is read as `fetch` too, so a
-      // profile written for it keeps working and gets the safer layout. The
-      // line saying so is the check's, where the whole option is read.
+      // How a git directory in its machines is guarded. Absent is `fetch`.
       ...(said.gitGuard === 'fetch' || said.gitGuard === 'open' ? { gitGuard: said.gitGuard } : {}),
-      ...(said.gitGuard === 'bind' ? { gitGuard: 'fetch' as const } : {}),
       // What deleting one of its machines' sessions when it is not running
       // does to the machine's own copy. Absent is `inside`.
       ...(said.nestedDelete === 'inside' || said.nestedDelete === 'record' ? { nestedDelete: said.nestedDelete } : {}),
@@ -500,17 +502,12 @@ export const apply: Plugin['apply'] = (host, options) => {
    * dropped: the loader's check does not reach into a profile, and a value read
    * as the default would make a machine other than the one its operator asked
    * for.
-   *
-   * `gitGuard` takes a third value, `bind`, which is no longer a guard of its
-   * own: a profile written for it is read as `fetch` - the safer layout - and
-   * one line says so, because a profile quietly guarded differently from what
-   * its file asks for is a thing an operator has to be able to find out.
    */
   const answers: [field: string, values: string[]][] = [
     ['secretUnreadable', ['fail', 'drop']],
     ['state', ['volume', 'host']],
     ['stateScope', ['owner', 'shared']],
-    ['gitGuard', ['fetch', 'open', 'bind']],
+    ['gitGuard', ['fetch', 'open']],
     ['sessionTree', ['shared', 'copy']],
     ['nestedDelete', ['inside', 'record']],
     ['code', ['bundle', 'clone']],
@@ -524,9 +521,6 @@ export const apply: Plugin['apply'] = (host, options) => {
       if (said === undefined) continue;
       if (!values.includes(said as string)) {
         throw new Error(`plugin ${name}: profiles.${key}.${field} is ${asList(values)}, and ${String(said)} is neither`);
-      }
-      if (field === 'gitGuard' && said === 'bind') {
-        host.log(`${name}: profiles.${key}.gitGuard is bind, which is now fetch: the machine commits in a git directory of its own`);
       }
     }
   }
@@ -783,7 +777,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     // A template's parts come out of the joined image on this host's Docker.
     parts: partsFromDocker(
       { command, ...(args === undefined ? {} : { args }), ...(env === undefined ? {} : { env }) },
-      async () => (await ensureJoined({ runtime: dockered, log: noted })).tag,
+      async () => (await ensureJoined({ runtime: dockered, log: noted, image })).tag,
     ),
     log: noted,
   });
@@ -847,7 +841,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(host.hostId === undefined ? {} : { hostId: host.hostId }),
     parts: partsFromDocker(
       { command, ...(args === undefined ? {} : { args }), ...(env === undefined ? {} : { env }) },
-      async () => (await ensureJoined({ runtime: dockered, log: noted })).tag,
+      async () => (await ensureJoined({ runtime: dockered, log: noted, image })).tag,
     ),
     log: noted,
   });
@@ -1192,7 +1186,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       if (!vm && asked.partsAsked !== undefined && asked.partsAsked.length > 0) {
         const far = key === undefined ? undefined : farValues[key];
         const builder = far === undefined ? dockered : computerRouter.runtimes[far] ?? dockered;
-        const built = await ensureParts(asked.partsAsked, { runtime: builder, log: noted });
+        const built = await ensureParts(asked.partsAsked, { runtime: builder, log: noted, image });
         /*
          * A failed part whose need names a fallback has that host mount in its
          * place, and the machine counts it as had: its `ahpd.parts` label names
@@ -1874,6 +1868,104 @@ export const apply: Plugin['apply'] = (host, options) => {
     if (wanted.length > 0) await made.takeOut(id, wanted);
   };
 
+  /*
+   * A folder inside a machine, copied out through the machine's runtime into a
+   * scratch folder of this host's and read there, as VS Code reads a plugin's
+   * parts where the plugin lives: the copy is gone once `read` is done, read or
+   * thrown, and a machine that is not there or a folder it does not hold reads
+   * as nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L54-L91
+   */
+  const readFolder: NonNullable<ComputerPort['readFolder']> = async (id, folder, read) => {
+    if (await made.inspect(id) === undefined) return undefined;
+    const into = mkdtempSync(join(tmpdir(), 'ahpd-machine-folder-'));
+    try {
+      if (!await made.copyOut(id, folder, into)) return undefined;
+      return await read(join(into, posix.basename(folder)));
+    }
+    finally {
+      rmSync(into, { recursive: true, force: true });
+    }
+  };
+
+  /**
+   * What a command in a machine printed and how it ended, run by the
+   * descriptor the machine's runtime answers for it.
+   */
+  const ranIn = async (id: string, asked: SpawnOptions): Promise<{ code: number; out: string }> => {
+    const how = await reach(id, asked);
+    if (how === undefined) return { code: 1, out: `There is no computer called ${id}` };
+    return await new Promise((done) => {
+      execFile(how.command, how.args, {
+        encoding: 'utf8',
+        timeout: 60_000,
+        ...(how.cwd === undefined ? {} : { cwd: how.cwd }),
+        ...(how.env === undefined ? {} : { env: { ...process.env, ...how.env } }),
+      }, (error, stdout, stderr) => {
+        done({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : 1, out: `${stdout}${stderr}`.trim() });
+      });
+    });
+  };
+
+  /** Each machine's home, as the sandbox check inside it read it, which a sandboxed command does not read. */
+  const homes = new Map<string, string>();
+
+  /*
+   * Whether a computer can host the sandbox runtime, each kind for itself: this
+   * host by the runtime's own dependency check and VS Code's bubblewrap probe;
+   * a container by its real Docker settings, as VS Code checks a dev container
+   * before it treats it as able to host the sandbox, and then by the runtime's
+   * own start run inside it; a box or a VM by that start alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L498-L504
+   */
+  const sandboxSupport: NonNullable<ComputerPort['sandboxSupport']> = async (id) => {
+    if (id === undefined) return await hostSandboxRefusal();
+    const held = await made.inspect(id);
+    if (held === undefined) return `There is no computer called ${id}`;
+    if (typeof held['HostConfig'] === 'object' && held['HostConfig'] !== null && !isSandboxSupported(JSON.stringify(held))) {
+      return `computer://${id} was not made to host the sandbox: its container runs with seccomp, AppArmor or its system paths confined, or without /dev/net/tun`;
+    }
+    const probed = await ranIn(id, { command: 'sh', args: ['-c', MACHINE_SANDBOX_CHECK] });
+    if (probed.code !== 0) return probed.out === '' ? `The sandbox runtime cannot run in computer://${id}` : probed.out;
+    homes.set(id, probed.out);
+    return undefined;
+  };
+
+  /*
+   * A command or an MCP server inside the sandbox runtime, with the chat's
+   * settings: on this host, the runtime this plugin depends on run with the
+   * daemon's Node and its settings written beside it; inside a machine, the
+   * runtime's `srt` there, its settings written into the machine by the same
+   * command that starts it, which the machine's own runtime reaches.
+   */
+  const sandboxed: NonNullable<ComputerPort['sandboxed']> = async (id, asked) => {
+    const sandbox = asked.sandbox ?? {};
+    const { chat, server, unsandboxed, sandbox: _sandbox, ...options } = asked;
+    const outside = unsandboxed === true && sandbox.allowUnsandboxedCommands === true;
+    if (id === undefined) {
+      const place = hostSandboxPlace(chat ?? '', host.configDir);
+      const configPath = writeSandboxSettings(place, (path) => sandboxSettingsOf(sandbox, place, options.cwd, path));
+      return server === true ? sandboxedServer(place, configPath, options) : sandboxedCommand(place, configPath, options, outside);
+    }
+    if (!homes.has(id)) {
+      const refused = await sandboxSupport(id);
+      if (refused !== undefined) throw new Error(refused);
+    }
+    const home = homes.get(id);
+    const place = { execPath: 'node', ...(home === undefined ? {} : { home }), tempDir: sandboxTempDir('/tmp/ahpd-sandbox', chat ?? ''), platform: 'linux' as const };
+    const configPath = `${place.tempDir}/settings.json`;
+    const settings = JSON.stringify(sandboxSettingsOf(sandbox, place, options.cwd, configPath));
+    const inner = server === true ? sandboxedServer(place, configPath, options) : sandboxedCommand(place, configPath, options, outside);
+    const how = await reach(id, {
+      command: 'sh',
+      args: ['-c', MACHINE_SANDBOX_START, 'sh', place.tempDir, settings, inner.command, ...inner.args],
+      ...(inner.env === undefined ? {} : { env: inner.env }),
+      ...(asked.provider === undefined ? {} : { provider: asked.provider }),
+    });
+    if (how === undefined) throw new Error(`There is no computer called ${id}`);
+    return how;
+  };
+
   host.registerComputers({
     how: reach,
     /*
@@ -1906,6 +1998,9 @@ export const apply: Plugin['apply'] = (host, options) => {
     follow,
     putIn,
     takeOut,
+    readFolder,
+    sandboxSupport,
+    sandboxed,
     /*
      * The agents one was prepared for, read back from its own runtime.
      *
@@ -2058,7 +2153,7 @@ export const apply: Plugin['apply'] = (host, options) => {
           try {
             // The CLI decides the container's name, so the id is the one it made
             // rather than the one this host suggested.
-            return (await made.run({ ...spec, label, ...withGit(asked, answer) })).id;
+            return (await made.run({ ...spec, label, ...withGit(asked, answer), ...(asked.sandbox === true ? { sandbox: true } : {}) })).id;
           }
           catch (error) {
             throw new Error(`The machine for ${asked.source} could not be made: ${error instanceof Error ? error.message : String(error)}`);
@@ -2174,6 +2269,8 @@ export const apply: Plugin['apply'] = (host, options) => {
           // keeps it out of a daemon that keeps the same session ids.
           session: asked.session,
           ...(host.hostId === undefined ? {} : { host: host.hostId }),
+          // Made to host the sandbox runtime where the session's sandbox is on.
+          ...(asked.sandbox === true ? { sandbox: true } : {}),
         }));
       });
       // Watched before the host says the session entered, so a session that
@@ -2379,6 +2476,14 @@ export const apply: Plugin['apply'] = (host, options) => {
       },
     });
   }
+
+  /*
+   * The root `sandbox` property, VS Code's own: a window forwards its sandbox
+   * settings to a host whose root config declares the property, and the
+   * switch a chat sets is each backend's own session key.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/terminalContrib/chatAgentTools/browser/agentHostSandboxForwarder.ts#L118-L136
+   */
+  host.registerProviderConfiguration(sandboxConfiguration);
 
   if (sessionSetting) {
     if (sessionDefault !== '' && !/^computer:\/\/[^/\s]+$/.test(sessionDefault)) {

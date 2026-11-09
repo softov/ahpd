@@ -375,6 +375,45 @@ it('refuses a path that is no session\'s attachments, before a copy and before a
   for (const line of refused) expect(line).toContain("it is not a session's attachments path");
 });
 
+/*
+ * A folder inside a machine read where it lives, as VS Code reads a plugin's
+ * parts where the plugin is (claudeSessionCustomizationDiscovery.ts L54-L91 at
+ * 6b68d3fe): copied out through the machine's runtime for the time the read
+ * takes, and gone after it.
+ */
+it('reads a folder inside a machine through a copy that is gone once the read is done', async () => {
+  const dir = temp();
+  const dockerState = join(dir, 'docker.json');
+  const plugin = '/home/agent/.claude/plugins/cache/tools/1.0.0';
+  writeFileSync(dockerState, JSON.stringify({
+    machines: [{ name: 'box', image: 'node:22', labels: { 'ahpd.computer': '1' } }],
+    calls: [],
+    files: {
+      [`box:${plugin}/.claude-plugin/plugin.json`]: '{ "name": "tools" }',
+      [`box:${plugin}/agents/reviewer.md`]: '# Reviewer',
+    },
+  }));
+  const { options: loaded } = await load(optionsOf({ docker: dockerState }), memorySessions());
+  const port = loaded.computers as ComputerPort;
+
+  let copied = '';
+  const read = await port.readFolder?.('box', plugin, (copy) => {
+    copied = copy;
+    return {
+      manifest: readFileSync(join(copy, '.claude-plugin', 'plugin.json'), 'utf8'),
+      agent: readFileSync(join(copy, 'agents', 'reviewer.md'), 'utf8'),
+    };
+  });
+  expect(read).toEqual({ manifest: '{ "name": "tools" }', agent: '# Reviewer' });
+  expect(copied).not.toBe('');
+  expect(existsSync(copied)).toBe(false);
+  expect((held(dockerState) as Held & { copiedOut?: string[] }).copiedOut).toEqual([`box:${plugin}`]);
+
+  // A folder the machine does not hold, and a machine that is not there, read as nothing.
+  expect(await port.readFolder?.('box', '/home/agent/elsewhere', () => 'read')).toBeUndefined();
+  expect(await port.readFolder?.('gone', plugin, () => 'read')).toBeUndefined();
+});
+
 it('writes nothing into a machine for a store that keeps no files', async () => {
   const dir = temp();
   const dockerState = join(dir, 'docker.json');

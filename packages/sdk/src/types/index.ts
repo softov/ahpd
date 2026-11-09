@@ -34,9 +34,13 @@ export type {
 export type { Account, Offered } from './probe.js';
 export type { Agent, Listed, Start, BoundTool, ToolCallFacts, Endpoint, ToolEffects, RestoredSubagent, SessionAt, SessionMachine, McpServer, StdioMcpServer, HttpMcpServer, ToolResultResource, PendingConfirmation, SchemaPolicy } from './agent.js';
 export type { ManagedSettingsPermissions, PermissionKind } from './permissions.js';
+export type {
+  SandboxConfigValue, SandboxEnabledValue, SandboxFileSystemSetting, SandboxMaskedCredentials, SandboxUserConfiguredPaths,
+  SessionSandboxEnabled, SessionSandboxPolicy, SessionSandboxState,
+} from './sandbox.js';
 export type { DirectoryNeed, FileNeed, EnvNeed, CopyNeed, PartNeed, StateNeed, Seed, ResolvedSeed, StateMode, MachineNeed, NeedKind, ResolvedNeed } from './machine.js';
 export type { Entry, Metadata, Read, ResourceChange, ResourceProvider, ResourceStore, SchemeDescription, Watcher, WatchOptions, Write } from './resources.js';
-export type { BroughtBack, ComputerPort, HandedAgent, HandedRecord, MachineSource, NestedSpawn, Spawn, SpawnOptions } from './computers.js';
+export type { BroughtBack, ComputerPort, HandedAgent, HandedRecord, MachineSource, NestedSpawn, SandboxedSpawn, Spawn, SpawnOptions } from './computers.js';
 export type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink } from './containers.js';
 export type { SessionConfigAnswerer, SessionConfigAsk } from './completions.js';
 export type { Claim, CommandTerminal, Terminal, TerminalOptions, SpawnPty, TerminalStore, OpenTerminal, OpenedTerminal, StartTerminals, OutputTerminal, OutputTerminals, TerminalOutputs, ShellIntegration, ShellIntegrationAnswer, Screen, ScreenOptions, SpawnScreen } from './terminals.js';

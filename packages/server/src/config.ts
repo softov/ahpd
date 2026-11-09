@@ -6,7 +6,7 @@ import { isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { resolveConfig, type ResolvedConfig } from '@cofold/config';
-import { isManagedDomainBoundaryRule, isShellName, issuerKind, managedRuleOf, reason, type Icon, type IssuerVerify, type ManagedSettingsPermissions, type McpServer, type PluginContracts, type PluginLink, type PluginSpec, type ShellEnv } from '@ahpd/sdk';
+import { isManagedDomainBoundaryRule, isShellName, issuerKind, managedRuleOf, reason, type Icon, type IssuerVerify, type ManagedSettingsPermissions, type McpServer, type PluginContracts, type PluginLink, type PluginSpec, type SessionSandboxPolicy, type ShellEnv } from '@ahpd/sdk';
 import type { ProxySetting } from './proxy/providers.js';
 
 /**
@@ -515,6 +515,16 @@ export interface Config {
    * no managed permissions at all.
    */
   managedSettingsPermissions?: ManagedSettingsPermissions;
+  /**
+   * The floor every session's sandbox is held to, in VS Code's floor shape:
+   * `enabled` to keep the sandbox on, `allowBypass` for whether a command may
+   * leave it, the outbound and local network, `allowedHosts` and
+   * `blockedHosts`, `readwritePaths`, `readonlyPaths` and `deniedPaths`, the
+   * server, credential and developer-tool switches, and `failClosed`, which
+   * keeps the sandbox on with no way out. No chat's selection lowers it.
+   * Absent is no floor at all.
+   */
+  managedSettingsSandbox?: SessionSandboxPolicy;
   /**
    * The operator's per-tool approval eligibility, VS Code's
    * `chat.tools.eligibleForAutoApproval` map of tool name to boolean: under

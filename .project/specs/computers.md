@@ -30,6 +30,9 @@ refs:
   - "[code://packages/computer/src/manifest.ts#L608-L628](../../packages/computer/src/manifest.ts#L608-L628) - `oneMountEach`, one mount for each target"
   - "[code://packages/computer/src/tools.ts#L50-L70](../../packages/computer/src/tools.ts#L50-L70) - `request_disposable_computer`, one of the three host tools"
   - "[code://packages/computer/src/catalogue.ts#L1-L45](../../packages/computer/src/catalogue.ts#L1-L45) - the `x-ahpd-computers://` channel"
+  - "[code://packages/sdk/src/sandbox.ts](../../packages/sdk/src/sandbox.ts) - a chat's sandbox resolved as VS Code's `getSessionSandboxConfig`"
+  - "[code://packages/sdk/src/host/sandbox.ts](../../packages/sdk/src/host/sandbox.ts) - the floor published, a chat's sandbox applied, and a rejection put back"
+  - "[code://packages/computer/src/sandbox.ts](../../packages/computer/src/sandbox.ts) - the root `sandbox` property, the container check, and a start inside the runtime"
   - git://d9d4f950^ - the deleted decisions this spec was written from: a-backend-reaches-a-computer-through-a-port, a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps, a-disposable-alone-machine-refuses-another-session, a-machine-is-made-by-a-host-tool, a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time, a-machine-made-for-a-session-counts-against-max-and-needs-computer-write, a-machine-runtime-is-named-for-its-maker, a-need-and-a-mount-at-one-target-are-refused, a-part-is-mounted-from-its-image-and-a-volume-is-the-fallback, a-session-folder-reaches-a-machine-only-where-its-profile-allows, a-session-in-a-machine-gets-each-attachment-copied-into-it, a-session-on-a-machine-not-prepared-for-its-agent-fails-at-creation, a-shared-target-is-refused-only-when-the-mounts-differ, an-agent-declares-its-machine-needs-with-a-method, cofold-config-reaches-a-machine-at-a-fixed-target, gvisor-is-a-docker-profile-option-not-a-runtime, one-computer-provider-with-runtimes-as-options, the-computer-is-an-object-a-person-manages, the-host-hands-an-agents-machine-needs-to-the-machine-maker, the-published-image-is-the-parts-joined
 ---
 
@@ -179,6 +182,54 @@ WHEN a session has the advanced tools
 THEN its agent sees `request_disposable_computer`, `release_computer` and `computer_exec`
 AND a machine that a tool makes counts against `max`.
 A session without the advanced tools does not see these three tools.
+
+### The plugin declares the root sandbox property
+
+WHEN the plugin loads
+THEN it declares VS Code's root `sandbox` property through `registerProviderConfiguration`
+AND it declares no other sandbox setting.
+A backend whose commands start through `Start.computers.sandboxed` declares a chat's switch with `SANDBOX_ENABLED_PROPERTY`.
+That property is VS Code's platform property, `sessionMutable` and `chatMutable`.
+
+### A chat's sandbox is resolved within the floor
+
+WHEN a backend reads `Start.computers.sandbox(chat)`
+THEN the host answers the chat's sandbox as VS Code's `getSessionSandboxConfig` resolves it
+AND the root settings come first, then the chat's selection, within the operator's `managedSettingsSandbox`.
+A chat reads its selection from the values it runs on: its own where it has them, its session's otherwise.
+A client sets a chat's own selection with `chat/configChanged`, and a session's selection reaches the chats that set none.
+Each session publishes the floor as `vscode.resolvedSandboxPolicy`.
+Under a floor that allows bypass, a client's `off` is the chat's enablement.
+A floor with `failClosed` keeps the sandbox on with no way out, and refuses a client's `off`.
+
+### Each chat's sandbox is applied
+
+WHEN a chat starts, the selection it takes changes, or the root `sandbox` settings change
+THEN the host applies the chat's sandbox where its session runs
+AND it publishes the chat's applied enablement in `vscode.sandboxState` under `chats`.
+The default chat's state is also at the top, where older clients read it.
+
+### A command runs inside the sandbox runtime
+
+WHEN a backend asks `Start.computers.sandboxed` for a command and the chat's sandbox is on
+THEN the answer runs the command inside `@vscode/sandbox-runtime` with the chat's settings
+AND an MCP server runs inside it only while `sandboxMcpServers` is on.
+A person's terminal and a `!` command are left alone.
+
+### A computer says whether it can host the sandbox
+
+WHEN the host applies a chat's sandbox
+THEN it asks the computer the session runs on whether it can host the runtime
+AND a container answers from its real Docker settings and then from the runtime's own start inside it.
+A machine made for a session whose sandbox is on gets VS Code's options for it.
+
+### A request the computer cannot host is rejected
+
+WHEN a client turns a chat's sandbox on where its computer cannot host it
+THEN the host publishes the computer's reason in `vscode.sandboxState` with the client's id and sequence number
+AND it puts the selection back to the enablement last applied, where the selection was made.
+The rejection stays reported until a new selection is made.
+A start that meets the same reason reports it in the same place.
 
 ### A machine is owned and metered
 

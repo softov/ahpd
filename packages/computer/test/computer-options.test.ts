@@ -101,16 +101,15 @@ it('takes a profile\'s state and stateScope by their values, and refuses anythin
 });
 
 it('takes a profile\'s gitGuard by its values, and refuses anything else by name', async () => {
-  // `bind` is the guard plan host/67 removes, kept readable so a profile
-  // written for it still loads; it is read as `fetch`, which the plugin test
-  // asks of the machine a session makes.
-  const all = await load({ profiles: { fetched: { gitGuard: 'fetch' }, open: { gitGuard: 'open' }, bound: { gitGuard: 'bind' } } });
+  const all = await load({ profiles: { fetched: { gitGuard: 'fetch' }, open: { gitGuard: 'open' } } });
   expect(all.problems).toEqual([]);
   expect(all.loaded.map((one) => one.name)).toEqual([NAME]);
 
-  const loose = await load({ profiles: { bots: { gitGuard: 'loose' } } });
-  expect(loose.loaded).toEqual([]);
-  expect(loose.problems.join('\n')).toContain('profiles.bots.gitGuard is fetch, open or bind, and loose is neither');
+  for (const said of ['loose', 'bind']) {
+    const refused = await load({ profiles: { bots: { gitGuard: said } } });
+    expect(refused.loaded).toEqual([]);
+    expect(refused.problems.join('\n')).toContain(`profiles.bots.gitGuard is fetch or open, and ${said} is neither`);
+  }
 });
 
 it('takes a profile\'s nestedDelete by its values, and refuses anything else by name', async () => {

@@ -113,6 +113,7 @@ const fake = () => {
     // for a session's attachments - recorded here, and nothing more.
     putIn: async (id, paths) => { calls.push(`putIn ${id} ${paths.join(',')}`); },
     takeOut: async (id, paths) => { calls.push(`takeOut ${id} ${paths.join(',')}`); },
+    copyOut: async (id, path) => { calls.push(`copyOut ${id} ${path}`); return false; },
     capabilities: () => ({
       runtime: 'docker',
       actions: ['create', 'start', 'stop', 'restart', 'exec', 'delete'],
@@ -124,6 +125,9 @@ const fake = () => {
     hasImage: async () => true,
     buildImage: async (tag) => { calls.push(`build ${tag}`); },
     pullImage: async (from, tag) => { calls.push(`pull ${from} ${tag}`); },
+    removeImage: async (tag) => { calls.push(`remove ${tag}`); },
+    imagesOf: async () => [],
+    checkPart: async () => undefined,
   };
   return { runtime, held, calls, specs };
 };
@@ -132,11 +136,12 @@ const fake = () => {
 const unread: PluginHost['secret'] = async () => '';
 
 const options = { image: 'debian:bookworm-slim', cpus: '2', memory: '2g', max: 2, label: 'ahpd.computer=1', secret: unread };
-/** A call the host's own turn makes, or one a person's turn makes, which may hold a grant or not. */
-const callBy = (person = 'host', may = true): ToolCall => ({
+/** A call the host's own turn makes, or one a person's turn makes, which may hold a grant or not, on the person's teams. */
+const callBy = (person = 'host', may = true, teams: string[] = []): ToolCall => ({
   person: () => person,
   may: () => may,
   refusal: (grant: string) => `${person} may not ${grant} here`,
+  teams: () => teams,
 }) as unknown as ToolCall;
 const at = callBy();
 const by = (tools: ReturnType<typeof computerTools>, name: string) =>
@@ -250,14 +255,16 @@ it('refuses past the maximum, a name already taken, and a machine it does not ha
 
 /*
  * A machine tool acts on the machines the turn's person may use, their own,
- * the host's or a team's, and asks the person's grant as the host's own tools
- * do (P2CJ-0083's gate): a machine is owned by whoever made it.
+ * the host's or one charged to a team they are on, and asks the person's grant
+ * as the host's own tools do (P2CJ-0083's gate): a machine is owned by whoever
+ * made it, and a call carries its person's teams.
  */
-it('acts on the machines the turn\'s person may use, and asks the person\'s grant', async () => {
+it('acts on the machines the turn\'s person may use, a team\'s for the team\'s people alone, and asks the person\'s grant', async () => {
   const { runtime, held, specs } = fake();
   const tools = computerTools(runtime, { ...options, max: 9, label: 'ahpd.computer=1', prefix: 'ahpd-computer' });
   const ada = callBy('user:ada');
-  const bo = callBy('user:bo');
+  const bo = callBy('user:bo', true, ['eng']);
+  const dee = callBy('user:dee', true, ['ops']);
 
   // A machine Ada asks for is hers.
   await by(tools, 'request_disposable_computer').run({ name: 'adas' }, ada);
@@ -270,9 +277,13 @@ it('acts on the machines the turn\'s person may use, and asks the person\'s gran
   expect(String(await by(tools, 'run_in_computer').run({ id: 'adas', command: 'true' }, bo))).toBe('There is no computer called adas.');
   expect(String(await by(tools, 'release_computer').run({ id: 'adas' }, bo))).toBe('There is no computer called adas.');
   expect(held.has('adas')).toBe(true);
-  // The host's and a team's are his to use.
+  // The host's is his to use, and so is the one charged to eng, his team.
   expect(String(await by(tools, 'run_in_computer').run({ id: 'hosts', command: 'true' }, bo))).toBe('hello\n\nexit 0');
   expect(String(await by(tools, 'run_in_computer').run({ id: 'teams', command: 'true' }, bo))).toBe('hello\n\nexit 0');
+  // Dee, on another team, and Ada, on none, are told there is no eng machine.
+  expect(String(await by(tools, 'run_in_computer').run({ id: 'teams', command: 'true' }, dee))).toBe('There is no computer called teams.');
+  expect(String(await by(tools, 'release_computer').run({ id: 'teams' }, ada))).toBe('There is no computer called teams.');
+  expect(held.has('teams')).toBe(true);
   // And Ada uses and removes her own.
   expect(String(await by(tools, 'release_computer').run({ id: 'adas' }, ada))).toContain('gone');
 

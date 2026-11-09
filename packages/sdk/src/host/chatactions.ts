@@ -700,6 +700,10 @@ export function chatAction(
         ctx.keepChat(uri, channel, undefined, false, provider, settings);
       }
       dispatch(channel, action, origin);
+      // The sandbox's part of the change, once it is said, as VS Code's host
+      // handles a chat's config change and then its runtime applies the
+      // sandbox (agentConfigurationService.ts L506-L536 at 6b68d3fe).
+      ctx.sandbox.chatConfigChanged(uri, channel, config, origin);
       const chat = owning === undefined ? undefined : byChat.get(channel)?.chat;
       if (owning === undefined || chat === undefined) return;
       const effective = { ...agent.defaults(), ...contributedDefaults(), ...chatConfig(uri, owning, channel) };
@@ -1578,6 +1582,15 @@ export function chatAction(
           dispatch(uri, { ...action, config: taken });
           dispatch(channel, { ...action, config: taken }, origin);
         }
+        /*
+         * The sandbox's part of the change, once it is said, as VS Code's
+         * host handles a session's config change and then its runtimes apply
+         * the sandbox: the session's floor published again, and the sandbox
+         * applied for each chat that takes the session's selection, a change
+         * the computer cannot host rejected in its words and put back.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L479-L503
+         */
+        ctx.sandbox.configChanged(uri, taken, origin);
       };
       /*
        * The keys the schema does not declare, which are the backend's to

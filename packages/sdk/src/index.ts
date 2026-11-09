@@ -71,6 +71,12 @@ export { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from './tools/clien
 export type { ClientCall, ClientCallAnswer, ClientCalls, ClientCallsOptions } from './tools/clientcalls.js';
 export { toMcpContent } from './tools/mcpcontent.js';
 export { machineAsked, refuseComputer, computersFor, computerId, computerSource, machineRefusal, openComputer } from './machines/computers.js';
+export {
+  normalizeSandboxFileSystemPath, readChatSandboxState, readSessionSandboxPolicy, readSessionSandboxState, resolveSandboxEnabled,
+  sandboxResolution, sessionSandboxConfig, sessionSandboxOverrides, withChatSandboxState, withSessionSandboxPolicy, withSessionSandboxState,
+} from './sandbox.js';
+export type { SandboxOverrides } from './sandbox.js';
+export { SANDBOX_ENABLED_KEY, SANDBOX_ENABLED_PROPERTY, SANDBOX_ROOT_KEY } from './types/sandbox.js';
 export { nestedAgent } from './sessions/nested.js';
 export type { NestedAsked, NestedHost, NestedOptions, NestedStarted } from './sessions/nested.js';
 export { resolveNeeds, expandHome, partTarget, PART_ROOT, machinePathOf, hostPathOf } from './machines/machine.js';

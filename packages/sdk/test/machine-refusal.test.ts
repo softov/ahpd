@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
-import { machineRefusal } from '../src/machines/computers.js';
+import { computersFor, machineRefusal } from '../src/machines/computers.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { ComputerPort, KeptFor } from '../src/types/computers.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -30,6 +30,23 @@ it('refuses a machine kept for another session', async () => {
   // And lets its own session in, whoever that session's owner is compared to
   // nobody: no owner asked for is no owner to disagree with.
   expect(await machineRefusal(port, 'box', 'echo', 'echo:/theirs')).toBeUndefined();
+});
+
+/*
+ * A folder read out of a machine is the machine's too: the port a backend is
+ * handed refuses one kept for another session before the read reaches it.
+ */
+it('refuses a folder read out of a machine kept for another session, and reads its own session\'s', async () => {
+  const read: string[] = [];
+  const port: ComputerPort = {
+    ...kept({ session: 'echo:/theirs' }),
+    readFolder: async (id, folder, reader) => { read.push(`${id}:${folder}`); return reader('/tmp/copy'); },
+  };
+  await expect(computersFor(port, 'echo', 'echo:/ours').readFolder?.('box', '/plugin', (copy) => copy))
+    .rejects.toThrow('computer://box belongs to another session');
+  expect(read).toEqual([]);
+  expect(await computersFor(port, 'echo', 'echo:/theirs').readFolder?.('box', '/plugin', (copy) => copy)).toBe('/tmp/copy');
+  expect(read).toEqual(['box:/plugin']);
 });
 
 it('refuses a machine made for another owner, on the same session id', async () => {

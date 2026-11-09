@@ -140,7 +140,7 @@ describe('recordOf', () => {
   });
 
   it('carries the control it is given, and no field when it is given none', () => {
-    const control: Control = { pipe: '\\\\.\\pipe\\ahpd-abc', key: 'def' };
+    const control: Control = { pipe: '\\\\.\\pipe\\ahpd-abc', connectionToken: 'def' };
     expect(recordOf(ANNOUNCED, 42, 'abc', undefined, control).control).toEqual(control);
     expect(recordOf(ANNOUNCED, 42, 'abc').control).toBeUndefined();
   });
@@ -162,34 +162,37 @@ describe('recordOf', () => {
     expect(recordOf(ANNOUNCED, 42, 'abc').startFolder).toBeUndefined();
   });
 
-  it('keeps the key out of every field a verb prints', () => {
+  it('keeps the connectionToken out of every field a verb prints', () => {
     const control = controlFor('win32') as Control;
     const record = recordOf(ANNOUNCED, 42, 'abc', undefined, control);
     // What `ahpd start` and `ahpd status` render from, and the one line status
-    // builds. The key belongs in the 0600 record and on no line.
+    // builds. The token belongs in the 0600 record and on no line.
+    expect(control.connectionToken).toMatch(/^[0-9a-f]{64}$/u);
     const printed = [record.url, record.connectUrl, statusLine(record), ...record.paths, record.automations as string];
-    for (const said of printed) expect(said).not.toContain(control.key);
-    expect(JSON.stringify({ url: record.url, paths: record.paths })).not.toContain(control.key);
+    for (const said of printed) expect(said).not.toContain(control.connectionToken);
+    expect(JSON.stringify({ url: record.url, paths: record.paths })).not.toContain(control.connectionToken);
   });
 });
 
 describe('controlFor', () => {
-  it('makes a named pipe and a key on win32, and nothing elsewhere', () => {
+  it('makes a named pipe and a connectionToken on win32, and nothing elsewhere', () => {
     expect(controlFor('linux')).toBeUndefined();
     expect(controlFor('darwin')).toBeUndefined();
     const control = controlFor('win32') as Control;
     // The application's name and a random UUID under the pipe namespace, as VS
     // Code's CLI names its pipe (cli/src/async_pipe.rs L179-L188 at 6b68d3fe),
-    // and a key of 32 bytes as hex.
+    // and a token of 32 bytes as hex under VS Code's name for the token its
+    // local endpoint requires (LOCAL_ENDPOINT.md L75 at 6b68d3fe).
     expect(control.pipe).toMatch(/^\\\\\.\\pipe\\ahpd-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
-    expect(control.key).toMatch(/^[0-9a-f]{64}$/u);
+    expect(control.connectionToken).toMatch(/^[0-9a-f]{64}$/u);
   });
 
-  it('makes a new pipe and a new key each time, so no other process can take one', () => {
+  it('makes a new pipe and a new connectionToken each time, so no other process can take one', () => {
     const one = controlFor('win32') as Control;
     const two = controlFor('win32') as Control;
     expect(one.pipe).not.toBe(two.pipe);
-    expect(one.key).not.toBe(two.key);
+    expect(one.connectionToken).toMatch(/^[0-9a-f]{64}$/u);
+    expect(one.connectionToken).not.toBe(two.connectionToken);
   });
 
   it('takes the pipe name it is given, which is how a case here holds the other end', () => {
@@ -197,7 +200,7 @@ describe('controlFor', () => {
     // it over a unix socket path rather than a named pipe.
     const control = controlFor('win32', '/tmp/ahpd-control.sock') as Control;
     expect(control.pipe).toBe('/tmp/ahpd-control.sock');
-    expect(control.key).toMatch(/^[0-9a-f]{64}$/u);
+    expect(control.connectionToken).toMatch(/^[0-9a-f]{64}$/u);
   });
 });
 
