@@ -155,11 +155,18 @@ jobs:
 
   # The cases that start real processes and Docker containers: the daemon's
   # command line, the HTTP server, the computer plugin and a nested host. They
-  # are most of the test time, so they run beside `linux` on a runner of their
-  # own, under the same bound.
+  # are most of the test time, so they run beside `linux` on runners of their
+  # own, under the same bound, split over two because one runner took from 208 s
+  # to past 300 s for the same commit.
   processes:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      # Every shard reports, so one red shard does not hide another.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    name: processes (${{ matrix.shard }}/2)
     steps:
       - uses: actions/checkout@v7
 
@@ -173,7 +180,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Tests
-        run: timeout 300 pnpm test:processes
+        run: timeout 300 pnpm test:processes --shard=${{ matrix.shard }}/2
 
   # `resourceWrite` is symmetrical, so this host implements the whole of it and
   # so does `ahpc`. `packages/sdk/test/fixtures/resource-write.json` is the same file in both
