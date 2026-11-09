@@ -406,8 +406,10 @@ const say = async (
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
   });
-  await until(() => told(through.notes, chatUri).some((action) =>
-    action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error'));
+  // This turn's own end: a turn stopped before it can still say its end after
+  // the notes were cleared, and that end is not this one's.
+  await until(() => told(through.notes, chatUri).some((action) => action.turnId === turnId
+    && (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')));
 };
 
 it('forks through the host, from the source chat into a chat of its own', async () => {
