@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,7 +39,7 @@ type Told = { folder: string; trusted: boolean | undefined }[];
 
 /** The context every plugin in this repository is handed, without a daemon. */
 const context = (): LoaderContext => ({
-  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {},
+  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {},
 });
 
 /**

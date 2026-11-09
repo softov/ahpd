@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { networkInterfaces } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
@@ -21,7 +22,7 @@ import type { Peer } from '../src/types/rpc.js';
 const DIR = '/tmp/example-canvas';
 
 const context = (): LoaderContext => ({
-  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {},
+  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {},
 });
 
 const peer = (): Peer => ({

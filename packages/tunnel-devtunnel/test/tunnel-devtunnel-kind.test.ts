@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { expect, it } from 'vitest';
 import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { checkTunnelKind } from '../../sdk/src/plugins/validate.js';
@@ -30,7 +31,7 @@ const unreached = (): Service => ({
 const kindOf = (over: Partial<KindOptions> = {}) => {
   const alerts: Alert[] = [];
   const context: LoaderContext = {
-    path: '/work', paths: ['/work'], version: '0.6.3', hostName: 'test', configDir: '/work', log: () => {}, say: () => {},
+    path: '/work', paths: ['/work'], version: '0.6.3', hostName: 'test', configDir: '/work', log: loggerOf(() => {}), say: () => {},
   };
   const { host } = pluginHost('tunnel', context, {
     alert: (alert) => { alerts.push(alert); },

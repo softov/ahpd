@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
@@ -50,7 +51,7 @@ function built(subscriptions: Subscription[]) {
       version: sdkVersion(),
       hostName: 'test',
       configDir: DIR,
-      log: (line) => { ctxLines.push(`${one.by}: ${line}`); },
+      log: loggerOf((line: string) => { ctxLines.push(`${one.by}: ${line}`); }),
       say: () => {},
     };
     const { host, contribution } = pluginHost(one.by, context);

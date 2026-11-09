@@ -1,6 +1,6 @@
 ---
 title: The daemon writes the level
-status: todo
+status: doing
 depends: [task-01-the-hosts-log-takes-a-level.md]
 layer: "server"
 refs:
@@ -46,4 +46,6 @@ The daemon writes each line as `2026-11-09 14:02:11.123 [warning] message`, in c
 - By hand: `ahpd` in a terminal shows `[warning]` in yellow; `daemon.log` of a detached daemon has no escape codes.
 
 ## Resume
+
+Built on 2026-11-09 and waits for review. The store problems that `run.ts` wrote to stderr without a time now go through `stamp` at warn. The examples in `RUN.md` get real lines in task 03.
 

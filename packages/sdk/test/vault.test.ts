@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { describe, expect, it } from 'vitest';
 import { fromEnvRef, readSecret, readSecrets, scopeOf, secretRef } from '../src/access/vault.js';
 import { pluginHost } from '../src/plugins/plugins.js';
@@ -107,7 +108,7 @@ describe('readSecret', () => {
 });
 
 const context = (): LoaderContext => ({
-  path: '/tmp/vault', paths: ['/tmp/vault'], version: sdkVersion(), hostName: 'test', configDir: '/tmp/vault', log: () => {}, say: () => {},
+  path: '/tmp/vault', paths: ['/tmp/vault'], version: sdkVersion(), hostName: 'test', configDir: '/tmp/vault', log: loggerOf(() => {}), say: () => {},
 });
 
 describe('PluginHost.secret', () => {

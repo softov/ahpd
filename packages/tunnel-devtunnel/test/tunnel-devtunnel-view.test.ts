@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { afterEach, expect, it, vi } from 'vitest';
 import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { checkView } from '../../sdk/src/plugins/view.js';
@@ -55,7 +56,7 @@ const scripted = (answers: Answer[]) => {
 };
 
 const context = (over: Partial<LoaderContext> = {}): LoaderContext => ({
-  path: '/work', paths: ['/work'], version: '0.10.0', hostName: 'test', configDir: '/work', log: () => {}, say: () => {}, ...over,
+  path: '/work', paths: ['/work'], version: '0.10.0', hostName: 'test', configDir: '/work', log: loggerOf(() => {}), say: () => {}, ...over,
 });
 
 /** The system tunnel, which is the one this plugin draws. */
@@ -76,7 +77,7 @@ const kindFor = (service: Service, over: Partial<KindOptions> = {}) => {
   const clearedViews: string[] = [];
   const clearedAlerts: string[] = [];
   const { host } = pluginHost('tunnel', context({
-    log: (line) => { logged.push(line); },
+    log: loggerOf((line: string) => { logged.push(line); }),
   }), {
     alert: (alert) => { alerts.push(alert); },
     clearAlert: (ref) => { clearedAlerts.push(ref); },

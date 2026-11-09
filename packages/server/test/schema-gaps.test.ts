@@ -20,6 +20,7 @@
  * one, and no daemon is started.
  */
 
+import { loggerOf } from '@ahpd/sdk';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -205,7 +206,7 @@ beforeAll(async () => {
       version: '0.0.0',
       hostName: 'schema-gaps',
       configDir,
-      log: () => {},
+      log: loggerOf(() => {}),
       say: () => {},
     }, {
       alert: (alert) => { alerts.push(alert.text); },

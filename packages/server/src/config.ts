@@ -300,6 +300,10 @@ export interface Config {
    * goes through.
    */
   closedChats?: 'hidden' | 'delete';
+  /** The lowest level of line the daemon writes to its log, or `off`. */
+  logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'off';
+  /** The clock the log's times are read on. */
+  logTime?: 'local' | 'utc';
   /**
    * What a turn naming a model its chat's agent does not offer does.
    *

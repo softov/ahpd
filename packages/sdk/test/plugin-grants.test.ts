@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
@@ -32,7 +33,7 @@ const context = (): LoaderContext => ({
   version: '0.0.0',
   hostName: 'host',
   configDir: '/tmp/plugin-grants',
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
 });
 

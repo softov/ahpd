@@ -7,6 +7,7 @@
  * name of the plugin that made it.
  */
 
+import { loggerOf } from '../src/log.js';
 import { expect, it } from 'vitest';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -21,7 +22,7 @@ const context: LoaderContext = {
   version: '0.0.0',
   hostName: 'host',
   configDir: '/tmp/plugins-close',
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
 };
 

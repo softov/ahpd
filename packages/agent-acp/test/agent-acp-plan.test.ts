@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,7 +71,7 @@ const finished = (p: ReturnType<typeof peer>, chatUri: string, turns: number): b
 
 /** What a plugin is handed, without the YAML the daemon would give it. */
 const context = (path: string): LoaderContext => ({
-  path, paths: [path], version: sdkVersion(), hostName: 'test', configDir: path, log: () => {}, say: () => {},
+  path, paths: [path], version: sdkVersion(), hostName: 'test', configDir: path, log: loggerOf(() => {}), say: () => {},
 });
 
 /** A connected client with one ACP session, and a plugin hearing `plan_update`. */

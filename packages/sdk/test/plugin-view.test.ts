@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { describe, expect, it } from 'vitest';
 import { createCanvases } from '../src/host/canvases.js';
 import { pluginHost } from '../src/plugins/plugins.js';
@@ -18,7 +19,7 @@ import type { LoaderContext, PluginView, ServedMethod } from '../src/types/plugi
 const DIR = '/tmp/plugin-view';
 
 const context = (): LoaderContext => ({
-  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {},
+  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {},
 });
 
 /** A view every client can draw: a Card, a Column, a Text, a Link and a Button. */

@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,7 +124,7 @@ const context = (): LoaderContext => ({
   version: '0.0.0',
   hostName: 'host',
   configDir: DIR,
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
 });
 

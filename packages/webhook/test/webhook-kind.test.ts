@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,7 +40,7 @@ const context = (dir: string): LoaderContext => ({
   version: '0.0.0',
   hostName: 'host',
   configDir: dir,
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
 });
 

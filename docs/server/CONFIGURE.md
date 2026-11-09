@@ -107,6 +107,8 @@ An unknown key is logged and ignored:
 | `attachmentFetchLimitBytes` | `--attachment-fetch-limit-bytes` | `33554432` | The largest file a client is asked for when a message attaches one the daemon has no copy of; `0` sets no limit |
 | `toolResultResourceLimitBytes` | `--tool-result-resource-limit-bytes` | `8388608` | The most bytes kept of one content a tool result or an agent's message carries inline, which a client reads back by a `session-db-resource` URI; larger content is left out, as VS Code keeps nothing over its bound; `0` sets no limit |
 | `closedChats` | `--closed-chats` | `hidden` | `delete` removes a closed chat from the backend |
+| `logLevel` | `--log-level` | `info` | The lowest level the log holds: `trace`, `debug`, `info`, `warn`, `error` or `off`. See [Run](RUN.md#files) |
+| `logTime` | `--log-time` | `local` | The clock of the log's times: `local` or `utc` |
 | `unofferedModel` | `--unoffered-model` | `fail` | `keep` keeps a chat's model when a turn names one its agent does not offer, as VS Code does |
 | `workspacelessFolder` | `--workspaceless-folder` | `first` | `scratch` works a session that names no folder in a folder of its own, `~/.copilot/chats/<session id>`, made with the session and removed with it, and makes it VS Code's workspace-less session, as VS Code does |
 | `rootOwner` | `--root-owner` | `host` | Whose work a session a root connection starts is, under a users directory: `host` is the host itself, `root:<hostName>`, the owner the usage rules charge; `none` is no one, as VS Code's host records no principal for a session made without a validated identity |

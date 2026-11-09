@@ -14,6 +14,7 @@
  */
 
 import type { ErrorInfo, SessionInputRequestKind } from '@microsoft/agent-host-protocol';
+import type { LogLevel } from '../log.js';
 
 import type { PluginContext } from './plugin.js';
 import type { PlanUpdate } from './session.js';
@@ -373,6 +374,8 @@ export interface LogEvent {
   type: 'log';
   /** The line, the same string `onEvent` receives. */
   line: string;
+  /** How much the line matters, the level `onEvent` receives with it. */
+  level: LogLevel;
 }
 
 /** Every event, discriminated on `type`. */

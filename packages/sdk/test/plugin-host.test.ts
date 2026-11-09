@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
@@ -55,7 +56,7 @@ it('answers whether it keeps a session, from the store and by the id in the URI'
     version: '0.0.0',
     hostName: 'host',
     configDir: '/tmp/plugin-host',
-    log: () => {},
+    log: loggerOf(() => {}),
     say: () => {},
   };
 
@@ -82,7 +83,7 @@ it('gives a plugin YAML functions that throw where the loader gave none', () => 
     version: '0.0.0',
     hostName: 'host',
     configDir: '/tmp/plugin-host',
-    log: () => {},
+    log: loggerOf(() => {}),
     say: () => {},
   };
   const { host } = pluginHost('fixture', context);
@@ -104,7 +105,7 @@ it('answers whose a session is, from the store and by the id in the URI', async 
     version: '0.0.0',
     hostName: 'host',
     configDir: '/tmp/plugin-host',
-    log: () => {},
+    log: loggerOf(() => {}),
     say: () => {},
   };
 
@@ -124,7 +125,7 @@ it('records the plugin that registered each agent, by the spec it was named with
     version: '0.0.0',
     hostName: 'host',
     configDir: '/tmp/plugin-host',
-    log: () => {},
+    log: loggerOf(() => {}),
     say: () => {},
   };
   const scoped = pluginHost('agents', context, { spec: 'some-scope/agents' });
@@ -162,7 +163,7 @@ it('waits for the store rather than answering before the fold has named it', asy
     version: '0.0.0',
     hostName: 'host',
     configDir: '/tmp/plugin-host',
-    log: () => {},
+    log: loggerOf(() => {}),
     say: () => {},
   };
 
@@ -680,14 +681,14 @@ const LOOPING_CONTEXT: LoaderContext = {
   version: '0.0.0',
   hostName: 'host',
   configDir: '/tmp/plugin-host',
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
 };
 
 /** A plugin host that keeps what it was told, rather than writing it anywhere. */
 const looping = (problems: string[], lines: string[] = []) => pluginHost(
   'fixture',
-  { ...LOOPING_CONTEXT, log: (line) => lines.push(line) },
+  { ...LOOPING_CONTEXT, log: loggerOf((line: string) => { lines.push(line); }) },
   { alert: (alert) => problems.push(alert.text) },
 ).host;
 
@@ -741,7 +742,7 @@ const CONTRACT_CONTEXT: LoaderContext = {
   version: '0.0.0',
   hostName: 'host',
   configDir: '/tmp/plugin-host',
-  log: () => {},
+  log: loggerOf(() => {}),
   say: () => {},
 };
 

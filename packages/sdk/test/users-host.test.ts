@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { expect, it, vi } from 'vitest';
 import { join } from 'node:path';
 import { createHost, ROOT } from '../src/host.js';
@@ -76,7 +77,7 @@ const agents = (): HostOptions['agents'] => [
 /** A host, with the `authenticated` event recorded the way a plugin records it. */
 function served(extra: Partial<HostOptions> = {}) {
   const seen: HostEvent[] = [];
-  const { host: plugin, contribution } = pluginHost('probe', { path: DIR, paths: [DIR], version: '0.0.0', hostName: 'test', configDir: DIR, log: () => {}, say: () => {} });
+  const { host: plugin, contribution } = pluginHost('probe', { path: DIR, paths: [DIR], version: '0.0.0', hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {} });
   plugin.on('authenticated', (event) => { seen.push(event); });
   const { options } = foldHostOptions({ path: DIR, agents: agents(), ...extra }, [contribution]);
   return { host: createHost(options), seen };

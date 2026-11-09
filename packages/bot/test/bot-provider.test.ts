@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -127,7 +128,7 @@ function made(
     hostName: 'test',
     configDir,
     ...(people ? { hasUsers: true } : {}),
-    log: () => {},
+    log: loggerOf(() => {}),
     say: () => {},
     // The host's YAML, which a bot's `AGENTS.md` is read and written with: the
     // daemon gives its own, and a test gives the parser the other tests use.

@@ -1,3 +1,4 @@
+import { loggerOf } from '../src/log.js';
 import { describe, expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
@@ -32,7 +33,7 @@ const STATE: CanvasState = {
 };
 
 const context = (): LoaderContext => ({
-  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {},
+  path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: loggerOf(() => {}), say: () => {},
 });
 
 const peer = (): Peer => ({

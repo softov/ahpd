@@ -45,6 +45,7 @@ import type { SessionLifecycle } from './sessionlifecycle.js';
 import type { Canvases } from './canvases.js';
 import type { Sandbox } from './sandbox.js';
 import type { Asking } from './asking.js';
+import type { Logger } from '../log.js';
 
 /**
  * A tree the window made for itself, cut for a creating session and held by
@@ -565,8 +566,8 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     origin: Origin | undefined,
     reason: string,
   ) => void;
-  /** The host's own log. */
-  log: (message: string) => void;
+  /** The host's own log: called as a function at info, and by a method at any other level. */
+  log: Logger;
   /** What the window's "collect logs" gets, and reads back. */
   logs: DebugLogs;
   /**

@@ -1,6 +1,6 @@
 ---
 title: The host's log takes a level
-status: todo
+status: doing
 depends: []
 layer: "sdk"
 refs:
@@ -50,4 +50,6 @@ The host's `log`, a plugin's `host.log`, the `log` event and each OTLP record ca
 - `pnpm typecheck` and `pnpm test:unit` pass.
 
 ## Resume
+
+Built on 2026-11-09 and waits for review. The tests that built a plugin host with `log: () => {}` wrap it in `loggerOf`, because `PluginHost.log` is a `Logger`.
 

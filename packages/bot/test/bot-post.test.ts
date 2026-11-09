@@ -1,3 +1,4 @@
+import { loggerOf } from '@ahpd/sdk';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -442,7 +443,7 @@ it('declares the options something reads, and those alone', async () => {
 it('reports a value outside the table, and loads anyway', () => {
   const root = mkdtempSync(join(tmpdir(), 'ahpd-bot-post-option-'));
   const context: LoaderContext = {
-    path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: join(root, 'config'), log: () => {}, say: () => {},
+    path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: join(root, 'config'), log: loggerOf(() => {}), say: () => {},
   };
   const problems: string[] = [];
   const { host } = pluginHost('bot', context, {

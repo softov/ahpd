@@ -13,6 +13,7 @@
  */
 
 import type { AutomationTriggerDefinition, CanvasState, ChatOrigin, ChatSummary, Icon } from '@microsoft/agent-host-protocol';
+import type { Logger } from '../log.js';
 
 import type { Agent } from './agent.js';
 import type { Engine, AgentOwner, ServedEngine } from './agents.js';
@@ -748,8 +749,8 @@ export interface PluginContext {
    * `dev-containers-need-allowed-folders-on-a-host-with-users`.
    */
   readonly hasUsers?: boolean;
-  /** One line to the daemon's log. */
-  log(message: string): void;
+  /** The daemon's log: called as a function it writes at info, and each method at its own level. */
+  log: Logger;
   /**
    * One line in what the daemon announces about itself.
    *
