@@ -4,47 +4,47 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 # Handoff: where `ahpd` stands, and what is pending
 
-Current progress and pending items only, as of 2026-11-04.
+Current progress and pending items only. *Main* is as of 2026-11-09. The sections after it were last checked on 2026-11-04.
 `node ~/.claude/skills/do-spec/scripts/plans.mjs` lists the backlog, and each plan's Resume state is its detail. What merged is in `git log`, and what was released is in [docs/updates/](../../docs/updates/).
 
 ## Main
 
-- The last release is 0.14.0 (`v0.14.0`, 2026-10-26). The next is `0.15.0-rc.1` on npm `next`, and ahpw updates with it. What it needs is in [pending/release.md](../pending/release.md).
-- Main's last code change is `6cf8c236`, the merge of #212. Main CI is green on `f9e99b34`, in run 41768795261. On `125b1ff1`, one case of `agent-cofold-plugin.test.ts` failed once on Linux, and it passed on `f9e99b34`. The case is "resumes a paused run and shows the open turn once to a client that subscribes after".
-- On 2026-11-03 and 2026-11-04, after #205, these PRs merged:
-  - #207: plugin/20261103-1514, a connector field picks from the connectors. Another session built it.
-  - #208: MayCXC's union `2a73f927`.
-  - #209: host/20261103-1620, a shell to sit in runs VS Code's shell integration, and each terminal has a screen. `@xterm/headless` is a new server dependency.
-  - #210: host/20261103-1620, an agent asks the person: the host's `ask_user`, for every backend but Claude.
-  - #211: host/20261103-1620, the agent terminal tool: VS Code's six shell tools, off until the root config sets `enableCustomTerminalTool`, never on Windows. Each chat keeps its own shells. It also fixed the store's command ids, which two commands in one millisecond shared.
-  - #213: host/20261103-1620, an async command is a background row, and its end wakes the session.
-  - #212: a Dev Tunnels call waits for the token refresh. Another session made and merged it.
-- Earlier on 2026-11-03, these PRs merged:
-  - #195, #202, #203 and #206: MayCXC's unions. #202 holds 15 branches, #203 holds bots/20261103-1008, and #206 holds 1030, 0910, 1322, 1332 and 1357.
-  - #196: plugin/52-p8, AGENTS.md is the bot's one copy.
-  - #197: host/20261103-0321, a client is listed and dropped.
-  - #198: host/101, a rule makes a tool call ask every time.
-  - #199: plugin/20261103-0158, a bot chat follows its back session.
-  - #200: plugin/20261103-0905, a back session posts more than once.
-  - #204: host/20261103-1339, no one gives a grant they do not hold. It closes a privilege escalation: a user with `role:put` and `user:put` gave themselves `*:*`.
-  - #205: host/20261103-1339, plugins register their grants. A plugin declares `contracts.grants`, and the host reports a grant that no entry of `ahpd.grants` lists.
-- On 2026-11-02, #192 to #194 merged. #192 built the answers of plans 1347 and 1122 on grants. #194 is the canvas example.
-- Softov's dev daemon runs #211. A restart in his terminal wires in #212 and #213. Never restart it or use the ports 5180 and 37537 yourself. A restart cancels a build turn on it, so ask for one only when no build runs.
-- After the restart, `/mcp` stays off until `mcpTools` is `all` and `httpApi` is on.
-- Code goes through a PR on `softov/ahpd`. Plan-only commits go to main. The ruleset restricts updates to main, so a PR merges with `gh pr merge --admin --merge`, only on Softov's word. Run `gh pr checks` with `-R softov/ahpd` outside a repo.
-- `gh pr checks` has no `--json` here. Read a job's log with `gh api repos/softov/ahpd/actions/jobs/<id>/logs`. `gh pr edit --base` fails on the Projects classic deprecation; use `gh api repos/softov/ahpd/pulls/<n> -X PATCH -f base=main`.
-- `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it. Run one vitest suite at a time.
-- On Windows CI, `agent-acp-ports`, the vitest worker RPC, `computer-needs`, `commit` and `host-merged` fail at times. So do the cases of [problems/two-attachment-cases-time-out-on-windows.md](../problems/two-attachment-cases-time-out-on-windows.md) and [problems/a-cofold-titling-case-times-out-on-windows.md](../problems/a-cofold-titling-case-times-out-on-windows.md). Rerun the failed jobs once; a second failure needs a look.
-- On this machine, two Docker tests time out: `computer-devcontainer` and `computer-disposable`. They time out on main too, and CI passes them.
+- The last release is 0.14.0 (`v0.14.0`). `0.15.0-rc.1` is on npm `next` (`v0.15.0-rc.1`, #231). What the release needs is in [pending/release.md](../pending/release.md).
+- Main is `8c312dba1`. CI on it was running when this was written. Its code is at `10ed70e69`, the merge of #259, whose PR run passed every job.
+- On 2026-11-08 and 2026-11-09, these PRs merged:
+  - #252: MayCXC's three audit branches (0210 at `b67a59acb`, 1647 at `93bda3612`, 2330 at `1f643e14a`) merged with main. `effortLevel` stays on Claude and cofold, `chatMutable`.
+  - #254: a closed host waits for the git it started, so Windows can remove a session's folder after `host.close()`.
+  - #255: the parts bump of 2026-11-09.
+  - #256: the Linux unit tests run in two shards, and host-tools waits for a plugin's real load.
+  - #257: MayCXC's 0340 at `20e812035`, the computer sandboxes its commands.
+  - #258: the process tests run in two shards.
+  - #259: plan daemon/20261109-1532, a log line says its level. It is `built`.
+- MayCXC said on 2026-11-09 not to wait for him. His branches 0210, 1647, 2330 and 0340 are all on main, and he has pushed nothing since 0340.
+- CI shards: `linux (1/2)`, `linux (2/2)`, `processes (1/2)`, `processes (2/2)` and `windows (1/4)` to `windows (4/4)`. `check` and `check-windows` are the checks the `main` ruleset requires; each is green only when every shard of its job is.
+- A slow runner can still fail a job with nothing wrong in the code. Rerun the failed jobs once with `gh run rerun <id> -R softov/ahpd --failed`; a second failure needs a look.
+- Softov's dev daemon has not been restarted for these merges. A restart in his terminal wires in #252 to #259. Never restart it or use the ports 5180 and 37537 yourself.
+- Code goes through a PR on `softov/ahpd`. Plan-only commits go to main. A PR merges with `gh pr merge <n> -R softov/ahpd --admin --merge`, only on Softov's word. Show a PR's text in chat before opening it.
+- `gh pr checks` has no `--json` here, and `gh pr edit` fails on the Projects classic deprecation. Read a job's log with `gh api repos/softov/ahpd/actions/jobs/<id>/logs`, and set a PR body with `gh api repos/softov/ahpd/pulls/<n> -X PATCH -F body=@<file>`.
+- `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it. Run one vitest suite at a time, with `TMPDIR` on a folder outside the home's dot-folders.
+- On this machine, computer-spawn's "fails a turn on a session whose CLI is gone" fails on main too. CI passes it.
 - A test daemon for checks: `source .project/pending/test-daemon.sh`, on port 39200, with its token at `~/ahpd-check/token`. Check `ss -ltnp` before you start one, and stop it by pid.
+- `/github/ahpd` is a shared checkout on an old main. Work in a worktree from `origin/main` under `/github/ahpd.worktrees/`.
 - Worktrees in `/github/ahpd.worktrees/`. Remove one only on Softov's word:
+  - `audit-guards`, on `host/20261108-1222-the-audit-keeps-its-guards`: another session's, with changes not committed.
+  - `base-0210`, `base-1647`, `base-2330` and `base-main`: detached, at the bases of the audit merge.
   - `briefs-commit`, `plan-mcp` and `pending-check`: detached, for plan-only commits and checks.
-  - `devtunnel-refresh`, on `plugin/devtunnel-token-waits-for-refresh`: another session's, merged in #212.
+  - `build-agents-057f374c`, `build-agents-3795760c`, `build-agents-ae3197fe`, `build-agents-e6611632`, `build-agents-ed43acf5`, `devtunnel-key-values` and `usage-task-03`: build sessions' worktrees.
   - `release-prerelease`: merged in #163.
   - Merged branches: `build-agents-6c0a50f2` (#199), `build-agents-74d376da` (#196), `build-agents-9b7dd5b5` (#197), `build-agents-b6d26e50` (#187), `build-agents-cba21cdc` (#198), `canvas-example` (#194), `grants-follow-the-answers` (#192), `maycxc-union` and `union-ad15488a`.
-- Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334` (merged), `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union` and `host/20261101-0331-maycxc-cancel-4e6d5cb8`. Delete them only on his word.
-- MayCXC's `host/124-an-agents-shell-is-a-terminal-the-person-sees` was not merged. The four host/20261103-1620 plans built it again on main, in #209, #210, #211 and #213. His `usage/20261101-0158` is on main through `20017525`; the branch shows commits only because he rebased it after that merge.
+- Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334` (merged), `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`. Delete them only on his word.
 - Many ACP servers at once: each read of the session list starts one server per ACP preset that has `session/list`, 8 on his box. A proper fix would answer the list from the record and ask the servers only on a refresh; no brief yet.
+
+## Left open on 2026-11-09
+
+- `agent-cofold-delete.test.ts:21` and `watches.test.ts:45` wait a fixed 4 s, not `WAIT_MS`. A slow runner can fail them as it failed cofold-store.
+- `scripts/parts-publish.mjs` asks the registry with `docker buildx imagetools inspect` and no time limit. A stall timed out the process job once on #254.
+- On Windows, a `!command`'s result holds PowerShell's prompts and the echoed sentinel line.
+- An ACP server's stderr line that says no level, such as gemini's, is logged at info.
 
 ## Waiting for Softov
 
