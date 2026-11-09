@@ -76,7 +76,7 @@ The versions are exact, and the versions `@activepieces/pieces-framework` at `0.
 }
 ```
 
-Sent as the params of `x-ahpd/connectors/put`, that connector writes the key to the vault and keeps `{ "$secret": "<name>" }` in the record. A bot, or a session config key, that binds `mail` gets the tool `ap_resend_send_email`, and a call sends one email through the piece. A Slack connector with `botToken` and `userToken` gets `ap_slack_send_channel_message` and the rest of the piece's actions.
+Sent as the params of `x-ahpd/connectors/put`, that connector writes the key to the vault and keeps `{ "$secret": "<name>" }` in the record. A bot, or a session config key, that binds `mail` gets the tool `ap_resend_send_email`, and a call sends one email through the piece. A Slack connector with `botToken` and `userToken` gets `ap_slack_slack_post_message` and the rest of the piece's actions that are not marked for a person alone.
 
 A connector carries the auth kinds Activepieces names `SECRET_TEXT`, one secret `secret_text`; `BASIC_AUTH`, a `username` and a secret `password`; and `CUSTOM_AUTH`, the piece's own fields. A piece that lists more than one of them is one adapter whose connector picks its kind with `type`, as a person picks the kind of an Activepieces connection: a GitHub connector is `{ "type": "SECRET_TEXT", "secret_text": "<token>" }` or `{ "type": "CUSTOM_AUTH", "appId": "...", "installationId": "...", "privateKey": "..." }`. An `OAUTH2` auth is not carried.
 
