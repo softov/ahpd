@@ -135,6 +135,8 @@ A machine is also kept to the agents it was prepared for. A profile with `agents
 
 Clients get a picker for free: the key is marked `enumDynamic`, and `sessionConfigCompletions` answers with "This host" first, then each running machine with its image or folder and status. When the client says which agent the session would run, the machines not prepared for it are left out. A [disposable profile](#disposable-machines) is offered too, as `disposable:<profile>`, and once the session has made one it is an ordinary `computer://<id>`. A `devcontainer://<folder>` row is offered when the session's folder has a `devcontainer.json` and no computer is labelled with it.
 
+A backend reads a folder inside the machine, such as a plugin the CLI there reports by its path, with `Start.computers.readFolder(id, folder, read)`: the folder is copied out through the machine's runtime into a scratch folder of this host's, `read` is handed the copy's path, and the copy is gone once `read` is done, as VS Code reads a plugin's parts where the plugin lives. A machine that is not there, or a folder it does not hold, reads as nothing. A Docker machine is read with Docker's own `cp`; a box, a VM and a node are not read out of.
+
 The session's working directory is mapped through the machine's mounts. With `/srv/app:/workspaces/app`, a session in `/srv/app/x` starts in `/workspaces/app/x`. The longest mount wins, and a path no mount covers starts in the machine's own working directory - for a dev container, the folder it was made from as that is mounted inside.
 
 ### A backend that runs nested
@@ -522,7 +524,7 @@ A need is delivered as a bind mount, an environment variable, a file copied in, 
 | --- | --- | --- |
 | `state` | `volume` (default), `host` | `volume` gives each agent's state directory a named volume, seeded from this host, and leaves out every need an agent marks `when: "host"`. `host` mounts this host's own configuration, sign-in included, as those needs say, and makes no state volume: the machine is made exactly as it was before state volumes existed. |
 | `stateScope` | `owner` (default), `shared` | `owner` gives each owner of a machine from the profile a volume per provider, `ahpd-state-<profile>-<owner>-<provider>-<hash>`; a bot, an automation or a plugin that owns a machine is an owner like a person. `shared` gives every owner of the profile one volume per provider, `ahpd-state-<profile>-<provider>-<hash>`, for a team that wants one shared bot state. |
-| `gitGuard` | `fetch` (default), `open` | How a repository's git directory is guarded in a session's machine. `fetch` gives the machine a git directory of its own, in a volume named after the machine, and mounts nothing of this host's but the repository's `objects/` read-only: the machine commits in its own repository, as the host user's uid:gid, and ahpd fetches the work back into this host's repository. `open` mounts this host's git directory writable in the machine, which is the operator's own choice for a machine they trust with it; for a session at the repository root that leaves the image's user, and a worktree's directory is still run as the host user. `bind` is read as `fetch`, with a line saying so, so a profile written for it still starts and gets a safer machine. See [Disposable machines](#disposable-machines). |
+| `gitGuard` | `fetch` (default), `open` | How a repository's git directory is guarded in a session's machine. `fetch` gives the machine a git directory of its own, in a volume named after the machine, and mounts nothing of this host's but the repository's `objects/` read-only: the machine commits in its own repository, as the host user's uid:gid, and ahpd fetches the work back into this host's repository. `open` mounts this host's git directory writable in the machine, which is the operator's own choice for a machine they trust with it; for a session at the repository root that leaves the image's user, and a worktree's directory is still run as the host user. See [Disposable machines](#disposable-machines). |
 | `sessionTree` | `shared` (default), `copy` | Whether the session's folder reaches the machine as this host's own tree or as a checkout of the machine's own. `shared` mounts this host's tree at the same path read-write, so the host sees an agent's edit as it is made; `copy` mounts the machine's git volume at that path instead, holding a working tree and its `.git` together, with nothing of this host's tree bound, so the agent's work reaches this host only through the fetch. Needs `sessionFolder`, which is what puts a folder there at all, and needs the folder to be in a repository: a folder with none is refused rather than given an empty volume. |
 | `nestedDelete` | `inside` (default), `record` | What deleting a nested session that ran in a machine from the profile, and is not running, does to the copy inside. `inside` starts the machine's own host, disposes that session there, then deletes the record here; with no machine the record goes and a line says the copy went with the machine. `record` deletes the record here and leaves the machine's copy where it is, for a machine somebody works in by hand and comes back to. Any other value refuses the plugin when the options are read. |
 
@@ -941,6 +943,60 @@ A value under the plugin's `needs` or a profile's `needs` answers `<set>` in `ah
 
 **What a machine is not.** The container separates processes and the filesystem, not the network, and a bind mount is the host's files. Nothing in a machine survives `resourceDelete`.
 
+## The sandbox
+
+A session has two settings for where its work runs. Its `computer` setting is the machine the session runs in, or this host. A chat's sandbox switch is VS Code's: it turns the sandbox runtime on for that chat's commands wherever the session runs, this host included.
+
+| Setting | Whose | What it says |
+| --- | --- | --- |
+| `computer` | The session's, which this plugin declares | Where the session runs: this host, a machine, a disposable profile or a folder's dev container |
+| `sandboxEnabled` | Each chat's: VS Code's platform property, `SANDBOX_ENABLED_PROPERTY` in `@ahpd/sdk`, `sessionMutable` and `chatMutable`, which a backend whose commands start through `Start.computers.sandboxed` puts in its session schema | `default` follows the root settings, `on` and `off` set the sandbox; a chat reads it from the values it runs on, its own where it has them and its session's otherwise |
+| `sandbox` | The host's root setting, which this plugin declares | VS Code's sandbox settings, which VS Code's window forwards to a host whose root config declares the property |
+
+This plugin declares the root `sandbox` property with VS Code's own schema, through `registerProviderConfiguration`, and no other sandbox setting.
+
+### How a chat's sandbox is resolved
+
+The host resolves a chat's sandbox as VS Code's `getSessionSandboxConfig` does. The root `sandbox` settings come first, then the chat's selection over them, all within the session's floor. The floor is the operator's `managedSettingsSandbox`, in VS Code's floor shape, and every session publishes it in its `_meta` as `vscode.resolvedSandboxPolicy`. Each chat's applied enablement, and a failure met applying it, is in the session's `_meta` as `vscode.sandboxState`, under `chats` by chat, the default chat's also at the top, which older clients read.
+
+The floor decides what a selection of `off` comes to, as VS Code's host does:
+
+| Floor | A selection of `off` |
+| --- | --- |
+| None, or `enabled` off | The sandbox is off |
+| `enabled` with `allowBypass` | A client's `off` is kept and is the chat's enablement, so its commands run outside the sandbox; any other `off` becomes `on` |
+| `enabled` without `allowBypass` | It becomes `on` |
+| `failClosed` | It stays as selected and the sandbox stays on; a client's `off` is refused in the words VS Code reads as its runtime's refusal, and put back |
+
+A client sets a chat's own selection with `chat/configChanged` on the chat, and the session's with `session/configChanged`, which reaches the chats that set none of their own; a new chat starts with its default chat's selection as its own. The host applies a chat's sandbox at each start of the chat, at each change of the selection the chat takes, and at each change of the root `sandbox` settings, and a selection of `off` the floor moves to `on` is moved where it was made, on the chat or on the session.
+
+A backend reads its chat's resolved sandbox from `Start.computers.sandbox(chat)`, and a runtime with a sandbox of its own applies it there.
+
+### The runtime
+
+`@vscode/sandbox-runtime`, the runtime VS Code's terminal sandbox runs, enforces the settings. A backend asks `Start.computers.sandboxed(id, options)` for each command it runs for its agent and each MCP server it starts, and runs the descriptor it gets back:
+
+- a command runs inside the runtime while the chat's sandbox is on, as VS Code's terminal sandbox wraps one;
+- an MCP server runs inside it while `sandboxMcpServers` is on too, as VS Code's MCP sandbox starts one;
+- a command the person let leave the sandbox runs outside it where `allowUnsandboxedCommands` allows one;
+- a person's terminal and a `!` command are left as they are.
+
+On this host the runtime is this plugin's own dependency, run with the daemon's Node, and its settings and sockets go under `tmp/` in the configuration folder. Inside a machine it is the `srt` on the machine's `PATH`, with its settings written into the machine by the command that starts it. The settings are the ones VS Code's terminal sandbox writes: writes in the working folder and the sandbox's own folder, the user's home denied, the platform's filesystem lists, and the domain lists unless the whole network is allowed.
+
+### Each computer
+
+Each kind of computer says whether it can host the runtime, from the computer as it is:
+
+| Computer | The check |
+| --- | --- |
+| This host | The runtime's own dependency check, which needs ripgrep and, on Linux, bubblewrap and socat; then on Linux VS Code's check that bubblewrap can make the namespace the sandbox needs |
+| A container, a dev container among them | Its real Docker settings, as VS Code checks a dev container: privileged, or seccomp unconfined with nothing masked or read-only and `/dev/net/tun` readable and writable, AppArmor unconfined either way; then the runtime's own start, `srt -c true`, run inside it |
+| An ssh box or a VM | The runtime's own start, run inside it |
+
+A machine made for a session whose sandbox is on is made to host the runtime, as VS Code prepares a dev container it starts with the sandbox enabled. A container gets `--security-opt seccomp=unconfined`, `apparmor=unconfined` and `systempaths=unconfined` and `--device /dev/net/tun`, and a Compose definition's service gets the same as `security_opt` and `devices`.
+
+A client's request to turn the sandbox on where the computer cannot host it is rejected with the computer's reason, as VS Code rejects a sandbox change its runtime cannot apply. The failure is published in `vscode.sandboxState` with the client's id and sequence number, and then the selection is put back to the enablement last applied where it was made, the chat's own or its session's. The chat applies the selection put back, which keeps `rejectedSelection` in its state until a new selection is made. A session that starts with its sandbox on where its computer cannot host it reports the failure in the same place.
+
 ## Parts
 
 Every agent CLI is a **part**: one image that holds one CLI at one exact version, at `/opt/ahpd/<id>`, with its launchers at `/opt/ahpd/<id>/bin`. `codex` is a part, `goose` is a part, and so is `node`, which the npm parts name as a requirement so one Node serves them all. `claude` holds both Claude Code and its ACP adapter, and `ahpd` holds ahpd with the backends that run nested. Parts are the default way an agent's CLI reaches a machine: nothing of this host's binaries is mounted unless an agent's options ask for it.
@@ -954,7 +1010,7 @@ The versions file is `packages/computer/images/versions.json`, and it is the onl
 | `archive` | A CLI published as a tarball | `archives`, one url and sha256 per platform, `paths`, where each command is in the download, and any `packages` installed onto the node part beside it, each written `<package>@<version>` |
 | `ahpd` | ahpd itself | From npm at its `version`, or a checkout's own packages where `AHPD_PART_AHPD_ROOT` names the checkout |
 
-A part is built once, by the release workflow, for `linux/amd64` and `linux/arm64`, and pushed to the GitHub container registry of the repository `@ahpd/computer` names, `ghcr.io/<owner>/ahpd-part/<id>:<tag>`; a host pulls it at that tag the first time it is asked for and tags it `ahpd-part/<id>:<tag>`, as VS Code's build produces each agent SDK once per release and every host [downloads it at first use](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5). The tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than pulled again. A package pinned at its own version adds that version to the tag, so `ahpd-part/claude:0.85.1-2.1.291` moves when either moves. A short hash of the Dockerfile that writes the image is in the tag after them, so an ahpd upgrade that changes how an image is written is a different image at the same versions, and the release that carries the change publishes it. A part whose pull fails is refused by name and every other part still loads; a machine asking for it within 30 seconds is told the same failure without another pull, and the next ask after that pulls it again, as VS Code holds a [failed SDK load](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395). The hold is per Docker, so a failure on one refuses nothing on another.
+A part is built once, by the release workflow, for `linux/amd64` and `linux/arm64`, and pushed to the GitHub container registry of the repository `@ahpd/computer` names, `ghcr.io/<owner>/ahpd-part/<id>:<tag>`; a host pulls it at that tag the first time it is asked for and tags it `ahpd-part/<id>:<tag>`, as VS Code's build produces each agent SDK once per release and every host [downloads it at first use](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5). The tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than pulled again. A package pinned at its own version adds that version to the tag, so `ahpd-part/claude:0.85.1-2.1.291` moves when either moves. A short hash of the Dockerfile that writes the image is in the tag after them, so an ahpd upgrade that changes how an image is written is a different image at the same versions, and the release that carries the change publishes it. Once a part is pulled, each of its launchers is run once with `--version` in the image a machine runs when its profile names none, with the parts it requires mounted, as VS Code [checks its CLI after an install](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/remoteAgentHostCliInstaller.ts#L102-L106); a launcher that does not answer takes the tag away from the image, so the next ask pulls it again. When the pull or the check fails, the newest earlier image of the part here whose launchers answer is loaded in its place, as VS Code [falls back to an older CLI](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/remoteAgentHostCliInstaller.ts#L111-L123), and the log says which. A part with no such image is refused by name and every other part still loads; a machine asking for it within 30 seconds is told the same failure without another pull, and the next ask after that pulls it again, as VS Code holds a [failed SDK load](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395). The hold is per Docker, so a failure on one refuses nothing on another.
 
 A part's npm packages are installed from a lock, as VS Code installs each agent SDK from the `package.json` and `package-lock.json` [committed beside it](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L48-L57): `packages/computer/images/parts/<id>` holds the two files of each `npm` part, of each `archive` part with `packages`, and of the `ahpd` part, whose are `@ahpd/sdk` and `@ahpd/server` at its version. The build copies them in, checks each against the sum its Dockerfile names, and runs `npm ci`, so the image is a function of its lock and a lock that moves moves the tag. Install scripts run, because several of these packages fetch their binary in a `postinstall`, and the peers each package names are installed with it, because dsh's own packages reach one another as peers.
 
@@ -989,7 +1045,7 @@ A machine made for one session, a disposable or a `devcontainer://` made when th
 
 ### The joined image
 
-`ahpd-agents:<hash>` is every part copied into one image, built on this host from the part images it has, which is what a runtime that cannot mount image parts runs. Its hash folds in the versions file and the ahpd part's own source, so a version that moved is a different image. Build it with:
+`ahpd-agents:<hash>` is every part copied into one image, which is what a runtime that cannot mount image parts runs. The release workflow builds it with the parts and pushes it beside them, `ghcr.io/<owner>/ahpd-agents:<hash>`, and a host whose parts all loaded at the tags the release published them at pulls it, as VS Code's build produces each agent SDK [once per release](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5). A joined image holding a checkout's own ahpd part, an earlier image of a part, or none of a part that would not load is no release's, and is built on this host from the part images it has. Its base is `debian:bookworm-slim` pinned by the digest of its index, as Docker's guidance [pins a base image](https://docs.docker.com/build/building/best-practices/#pin-base-image-versions), so it builds on the same base wherever it is built. Its hash folds in the versions file, the ahpd part's own source, the parts it holds and its Dockerfile, so a version that moved is a different image. Load it with:
 
 ```sh
 node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts --joined
@@ -1036,7 +1092,7 @@ With neither it builds for both platforms and pushes nothing, which is how the r
 
 `request_disposable_computer`, `release_computer` and `run_in_computer` let a model ask for a scratch machine during a session. They are separate from the machine a session runs in, and they follow the same image rules.
 
-Each asks `computer:write` of the person who sent the turn, as the host's own tools ask that person's grants, and is refused in the host's words without it. A machine a tool makes is owned by that person, as a machine is by whoever made it, and the tools act on the machines the person may use: their own, the host's, and one charged to a team. Another person's machine is one the tools say is not there.
+Each asks `computer:write` of the person who sent the turn, as the host's own tools ask that person's grants, and is refused in the host's words without it. A machine a tool makes is owned by that person, as a machine is by whoever made it, and the tools act on the machines the person may use: their own, the host's, and one charged to a team they are on, which a call carries. Another person's machine, and one charged to another team, is one the tools say is not there.
 
 They are off until the daemon enables advanced tools:
 

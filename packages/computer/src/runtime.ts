@@ -17,6 +17,7 @@ import { cliMountOf, cliVolumeOf, copyOf, gitVolumeOf, guardFor, guardedMounts, 
 import type { GitGuard, GitMounts, SessionTree } from './gitdir.js';
 import { codeRouteOf } from './clone.js';
 import type { CodeRoute } from './clone.js';
+import { sandboxRunArgs, sandboxSecurityOptions } from './sandbox.js';
 import { bringBack, bundledInto, checkedOut, fetchedInto, followOfCopy, hostGit, keepUncommitted, movesOver } from './machinegit.js';
 import type { FarSeed, MachineGit, Ran } from './machinegit.js';
 import { absoluteOnHost, mountParts } from './manifest.js';
@@ -327,6 +328,15 @@ export interface MachineSpec {
    * Compose override's `runtime` for a Compose definition.
    */
   ociRuntime?: string;
+  /**
+   * Whether the machine is made to host the sandbox runtime: seccomp, AppArmor
+   * and the system paths unconfined and a tun device, as VS Code prepares a
+   * dev container it starts with the sandbox enabled. A container's `docker
+   * run` options take them, and a Compose definition's service its
+   * `security_opt` and `devices`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerSandbox.ts#L93-L152
+   */
+  sandbox?: boolean;
   /**
    * Host paths made visible in the machine, as `source:target` or
    * `source:target:ro`.
@@ -654,6 +664,12 @@ export interface ComputerRuntime {
    */
   takeOut(id: string, paths: string[]): Promise<void>;
   /**
+   * One path in a machine copied out into a folder of this host's, under the
+   * path's own last name, with whatever is under it: false for a path the
+   * machine does not hold.
+   */
+  copyOut(id: string, path: string, into: string): Promise<boolean>;
+  /**
    * Bring the commits a machine made in a git directory of its own back into
    * the host's repository, and answer what became of them.
    *
@@ -721,6 +737,18 @@ export interface ComputerRuntime {
   buildImage(tag: string, context: Uint8Array): Promise<void>;
   /** Pull one image from its registry and give it `tag` here. */
   pullImage(from: string, tag: string): Promise<void>;
+  /** Take one tag away from the image it names, which stays under its other names. */
+  removeImage(tag: string): Promise<void>;
+  /** The tags here of one image name, `<name>:<tag>` each, in the order Docker lists them, the newest first. */
+  imagesOf(name: string): Promise<string[]>;
+  /**
+   * Each of a part's launchers run once with `--version`, in a container of
+   * `image` with the part and the parts it requires mounted as a machine's
+   * are, as VS Code runs its CLI's `--version` after an install: nothing when
+   * each answered, else what the first that did not said.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/remoteAgentHostCliInstaller.ts#L102-L106
+   */
+  checkPart(part: MadePart, requires: readonly MadePart[], bins: readonly string[], image: string): Promise<string | undefined>;
   /**
    * Remove each part volume `requested` does not keep that no machine has used
    * for `PART_VOLUME_KEPT_MS`, as VS Code removes a cached SDK version the
@@ -1437,6 +1465,9 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
       // A part from its own image, which only `runArgs` can spell: the CLI
       // passes the entry to its `docker run` as written.
       ...options.images.flatMap((part) => ['--mount', imageMountOf(part)]),
+      // The sandbox runtime's options after the definition's own, as VS Code
+      // appends them to its `runArgs`.
+      ...(options.sandbox ? sandboxRunArgs : []),
     ];
   }
   return held;
@@ -1460,6 +1491,7 @@ const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
   memory?: string;
   runtime?: string;
   images: MadePart[];
+  sandbox: boolean;
 } => {
   const agents = spec.agents ?? [];
   return {
@@ -1476,6 +1508,7 @@ const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
     ...(spec.memory === undefined ? {} : { memory: spec.memory }),
     ...(spec.ociRuntime === undefined ? {} : { runtime: spec.ociRuntime }),
     images: route === 'image' ? spec.parts ?? [] : [],
+    sandbox: spec.sandbox === true,
   };
 };
 
@@ -1550,6 +1583,9 @@ const composeOverrideOf = (
             image: { subpath: partTarget(part.id).slice(1) },
           })),
         }),
+        // The sandbox runtime's options, as VS Code writes them for a Compose
+        // definition (devContainerSandbox.ts L125-L133 at 6b68d3fe).
+        ...(options.sandbox ? { security_opt: [...sandboxSecurityOptions], devices: ['/dev/net/tun:/dev/net/tun:rw'] } : {}),
       },
     },
   }), { mode: 0o600 });
@@ -3198,6 +3234,8 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        * Docker that has no such runtime refuses the machine itself.
        */
       if (spec.ociRuntime !== undefined) flags.push(`--runtime=${spec.ociRuntime}`);
+      // Made to host the sandbox runtime, where the session's sandbox is on.
+      if (spec.sandbox === true) flags.push(...sandboxRunArgs);
       /*
        * One `-v` per entry, however many said the same one.
        *
@@ -3400,6 +3438,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       for (const path of paths) await must(['exec', '--user', '0', at, 'rm', '-rf', machinePathOf(path)]);
     },
 
+    /** A path copied out by Docker's own `cp`, which a stopped machine answers too. */
+    copyOut: async (id, path, into) => {
+      const at = await containerOrFail(id);
+      return (await ran(options, ['cp', `${at}:${path}`, into])).code === 0;
+    },
+
     /** What a machine committed, brought back by fetch: `bringBackOfMachine`. */
     bringBack: bringBackOfMachine,
 
@@ -3492,6 +3536,37 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           throw new Error(`${options.command} ${argv.join(' ')} exited ${held.code}: ${said.split('\n').slice(-8).join('\n')}`);
         }
       }
+    },
+
+    removeImage: async (tag) => { await must(['image', 'rm', tag]); },
+
+    imagesOf: async (name) => (await must(['image', 'ls', '--format', '{{.Tag}}', name]))
+      .split('\n')
+      .map((one) => one.trim())
+      .filter((one) => one !== '' && one !== '<none>')
+      .map((one) => `${name}:${one}`),
+
+    /*
+     * One container, removed when it ends, its parts mounted as a machine's
+     * are and its launchers run in turn with nothing on their input, so a
+     * launcher that serves a protocol on it reads its end at once. The first
+     * that does not answer is said in VS Code's words for a CLI that fails
+     * its check.
+     */
+    checkPart: async (part, requires, bins, image) => {
+      const { route, parts } = await mountable(`the ${part.id} part's check`, [...requires, part]);
+      if (!parts.includes(part)) return `the ${part.id} part could not be mounted to run its launchers`;
+      const flags = parts.flatMap((one) => (route === 'image'
+        ? ['--mount', imageMountOf(one)]
+        : ['-v', `${volumeOf(one)}:${partTarget(one.id)}:ro`]));
+      const script = 'for one; do "$one" --version >/dev/null 2>&1 </dev/null; code=$?; '
+        + '[ "$code" -eq 0 ] || { printf \'CLI at %s failed --version check after install (exit code %s)\\n\' "$one" "$code"; exit 1; }; done';
+      const held = await ran(options, [
+        'run', '--rm', ...flags, '-e', `PATH=${pathWith(parts.map((one) => one.id), IMAGE_PATH)}`, image,
+        'sh', '-c', script, 'sh', ...bins.map((bin) => `${partTarget(part.id)}/bin/${bin}`),
+      ]);
+      if (held.code === 0) return undefined;
+      return (held.stdout.trim() || held.stderr.trim() || `${options.command} run exited ${held.code}`).split('\n').slice(-8).join('\n');
     },
 
     /*

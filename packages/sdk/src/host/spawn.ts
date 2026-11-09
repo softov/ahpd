@@ -1305,7 +1305,9 @@ export function createSpawn(ctx: HostContext): Spawn {
       // The outputs this chat keeps after their terminals are gone, where the
       // store keeps the session a folder to hold them in.
       ...(terminalOutputs === undefined ? {} : { terminalOutputs }),
-      ...(options.computers !== undefined ? { computers: computersFor(options.computers, agent.provider, uri, kept.owner(idOf(uri))) } : {}),
+      ...(options.computers !== undefined ? {
+        computers: computersFor(options.computers, agent.provider, uri, kept.owner(idOf(uri)), (chat) => ctx.sandbox.config(uri, chat ?? chatUri)),
+      } : {}),
       /*
        * The MCP servers, when there are any.
        *
@@ -1964,6 +1966,16 @@ export function createSpawn(ctx: HostContext): Spawn {
      */
     ctx.touch(uri);
     queueMicrotask(() => { ctx.reconcile(); });
+    // The sandbox floor published on the session once it is held, and a
+    // selection it no longer allows moved, as VS Code's host publishes a
+    // session's floor once its runtime resolved it; then the chat's sandbox
+    // applied where the session runs, as its runtime applies it at launch.
+    queueMicrotask(() => {
+      ctx.sandbox.publish(uri);
+      void ctx.sandbox.check(uri, chatUri).catch((error: unknown) => {
+        log(`${chatUri}: the sandbox was not applied: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    });
     /*
      * A chat on a backend of its own, which the session's own agent does not
      * serve.

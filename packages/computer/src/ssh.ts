@@ -650,6 +650,10 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
       must(id);
       throw new Error(`${id} is a box this host reaches over ssh, and ${paths.length === 1 ? 'a file is' : 'files are'} not removed from it`);
     },
+    copyOut: async (id) => {
+      must(id);
+      throw new Error(`${id} is a box this host reaches over ssh, and files are not read out of it`);
+    },
 
     /*
      * The two git verbs, which a box has nothing of.
@@ -675,6 +679,9 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
     hasImage: async () => false,
     buildImage: async () => { throw new Error('an image is not built for a box this host reaches over ssh'); },
     pullImage: async () => { throw new Error('an image is not pulled for a box this host reaches over ssh'); },
+    removeImage: async () => { throw new Error('an image is not removed for a box this host reaches over ssh'); },
+    imagesOf: async () => [],
+    checkPart: async () => 'a part is not checked for a box this host reaches over ssh',
   };
 };
 

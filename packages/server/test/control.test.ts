@@ -38,8 +38,8 @@ const send = (control: Control, line: string): Promise<void> => new Promise((don
   client.on('error', (error: Error) => { fail(error); });
 });
 
-/** The request line for that key and signal. */
-const request = (key: string, signal: string): string => `${JSON.stringify({ key, signal })}\n`;
+/** The request line for that token and signal. */
+const request = (connectionToken: string, signal: string): string => `${JSON.stringify({ connectionToken, signal })}\n`;
 
 /** A record naming pid 7, with the control a start would have recorded. */
 const recordOf = (control?: Control): Running => ({
@@ -47,20 +47,20 @@ const recordOf = (control?: Control): Running => ({
   ...(control === undefined ? {} : { control }),
 });
 
-/** A key of the same length as `own` and certainly another one. */
-const wrongKey = (own: string): string => `${own.startsWith('a') ? 'b' : 'a'}${own.slice(1)}`;
+/** A token of the same length as `own` and certainly another one. */
+const wrongToken = (own: string): string => `${own.startsWith('a') ? 'b' : 'a'}${own.slice(1)}`;
 
 /** Handlers that run nothing, for a case about what does not happen. */
 const quiet = (): ControlHandlers => ({ SIGTERM: vi.fn(), SIGHUP: vi.fn(), SIGUSR2: vi.fn() });
 
 describe('controlIn', () => {
-  it('reads the pipe and key a start handed the child', () => {
-    const control: Control = { pipe: '\\\\.\\pipe\\ahpd-1', key: 'ab' };
+  it('reads the pipe and connectionToken a start handed the child', () => {
+    const control: Control = { pipe: '\\\\.\\pipe\\ahpd-1', connectionToken: 'ab' };
     expect(controlIn(JSON.stringify(control))).toEqual(control);
   });
 
   it('answers nothing for a value that is not a control, so the daemon still serves', () => {
-    for (const said of ['', 'not json', 'null', '42', '"x"', '{}', '{"pipe":""}', '{"key":"ab"}', '{"pipe":"/tmp/x","key":""}']) {
+    for (const said of ['', 'not json', 'null', '42', '"x"', '{}', '{"pipe":""}', '{"connectionToken":"ab"}', '{"pipe":"/tmp/x","connectionToken":""}', '{"pipe":"/tmp/x","key":"ab"}']) {
       expect(controlIn(said)).toBeUndefined();
     }
     expect(controlIn(undefined)).toBeUndefined();
@@ -68,13 +68,13 @@ describe('controlIn', () => {
 });
 
 describe('the control server', () => {
-  it('runs the handler a SIGTERM with the right key names, once', async () => {
+  it('runs the handler a SIGTERM with the right connectionToken names, once', async () => {
     const control = here();
     const handlers = quiet();
     const server = controlServer(control, handlers, () => {});
     await server.listening;
     try {
-      await send(control, request(control.key, 'SIGTERM'));
+      await send(control, request(control.connectionToken, 'SIGTERM'));
       expect(handlers.SIGTERM).toHaveBeenCalledTimes(1);
       expect(handlers.SIGHUP).not.toHaveBeenCalled();
       expect(handlers.SIGUSR2).not.toHaveBeenCalled();
@@ -82,7 +82,7 @@ describe('the control server', () => {
     finally { await server.close(); }
   });
 
-  it('runs nothing for a wrong key, and the log line holds no key', async () => {
+  it('runs nothing for the wrong token, and the log line holds no token', async () => {
     const control = here();
     const handlers = quiet();
     const said: string[] = [];
@@ -91,14 +91,14 @@ describe('the control server', () => {
     try {
       // One of the same length, which is the compare, and one of another, which
       // is not: `timingSafeEqual` throws on two buffers of different lengths.
-      await send(control, request(wrongKey(control.key), 'SIGTERM'));
+      await send(control, request(wrongToken(control.connectionToken), 'SIGTERM'));
       await send(control, request('short', 'SIGTERM'));
       expect(handlers.SIGTERM).not.toHaveBeenCalled();
       expect(said).toEqual([
-        'control: refused a request with a wrong key',
-        'control: refused a request with a wrong key',
+        'control: refused a request with the wrong token',
+        'control: refused a request with the wrong token',
       ]);
-      expect(JSON.stringify(said)).not.toContain(control.key);
+      expect(JSON.stringify(said)).not.toContain(control.connectionToken);
     }
     finally { await server.close(); }
   });
@@ -110,10 +110,10 @@ describe('the control server', () => {
     const server = controlServer(control, handlers, (line) => { said.push(line); });
     await server.listening;
     try {
-      await send(control, request(control.key, 'SIGKILL'));
+      await send(control, request(control.connectionToken, 'SIGKILL'));
       // A name with a newline in it is still one line of the log: the log is
       // read line by line, and a line a request wrote is a line it made up.
-      await send(control, request(control.key, 'SIGTERM\nrestart: stopping (SIGHUP)'));
+      await send(control, request(control.connectionToken, 'SIGTERM\nrestart: stopping (SIGHUP)'));
       expect(handlers.SIGTERM).not.toHaveBeenCalled();
       expect(handlers.SIGHUP).not.toHaveBeenCalled();
       expect(handlers.SIGUSR2).not.toHaveBeenCalled();
@@ -132,11 +132,11 @@ describe('the control server', () => {
     const server = controlServer(control, handlers, (line) => { said.push(line); });
     await server.listening;
     try {
-      for (const line of ['not json\n', 'null\n', '{"signal":"SIGTERM"}\n', '{"key":"ab"}\n', '{"key":42,"signal":"SIGTERM"}\n']) {
+      for (const line of ['not json\n', 'null\n', '{"signal":"SIGTERM"}\n', '{"connectionToken":"ab"}\n', '{"connectionToken":42,"signal":"SIGTERM"}\n']) {
         await send(control, line);
       }
       expect(handlers.SIGTERM).not.toHaveBeenCalled();
-      expect(said).toEqual(Array.from({ length: 5 }, () => 'control: refused a request that is not a JSON line with a key and a signal'));
+      expect(said).toEqual(Array.from({ length: 5 }, () => 'control: refused a request that is not a JSON line with a connectionToken and a signal'));
     }
     finally { await server.close(); }
   });
@@ -147,8 +147,8 @@ describe('the control server', () => {
     const server = controlServer(control, { SIGTERM: shutdown, SIGHUP: vi.fn(), SIGUSR2: vi.fn() }, () => {});
     await server.listening;
     try {
-      await send(control, request(control.key, 'SIGTERM'));
-      await send(control, request(control.key, 'SIGTERM'));
+      await send(control, request(control.connectionToken, 'SIGTERM'));
+      await send(control, request(control.connectionToken, 'SIGTERM'));
       expect(shutdown).toHaveBeenCalledTimes(2);
     }
     finally { await server.close(); }
@@ -172,18 +172,19 @@ describe('deliver', () => {
     finally { await server.close(); }
   });
 
-  it('writes the one line the daemon reads, key and signal together', () => {
-    // The same line the cases above send by hand: there is no second format,
-    // and the key is the one the record holds.
+  it('writes the one line the daemon reads, the connectionToken and the signal together', () => {
+    // The same line the cases above send by hand, the token under VS Code's
+    // name for it (LOCAL_ENDPOINT.md L75 at 6b68d3fe), and the one the record
+    // holds.
     const control = here();
-    expect(requestLine(control, 'SIGHUP')).toBe(request(control.key, 'SIGHUP'));
-    expect(requestLine(control, 'SIGUSR2')).toBe(`${JSON.stringify({ key: control.key, signal: 'SIGUSR2' })}\n`);
+    expect(requestLine(control, 'SIGHUP')).toBe(request(control.connectionToken, 'SIGHUP'));
+    expect(requestLine(control, 'SIGUSR2')).toBe(`${JSON.stringify({ connectionToken: control.connectionToken, signal: 'SIGUSR2' })}\n`);
   });
 
   it('sends the signal on a platform whose signals reach the daemon, control or not', async () => {
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     try {
-      await deliver(recordOf({ pipe: '/tmp/ahpd-none.sock', key: 'ab' }), 'SIGTERM', 'linux');
+      await deliver(recordOf({ pipe: '/tmp/ahpd-none.sock', connectionToken: 'ab' }), 'SIGTERM', 'linux');
       expect(kill).toHaveBeenCalledWith(7, 'SIGTERM');
     }
     finally { kill.mockRestore(); }
@@ -252,12 +253,12 @@ describe('a restart reached over the control', () => {
     const server = controlServer(control, handlersFor(said, restarted, ['ahp-session:/a'], vi.fn()), (line) => { said.push(line); });
     await server.listening;
     try {
-      await send(control, request(control.key, 'SIGHUP'));
+      await send(control, request(control.connectionToken, 'SIGHUP'));
       expect(said).toEqual(['restart parked (control pipe): A turn is running in ahp-session:/a; it restarts once the turns end, or at once with --force.']);
       expect(restarted).toEqual([]);
 
       // The same turn, forced: the restart runs, and its receipt names the pipe and the force.
-      await send(control, request(control.key, 'SIGUSR2'));
+      await send(control, request(control.connectionToken, 'SIGUSR2'));
       expect(restarted).toEqual([['--port', '0']]);
       expect(said).toContain('restart: stopping (control pipe, forced)');
     }
@@ -271,21 +272,21 @@ describe('a restart reached over the control', () => {
     const server = controlServer(control, handlersFor(said, restarted, [], vi.fn()), (line) => { said.push(line); });
     await server.listening;
     try {
-      await send(control, request(control.key, 'SIGHUP'));
+      await send(control, request(control.connectionToken, 'SIGHUP'));
       expect(restarted).toEqual([['--port', '0']]);
       expect(said).toEqual(['restart: stopping (control pipe)']);
     }
     finally { await server.close(); }
   });
 
-  it('shuts down on a SIGTERM with the right key', async () => {
+  it('shuts down on a SIGTERM with the right connectionToken', async () => {
     const control = here();
     const shutdown = vi.fn();
     const said: string[] = [];
     const server = controlServer(control, handlersFor(said, [], [], shutdown), (line) => { said.push(line); });
     await server.listening;
     try {
-      await send(control, request(control.key, 'SIGTERM'));
+      await send(control, request(control.connectionToken, 'SIGTERM'));
       expect(shutdown).toHaveBeenCalledTimes(1);
       expect(said).toEqual([]);
     }

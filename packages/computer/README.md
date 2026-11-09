@@ -148,6 +148,10 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 
 A machine made for an agent carries what the agent's `machine()` declares. Each agent's CLI comes from a part, an image the release workflow builds and this host pulls at the version `images/versions.json` pins and mounts at `/opt/ahpd/<id>`, so any glibc image runs it with nothing installed. Each agent keeps its configuration in a state volume per provider, seeded from a few host files and never a login file; a profile with `state: "host"` mounts this host's own configuration instead. A value the vault fills for a need reaches only the agent whose need declared it, `run_in_computer` from that agent's session included. See [COMPUTERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#parts).
 
+## The sandbox
+
+The plugin declares VS Code's root `sandbox` property, so a VS Code window forwards its sandbox settings to the host. A chat whose sandbox is on has the commands its agent runs, and its MCP servers while `sandboxMcpServers` is on, started inside [`@vscode/sandbox-runtime`](https://www.npmjs.com/package/@vscode/sandbox-runtime) through `Start.computers.sandboxed`, wherever its session runs. On this host the runtime is this package's own dependency; inside a machine it is the `srt` on the machine's `PATH`. Each kind of machine says whether it can host the runtime, and a machine made for a session whose sandbox is on is made to host it. See [The sandbox](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#the-sandbox).
+
 ## The tools
 
 | | |

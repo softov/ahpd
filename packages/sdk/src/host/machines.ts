@@ -4,6 +4,9 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { idOf } from '../sessions/catalog.js';
 import { computerId, computerSource, machineRefusal, openComputer } from '../machines/computers.js';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
+import { sessionSandboxConfig } from '../sandbox.js';
+import { SANDBOX_ENABLED_KEY, SANDBOX_ROOT_KEY } from '../types/sandbox.js';
+import type { SandboxConfigValue } from '../types/sandbox.js';
 import type { Scope } from '../usage/scopes.js';
 import type { BroughtBack } from '../types/computers.js';
 import type { Principal } from '../types/users.js';
@@ -494,6 +497,15 @@ export function createMachines(ctx: HostContext): Machines {
     const scope = charged.get(uri)?.scope;
     const devPrefix = 'devcontainer://';
     const tree = await repositoryOf(uri, said.startsWith(devPrefix) ? said.slice(devPrefix.length).trim() : where);
+    // Whether the session starts with its sandbox on, so the machine is made
+    // to host it, as VS Code prepares a dev container it starts with the
+    // sandbox enabled.
+    const sandbox = sessionSandboxConfig(
+      ctx.rootConfig[SANDBOX_ROOT_KEY] as SandboxConfigValue | undefined,
+      config[SANDBOX_ENABLED_KEY],
+      options.managedSettingsSandbox,
+      undefined,
+    ).enabled === 'on';
     const machine = await openComputer(options.computers, said, {
       session: uri,
       provider,
@@ -503,6 +515,7 @@ export function createMachines(ctx: HostContext): Machines {
       ...(where === undefined ? {} : { folder: where }),
       ...tree,
       ...(agent?.machine === undefined ? {} : { needs: agent.machine() }),
+      ...(sandbox ? { sandbox } : {}),
     });
     sessionMachines.set(uri, { source: said, machine });
     config.computer = machine;
