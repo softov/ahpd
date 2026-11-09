@@ -1,6 +1,6 @@
 ---
 title: Every line has its level
-status: doing
+status: done
 depends: [task-01-the-hosts-log-takes-a-level.md]
 layer: "sdk, server, backends, plugins"
 refs:
@@ -43,7 +43,7 @@ The words of each line do not change.
 
 ## Resume
 
-Built on 2026-11-09 and waits for review.
+Built on 2026-11-09 and merged in PR #259.
 
 - 392 calls were read: 121 error, 141 warn, 14 debug, and the rest info, which stays a plain call.
 - A module that takes a plain log callback passes the level as the second argument, as VS Code's `ILogger.log` takes one. Its callback type is `(line: string, level?: LogLevel) => void`, so a one-argument callback still fits.

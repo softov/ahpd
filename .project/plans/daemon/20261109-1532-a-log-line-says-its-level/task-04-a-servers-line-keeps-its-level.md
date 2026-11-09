@@ -1,6 +1,6 @@
 ---
 title: A server's line keeps its level
-status: doing
+status: done
 depends: [task-01-the-hosts-log-takes-a-level.md]
 layer: "sdk, agent-acp"
 refs:
@@ -40,4 +40,4 @@ A line that says no level is logged at info.
 
 ## Resume
 
-Built on 2026-11-09 and waits for review.
+Built on 2026-11-09 and merged in PR #259.

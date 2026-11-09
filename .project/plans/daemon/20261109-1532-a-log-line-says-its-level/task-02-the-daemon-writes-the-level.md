@@ -1,6 +1,6 @@
 ---
 title: The daemon writes the level
-status: doing
+status: done
 depends: [task-01-the-hosts-log-takes-a-level.md]
 layer: "server"
 refs:
@@ -47,5 +47,5 @@ The daemon writes each line as `2026-11-09 14:02:11.123 [warning] message`, in c
 
 ## Resume
 
-Built on 2026-11-09 and waits for review. The store problems that `run.ts` wrote to stderr without a time now go through `stamp` at warn. The examples in `RUN.md` get real lines in task 03.
+Built on 2026-11-09 and merged in PR #259. The store problems that `run.ts` wrote to stderr without a time now go through `stamp` at warn. The examples in `RUN.md` get real lines in task 03.
 
