@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1050,10 +1051,13 @@ describe('the MCP servers a session is offered', () => {
     for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
-  /** Settle until something is true, giving it real time to happen. */
-  const until = async (ready: () => boolean, ms = 2000): Promise<void> => {
+  /** Settle until something is true, giving it real time to happen, and fail when it never is. */
+  const until = async (ready: () => boolean, ms = WAIT_MS): Promise<void> => {
     const end = Date.now() + ms;
-    while (!ready() && Date.now() < end) await new Promise((r) => { setTimeout(r, 5); });
+    while (!ready()) {
+      if (Date.now() > end) throw new Error(`timed out waiting for ${ready.toString()}`);
+      await new Promise((r) => { setTimeout(r, 5); });
+    }
   };
 
   /**
@@ -2767,10 +2771,13 @@ describe('a customization switched for every session or a folder', () => {
     for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
-  /** Settle until something is true, giving it real time to happen. */
-  const until = async (ready: () => boolean, ms = 2000): Promise<void> => {
+  /** Settle until something is true, giving it real time to happen, and fail when it never is. */
+  const until = async (ready: () => boolean, ms = WAIT_MS): Promise<void> => {
     const end = Date.now() + ms;
-    while (!ready() && Date.now() < end) await new Promise((r) => { setTimeout(r, 5); });
+    while (!ready()) {
+      if (Date.now() > end) throw new Error(`timed out waiting for ${ready.toString()}`);
+      await new Promise((r) => { setTimeout(r, 5); });
+    }
   };
 
   /**
@@ -2884,11 +2891,18 @@ describe('a customization switched for every session or a folder', () => {
             activeClient: { clientId, customizations: [{ type: 'plugin', uri: PLUGIN, nonce }], tools: [] },
           },
         } }),
-        /** Whether the plugin has been reported on this session, and settled. */
+        /**
+         * Whether the plugin has been reported on this session, and settled:
+         * in the whole list, or in the one customization the host says again
+         * once its load ends.
+         */
         loaded: (): boolean => actions(watching, uri)
-          .filter((one) => one.action.type === 'session/customizationsChanged')
-          .some((one) => ((one.action.customizations as Record<string, unknown>[]) ?? [])
-            .some((custom) => custom.uri === PLUGIN && (custom.load as { kind: string }).kind === 'loaded')),
+          .flatMap((one) => {
+            if (one.action.type === 'session/customizationsChanged') return (one.action.customizations as Record<string, unknown>[]) ?? [];
+            if (one.action.type === 'session/customizationUpdated') return [one.action.customization as Record<string, unknown>];
+            return [];
+          })
+          .some((custom) => custom.uri === PLUGIN && (custom.load as { kind: string } | undefined)?.kind === 'loaded'),
         /** The enablement each switch said on this session carried. */
         switched: (): unknown[] => actions(watching, uri)
           .filter((one) => one.action.type === 'session/customizationToggled')
