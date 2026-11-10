@@ -86,11 +86,34 @@ const NOT_A_RECORD = new Set(['provider', 'displayName', 'description', 'model']
 /** The fields of a record that become an option a turn runs on. */
 const RECORD_FIELDS = ['projectTrust', 'sessionDir', 'hostTools'] as const;
 
+/** A value read from somewhere else: `{ "$secret": "<name>" }` or `{ "fromEnv": "<VAR>" }`, as a Claude record's `env` takes one. */
+const REFERENCE = (keyword: '$secret' | 'fromEnv'): Record<string, unknown> => ({
+  type: 'object',
+  properties: { [keyword]: { type: 'string' } },
+  required: [keyword],
+  additionalProperties: false,
+});
+
+/**
+ * One value of `env`: text, or a reference to where the text comes from, as a
+ * Claude record's `env` value is. The channel reads each reference back before
+ * pi is given the record. A Claude value may also be `null` to unset a
+ * variable, which pi has no way to do: it reads a key the record does not
+ * name from the daemon's environment by itself.
+ */
+const ENV_VALUE: Record<string, unknown> = {
+  oneOf: [
+    { type: 'string' },
+    REFERENCE('fromEnv'),
+    REFERENCE('$secret'),
+  ],
+};
+
 /**
  * The engine's form: what a record may set, and nothing a second engine spells.
  *
- * Every variable pi takes a key from is declared `secret`, so a client is
- * told it is a credential and never what it is. The channel vaults those by
+ * `env` is an open map, as a Claude record's is: a person types the variable's
+ * name. The channel vaults the variables pi takes a key from, by
  * `keyVariables`; a host record may also set any other variable, which stays a
  * plain string and is refused to a team's or a person's record, because a free
  * environment can run a program.
@@ -106,9 +129,8 @@ const kindSchema = (): Record<string, unknown> => ({
     hostTools: { type: 'boolean', description: "Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting." },
     env: {
       type: 'object',
-      description: "Variables pi is given, by name. One pi takes a key from is kept in the vault and never shown again; only a host record may set any other.",
-      properties: Object.fromEntries(PI_KEY_VARIABLES.map((name) => [name, { type: 'string', secret: true }])),
-      additionalProperties: { type: 'string' },
+      description: "Variables pi is given, over the daemon's own environment, such as OPENROUTER_API_KEY. { fromEnv: NAME } reads the daemon's NAME; { \"$secret\": \"host:NAME\" } reads the vault. A key pi reads is kept in the vault; only a host record may set any other variable.",
+      additionalProperties: ENV_VALUE,
     },
   },
 });
