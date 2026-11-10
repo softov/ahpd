@@ -1,6 +1,8 @@
 import type { HostTool } from '../types/host.js';
 import { sessionTools, wakeupTool } from './session.js';
 import { artifactTools } from './artifacts.js';
+import { commentTools } from './comments.js';
+import { agentMergeTools } from './agentmerge.js';
 import { askUserTool } from './askuser.js';
 import { shellTools } from './shell.js';
 
@@ -12,12 +14,13 @@ import { shellTools } from './shell.js';
  * something the agent inside a session cannot: the other sessions running
  * beside it, and the terminals the person is watching. The session tools are
  * the reference host's nine, by name and by schema (`session.ts`), and
- * the artifact tools its three (`artifacts.ts`), so a skill written
- * against that host works here; the six shell tools its agent terminal tool
- * offers (`shell.ts`), which `contributingTo` withholds until the root config
- * turns them on; and the four after them are this host's own: two read-only,
- * `schedule_wakeup`, which wakes the calling chat later, and `ask_user`, which
- * asks the person in the chat and waits for the answer.
+ * the artifact tools its three (`artifacts.ts`), and the comment tools its
+ * six (`comments.ts`), so a skill written against that host works here; the
+ * six shell tools its agent terminal tool offers (`shell.ts`), which
+ * `contributingTo` withholds until the root config turns them on; and the four
+ * after them are this host's own: two read-only, `schedule_wakeup`, which
+ * wakes the calling chat later, and `ask_user`, which asks the person in the
+ * chat and waits for the answer.
  *
  * ```ts
  * createHost({ path, agents, tools: hostTools() });
@@ -29,6 +32,8 @@ import { shellTools } from './shell.js';
 export const hostTools = (): HostTool[] => [
   ...sessionTools(),
   ...artifactTools(),
+  ...commentTools(),
+  ...agentMergeTools(),
   {
     definition: {
       name: 'ahp_resource',

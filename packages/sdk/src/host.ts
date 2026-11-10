@@ -19,9 +19,9 @@
 
 import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { ACTION_INTRODUCED_IN, chatReducer, isActionKnownToVersion, rootReducer, sessionReducer } from '@microsoft/agent-host-protocol';
+import { ACTION_INTRODUCED_IN, annotationsReducer, chatReducer, isActionKnownToVersion, rootReducer, sessionReducer } from '@microsoft/agent-host-protocol';
 import type {
-  AnnotationsState, ChatAction, ChatState, RootAction, RootState, SessionAction, SessionInputRequestKind, SessionState, StateAction,
+  AnnotationsAction, AnnotationsState, ChatAction, ChatState, RootAction, RootState, SessionAction, SessionInputRequestKind, SessionState, StateAction,
   SubscribeView, ToolDefinition,
 } from '@microsoft/agent-host-protocol';
 import type { WireTurn } from './types/wire.js';
@@ -57,7 +57,7 @@ import { clientQueueBytes, replayBytes } from './host/limits.js';
 import {
   ROOT, RESTART_NEEDED, isRootChannel, AUTOMATIONS, AUTOMATIONS_ME, spaceOf, servedIn, methodIn, named,
   chatUriFor, subagentChatUri, WORKER_ACTIONS, toolCallOfSubagentChat, isAutomations, automationOwner,
-  parseResourceWatchChannelUri, schemeOf,
+  parseResourceWatchChannelUri, schemeOf, ANNOTATIONS_PATH_SEGMENT,
 } from './host/channels.js';
 import type { Space } from './host/channels.js';
 import { DELTA_WINDOW_MS, merger } from './host/deltas.js';
@@ -94,6 +94,7 @@ import { createSnapshots } from './host/snapshots.js';
 import { createSleep } from './host/sleep.js';
 import { createSessionLifecycle } from './host/sessionlifecycle.js';
 import { createWakes } from './host/wakes.js';
+import { createAgentMerge } from './host/agentmerge.js';
 import { createQueueDrain } from './host/queuedrain.js';
 import { createTelemetry } from './host/telemetry.js';
 import { createAuth } from './host/auth.js';
@@ -627,6 +628,24 @@ export function createHost(options: HostOptions): Host {
     marks.get(id) ?? (kept.annotations?.(id) as AnnotationsState | undefined) ?? { annotations: [] };
 
   /**
+   * One mark on a session, kept and said.
+   *
+   * A client's action lands here, and a host tool that writes a comment makes
+   * the same call with the session it runs in, so the two are one state and
+   * one notice rather than two paths that could disagree. Reduced with the
+   * protocol's own `annotationsReducer`, because a host that reduced it even
+   * slightly differently would hand out a state its clients disagree with,
+   * and written down as it lands, so the marks outlive the process.
+   */
+  const markAnnotation = (uri: string, action: AnnotationsAction, origin?: Origin): void => {
+    const id = idOf(uri);
+    const next = annotationsReducer(marksOf(id), action);
+    marks.set(id, next);
+    kept.setAnnotations?.(id, next as unknown as Bag);
+    dispatch(`${uri}${ANNOTATIONS_PATH_SEGMENT}`, action as unknown as Record<string, unknown>, origin);
+  };
+
+  /**
    * A root notification about a session, as one connection receives it.
    *
    * An older VS Code window is told nothing about a session it may not see,
@@ -1098,7 +1117,13 @@ export function createHost(options: HostOptions): Host {
       ctx.recordFailedTurn(sessionFor(channel), channel, (states.get(channel)?.state.turns ?? []) as Bag[], String(action.turnId ?? ''));
     }
     // What the chat's queue drain does with it: a turn's end, or any other action of the chat.
-    if (ending) ctx.turnEnded(channel, action);
+    if (ending) {
+      ctx.turnEnded(channel, action);
+      // And Agent Merge, whose repair turn ran in the chat: a review reply
+      // left unpublished stops the folder's watch, and any other end asks the
+      // pull request again.
+      ctx.agentMerge.turnEnded(channel);
+    }
     else if (states.get(channel)?.kind === 'chat') ctx.observed(channel, action, origin);
     /*
      * A terminal's title and claim are on the root's list of terminals too,
@@ -1560,7 +1585,7 @@ export function createHost(options: HostOptions): Host {
     logs, detached, refuse,
     serverSeq: 0,
     closed: false, shutdown: () => host.close(), refusing: undefined, bareSessions: new Set<string>(), startedWorkspaceless: new Set<string>(), commandTurns: new Set<string>(), described, links,
-    watches, marksOf, restoredSessions, activeClientsOf,
+    watches, marksOf, restoredSessions, activeClientsOf, markAnnotation,
     restartNeeded: false,
     markRestart: () => {
       if (ctx.restartNeeded) return;
@@ -1652,6 +1677,7 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createSleep(ctx));
   Object.assign(ctx, createSessionLifecycle(ctx));
   Object.assign(ctx, createWakes(ctx));
+  ctx.agentMerge = createAgentMerge(ctx);
   Object.assign(ctx, createQueueDrain(ctx));
   /*
    * Every subscription passes here - the command, and the two handshakes that
@@ -2090,6 +2116,7 @@ export function createHost(options: HostOptions): Host {
         ctx.flushPendingSessionSummaries();
         ctx.stopSleep();
         ctx.stopWakes();
+        ctx.agentMerge.stop();
         ctx.disposeSessionLifecycle();
         ctx.closed = true;
         ctx.stopLapses();

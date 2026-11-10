@@ -81,6 +81,8 @@ describe('tools the host contributes', () => {
       'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
       'move_session',
       'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
+      'addComment', 'listComments', 'replyToComment', 'deleteComments', 'resolveComments', 'viewUnreviewedComments',
+      'setAgentMergeEnabled', 'readAgentMergeCI', 'replyToAgentMergeReviewThread', 'rerunAgentMergeWorkflow',
       'ahp_resource', 'ahp_terminals', 'schedule_wakeup', 'ask_user',
     ]);
 
@@ -1043,9 +1045,11 @@ describe('tools the host contributes', () => {
 describe('the session tools, which an install may switch off', () => {
   type SessionClient = ReturnType<ReturnType<typeof createHost>['accept']>;
 
-  /** The seven the option never covers: this host's own, in the order they are offered. */
+  /** The seventeen the option never covers: this host's own, in the order they are offered. */
   const HOST_OWN = [
     'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
+    'addComment', 'listComments', 'replyToComment', 'deleteComments', 'resolveComments', 'viewUnreviewedComments',
+    'setAgentMergeEnabled', 'readAgentMergeCI', 'replyToAgentMergeReviewThread', 'rerunAgentMergeWorkflow',
     'ahp_resource', 'ahp_terminals', 'schedule_wakeup', 'ask_user',
   ];
 

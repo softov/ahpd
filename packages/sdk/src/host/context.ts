@@ -5,7 +5,7 @@ import type { PublishOptions } from '../types/plugin.js';
 import type { Peer } from '../types/rpc.js';
 import type { Session } from '../types/session.js';
 import type { Bag } from '../types/common.js';
-import type { AnnotationsState } from '@microsoft/agent-host-protocol';
+import type { AnnotationsAction, AnnotationsState } from '@microsoft/agent-host-protocol';
 import type { Terminal } from '../types/terminals.js';
 import type { Principal } from '../types/users.js';
 import type { StoredWorktree } from '../types/sessions.js';
@@ -40,6 +40,7 @@ import type { Automations } from './automations.js';
 import type { SessionEvents } from './sessionevents.js';
 import type { Sleep } from './sleep.js';
 import type { Wakes } from './wakes.js';
+import type { AgentMerge } from './agentmerge.js';
 import type { QueueDrain } from './queuedrain.js';
 import type { SessionLifecycle } from './sessionlifecycle.js';
 import type { Canvases } from './canvases.js';
@@ -79,6 +80,13 @@ export interface DetachedWorktree {
 export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Outputs, LocalTurns, Automations, Sleep, Wakes, QueueDrain, SessionLifecycle {
   /** The background tasks a backend reported, by chat. */
   background: Background;
+  /**
+   * Agent Merge's watches, one per chat that turned it on.
+   *
+   * Under its own name rather than spread flat, because `stateOf` and `stop`
+   * are words other areas reach for.
+   */
+  agentMerge: AgentMerge;
   /** The canvases each chat shows, and the plugin that opened each one. */
   canvases: Canvases;
   /** The shells each chat's agent runs its commands in, one set a chat. */
@@ -315,6 +323,14 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   attachWatch(channel: string, principal?: Principal): Promise<Bag | undefined>;
   /** The marks a session carries, as a snapshot of its annotations channel reports them. */
   marksOf: (id: string) => AnnotationsState;
+  /**
+   * Make one mark on a session, keep it and say it on its annotations channel.
+   *
+   * The one writer both a client's `annotations/*` action and a host tool's go
+   * through, so a comment added by an agent and one added by the window are the
+   * same state to every client of the session.
+   */
+  markAnnotation: (uri: string, action: AnnotationsAction, origin?: Origin | undefined) => void;
   /** The live sessions restored from a recorded one, whose workers are read back. */
   restoredSessions: Set<string>;
   /** Who is in a session, as its state reports them. */

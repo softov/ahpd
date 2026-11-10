@@ -1,6 +1,6 @@
 /** The protocol server: channels, subscriptions and requests. */
 
-import type { ProjectInfo, ToolDefinition, ToolResultContent } from '@microsoft/agent-host-protocol';
+import type { AnnotationsAction, AnnotationsState, ProjectInfo, ToolDefinition, ToolResultContent } from '@microsoft/agent-host-protocol';
 import type { LogLevel } from '../log.js';
 import type { OnWire } from './wire.js';
 import type { Agent, BoundTool, McpServer, ToolEffects } from './agent.js';
@@ -1467,6 +1467,47 @@ export interface AskedAnswers {
   answers: Record<string, string | string[]>;
 }
 
+/** One option the Agent Merge tool may change for a folder, on top of the root keys. */
+export interface AgentMergeOverridesInput {
+  addressReviews?: boolean;
+  fixCI?: boolean;
+  resolveConflicts?: boolean;
+  mergePullRequest?: 'always' | 'ifUnchanged' | 'never';
+}
+
+/** One readAgentMergeCI call, once the fields its mode allows are the only ones left. */
+export interface AgentMergeCIRequest {
+  mode?: 'summary' | 'tail' | 'range' | 'search';
+  evidenceId?: string;
+  jobId?: string;
+  cursor?: string;
+  startLine?: number;
+  startColumn?: number;
+  endLine?: number;
+  lineCount?: number;
+  query?: string;
+  contextLines?: number;
+}
+
+/**
+ * The four Agent Merge tools, as the host serves them for one chat.
+ *
+ * The shape is VS Code's `IAgentMergeToolAccessor`, with the chat already
+ * bound: the tool group is given one of these by the chat the call came from,
+ * and nothing else can reach a repair turn's authorization. The last three
+ * answer only inside a turn Agent Merge started; `setEnabled` is the one the
+ * model may call at any time, because it is how a folder starts being watched.
+ * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/agentMergeServerTools.ts#L93-L99
+ */
+export interface AgentMergeToolAccessor {
+  /** Whether this host can watch a pull request here at all. */
+  isEnabled(): boolean;
+  setEnabled(enabled: boolean, overrides?: AgentMergeOverridesInput): Promise<string>;
+  readFailedCI(request?: AgentMergeCIRequest): Promise<string>;
+  replyToReviewThread(threadId: string, body: string, resolve: boolean): Promise<string>;
+  rerunFailedWorkflow(runId: string, failedJobsOnly: boolean): Promise<string>;
+}
+
 /**
  * One `send_message` call, in the reference host's terms.
  *
@@ -1749,6 +1790,25 @@ export interface ToolCall {
   /** Replace them, and tell every client watching the session. */
   setArtifacts(list: Bag[]): void;
   /**
+   * The marks on the calling session, as its annotations channel holds them.
+   *
+   * A mark is what a window draws on a file range: a comment, a suggestion,
+   * anything else a client put there. Read here rather than kept by the tool,
+   * because the channel may also have been written by a client while the turn
+   * runs.
+   */
+  annotations(): AnnotationsState;
+  /**
+   * Make one mark on the calling session, and tell every client watching it.
+   *
+   * The same writer a client's `annotations/*` action goes through, so a
+   * comment a tool adds and one the window adds are one state to everybody.
+   * The action is checked by the channel, not here: `annotations/*` needs
+   * `session:review`, which a writing tool asks for with `may` before it
+   * calls this.
+   */
+  markAnnotation(action: AnnotationsAction): void;
+  /**
    * Replace what this call has produced so far, which every client watching
    * the chat is shown as the running call's partial content, the spec's
    * `chat/toolCallContentChanged`. Given by a host that can say it.
@@ -1765,6 +1825,14 @@ export interface ToolCall {
    * nobody sees.
    */
   shells(): Shells | undefined;
+  /**
+   * Agent Merge for the chat this call came from, when the host runs it.
+   *
+   * The chat is already bound, so the last three tools can answer only inside
+   * the repair turn that chat is running; a call with no such turn is refused
+   * whatever the model asks. Absent on a host with no Agent Merge.
+   */
+  agentMerge?(): AgentMergeToolAccessor | undefined;
   /**
    * The calling chat's background rows, to set one and take it back.
    *

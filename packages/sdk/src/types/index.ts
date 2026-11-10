@@ -47,7 +47,11 @@ export type { Claim, CommandTerminal, Terminal, TerminalOptions, SpawnPty, Termi
 export type { HeldShell, ManagedShell, ShellClaim, ShellCommandResult, ShellCommandStatus, Shells, ShellType } from './shells.js';
 export type { BackgroundTask, BackgroundTaskKind, BackgroundTasks, ChatBackgroundTasks } from './background.js';
 export type { GitDir, Worktree, Worktrees } from './worktrees.js';
-export type { NewPullRequest, PullRequest, PullRequests } from './github.js';
+export type {
+  NewPullRequest, PullRequest, PullRequestCheck, PullRequestChecks, PullRequestComment, PullRequestCore, PullRequestDetail,
+  PullRequestFeedbackComment, PullRequestJob, PullRequestJobLog, PullRequestJobStep, PullRequestMergeability, PullRequestReview,
+  PullRequestReviewThread, PullRequests,
+} from './github.js';
 export type { Automation, AutomationEntry, AutomationRun, AutomationStore, RunEnding, StartSession } from './automations.js';
 export type { Grant, IssuerVerify, Me, MintedToken, Named, Principal, Role, TokenRecord, UserFile, UserRecord, Users, Verb } from './users.js';
 export type { ComputerTime, Cost, ModelCall, ModelUse, Owner, Usage, UsageBase, UsageEntry, UsageGroup, UsageKey, UsageTotal } from './usage.js';

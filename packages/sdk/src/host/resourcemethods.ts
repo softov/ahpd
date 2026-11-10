@@ -27,8 +27,8 @@ export interface ResourceMethods {
 export function createResourceMethods(ctx: HostContext, conn: ConnectionContext): ResourceMethods {
   const { connection } = conn;
   const {
-    bringBackOf, clientResources, followOf, changesetAt, contentMoved, dispatch, fire, log, operationContext,
-    opKey, options, ownerFor, recordPullRequest, refreshFacts, statusOf, wroteThrough,
+    bringBackOf, clientResources, followOf, changesetAt, contentMoved, dispatch, fire, leadOf, log, operationContext,
+    opKey, options, ownerFor, recordPullRequest, refreshFacts, sessions, statusOf, wroteThrough,
   } = ctx;
 
 /**
@@ -397,6 +397,24 @@ const CONFLICT = -32011;
           ctx.operationStatusSaid(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
           // Before the refresh, so GitHub's later answer is what survives.
           if (result.pullRequest !== undefined) recordPullRequest(at.owner, at.dir, result.pullRequest);
+          /*
+           * And Agent Merge, where the create asked for it.
+           *
+           * The branch and page the operation landed on are its own answer, so
+           * the watch starts on them before the folder's facts are read again:
+           * a create that branched off the base would otherwise arm a watch on
+           * the branch it just left.
+           */
+          if (result.agentMerge === true && result.pullRequest !== undefined) {
+            const held = sessions.get(at.owner);
+            const lead = held === undefined ? undefined : leadOf(held);
+            if (lead !== undefined) {
+              ctx.agentMerge.enableFor(lead.chatUri, {
+                branchName: result.pullRequest.branch,
+                pullRequestUrl: result.pullRequest.url,
+              });
+            }
+          }
           /*
            * The agent's edits the operation undid, told to the session's agent
            * with its next turn, as the reference host's discard reports them.
