@@ -1,6 +1,6 @@
 /** The protocol server: channels, subscriptions and requests. */
 
-import type { ProjectInfo, ToolDefinition, ToolResultContent } from '@microsoft/agent-host-protocol';
+import type { AnnotationsAction, AnnotationsState, ProjectInfo, ToolDefinition, ToolResultContent } from '@microsoft/agent-host-protocol';
 import type { LogLevel } from '../log.js';
 import type { OnWire } from './wire.js';
 import type { Agent, BoundTool, McpServer, ToolEffects } from './agent.js';
@@ -1262,6 +1262,15 @@ export interface ToolSession {
    * it, a workspace it took since included.
    */
   startedWorkspaceless?: boolean | undefined;
+  /**
+   * The agents the caller of this tool may start, with the name a person
+   * reads, for a tool that names them.
+   *
+   * It is the list `mayUseAgent` allows and `list_agents` answers, so what a
+   * tool offers and what it refuses are one reading: absent leaves a tool as
+   * it is, and an empty list is a caller that may start none.
+   */
+  agents?: { provider: string; name: string }[] | undefined;
 }
 
 /**
@@ -1606,6 +1615,20 @@ export interface ToolCall {
    */
   providers(): string[];
   /**
+   * The agents this call may start, in the order the host holds them.
+   *
+   * Each with the id a session is made on, the name a person reads, and the
+   * schema its `config` is checked against - what a tool answering "which
+   * agents may I start" says, and nothing a caller may not use: an agent held
+   * by a person or a team somebody else belongs to is not named to them, the
+   * same rule that decides whether a session may start on it.
+   *
+   * A call nobody is behind is told about the host's own agents alone, which
+   * is what it may start; a root call, like a host with no users directory,
+   * keeps every agent.
+   */
+  agents(): { provider: string; name: string; schema: Bag }[];
+  /**
    * A chat's conversation, as its channel snapshot carries it.
    *
    * The newest page of turns, the running one, and whether older ones exist
@@ -1703,6 +1726,25 @@ export interface ToolCall {
   artifacts(): Bag[];
   /** Replace them, and tell every client watching the session. */
   setArtifacts(list: Bag[]): void;
+  /**
+   * The marks on the calling session, as its annotations channel holds them.
+   *
+   * A mark is what a window draws on a file range: a comment, a suggestion,
+   * anything else a client put there. Read here rather than kept by the tool,
+   * because the channel may also have been written by a client while the turn
+   * runs.
+   */
+  annotations(): AnnotationsState;
+  /**
+   * Make one mark on the calling session, and tell every client watching it.
+   *
+   * The same writer a client's `annotations/*` action goes through, so a
+   * comment a tool adds and one the window adds are one state to everybody.
+   * The action is checked by the channel, not here: `annotations/*` needs
+   * `session:review`, which a writing tool asks for with `may` before it
+   * calls this.
+   */
+  markAnnotation(action: AnnotationsAction): void;
   /**
    * Replace what this call has produced so far, which every client watching
    * the chat is shown as the running call's partial content, the spec's

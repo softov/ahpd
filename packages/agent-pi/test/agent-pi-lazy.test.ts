@@ -55,6 +55,8 @@ vi.mock('@earendil-works/pi-coding-agent', async () => {
     createAgentSessionFromServices: async () => ({ session }),
     defineTool: (tool: unknown) => tool,
     ModelRuntime: { create: async () => ({ getAvailable: async () => [] }) },
+    // Read by `loadPi` whether or not a suite registers an endpoint.
+    ModelRegistry: class { registerProvider(): void {} },
     getAgentDir: () => '/nonexistent/pi-agent',
   };
 });

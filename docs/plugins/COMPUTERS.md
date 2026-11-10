@@ -270,16 +270,16 @@ A profile that names `cofold` carries the `ahpd` part its nested host runs from,
 | Need | What it is on the host | Where it goes |
 | --- | --- | --- |
 | `ahpdPart` | the `ahpd` part, with `@ahpd/agent-cofold` among its plugins | `/opt/ahpd/ahpd`, with `ahpd` on the machine's `PATH` |
-| `cofoldState` | a state volume seeded with the harness's `config.json` | `/ahpd/cofold`, the file at `/ahpd/cofold/papo/config.json` |
-| `cofoldConfig` | the harness's `config.json`, read-only, only in a profile with `state: "host"` | `/ahpd/cofold/papo/config.json` |
-| `cofoldConfigPath` | - | `PAPO_CONFIG=/ahpd/cofold/papo/config.json` |
+| `cofoldState` | a state volume seeded with the harness's `config.json` | `/ahpd/cofold`, the file at `/ahpd/cofold/copapo/config.json` |
+| `cofoldConfig` | the harness's `config.json`, read-only, only in a profile with `state: "host"` | `/ahpd/cofold/copapo/config.json` |
+| `cofoldConfigPath` | - | `COPAPO_CONFIG=/ahpd/cofold/copapo/config.json` |
 | `cofoldBaseUrl` | - | `COFOLD_BASE_URL`, only when a profile names it |
 | `cofoldApiKey` | - | `COFOLD_API_KEY`, only when a profile names it |
 | `cofoldModel` | - | `COFOLD_MODEL`, only when a profile names it |
 
 `computerConfigDir` in the `@ahpd/agent-cofold` options names that directory, `/ahpd/cofold` by default, and `false` leaves the image's own configuration alone and declares only the part.
 
-The path inside the machine is fixed and `PAPO_CONFIG` points at the file, the layer cofold's harness reads from that variable, so the configuration is found whichever user the image runs as - a container whose home is `/home/app` reads it the same as one running as root. A profile that mounts the configuration at some other path of its own gets a machine where the harness does not look.
+The path inside the machine is fixed and `COPAPO_CONFIG` points at the file, the layer cofold's harness reads from that variable, so the configuration is found whichever user the image runs as - a container whose home is `/home/app` reads it the same as one running as root. A profile that mounts the configuration at some other path of its own gets a machine where the harness does not look.
 
 `XDG_CONFIG_HOME` is not touched, and that is the point: it is the nested `ahpd`'s own folder as well, and a machine's mount point is root-owned, so pointing it at `/ahpd/cofold` stops any image that does not run as root from starting at all - `EACCES: permission denied, mkdir '/ahpd/cofold/ahpd/usage'` on the way in. Every other program in the machine keeps its own XDG configuration.
 
@@ -636,7 +636,7 @@ The session's folder is on this host, so `code` says how the machine gets the se
 
 Either way the work comes back the same way, by the fetch [Disposable machines](#disposable-machines) describes, and the machine never pushes.
 
-A credential of this host's own never goes to another box. An agent need marked as a credential whose value is this host's, such as a cofold configuration seeded from `~/.config/papo/config.json`, is refused at create with a sentence naming the need. Give the box its own value in the profile instead, best named from the vault as above: the value is passed by name on each `docker exec` and is never in the machine's `docker inspect`.
+A credential of this host's own never goes to another box. An agent need marked as a credential whose value is this host's, such as a cofold configuration seeded from `~/.config/copapo/config.json`, is refused at create with a sentence naming the need. Give the box its own value in the profile instead, best named from the vault as above: the value is passed by name on each `docker exec` and is never in the machine's `docker inspect`.
 
 ### Profiles that make VMs
 

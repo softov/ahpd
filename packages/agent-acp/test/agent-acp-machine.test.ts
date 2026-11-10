@@ -582,7 +582,7 @@ it('keeps the row\'s machine variables out of a host spawn', async () => {
 it('ships a part and a state directory for every row, each seeded from the agent\'s own host files', async () => {
   const { problems, kind } = await load({});
   expect(problems).toEqual([]);
-  const rows = Object.fromEntries(['codex', 'gemini', 'copilot', 'opencode', 'kilo', 'goose', 'pi', 'dsh', 'devin', 'cursor', 'amp', 'qwen'].map((id) => {
+  const rows = Object.fromEntries(['codex', 'gemini', 'copilot', 'opencode', 'kilo', 'goose', 'pi', 'dsh', 'copapo', 'devin', 'cursor', 'amp', 'qwen'].map((id) => {
     const needs = kind.open(viewOf(id, () => ({}))).machine?.() ?? {};
     const state = needs[`${id}.state`] as { state: string; seed: { source: string }[] } | undefined;
     return [id, {
@@ -615,6 +615,12 @@ it('ships a part and a state directory for every row, each seeded from the agent
     goose: { part: 'goose', env: ['GOOSE_PATH_ROOT=/ahpd/goose'], state: '/ahpd/goose', seed: ['~/.config/goose/config.yaml'] },
     pi: { part: 'pi', env: ['PI_CODING_AGENT_DIR=/ahpd/pi'], state: '/ahpd/pi', seed: ['~/.pi/agent/settings.json', '~/.pi/agent/models.json'] },
     dsh: { part: 'dsh', env: ['DSH_HOME=/ahpd/dsh'], state: '/ahpd/dsh', seed: ['~/.dsh/profiles/acp'] },
+    copapo: {
+      part: 'copapo',
+      env: ['XDG_CONFIG_HOME=/ahpd/copapo/config', 'XDG_DATA_HOME=/ahpd/copapo/data', 'COFOLD_HOME=/ahpd/copapo/home'],
+      state: '/ahpd/copapo',
+      seed: ['~/.config/copapo/config.json'],
+    },
     devin: {
       part: 'devin',
       env: ['XDG_CONFIG_HOME=/ahpd/devin/config', 'XDG_DATA_HOME=/ahpd/devin/data'],

@@ -88,11 +88,11 @@ it('reads the file that ships, and every part it names', () => {
 
   expect(parts.map((one) => one.id)).toEqual([
     'node', 'ahpd', 'claude', 'codex', 'gemini', 'copilot', 'opencode',
-    'kilo', 'goose', 'pi', 'dsh', 'devin', 'cursor', 'amp', 'qwen',
+    'kilo', 'goose', 'pi', 'dsh', 'copapo', 'devin', 'cursor', 'amp', 'qwen',
   ]);
   expect(parts.map((one) => one.kind)).toEqual([
     'node', 'ahpd', 'npm', 'npm', 'npm', 'npm', 'archive',
-    'npm', 'archive', 'npm', 'npm', 'archive', 'archive', 'archive', 'npm',
+    'npm', 'archive', 'npm', 'npm', 'npm', 'archive', 'archive', 'archive', 'npm',
   ]);
 
   const codex = parts.find((one) => one.id === 'codex');

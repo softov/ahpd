@@ -277,6 +277,14 @@ it.skipIf(!posix)('spawns the base row\'s command, arguments and environment', a
   expect(work.env['COPILOT_AUTO_UPDATE']).toBe('false');
 });
 
+it.skipIf(!posix)('starts copapo over acp, with no trust of its own, under /ahpd/copapo', async () => {
+  const { kind } = await load();
+  const copapo = await spawnOf(kind, 'copapo');
+  expect([copapo.name, copapo.argv]).toEqual(['copapo', ['acp']]);
+  expect(shipped.copapo?.honoursTrust).toBeUndefined();
+  expect(shipped.copapo?.machine?.state).toBe('/ahpd/copapo');
+});
+
 it.skipIf(!posix)('accepts install and page on a record, and runs the row its id names', async () => {
   const { kind } = await load();
   const codex = await spawnOf(kind, 'codex', () => ({

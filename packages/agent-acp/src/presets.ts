@@ -101,10 +101,12 @@ const stateOf = (id: string, seed: Seed[]): Pick<AcpMachine, 'state' | 'seed'> =
  *
  * The variables are the whole machine's, so a nested `ahpd` in the same
  * machine keeps its own folder in that state directory too, which is writable.
+ * An `env` given is added to that environment, for a variable the agent reads
+ * beside its XDG ones.
  */
-const xdgOf = (id: string, files: string[]): AcpMachine => ({
+const xdgOf = (id: string, files: string[], env: Record<string, string> = {}): AcpMachine => ({
   part: id,
-  env: { XDG_CONFIG_HOME: `/ahpd/${id}/config`, XDG_DATA_HOME: `/ahpd/${id}/data` },
+  env: { XDG_CONFIG_HOME: `/ahpd/${id}/config`, XDG_DATA_HOME: `/ahpd/${id}/data`, ...env },
   ...stateOf(id, files.map((file) => ({ source: `~/.config/${id}/${file}`, target: `config/${id}/${file}` }))),
 });
 
@@ -205,6 +207,13 @@ export const presets: Record<string, AcpPreset> = {
       env: { DSH_HOME: '/ahpd/dsh' },
       ...stateOf('dsh', [{ source: '~/.dsh/profiles/acp', target: 'profiles/acp' }]),
     },
+  },
+  copapo: {
+    ...rowOf('copapo'),
+    args: ['acp'],
+    // copapo over ACP ignores the `mcpServers` a client sends, so a session this
+    // preset starts runs without the host's MCP servers.
+    machine: xdgOf('copapo', ['config.json'], { COFOLD_HOME: '/ahpd/copapo/home' }),
   },
   devin: {
     ...rowOf('devin'),

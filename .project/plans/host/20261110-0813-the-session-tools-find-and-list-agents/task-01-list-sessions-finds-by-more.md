@@ -1,6 +1,6 @@
 ---
 title: list_sessions finds by more
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -35,4 +35,6 @@ A `list_sessions` row says its `agent`, and the tool takes `agent`, `limit`, `ti
 - `pnpm typecheck`, then the sdk suite.
 
 ## Resume
+
+Implemented 2026-11-10. A row answers `agent`, its provider id; `filterSessions` takes `agent` (exact), `title` and `path` (contains, any case), `modifiedAfter` and `modifiedBefore`, and answers newest first by `modifiedAt`, keeping the catalogue's order for rows changed in the same millisecond; `list_sessions` keeps the newest `limit` and answers `truncated: true` when the limit cut rows. `path` matches a working directory, as its path or its `file://` URI, in any case; a project's URI is not matched by it, since `workspace` already names a project. Cases in `packages/sdk/test/sessiontools.test.ts`; `docs/server/MCP.md` names the new filters. Gate: typecheck clean, sdk suite green but for eight git/filesystem cases (`changes-refresh`, `git`, `watches`, `worktrees`) that the prescribed `TMPDIR` inside the worktree breaks - they pass with `TMPDIR` outside the repository, and none of them reads these tools.
 

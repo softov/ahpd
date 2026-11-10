@@ -3,6 +3,7 @@ import { Status, idOf } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { flag, optional, required, when } from '../utils/toolinput.js';
 import type { HostTool, SessionlessToolCall, ToolCall } from '../types/host.js';
+import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Summary } from '../types/catalog.js';
 import type { Bag } from '../types/common.js';
 import type { Grant } from '../types/users.js';
@@ -119,6 +120,7 @@ export const serializeSession = (row: Summary): Bag => {
   return {
     session: row.resource,
     openLink: openLink(row.resource, row.provider),
+    agent: row.provider,
     title: row.title,
     status: words.length > 0 ? words.join(',') : 'unknown',
     ...(extra.activity !== undefined ? { activity: extra.activity } : {}),
@@ -135,7 +137,15 @@ export const serializeSession = (row: Summary): Bag => {
   };
 };
 
-/** The rows `list_sessions` keeps, under its filters. */
+/**
+ * The rows `list_sessions` keeps, under its filters, newest first.
+ *
+ * A caller that names `session` gets that row alone and no filters are read,
+ * as it is a lookup by identity rather than a search. Everything else is a
+ * search: `title` and `path` match a part of the text in any case, `agent` is
+ * the provider id exactly, and the two `modified` bounds are inclusive, as the
+ * `created` ones are.
+ */
 export const filterSessions = (rows: Summary[], args: Bag, tool = 'list_sessions'): Summary[] => {
   const direct = optional(args.session, 'session', tool);
   if (direct !== undefined) {
@@ -146,14 +156,19 @@ export const filterSessions = (rows: Summary[], args: Bag, tool = 'list_sessions
     ? new Set(args.status.filter((one): one is string => typeof one === 'string'))
     : undefined;
   const workspace = optional(args.workspace, 'workspace', tool);
+  const agent = optional(args.agent, 'agent', tool);
+  const title = optional(args.title, 'title', tool)?.toLowerCase();
+  const path = optional(args.path, 'path', tool)?.toLowerCase();
   const withChanges = flag(args.withChanges, 'withChanges', tool);
   const unread = flag(args.unread, 'unread', tool);
   const withPullRequest = flag(args.withPullRequest, 'withPullRequest', tool);
   const includeArchived = flag(args.includeArchived, 'includeArchived', tool);
   const after = when(args.createdAfter, 'createdAfter', tool);
   const before = when(args.createdBefore, 'createdBefore', tool);
+  const changedAfter = when(args.modifiedAfter, 'modifiedAfter', tool);
+  const changedBefore = when(args.modifiedBefore, 'modifiedBefore', tool);
   const bare = (value: string): string => localPath(value).replace(/\/+$/, '').toLowerCase();
-  return rows.filter((row) => {
+  const kept = rows.filter((row) => {
     const words = statusWords(row.status);
     if (status !== undefined && !words.some((word) => status.has(word))) return false;
     if (workspace !== undefined) {
@@ -164,6 +179,9 @@ export const filterSessions = (rows: Summary[], args: Bag, tool = 'list_sessions
       ];
       if (!names.includes(workspace.toLowerCase()) && !names.includes(bare(workspace))) return false;
     }
+    if (agent !== undefined && row.provider !== agent) return false;
+    if (title !== undefined && !row.title.toLowerCase().includes(title)) return false;
+    if (path !== undefined && !row.workingDirectories.some((one) => bare(one).includes(bare(path)))) return false;
     if (withChanges === true) {
       const changes = (row as Summary & { changes?: { files?: unknown } }).changes;
       if (typeof changes?.files !== 'number' || changes.files === 0) return false;
@@ -177,8 +195,24 @@ export const filterSessions = (rows: Summary[], args: Bag, tool = 'list_sessions
     const born = Date.parse(row.createdAt);
     if (after !== undefined && born < after) return false;
     if (before !== undefined && born > before) return false;
+    const changed = Date.parse(row.modifiedAt);
+    if (changedAfter !== undefined && changed < changedAfter) return false;
+    if (changedBefore !== undefined && changed > changedBefore) return false;
     return true;
   });
+  /*
+   * Newest first by the time the row changed; two rows changed in the same
+   * millisecond keep the order the catalogue gave them, so one listing is the
+   * same as the next.
+   */
+  const changedAt = (one: Summary): number => {
+    const at = Date.parse(one.modifiedAt);
+    return Number.isNaN(at) ? 0 : at;
+  };
+  return kept
+    .map((row, index) => ({ row, index }))
+    .sort((one, other) => changedAt(other.row) - changedAt(one.row) || one.index - other.index)
+    .map((one) => one.row);
 };
 
 /** The caps `get_session_context` cuts text to, per level of detail. */
@@ -332,7 +366,7 @@ const modelMeant = (at: AnyToolCall, asked: string | undefined, tool: string, pr
   if (asked === undefined) return undefined;
   const pool = at.models().filter((one) => provider === undefined || one.provider === provider);
   const found = pool.find((one) => one.id === asked) ?? pool.find((one) => one.name.toLowerCase() === asked.toLowerCase());
-  if (found === undefined) throw new Error(`Invalid ${tool} input: model "${asked}" is not one this host offers${provider ? ` for ${provider}` : ''}.`);
+  if (found === undefined) throw new Error(`Invalid ${tool} input: model "${asked}" is not one this host offers${provider ? ` for ${provider}` : ''}. See list_models for the models an agent offers.`);
   return { id: found.id, provider: found.provider };
 };
 
@@ -382,6 +416,15 @@ const workspaceMeant = (asked: string, rows: Summary[], tool: string): string =>
 
 const LIST_STATUS = ['idle', 'inProgress', 'inputNeeded', 'error', 'archived'];
 
+/**
+ * How many models a `list_agents` row names.
+ *
+ * The first five the host learned for that agent, which is the order its probe
+ * lists them in and the only order there is: nothing else ranks a model, and
+ * the default is the one a probe names first. `list_models` has them all.
+ */
+const TOP_MODELS = 5;
+
 /** What `rename_chat` does today, for a session that names its own chats. */
 const RENAME_CHAT_DESCRIPTION = 'Rename one specific chat so it is easy to find later. Renaming the default chat also names its owning session, while peer-chat titles remain independent. Use a short, human-friendly chat name in sentence case (1-4 words). Pass an `agent-host-session://` session or chat link to target another chat, or omit `chat` to rename the chat in which this tool is running. Name a fresh chat once its scope is clear. Call this tool again whenever the user explicitly asks to rename the chat; every invocation replaces the current title.';
 
@@ -402,25 +445,67 @@ const RENAME_CHAT_PROPERTIES: Record<string, object> = {
   automatic: { type: 'boolean', description: 'Set to true only when this call is fulfilling the host\'s automatic title reminder. Omit for user-requested renames.' },
 };
 
+/**
+ * `create_session`'s `agent` input, as one caller's agents name it.
+ *
+ * The enum is that caller's list itself, so an agent it may not start cannot
+ * be named, and the description gives each id the name a person reads, one per
+ * line, as Claude Code's Agent tool names its agent types. The last sentence
+ * points at `list_models` for the models behind each id.
+ */
+const agentInput = (agents: { provider: string; name: string }[]): object => ({
+  type: 'string',
+  enum: agents.map((one) => one.provider),
+  description: `Optional provider id of the agent to run. Defaults to the model's provider, then the current chat's. \`list_models\` names the models each agent offers.${agents.length === 0 ? '' : `\n${agents.map((one) => `${one.provider}: ${one.name}`).join('\n')}`}`,
+});
+
+/** `create_session`'s definition, before one caller's agents are named in its `agent` input. */
+const CREATE_SESSION: ToolDefinition = {
+  name: 'create_session',
+  title: 'Create Session',
+  description: 'Create delegated work and start it with an initial prompt, either in a new chat sharing the current session\'s workspace, lifecycle, and aggregate diff, or in an independent session. Only supply `worktree` when the user explicitly requests working with or without a new worktree; never combine it with `currentSession`.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      relationship: { type: 'string', enum: ['currentSession', 'independent'], description: 'Whether this work belongs to the current session or is independently managed. Use `currentSession` for tasks from the current plan or deliverable, including parallel or delegated tasks, unless the user explicitly requests a worktree. Use `independent` for a separate deliverable that needs its own workspace, provider, or top-level lifecycle, or for an explicitly requested worktree.' },
+      prompt: { type: 'string', description: 'Initial prompt to send to the new session.' },
+      workspace: { type: 'string', description: 'For `independent` work: unique project name, project/workspace URI, absolute folder path, or working directory from an existing session. Required for `independent` and invalid for `currentSession`.' },
+      worktree: { type: 'boolean', description: 'Override isolation for the new independent session. Set true only when the user explicitly asks to create a worktree, or false only when the user explicitly asks to work without one. Omit to preserve the existing isolation behavior: inherit the creating session\'s isolation for the same project, otherwise use worktree isolation. Only valid with relationship `independent`; omit for `currentSession`.' },
+      title: { type: 'string', maxLength: 200, description: 'Short title for the new chat or independent session.' },
+      model: { type: 'string', description: 'Optional model ID or display name. Defaults to the current chat\'s model. For `currentSession`, the model must belong to the current session\'s provider; for `independent`, the model selects the new session\'s provider.' },
+      agent: { type: 'string', description: 'Optional provider id of the agent to run, such as one `list_sessions` shows. Defaults to the model\'s provider, then the current chat\'s.' },
+      config: { type: 'object', description: 'Optional settings for the new session, as the agent\'s config schema names them. Defaults to what the current chat\'s agent says a new chat inherits.' },
+    },
+    required: ['relationship', 'prompt', 'title'],
+  },
+  annotations: { title: 'Create Session', readOnlyHint: false, destructiveHint: true },
+};
+
 /** VS Code's session tools, in its order. */
 export const sessionTools = (): HostTool[] => [
   {
     definition: {
       name: 'list_sessions',
       title: 'List Sessions',
-      description: 'List sessions and their compact metadata (status, activity, working directory, project, worktree changes, git/GitHub info, timestamps). Each result includes `session` for identity and tool inputs and `openLink` for clickable Markdown links; do not use `session` as a link target. Pass `session` to fetch a single known session by URI. By default archived sessions are omitted. Optionally filter by `status`, `workspace`, `withChanges`, `unread`, `withPullRequest`, `includeArchived`, `createdAfter`, or `createdBefore`.',
+      description: 'List sessions and their compact metadata (status, activity, working directory, project, worktree changes, git/GitHub info, timestamps). Each result includes `session` for identity and tool inputs and `openLink` for clickable Markdown links; do not use `session` as a link target. Pass `session` to fetch a single known session by URI. By default archived sessions are omitted. Optionally filter by `status`, `workspace`, `agent`, `title`, `path`, `withChanges`, `unread`, `withPullRequest`, `includeArchived`, `createdAfter`, `createdBefore`, `modifiedAfter`, or `modifiedBefore`. Rows are answered newest first by `modifiedAt`; pass `limit` for only the newest ones, and the answer says `truncated: true` when the limit cut rows.',
       inputSchema: {
         type: 'object',
         properties: {
           session: { type: 'string', description: 'Return only the session with this URI or `agent-host-session://` link (a direct lookup that ignores the other filters). Use this to fetch one known session\'s metadata.' },
           status: { type: 'array', items: { type: 'string', enum: LIST_STATUS }, description: 'Only return sessions whose status matches one of these (e.g. `inputNeeded` for sessions awaiting a reply, `inProgress` for running ones, `archived` for sessions marked Done/completed, which implies `includeArchived`). Omit to return every status.' },
           workspace: { type: 'string', description: 'Only return sessions for this project name, project URI, or working directory path/URI.' },
+          agent: { type: 'string', description: 'Only return sessions of this agent: the provider id a row answers as `agent`, matched exactly.' },
+          title: { type: 'string', description: 'Only return sessions whose title contains this text, in any case.' },
+          path: { type: 'string', description: 'Only return sessions with a working directory that contains this text, in any case.' },
           withChanges: { type: 'boolean', description: 'When true, only return sessions that have pending worktree changes.' },
           unread: { type: 'boolean', description: 'When true, only return sessions with updates the user has not seen yet.' },
           withPullRequest: { type: 'boolean', description: 'When true, only return sessions that have a linked GitHub pull request.' },
           includeArchived: { type: 'boolean', description: 'Whether to include archived sessions. Defaults to false; set true to also return archived sessions.' },
           createdAfter: { type: 'string', description: 'Only return sessions created at or after this time (ISO-8601 timestamp, e.g. `2025-01-31T00:00:00Z`).' },
           createdBefore: { type: 'string', description: 'Only return sessions created at or before this time (ISO-8601 timestamp).' },
+          modifiedAfter: { type: 'string', description: 'Only return sessions last modified at or after this time (ISO-8601 timestamp).' },
+          modifiedBefore: { type: 'string', description: 'Only return sessions last modified at or before this time (ISO-8601 timestamp).' },
+          limit: { type: 'number', description: 'Maximum number of rows to return, the newest first. All matching rows are returned when omitted, and the answer says `truncated: true` when the limit cut some.' },
         },
       },
       annotations: { title: 'List Sessions', readOnlyHint: true, openWorldHint: false },
@@ -434,7 +519,81 @@ export const sessionTools = (): HostTool[] => [
      */
     sessionless: true,
     grant: 'session:read',
-    run: async (input, at) => JSON.stringify({ sessions: filterSessions(await at.sessions(), input).map(serializeSession) }),
+    run: async (input, at) => {
+      const tool = 'list_sessions';
+      const found = filterSessions(await at.sessions(), input, tool);
+      const asked = input.limit;
+      if (asked !== undefined && (typeof asked !== 'number' || !Number.isFinite(asked) || asked < 1))
+        throw new Error(`Invalid ${tool} input: limit must be a positive number.`);
+      const kept = asked === undefined ? found : found.slice(0, Math.floor(asked));
+      /*
+       * A limited answer says it was cut, as `get_session_context` says a
+       * transcript was, so a model does not read a cut list as the whole of
+       * what matched and stop looking.
+       */
+      return JSON.stringify({
+        sessions: kept.map(serializeSession),
+        ...(kept.length < found.length ? { truncated: true } : {}),
+      });
+    },
+  },
+  {
+    definition: {
+      name: 'list_agents',
+      title: 'List Agents',
+      description: 'List the agents a new session may be started on, each with the `agent` id `create_session` and `list_sessions` take, the name a person reads, the settings its `config` accepts, and its first five models. Use this before `create_session` to choose the agent, its model and its settings.',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { title: 'List Agents', readOnlyHint: true, openWorldHint: false },
+    },
+    /*
+     * A reader, cut to what this call's person may start: the list is built
+     * for the caller, so an agent held by somebody else is not named.
+     */
+    sessionless: true,
+    grant: 'session:read',
+    run: (_input, at) => {
+      const models = at.models();
+      return JSON.stringify({
+        agents: at.agents().map((one) => ({
+          agent: one.provider,
+          name: one.name,
+          config: one.schema,
+          models: models.filter((model) => model.provider === one.provider).slice(0, TOP_MODELS)
+            .map((model) => ({ id: model.id, name: model.name })),
+        })),
+      });
+    },
+  },
+  {
+    definition: {
+      name: 'list_models',
+      title: 'List Models',
+      description: 'List the models the agents offer, in the order the host learned them. Pass `agent` for one agent\'s models; omit it for every agent\'s. Each model answers the `id` and `name` that `create_session` and `create_chat` take as `model`, under the `agent` it belongs to.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', description: 'Only return this agent\'s models: a provider id from `list_agents`. Omit to return every agent\'s.' },
+        },
+      },
+      annotations: { title: 'List Models', readOnlyHint: true, openWorldHint: false },
+    },
+    sessionless: true,
+    grant: 'session:read',
+    run: (input, at) => {
+      const tool = 'list_models';
+      const asked = optional(input.agent, 'agent', tool);
+      const agents = at.agents();
+      if (asked !== undefined && !agents.some((one) => one.provider === asked))
+        throw new Error(`Invalid ${tool} input: agent "${asked}" is not one this host offers${agents.length > 0 ? `; it offers ${agents.map((one) => one.provider).join(', ')}` : ''}.`);
+      const models = at.models();
+      const named = asked === undefined ? agents : agents.filter((one) => one.provider === asked);
+      return JSON.stringify({
+        agents: named.map((one) => ({
+          agent: one.provider,
+          models: models.filter((model) => model.provider === one.provider).map((model) => ({ id: model.id, name: model.name })),
+        })),
+      });
+    },
   },
   {
     definition: {
@@ -502,25 +661,25 @@ export const sessionTools = (): HostTool[] => [
     },
   },
   {
-    definition: {
-      name: 'create_session',
-      title: 'Create Session',
-      description: 'Create delegated work and start it with an initial prompt, either in a new chat sharing the current session\'s workspace, lifecycle, and aggregate diff, or in an independent session. Only supply `worktree` when the user explicitly requests working with or without a new worktree; never combine it with `currentSession`.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          relationship: { type: 'string', enum: ['currentSession', 'independent'], description: 'Whether this work belongs to the current session or is independently managed. Use `currentSession` for tasks from the current plan or deliverable, including parallel or delegated tasks, unless the user explicitly requests a worktree. Use `independent` for a separate deliverable that needs its own workspace, provider, or top-level lifecycle, or for an explicitly requested worktree.' },
-          prompt: { type: 'string', description: 'Initial prompt to send to the new session.' },
-          workspace: { type: 'string', description: 'For `independent` work: unique project name, project/workspace URI, absolute folder path, or working directory from an existing session. Required for `independent` and invalid for `currentSession`.' },
-          worktree: { type: 'boolean', description: 'Override isolation for the new independent session. Set true only when the user explicitly asks to create a worktree, or false only when the user explicitly asks to work without one. Omit to preserve the existing isolation behavior: inherit the creating session\'s isolation for the same project, otherwise use worktree isolation. Only valid with relationship `independent`; omit for `currentSession`.' },
-          title: { type: 'string', maxLength: 200, description: 'Short title for the new chat or independent session.' },
-          model: { type: 'string', description: 'Optional model ID or display name. Defaults to the current chat\'s model. For `currentSession`, the model must belong to the current session\'s provider; for `independent`, the model selects the new session\'s provider.' },
-          agent: { type: 'string', description: 'Optional provider id of the agent to run, such as one `list_sessions` shows. Defaults to the model\'s provider, then the current chat\'s.' },
-          config: { type: 'object', description: 'Optional settings for the new session, as the agent\'s config schema names them. Defaults to what the current chat\'s agent says a new chat inherits.' },
+    definition: CREATE_SESSION,
+    /*
+     * The `agent` input is one caller's list, so the definition is shaped for
+     * the caller each time it is offered: an agent held by somebody else is
+     * neither in the enum nor named in the description, and the run refuses
+     * the same ids the enum holds.
+     */
+    forSession: (session) => {
+      if (session.agents === undefined) return undefined;
+      const schema = CREATE_SESSION.inputSchema ?? { type: 'object' as const, properties: {} };
+      return {
+        definition: {
+          inputSchema: {
+            ...schema,
+            type: 'object' as const,
+            properties: { ...schema.properties, agent: agentInput(session.agents) },
+          },
         },
-        required: ['relationship', 'prompt', 'title'],
-      },
-      annotations: { title: 'Create Session', readOnlyHint: false, destructiveHint: true },
+      };
     },
     sessionless: true,
     grant: 'session:write',
@@ -534,7 +693,7 @@ export const sessionTools = (): HostTool[] => [
       const title = titled(input.title, tool);
       const agent = optional(input.agent, 'agent', tool);
       if (agent !== undefined) {
-        const offers = at.providers();
+        const offers = at.agents().map((one) => one.provider);
         if (!offers.includes(agent))
           throw new Error(`Invalid ${tool} input: agent "${agent}" is not one this host offers${offers.length > 0 ? `; it offers ${offers.join(', ')}` : ''}.`);
       }
@@ -779,7 +938,7 @@ export const sessionTools = (): HostTool[] => [
  *
  * Read off `sessionTools()` rather than written out a second time, so the list
  * cannot drift from the tools themselves: one added there is one the option
- * switches off, and one taken away leaves the list. Only these nine are the
+ * switches off, and one taken away leaves the list. Only these eleven are the
  * session tools - the artifact tools, `ahp_resource`, `ahp_terminals` and
  * `schedule_wakeup` are this host's own and are offered whatever the option
  * says.
