@@ -16,7 +16,7 @@ Terms, one line each:
 
 ## The four sources
 
-**This host's own**, from `hostTools()`: the reference host's nine session tools, its three artifact tools, its six comment tools, its four Agent Merge tools, and this host's own three. They are the protocol's `serverTools`, reported on `SessionState.serverTools`, offered to every backend that can take tools, and replaced whole - which is what `session/serverToolsChanged` means.
+**This host's own**, from `hostTools()`: the reference host's ten session tools, its three artifact tools, its six comment tools, its four Agent Merge tools, and this host's own three. They are the protocol's `serverTools`, reported on `SessionState.serverTools`, offered to every backend that can take tools, and replaced whole - which is what `session/serverToolsChanged` means.
 
 **A plugin's**, through `host.registerTool(tool)`, which appends one to the same set. The computer plugin contributes three this way - [PLUGINS.md](../plugins/PLUGINS.md#what-you-can-register).
 
@@ -114,7 +114,7 @@ The three that declare it are the computer's: `request_disposable_computer`, whi
 
 ## Which sessions are offered the session tools
 
-An install can turn the nine session tools off, as one answer or per provider, with two daemon keys. `sessionTools` is the switch: `true`, the default, offers them; `false` offers them to no session. `sessionToolsProviders` is a list of provider ids and narrows the switch to those providers' sessions; empty, the default, narrows nothing.
+An install can turn the ten session tools off, as one answer or per provider, with two daemon keys. `sessionTools` is the switch: `true`, the default, offers them; `false` offers them to no session. `sessionToolsProviders` is a list of provider ids and narrows the switch to those providers' sessions; empty, the default, narrows nothing.
 
 They are two keys rather than one because a key carries one type, and one key cannot be both a boolean and a list: `sessionTools` is a control a settings screen draws, and `sessionToolsProviders` is a list it draws. The list narrows rather than replaces, so `false` with a list still offers the tools to nobody.
 
@@ -151,7 +151,7 @@ A backend that cannot - an ACP agent, which asks its client for tools - is hande
 | Key | Values | Default | What changes |
 | --- | --- | --- | --- |
 | `advancedTools` | `true` or `false` | `false` | Offer the tools that declare `advancedPermission` to every session's model. Applies live |
-| `sessionTools` | `true` or `false` | `true` | Whether the nine session tools are offered at all. Applies live, and is worked out per session |
+| `sessionTools` | `true` or `false` | `true` | Whether the ten session tools are offered at all. Applies live, and is worked out per session |
 | `sessionToolsProviders` | a list of provider ids | none | Offer the session tools to the sessions of these providers alone. Empty offers them to every provider. Applies live, and is worked out per session |
 | `mcpServers` | an object of server entries | none | The MCP servers every session is offered. Applies live, and is read again for each session opened |
 | `clientToolTimeoutMs` | integer, milliseconds | `600000` (ten minutes) | How long a tool call a client runs may wait for that client. `0` waits for ever |
