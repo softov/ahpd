@@ -8,6 +8,9 @@ import {
 } from './support/host.js';
 import type { Start } from '../src/types/agent.js';
 import type { Emit } from '../src/types/session.js';
+import { WORK, WORK_URI } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
+import { join } from 'node:path';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -23,7 +26,7 @@ beforeEach(resetSdk);
  */
 const canvasHost = () => {
   let send: Emit | undefined;
-  const base = claude({ paths: ['/home/softov'] });
+  const base = claude({ paths: [WORK] });
   const agent = {
     ...base,
     create: (start: Start) => {
@@ -31,7 +34,7 @@ const canvasHost = () => {
       return base.create(start);
     },
   };
-  const host = createHost({ path: '/home/softov', agents: [agent], ...machine() });
+  const host = createHost({ path: WORK, agents: [agent], ...machine() });
   return {
     host,
     /** Say that a chat's canvas list moved, as the host's canvas store does. */
@@ -260,7 +263,7 @@ describe('the handshake', () => {
    */
   it('names a client that gives no id with none, as VS Code\'s host takes the id as sent', async () => {
     const p = peer();
-    const client = serving('/home/softov', []).accept(p);
+    const client = serving(WORK, []).accept(p);
     await client.handle({ method: 'initialize', params: { protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
     const uri = 'ahp-session:/unnamed';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
@@ -360,7 +363,7 @@ describe('what it will not pretend', () => {
   });
 
   it('drops one connection\'s subscription without touching another\'s', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const a = host.accept(peer());
     const b = host.accept(peer());
     await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -376,7 +379,7 @@ describe('what it will not pretend', () => {
 
 describe('a connection accepted with what the listener knew', () => {
   it('keeps the socket number, the address, the forwarded claim and the connect time', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const accepted = host.accept(peer(), undefined, false, { socket: 7, address: '127.0.0.1', forwardedFor: '203.0.113.9' });
     await accepted.handle(hello(['0.9.0']));
 
@@ -386,7 +389,7 @@ describe('a connection accepted with what the listener knew', () => {
   });
 
   it('lists a connection that came in with nothing said about it without a socket or a claim', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     host.accept(peer());
     const [row] = host.clientRegistry.connected();
     expect(row?.socket).toBeUndefined();
@@ -396,7 +399,7 @@ describe('a connection accepted with what the listener knew', () => {
 
 describe('a client that dropped, coming back', () => {
   it('replays what it missed, and nothing it already had', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const first = peer();
     const a = host.accept(first);
     await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -447,8 +450,8 @@ describe('a client that dropped, coming back', () => {
     let release = (): void => {};
     const gate = new Promise<void>((done) => { release = done; });
     const host = createHost({
-      path: '/home/softov',
-      agents: [claude({ paths: ['/home/softov'] })],
+      path: WORK,
+      agents: [claude({ paths: [WORK] })],
       ...machine(),
       channels: {
         'x-slow': {
@@ -488,7 +491,7 @@ describe('a client that dropped, coming back', () => {
   });
 
   it('names the channels it cannot resume rather than failing the whole thing', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const p = peer();
     const client = host.accept(p);
     const said = await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] })) as { serverSeq: number };
@@ -509,7 +512,7 @@ describe('a client that dropped, coming back', () => {
   });
 
   it('watches again, so what happens next arrives without a fresh subscribe', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const setup = host.accept(peer());
     await setup.handle(hello(['0.9.0']));
     await setup.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
@@ -536,7 +539,7 @@ describe('a client that dropped, coming back', () => {
   });
 
   it('hands back snapshots when the gap is longer than the buffer', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
@@ -597,7 +600,7 @@ describe('a client that dropped, coming back', () => {
             annotation: {
               id: 'a1',
               origin: { session: uri },
-              resource: 'file:///home/softov/x.ts',
+              resource: `${WORK_URI}/x.ts`,
               resolved: false,
               entries: [{ id: 'e1', text: `${i}:${'x'.repeat(300 * 1024)}` }],
             },
@@ -670,7 +673,7 @@ describe('a client that dropped, coming back', () => {
  */
 describe('authenticating', () => {
   const ANTHROPIC = 'https://api.anthropic.com';
-  const DIR = '/home/softov';
+  const DIR = WORK;
 
   /** A host serving one directory, and a client that has said hello. */
   const opened = async () => {
@@ -736,7 +739,7 @@ describe('authenticating', () => {
     })).resolves.toEqual({});
     await client.handle({
       method: 'createSession',
-      params: { channel: 'ahp-session:/revoked', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+      params: { channel: 'ahp-session:/revoked', provider: 'claude', workingDirectories: [uriOf(DIR)] },
     });
     await settle();
     // Started on nothing, the way a session for a client that never pushed is.
@@ -759,7 +762,7 @@ describe('authenticating', () => {
     await push('sk-scoped', ['admin']);
     await client.handle({
       method: 'createSession',
-      params: { channel: 'ahp-session:/scoped', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+      params: { channel: 'ahp-session:/scoped', provider: 'claude', workingDirectories: [uriOf(DIR)] },
     });
     await settle();
     // Claude's record lists no scopes, so the token pushed with none is the
@@ -808,7 +811,7 @@ describe('authenticating', () => {
 
       await client.handle({
         method: 'createSession',
-        params: { channel: 'ahp-session:/expired', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+        params: { channel: 'ahp-session:/expired', provider: 'claude', workingDirectories: [uriOf(DIR)] },
       });
       await vi.advanceTimersByTimeAsync(10);
       // Not spent: a session started on a credential its client was just told
@@ -841,7 +844,7 @@ describe('authenticating', () => {
       expect(wire.notes.filter((one) => one.method === 'auth/required')).toHaveLength(0);
       await client.handle({
         method: 'createSession',
-        params: { channel: 'ahp-session:/kept', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+        params: { channel: 'ahp-session:/kept', provider: 'claude', workingDirectories: [uriOf(DIR)] },
       });
       // The CLI its first send starts.
       await sendTurn(client, 'ahp-session:/kept');
@@ -881,7 +884,7 @@ describe('authenticating', () => {
     });
     await client.handle({
       method: 'createSession',
-      params: { channel: 'ahp-session:/authed', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+      params: { channel: 'ahp-session:/authed', provider: 'claude', workingDirectories: [uriOf(DIR)] },
     });
     // The CLI its first send starts.
     await sendTurn(client, 'ahp-session:/authed');
@@ -899,7 +902,7 @@ describe('authenticating', () => {
     const { client } = await opened();
     await client.handle({
       method: 'createSession',
-      params: { channel: 'ahp-session:/plain', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+      params: { channel: 'ahp-session:/plain', provider: 'claude', workingDirectories: [uriOf(DIR)] },
     });
     await settle();
     // The daemon's own, so the subprocess inherits - which is how every session
@@ -922,7 +925,7 @@ describe('authenticating', () => {
     });
     await other.handle({
       method: 'createSession',
-      params: { channel: 'ahp-session:/theirs', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+      params: { channel: 'ahp-session:/theirs', provider: 'claude', workingDirectories: [uriOf(DIR)] },
     });
     await settle();
 
@@ -969,7 +972,7 @@ describe('telling a client how far along something is', () => {
  */
 describe('a client this host has not met', () => {
   it('is refused with the code its client reads as "forgotten", in VS Code\'s words', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const client = host.accept(peer());
     await expect(client.handle({
       method: 'reconnect',
@@ -986,7 +989,7 @@ describe('a client this host has not met', () => {
   it('forgets a client gone longer than VS Code\'s retention, and resumes one back sooner', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      const host = serving('/home/softov');
+      const host = serving(WORK);
       const resume = (clientId: string) => host.accept(peer()).handle({
         method: 'reconnect',
         params: { channel: 'ahp-root://', clientId, lastSeenServerSeq: 0, subscriptions: [] },
@@ -1009,7 +1012,7 @@ describe('a client this host has not met', () => {
   });
 
   it('is answered once it has handshaken', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     const back = host.accept(peer());
@@ -1021,7 +1024,7 @@ describe('a client this host has not met', () => {
   });
 
   it('replays nothing to one that claims to be ahead, as VS Code\'s host', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     const back = host.accept(peer());
@@ -1035,7 +1038,7 @@ describe('a client this host has not met', () => {
   });
 
   it('answers with state a client that has not seen the oldest action it holds, as VS Code\'s host', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const first = peer();
     const client = host.accept(first);
     const said = await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] })) as { serverSeq: number };

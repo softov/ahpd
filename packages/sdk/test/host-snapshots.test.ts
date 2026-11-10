@@ -15,6 +15,8 @@ import {
 import type { Agent, Listed, Start } from '../src/types/agent.js';
 import type { HostTool } from '../src/types/host.js';
 import type { Principal } from '../src/types/users.js';
+import { WORK, WORK_URI } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -44,8 +46,8 @@ async function twoAutomationOwners() {
   store.create('ahp-automation:/ana-nightly', AUTOMATION_DEFINITION, 'user:ana');
   store.create('ahp-automation:/ben-nightly', AUTOMATION_DEFINITION, 'user:ben');
   const host = createHost({
-    path: '/home/softov',
-    agents: [claude({ paths: ['/home/softov'] })],
+    path: WORK,
+    agents: [claude({ paths: [WORK] })],
     automations: store,
   });
   const anaPeer = peer();
@@ -68,7 +70,7 @@ describe('what it says it is doing', () => {
    * session saying `own` when given one and nothing otherwise.
    */
   const doing = (activity: string, own?: string): Agent => {
-    const base = echo({ path: '/home/softov', pace: 1000 });
+    const base = echo({ path: WORK, pace: 1000 });
     return {
       ...base,
       create: (start: Start) => {
@@ -88,7 +90,7 @@ describe('what it says it is doing', () => {
     };
   };
   const begun = async (agent: Agent) => {
-    const host = createHost({ path: '/home/softov', agents: [agent] });
+    const host = createHost({ path: WORK, agents: [agent] });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -245,7 +247,7 @@ describe('what it says it is doing', () => {
       const uri = 'ahp-session:/titled';
       const peerChat = 'ahp-chat:/peer';
       const first = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
+        path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), sessions: fileSessions({ dir }),
       });
       const pa = peer();
       const a = first.accept(pa);
@@ -265,7 +267,7 @@ describe('what it says it is doing', () => {
 
       // A second host on the same file, which is what a restart is.
       const second = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
+        path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), sessions: fileSessions({ dir }),
       });
       const b = second.accept(peer());
       await b.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -290,8 +292,8 @@ describe('what it says it is doing', () => {
     // `ahp-session:/<id>`, the name the session was held by then.
     const store = memorySessions();
     store.setChatTitle(id, chatOf(`ahp-session:/${id}`), 'Paging');
-    sdk.sessions.push({ sessionId: id, summary: 'Derived', lastModified: 1, cwd: '/home/softov' });
-    const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: store });
+    sdk.sessions.push({ sessionId: id, summary: 'Derived', lastModified: 1, cwd: WORK });
+    const host = createHost({ path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), sessions: store });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
@@ -316,7 +318,7 @@ describe('what it says it is doing', () => {
 
   it('takes a chat\'s title with the chat, rather than leaving it for the next one', async () => {
     const store = memorySessions();
-    const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: store });
+    const host = createHost({ path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), sessions: store });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/titled';
@@ -456,8 +458,8 @@ describe('the fields a client reads by name', () => {
   it('still says what moved on a session no agent is running for', async () => {
     // A transcript this host never ran, written an hour ago, which a client
     // lists by the root's `showExternalSessions`.
-    sdk.sessions.push({ sessionId: 'browsed', summary: 'Read me', lastModified: Date.now() - 60 * 60 * 1000, cwd: '/home/softov' });
-    const host = serving('/home/softov');
+    sdk.sessions.push({ sessionId: 'browsed', summary: 'Read me', lastModified: Date.now() - 60 * 60 * 1000, cwd: WORK });
+    const host = serving(WORK);
     const seen = peer();
     const watching = host.accept(seen);
     await watching.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -516,8 +518,8 @@ describe('the fields a client reads by name', () => {
       await settle();
 
       // The next process finds the conversation where its CLI keeps it.
-      sdk.sessions.push({ sessionId: 'live', summary: 'Half done', lastModified: 1, cwd: '/home/softov' });
-      const next = serving('/home/softov', [], { sessions: fileSessions({ dir }) });
+      sdk.sessions.push({ sessionId: 'live', summary: 'Half done', lastModified: 1, cwd: WORK });
+      const next = serving(WORK, [], { sessions: fileSessions({ dir }) });
       const back = next.accept(peer());
       await back.handle(hello(['0.9.0']));
       await back.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
@@ -532,8 +534,8 @@ describe('the fields a client reads by name', () => {
   });
 
   it('holds a draft typed into a session nothing is running for', async () => {
-    sdk.sessions.push({ sessionId: 'typed', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
-    const host = serving('/home/softov');
+    sdk.sessions.push({ sessionId: 'typed', summary: 'Read me', lastModified: 1, cwd: WORK });
+    const host = serving(WORK);
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -576,8 +578,8 @@ describe('the fields a client reads by name', () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12492-L12507
    */
   it('says a client\'s dispatch after the draft it sent first for a session nothing is running for', async () => {
-    sdk.sessions.push({ sessionId: 'queued', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
-    const host = serving('/home/softov');
+    sdk.sessions.push({ sessionId: 'queued', summary: 'Read me', lastModified: 1, cwd: WORK });
+    const host = serving(WORK);
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -595,8 +597,8 @@ describe('the fields a client reads by name', () => {
   });
 
   it('says a draft it already holds for a session nothing is running for to every client of the chat, starting nothing', async () => {
-    sdk.sessions.push({ sessionId: 'held', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
-    const host = serving('/home/softov');
+    sdk.sessions.push({ sessionId: 'held', summary: 'Read me', lastModified: 1, cwd: WORK });
+    const host = serving(WORK);
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { clientId: 'one', initialSubscriptions: ['ahp-root://'] }));
@@ -625,9 +627,9 @@ describe('the fields a client reads by name', () => {
   });
 
   it('hands the draft to the session when one is finally started', async () => {
-    sdk.sessions.push({ sessionId: 'carried', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'carried', summary: 'Read me', lastModified: 1, cwd: WORK });
     sdk.transcript = [];
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -692,8 +694,8 @@ describe('the fields a client reads by name', () => {
     expect(without).not.toHaveProperty('automations');
 
     const host = createHost({
-      path: '/home/softov',
-      agents: [claude({ paths: ['/home/softov'] })],
+      path: WORK,
+      agents: [claude({ paths: [WORK] })],
       automations: memoryAutomations(),
     });
     const with_ = await host.accept(peer()).handle(hello(['0.9.0'])) as {
@@ -842,7 +844,7 @@ describe('the fields a client reads by name', () => {
   });
 
   it('refuses a dispatch out loud, to every client watching its channel, and holds the refusal for a reconnect', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const mine = peer();
     const theirs = peer();
     const client = host.accept(mine);
@@ -1044,10 +1046,10 @@ describe('the fields a client reads by name', () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1824-L1828
    */
   it('reads back a worker read and marks it unread, which its session lists like any other chat and no row lists', async () => {
-    sdk.sessions.push({ sessionId: 'restored', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
-    const host = serving('/home/softov', [], {
+    sdk.sessions.push({ sessionId: 'restored', summary: 'Read me', lastModified: 1, cwd: WORK });
+    const host = serving(WORK, [], {
       agents: [{
-        ...claude({ paths: ['/home/softov'] }),
+        ...claude({ paths: [WORK] }),
         subagents: async () => [{ toolCallId: 'toolu_task', title: 'Explore', turns: [] }],
       }],
     } as never);
@@ -1091,14 +1093,14 @@ describe('the fields a client reads by name', () => {
      * a link to a worker rides; the worker's chat names the call from its own
      * origin. A client whose turn ended around the call holds it so too.
      */
-    sdk.sessions.push({ sessionId: 'cut', summary: 'Cut off', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'cut', summary: 'Cut off', lastModified: 1, cwd: WORK });
     sdk.transcript.push(
       { type: 'user', uuid: 'u1', message: { role: 'user', content: 'go' } },
       { type: 'assistant', uuid: 'a1', message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_task', name: 'Task', input: { description: 'Explore', prompt: 'look' } }] } },
     );
-    const host = serving('/home/softov', [], {
+    const host = serving(WORK, [], {
       agents: [{
-        ...claude({ paths: ['/home/softov'] }),
+        ...claude({ paths: [WORK] }),
         subagents: async () => [{ toolCallId: 'toolu_task', title: 'Explore', turns: [] }],
       }],
     } as never);
@@ -1119,10 +1121,10 @@ describe('the fields a client reads by name', () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L801
    */
   it('answers a worker chat of a session nothing runs from its record, and refuses a name the record holds none under', async () => {
-    sdk.sessions.push({ sessionId: 'kept', summary: 'Kept', lastModified: 1, cwd: '/home/softov' });
-    const host = serving('/home/softov', [], {
+    sdk.sessions.push({ sessionId: 'kept', summary: 'Kept', lastModified: 1, cwd: WORK });
+    const host = serving(WORK, [], {
       agents: [{
-        ...claude({ paths: ['/home/softov'] }),
+        ...claude({ paths: [WORK] }),
         subagents: async () => [{ toolCallId: 'toolu_task', title: 'Explore', turns: [] }],
       }],
     } as never);
@@ -1279,7 +1281,7 @@ describe('a session\'s annotations', () => {
   });
 
   it('reads the transcript once, however many channels ask for it at once', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: WORK });
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     const client = open();
     await client.handle(hello(['0.9.0']));
@@ -1302,7 +1304,7 @@ describe('a session\'s annotations', () => {
   });
 
   it('answers one for a session read from its transcript, before it has been listed', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: WORK });
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     const client = open();
     await client.handle(hello(['0.9.0']));
@@ -1336,7 +1338,7 @@ describe('a session\'s annotations', () => {
           annotation: {
             id: 'a1',
             origin: { session: uri },
-            resource: 'file:///home/softov/x.ts',
+            resource: `${WORK_URI}/x.ts`,
             resolved: false,
             entries: [{ id: 'e1', text: 'this is the bit' }],
           },
@@ -1369,7 +1371,7 @@ describe('a session\'s annotations', () => {
         method: 'dispatchAction',
         params: {
           channel: marks,
-          action: { type: 'annotations/set', annotation: { id: 'a1', origin: { session: uri }, resource: 'file:///home/softov/x.ts', resolved: false, entries: [{ id: 'e1', text: 'kept' }] } },
+          action: { type: 'annotations/set', annotation: { id: 'a1', origin: { session: uri }, resource: `${WORK_URI}/x.ts`, resolved: false, entries: [{ id: 'e1', text: 'kept' }] } },
         },
       });
       await settle();
@@ -1377,8 +1379,8 @@ describe('a session\'s annotations', () => {
       await new Promise((tick) => { setTimeout(tick, 5); });
 
       // A second host on the same store, which is what a restart is.
-      sdk.sessions.push({ sessionId: 'live', summary: 'Live', lastModified: 1, cwd: '/home/softov' });
-      const second = serving('/home/softov', [], { sessions: fileSessions({ dir }) }).accept(peer());
+      sdk.sessions.push({ sessionId: 'live', summary: 'Live', lastModified: 1, cwd: WORK });
+      const second = serving(WORK, [], { sessions: fileSessions({ dir }) }).accept(peer());
       await second.handle(hello(['0.9.0']));
       await second.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
       const seen = await second.handle({ method: 'subscribe', params: { channel: marks } }) as {
@@ -1489,7 +1491,7 @@ describe('a chat another backend serves', () => {
   async function chatsOnAnother() {
     type Answer = { content: { text: string }[]; isError?: boolean };
     type Tool = { name: string; handler: (input: unknown) => Promise<Answer> };
-    const other: Agent = { ...echo({ path: '/home/softov', pace: 0 }), provider: 'other' };
+    const other: Agent = { ...echo({ path: WORK, pace: 0 }), provider: 'other' };
     const maker: HostTool = {
       definition: {
         name: 'make_chat',
@@ -1514,8 +1516,8 @@ describe('a chat another backend serves', () => {
       },
     };
     const host = createHost({
-      path: '/home/softov',
-      agents: [claude({ paths: ['/home/softov'] }), other],
+      path: WORK,
+      agents: [claude({ paths: [WORK] }), other],
       ...machine(),
       tools: [...hostTools(), maker],
       sleepAfterMinutes: 0,
@@ -1578,7 +1580,7 @@ describe("a browsed session's _meta", () => {
    * listed, beside the mark of a session this host never ran - and the running
    * agent's replace them once the session starts.
    */
-  const PATH = '/home/softov';
+  const PATH = WORK;
   const STAMP = '2026-10-25T00:00:00.000Z';
   const chatOf = (session: string) => `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
   const row = (id: string, meta?: Record<string, unknown>): Listed => ({
@@ -1586,7 +1588,7 @@ describe("a browsed session's _meta", () => {
     title: id,
     createdAt: STAMP,
     modifiedAt: STAMP,
-    workingDirectories: [`file://${PATH}`],
+    workingDirectories: [uriOf(PATH)],
     ...(meta === undefined ? {} : { _meta: meta }),
   });
   /**
@@ -1664,9 +1666,9 @@ describe('what a backend offers, asked again', () => {
     let stopped = 0;
     let seeds = [{ id: 'skill:review', type: 'skill', name: 'review' }];
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [{
-        ...echo({ path: '/home/softov', pace: 0 }),
+        ...echo({ path: WORK, pace: 0 }),
         provider: 'probed',
         probe: async () => ({ models: [], commands: [], customizations: [...seeds] }),
         probeChanged: (onChange) => {
@@ -1707,15 +1709,15 @@ describe('what a backend offers, asked again', () => {
   it('stops asking a backend a fold removed', async () => {
     let stopped = 0;
     const probed: Agent = {
-      ...echo({ path: '/home/softov', pace: 0 }),
+      ...echo({ path: WORK, pace: 0 }),
       provider: 'probed',
       probe: async () => ({ models: [], commands: [], customizations: [] }),
       probeChanged: () => () => { stopped += 1; },
     };
-    const options = { path: '/home/softov', agents: [probed, echo({ path: '/home/softov', pace: 0 })], ...machine() };
+    const options = { path: WORK, agents: [probed, echo({ path: WORK, pace: 0 })], ...machine() };
     const host = createHost(options);
     await settle();
-    expect(host.replace({ ...options, agents: [echo({ path: '/home/softov', pace: 0 })] })).toBeUndefined();
+    expect(host.replace({ ...options, agents: [echo({ path: WORK, pace: 0 })] })).toBeUndefined();
     expect(stopped).toBe(1);
     await host.close();
     expect(stopped).toBe(1);
@@ -1728,9 +1730,9 @@ describe('what a backend offers, asked again', () => {
     let probes = 0;
     const answers: (() => void)[] = [];
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [{
-        ...echo({ path: '/home/softov', pace: 0 }),
+        ...echo({ path: WORK, pace: 0 }),
         provider: 'probed',
         probe: async () => {
           probes += 1;

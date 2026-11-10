@@ -13,6 +13,7 @@ import { resultFrame } from '../src/rpc.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Principal, Users } from '../src/types/users.js';
 import type { PluginSpec } from '../src/types/plugin.js';
+import { WORK, WORK_URI } from './support/work.js';
 
 /*
  * Everything this host sends, against everything the protocol declares.
@@ -280,8 +281,8 @@ const strayMeta = (frame: Record<string, unknown>): string[] =>
 it('sends nothing the protocol does not declare, and nothing short of what it requires', async () => {
   // The claude agent names its user folders from the home, so the capture is
   // the same whoever runs it: `HOME` where it is POSIX, `USERPROFILE` on Windows.
-  vi.stubEnv('HOME', '/home/softov');
-  vi.stubEnv('USERPROFILE', '/home/softov');
+  vi.stubEnv('HOME', WORK);
+  vi.stubEnv('USERPROFILE', WORK);
   onTestFinished(() => { vi.unstubAllEnvs(); });
   /*
    * A plugin the daemon's own root config carries options for.
@@ -308,8 +309,8 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
 
   const automations = memoryAutomations();
   const host = createHost({
-    path: '/home/softov',
-    agents: [claude({ paths: ['/home/softov'], preset: { cliStart: 'send' } }), echo({ path: '/home/softov', pace: 0 })],
+    path: WORK,
+    agents: [claude({ paths: [WORK], preset: { cliStart: 'send' } }), echo({ path: WORK, pace: 0 })],
     resources: fileResources(),
     terminals: shellTerminals(),
     automations,
@@ -418,11 +419,11 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     },
     {
       type: 'stream_event',
-      event: { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"file_path":"/home/softov/a"}' } },
+      event: { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ file_path: join(WORK, 'a') }) } },
     },
     {
       type: 'assistant',
-      message: { id: 'm1', model: 'claude-opus-5', content: [{ type: 'tool_use', id: 'tc1', name: 'Read', input: { file_path: '/home/softov/a' } }] },
+      message: { id: 'm1', model: 'claude-opus-5', content: [{ type: 'tool_use', id: 'tc1', name: 'Read', input: { file_path: join(WORK, 'a') } }] },
     },
   );
   // Past the catalogue's 100 ms debounce, so the row says the tool it is on
@@ -472,7 +473,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     annotation: {
       id: 'a1',
       origin: { session: uri, chat: chatUri },
-      resource: 'file:///home/softov/a',
+      resource: `${WORK_URI}/a`,
       resolved: false,
       entries: [],
     },
@@ -495,7 +496,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   // than attached to a session, and started with no command of its own.
   const terminal = 'ahp-terminal:/wire';
   await ask('createTerminal', {
-    channel: terminal, claim: { kind: 'client', clientId: 'wire' }, cwd: 'file:///home/softov',
+    channel: terminal, claim: { kind: 'client', clientId: 'wire' }, cwd: WORK_URI,
   });
   await ask('subscribe', { channel: terminal });
   dispatch(terminal, { type: 'terminal/resized', cols: 100, rows: 30 });
@@ -520,7 +521,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
       title: 'Nightly review',
       enabled: true,
       message: { text: 'review what changed', origin: { kind: 'automation' } },
-      session: { provider: 'echo', workingDirectories: ['file:///home/softov'] },
+      session: { provider: 'echo', workingDirectories: [WORK_URI] },
       triggers: [],
     },
   });
@@ -591,7 +592,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   await ask('getManagedSettingsDiagnostics', {});
   await ask('getNetworkDiagnosticsInfo', {});
   await ask('vscode/reconcileAgentHostDetachedWorktrees', {
-    scope: 'file:///home/softov', activeHandles: [],
+    scope: WORK_URI, activeHandles: [],
   });
 
   /*
@@ -639,6 +640,12 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     .replace(/(ahp-chat:\/\/default\/)([A-Za-z0-9_-]+)/g, (_found, scheme: string, id: string) =>
       `${scheme}${Buffer.from(Buffer.from(id, 'base64url').toString('utf8').replace(UUID, named)).toString('base64url')}`)
     .replace(UUID, named)
+    /*
+     * And the folder the host serves, which is inside the run's own temporary
+     * folder and so another path each run. Read where it is POSIX only, as the
+     * capture is, so its text is the path itself, with nothing escaped.
+     */
+    .replaceAll(WORK, '/work')
     /*
      * And the id a backend mints from the clock when an agent speaks first,
      * which is `turn-${Date.now()}`. A generated id is mapped rather than
@@ -951,7 +958,7 @@ describe('the generated schema', () => {
 
   it('checks a partial session summary as a session, not as whichever Partial it emitted first', () => {
     // `project` and `_meta` are the session's own, and a chat has neither.
-    expect(at(changed({ project: { uri: 'file:///home/softov', displayName: 'softov' }, _meta: { 'ahpd.x': 1 } }))).toEqual([]);
+    expect(at(changed({ project: { uri: WORK_URI, displayName: 'softov' }, _meta: { 'ahpd.x': 1 } }))).toEqual([]);
     // A key neither of them has is still a finding, so the line above is not
     // passing because nothing is being checked.
     expect(at(changed({ invented: 1 }))).toEqual(['/changes undeclared key `invented`']);
@@ -964,7 +971,7 @@ describe('the generated schema', () => {
     // Twice, and both are right: the envelope's union refuses the action and
     // the action's own declaration refuses the field. The first is where it
     // stands on the wire, the second is what it is.
-    expect(at(chatChanged({ project: { uri: 'file:///home/softov', displayName: 'softov' } })))
+    expect(at(chatChanged({ project: { uri: WORK_URI, displayName: 'softov' } })))
       .toEqual(['/action/changes undeclared key `project`', '/changes undeclared key `project`']);
   });
 

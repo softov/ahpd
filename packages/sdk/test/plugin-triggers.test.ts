@@ -9,6 +9,8 @@ import { sdkVersion } from '../src/version.js';
 import type { Bag } from '../src/types/common.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { LoaderContext, TriggerTypeDefinition } from '../src/types/plugin.js';
+import { WORK } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -25,7 +27,7 @@ beforeEach(resetSdk);
  * watches it, and the two names a plugin may not take.
  */
 
-const DIR = '/home/softov';
+const DIR = WORK;
 const ROOT = 'ahp-root://';
 const AUTOMATION = 'ahp-automation:/batten';
 
@@ -63,7 +65,7 @@ const BATTEN: Bag = {
   title: 'Batten down',
   enabled: true,
   message: { text: 'Weather: {{event}} ({{trigger}}) on {{event.where}}' },
-  session: { provider: 'claude', workingDirectories: [`file://${DIR}`] },
+  session: { provider: 'claude', workingDirectories: [uriOf(DIR)] },
   triggers: [{
     id: 't1',
     kind: 'event',

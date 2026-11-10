@@ -10,6 +10,7 @@ import {
   actions, resetSdk, claude, createHost, echo, hello, machine, open, peer,
  sdk, sendAnswered, sendTurn, sessionQueries, serving, settle, running,
 } from './support/host.js';
+import { WORK } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -127,10 +128,10 @@ describe('choosing a model', () => {
 
   it('runs each session on the variant its own agent was built with', async () => {
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [
-        claude({ paths: ['/home/softov'], preset: { thinking: 'disabled', sandbox: 'on' } }),
-        claude({ paths: ['/home/softov'], provider: 'claude-test' }),
+        claude({ paths: [WORK], preset: { thinking: 'disabled', sandbox: 'on' } }),
+        claude({ paths: [WORK], provider: 'claude-test' }),
       ],
       ...machine(),
     });
@@ -420,7 +421,7 @@ describe('choosing a model', () => {
 describe('the connectors a session binds', () => {
   /** A host that serves one connector, of the owner the test names. */
   const bound = (refs: ConnectorRef[]) =>
-    serving('/home/softov', [], { connectors: { refs: () => refs, run: async () => ({}) } }).accept(peer());
+    serving(WORK, [], { connectors: { refs: () => refs, run: async () => ({}) } }).accept(peer());
 
   const start = (uri: string) => ({
     method: 'createSession',
@@ -473,7 +474,7 @@ describe('a session\'s config across a restart', () => {
   /** A host on the store folder, introduced. */
   const hostOnFile = async () => {
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), sessions: fileSessions({ dir }),
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
@@ -486,7 +487,7 @@ describe('a session\'s config across a restart', () => {
   /** A second host on the same file, which is what a restart is, with a turn sent to the session. */
   const resumed = async (id: string) => {
     await written();
-    sdk.sessions.push({ sessionId: id, summary: 'Kept', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: id, summary: 'Kept', lastModified: 1, cwd: WORK });
     const client = await hostOnFile();
     // Its default chat as the file kept it, the one minted when it was made.
     const kept = ((await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${id}` } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
@@ -530,12 +531,12 @@ describe('a session\'s config across a restart', () => {
   it('keeps a change the backend refused out of the store', async () => {
     // A backend that refuses every key its schema does not declare.
     const { echo } = await import('../../../examples/echo/agent.js');
-    const base = echo({ path: '/home/softov', pace: 0 });
+    const base = echo({ path: WORK, pace: 0 });
     const refusing: Agent = {
       ...base,
       create: (start) => ({ ...base.create(start), setConfig: (key: string) => `${key} is not taken here` }),
     };
-    const host = createHost({ path: '/home/softov', agents: [refusing], ...machine(), sessions: fileSessions({ dir }) });
+    const host = createHost({ path: WORK, agents: [refusing], ...machine(), sessions: fileSessions({ dir }) });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({
@@ -561,7 +562,7 @@ describe('a session\'s config across a restart', () => {
     });
     // A row nothing is running, which is written to the store with no
     // backend to ask.
-    sdk.sessions.push({ sessionId: 'row', summary: 'Row', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'row', summary: 'Row', lastModified: 1, cwd: WORK });
     client.handle({
       method: 'dispatchAction',
       params: { channel: 'ahp-session:/row', action: { type: 'session/configChanged', config: { shellInitScripts: scripts } } },
@@ -624,7 +625,7 @@ describe('a session\'s config across a restart', () => {
     expect(stored('lead') ?? {}).not.toHaveProperty('effortLevel');
     expect(storedChat('lead', lead)?.configValues).toEqual({ effortLevel: 'low' });
 
-    sdk.sessions.push({ sessionId: 'lead', summary: 'Kept', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'lead', summary: 'Kept', lastModified: 1, cwd: WORK });
     const again = await hostOnFile();
     const session = (await again.handle({ method: 'subscribe', params: { channel: 'ahp-session:/lead' } }) as {
       snapshot: { state: { config: { values: Record<string, unknown> } } };
@@ -723,10 +724,10 @@ describe('a session\'s config across a restart', () => {
     const store = memorySessions();
     store.setConfig('stale', config);
     store.setUri?.('stale', 'ahp-session:/stale');
-    sdk.sessions.push({ sessionId: 'stale', summary: 'Stale', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'stale', summary: 'Stale', lastModified: 1, cwd: WORK });
     const said: string[] = [];
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'], ...(preset === undefined ? {} : { preset }) })], ...machine(), sessions: store,
+      path: WORK, agents: [claude({ paths: [WORK], ...(preset === undefined ? {} : { preset }) })], ...machine(), sessions: store,
       onEvent: (message) => said.push(message),
     });
     const client = host.accept(peer());

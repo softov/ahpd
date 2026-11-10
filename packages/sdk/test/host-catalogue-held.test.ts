@@ -3,6 +3,8 @@ import { createHost, hello, machine, peer, resetSdk, settle, showExternal } from
 import { echo } from '../../../examples/echo/agent.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import type { Agent, Listed, SessionStore } from '@ahpd/sdk';
+import { WORK } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
 
 /*
  * The catalogue is held, and a refresh says what it found.
@@ -24,7 +26,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 beforeEach(resetSdk);
 
-const PATH = '/home/softov';
+const PATH = WORK;
 
 /** How long one pass over the backend's store takes. */
 const WAIT = 100;
@@ -43,7 +45,7 @@ const row = (id: string, title: string): Listed => ({
   title,
   createdAt: CREATED,
   modifiedAt: MODIFIED,
-  workingDirectories: [`file://${PATH}`],
+  workingDirectories: [uriOf(PATH)],
 });
 
 interface Store {

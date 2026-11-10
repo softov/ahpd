@@ -13,6 +13,7 @@ import {
 import type { Agent, Start } from '../src/types/agent.js';
 import type { HostOptions, HostTool } from '../src/types/host.js';
 import type { LoaderContext } from '../src/types/plugin.js';
+import { WORK } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -31,7 +32,7 @@ beforeEach(resetSdk);
  * and these are a plugin's words about one.
  */
 
-const DIR = '/home/softov';
+const DIR = WORK;
 
 /** The context every plugin in this repository is handed, without a daemon. */
 const context = (): LoaderContext => ({

@@ -18,6 +18,8 @@ import type { HostOptions } from '../src/types/host.js';
 import type { LoaderContext, TriggerTypeDefinition } from '../src/types/plugin.js';
 import type { Owner } from '../src/types/usage.js';
 import type { Vault } from '../src/types/vault.js';
+import { WORK } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -35,7 +37,7 @@ beforeEach(resetSdk);
  * automation its connector could not.
  */
 
-const DIR = '/home/softov';
+const DIR = WORK;
 const ROOT = 'ahp-root://';
 const AUTOMATION = 'ahp-automation:/bobs';
 
@@ -66,7 +68,7 @@ const watching = (connector: string): Bag => ({
   title: 'Batten down',
   enabled: true,
   message: { text: 'A call came to {{connector}}' },
-  session: { provider: 'claude', workingDirectories: [`file://${DIR}`] },
+  session: { provider: 'claude', workingDirectories: [uriOf(DIR)] },
   triggers: [{
     id: 't1',
     kind: 'event',

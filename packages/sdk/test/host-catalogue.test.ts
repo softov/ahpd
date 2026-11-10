@@ -15,6 +15,7 @@ import {
   sdk, serving, sessionQueries, settle, showExternal, running, wrote,
 } from './support/host.js';
 import type { Agent, Listed } from '../src/types/agent.js';
+import { WORK } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -29,8 +30,8 @@ const ago = (ms: number): number => Date.now() - ms;
 describe('the catalogue', () => {
   it('orders it most-recently-modified first, as the protocol asks', async () => {
     sdk.sessions.push(
-      { sessionId: 'old', summary: 'Older', lastModified: ago(2 * DAY), cwd: '/home/softov' },
-      { sessionId: 'new', summary: 'Newer', lastModified: ago(HOUR), cwd: '/home/softov' },
+      { sessionId: 'old', summary: 'Older', lastModified: ago(2 * DAY), cwd: WORK },
+      { sessionId: 'new', summary: 'Newer', lastModified: ago(HOUR), cwd: WORK },
     );
     const client = open();
     await client.handle(hello(['0.9.0']));
@@ -104,8 +105,8 @@ describe('the catalogue', () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionService.ts#L252
    */
   it('counts the sessions running a turn, as VS Code\'s host, the transcripts it lists and a session at rest counting none', async () => {
-    sdk.sessions.push({ sessionId: 'a', lastModified: ago(2 * MINUTE), cwd: '/home/softov' });
-    sdk.sessions.push({ sessionId: 'b', lastModified: ago(MINUTE), cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'a', lastModified: ago(2 * MINUTE), cwd: WORK });
+    sdk.sessions.push({ sessionId: 'b', lastModified: ago(MINUTE), cwd: WORK });
     const { client, peer: p, uri, chatUri } = await running();
     await showExternal(client);
     const count = async (): Promise<number> => (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
@@ -139,7 +140,7 @@ describe('the catalogue', () => {
 
   it('hands over the whole catalogue to a client that asked for no page size', async () => {
     for (let i = 0; i < 120; i++)
-      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((120 - i) * 1000), cwd: '/home/softov' });
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((120 - i) * 1000), cwd: WORK });
     const client = open();
     await client.handle(hello(['0.9.0']));
     await showExternal(client);
@@ -155,7 +156,7 @@ describe('the catalogue', () => {
 
   it('stops at a bound no real catalogue reaches, and offers the rest', async () => {
     for (let i = 0; i < 1_002; i++)
-      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((1_002 - i) * 1000), cwd: '/home/softov' });
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((1_002 - i) * 1000), cwd: WORK });
     const client = open();
     await client.handle(hello(['0.9.0']));
     await showExternal(client);
@@ -177,7 +178,7 @@ describe('the catalogue', () => {
 
   it('walks it in pages when one is asked for, with no gaps and no repeats', async () => {
     for (let i = 0; i < 120; i++)
-      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((120 - i) * 1000), cwd: '/home/softov' });
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((120 - i) * 1000), cwd: WORK });
     const client = open();
     await client.handle(hello(['0.9.0']));
     await showExternal(client);
@@ -202,7 +203,7 @@ describe('the catalogue', () => {
   });
 
   it('refuses a cursor it did not issue rather than starting over', async () => {
-    sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: WORK });
     const client = open();
     await client.handle(hello(['0.9.0']));
     // Resuming from the top would answer a question about the rest of the
@@ -215,7 +216,7 @@ describe('the catalogue', () => {
 });
 
 describe('a session that already happened', () => {
-  const older = { sessionId: 'older', summary: 'A real title', lastModified: ago(DAY), cwd: '/home/softov' };
+  const older = { sessionId: 'older', summary: 'A real title', lastModified: ago(DAY), cwd: WORK };
 
   it('opens from its transcript without spawning anything', async () => {
     sdk.sessions.push(older);
@@ -381,12 +382,12 @@ describe('paging a long history', () => {
    * about a subscribe that names no view passes `null` instead.
    */
   const opened = async (count = 120, view: { turns?: number } | null = { turns: 50 }) => {
-    sdk.sessions.push({ sessionId: 'long', summary: 'A long one', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'long', summary: 'A long one', lastModified: 1, cwd: WORK });
     sdk.transcript.push(...many(count));
     // The CLI wrote the conversation, so a turn sent to it resumes the session
     // rather than starting one under the id this test asked for.
-    wrote('long', '/home/softov');
-    const host = serving('/home/softov');
+    wrote('long', WORK);
+    const host = serving(WORK);
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0']));
@@ -643,8 +644,8 @@ describe('a session\'s _meta', () => {
 
 describe('the flags a client sets', () => {
   it('keeps read and archived, and tells everyone watching', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/home/softov' });
-    const host = serving('/home/softov');
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: WORK });
+    const host = serving(WORK);
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -665,7 +666,7 @@ describe('the flags a client sets', () => {
   });
 
   it('needs no agent to record one', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: WORK });
     const client = open();
     await client.handle(hello(['0.9.0']));
     await showExternal(client);
@@ -1079,7 +1080,7 @@ describe('a chat\'s read bit and its session\'s', () => {
 
 describe('a session read from its transcript', () => {
   it('rebuilds a tool call in a shape a client can draw', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: WORK });
     sdk.transcript.push(
       { type: 'user', uuid: 'u1', message: { role: 'user', content: 'list them' } },
       {
@@ -1135,10 +1136,10 @@ describe('a session read from its transcript', () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
    */
   it('takes the history its backend holds as chat/truncated then chat/turnsLoaded, when the chat opened with none', async () => {
-    sdk.sessions.push({ sessionId: 'late', summary: 'Late', lastModified: 1, cwd: '/home/softov' });
-    wrote('late', '/home/softov');
+    sdk.sessions.push({ sessionId: 'late', summary: 'Late', lastModified: 1, cwd: WORK });
+    wrote('late', WORK);
     const p = peer();
-    const client = serving('/home/softov').accept(p);
+    const client = serving(WORK).accept(p);
     await client.handle(hello(['0.9.0']));
     const chat = chatUriFor('ahp-session:/late');
     const opened = await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
@@ -1161,7 +1162,7 @@ describe('a session read from its transcript', () => {
   });
 
   it('is configurable before it is resumed', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: WORK });
     const client = open();
     await client.handle(hello(['0.9.0']));
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old' } }) as {
@@ -1174,7 +1175,7 @@ describe('a session read from its transcript', () => {
   });
 
   it('lists its chat the way a live session does', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1000, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1000, cwd: WORK });
     const client = open();
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
@@ -1192,7 +1193,7 @@ describe('a session read from its transcript', () => {
   });
 
   it('starts on what was chosen for it while it was only a row', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: WORK });
     const client = open();
     await client.handle(hello(['0.9.0']));
     client.handle({
@@ -1214,7 +1215,7 @@ describe('a session read from its transcript', () => {
   });
 
   it('reads a session again when the first read answered nothing', async () => {
-    sdk.sessions.push({ sessionId: 'late', summary: 'Late', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'late', summary: 'Late', lastModified: 1, cwd: WORK });
     const client = open();
     await client.handle(hello(['0.9.0']));
 
@@ -1243,7 +1244,7 @@ describe('a session read from its transcript', () => {
   });
 
   it('tries a transcript that failed once more before calling it empty', async () => {
-    sdk.sessions.push({ sessionId: 'flaky', summary: 'Flaky', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'flaky', summary: 'Flaky', lastModified: 1, cwd: WORK });
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'there' } });
     sdk.throwOnce = 1;
 
@@ -1380,7 +1381,7 @@ describe("a row lists the session's chats", () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L682-L700
    */
   it('lists a worker chat read back from a backend among its session\'s chats, read-only, and on no row', async () => {
-    sdk.sessions.push({ sessionId: 'restored', summary: 'Restored', lastModified: 2, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'restored', summary: 'Restored', lastModified: 2, cwd: WORK });
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     /*
      * A backend that says it once ran a worker. The Claude plugin reaches its
@@ -1388,8 +1389,8 @@ describe("a row lists the session's chats", () => {
      * a restart finds is driven from the agent itself - the seam
      * `subagent-chat.test.ts` uses to open one live.
      */
-    const base = claude({ paths: ['/home/softov'] });
-    const host = serving('/home/softov', [], {
+    const base = claude({ paths: [WORK] });
+    const host = serving(WORK, [], {
       agents: [{ ...base, subagents: async () => [{ toolCallId: 'toolu_task', title: 'Explore', turns: [] }] }],
     });
     const p = peer();
@@ -1432,7 +1433,7 @@ describe('one conversation, one row', () => {
     await settle();
     // The client named the channel `live`; the agent names its own transcript
     // and writes under that. Both are this conversation.
-    sdk.sessions.push({ sessionId: 'agent-chosen', summary: 'Hi', lastModified: 2, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'agent-chosen', summary: 'Hi', lastModified: 2, cwd: WORK });
     await emit({ type: 'system', subtype: 'init', session_id: 'agent-chosen' });
 
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
@@ -1444,9 +1445,9 @@ describe('one conversation, one row', () => {
 });
 
 it('takes a client into a session it is serving from a transcript', async () => {
-  sdk.sessions.push({ sessionId: 'older', summary: 'A real title', lastModified: 1, cwd: '/home/softov' });
+  sdk.sessions.push({ sessionId: 'older', summary: 'A real title', lastModified: 1, cwd: WORK });
   sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'hi' } });
-  const host = serving('/home/softov');
+  const host = serving(WORK);
   const p = peer();
   const client = host.accept(p);
   await client.handle(hello(['0.9.0']));
@@ -1469,8 +1470,8 @@ it('takes a client into a session it is serving from a transcript', async () => 
 });
 
 it('takes a client into a session the catalogue has listed, before anybody reads it', async () => {
-  sdk.sessions.push({ sessionId: 'listed', summary: 'A real title', lastModified: 1, cwd: '/home/softov' });
-  const host = serving('/home/softov');
+  sdk.sessions.push({ sessionId: 'listed', summary: 'A real title', lastModified: 1, cwd: WORK });
+  const host = serving(WORK);
   const p = peer();
   const client = host.accept(p);
   await client.handle(hello(['0.9.0']));
@@ -1606,7 +1607,7 @@ describe('a summary that did not change', () => {
     store.setChanges('old', { files: 2 });
     const counted_ = counted();
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), changes: counted_.source, sessions: store,
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), changes: counted_.source, sessions: store,
     });
     const p = peer();
     const client = host.accept(p);
@@ -1695,7 +1696,7 @@ describe('a summary that did not change', () => {
 describe("a row's counts are the session's own", () => {
   type Client = Awaited<ReturnType<typeof running>>['client'];
   /** The folder every session here works in, which two of them share. */
-  const FOLDER = '/home/softov';
+  const FOLDER = WORK;
 
   let made: string[] = [];
   afterEach(() => {
@@ -1781,7 +1782,7 @@ describe("a row's counts are the session's own", () => {
     const uri = `ahp-session:/${name}`;
     await client.handle({
       method: 'createSession',
-      params: { channel: uri, provider: 'claude', workingDirectories: [`file://${folder}`] },
+      params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(folder)] },
     });
     const state = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as {
       snapshot: { state: { defaultChat: string } };
@@ -1823,7 +1824,7 @@ describe("a row's counts are the session's own", () => {
     const store = memorySessions();
     // The tree this session was given: the record is what says a row is
     // counted by a branch, and it is the record that outlives the run.
-    store.setWorktree('live', { repository: FOLDER, path: `${FOLDER}/tree`, base: 'main' });
+    store.setWorktree('live', { repository: FOLDER, path: join(FOLDER, 'tree'), base: 'main' });
     const { peer: p } = await turned({ changes: source, sessions: store }, 'live');
 
     // Its own work is three files and its branch holds seven, and the row is
@@ -1938,14 +1939,14 @@ describe("a listed row's _meta", () => {
    * while one runs - so a browsed row's keys have to be kept where that read
    * finds them.
    */
-  const PATH = '/home/softov';
+  const PATH = WORK;
   const STAMP = new Date(ago(DAY)).toISOString();
   const row = (id: string, meta?: Record<string, unknown>): Listed => ({
     id,
     title: id,
     createdAt: STAMP,
     modifiedAt: STAMP,
-    workingDirectories: [`file://${PATH}`],
+    workingDirectories: [uriOf(PATH)],
     ...(meta === undefined ? {} : { _meta: meta }),
   });
   /** A backend over a store a test names, listing it and finding one id in it. */
@@ -2030,13 +2031,13 @@ describe("a listed row's _meta", () => {
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/externalSessionAdoption/externalSessionAdoptionContribution.ts#L25-L30
  */
 describe('a session made outside this host', () => {
-  const at = (before: number) => ({ lastModified: ago(before), cwd: '/home/softov' });
+  const at = (before: number) => ({ lastModified: ago(before), cwd: WORK });
   type Row = { resource: string; title: string; _meta?: Record<string, unknown> };
 
   /** A client of a host over `store`, watching the root, and a way to set the mode and list. */
   const watching = async (store = memorySessions()) => {
     const p = peer();
-    const client = serving('/home/softov', [], { sessions: store }).accept(p);
+    const client = serving(WORK, [], { sessions: store }).accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     const mode = async (value: string): Promise<void> => {
       await showExternal(client, value);
@@ -2110,7 +2111,7 @@ describe('a session made outside this host', () => {
   it('adopts one when a person\'s turn goes out in it, announcing it and listing it under every mode', async () => {
     sdk.sessions.push({ sessionId: 'older', summary: 'Theirs', ...at(HOUR) });
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
-    wrote('older', '/home/softov');
+    wrote('older', WORK);
     const store = memorySessions();
     const { client, listed, said } = await watching(store);
     expect(await listed()).toEqual([]);

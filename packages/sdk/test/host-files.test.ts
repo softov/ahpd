@@ -15,6 +15,7 @@ import {
   resetSdk, actions, builtServer, claude, complete, createHost, emit, firstMessage, hello, hostTools, list, machine, open,
   peer, read, resolve, sendAnswered, serving, sessionQueries, settle, running, wrote,
 } from './support/host.js';
+import { WORK } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -32,7 +33,7 @@ beforeEach(resetSdk);
 
 describe('where the agent works', () => {
   const opened = async (also: string[] = [], over: Partial<HostOptions> = {}) => {
-    const host = serving('/home/softov', also, over);
+    const host = serving(WORK, also, over);
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     return client;
@@ -125,7 +126,7 @@ describe('where the agent works', () => {
       params: { channel: 'ahp-session:/a', provider: 'claude' },
     });
     await sendAnswered(client, 'ahp-session:/a');
-    expect(sessionQueries().at(-1)?.options.cwd).toBe('/home/softov');
+    expect(sessionQueries().at(-1)?.options.cwd).toBe(WORK);
   });
 
   /*
@@ -759,7 +760,7 @@ describe('more than one directory', () => {
 
   /** A window's session over the given folders, made from a multi-root workspace or not, and spoken in. */
   const windowed = async (folders: string[], multiRoot = true, over: Partial<HostOptions> = {}) => {
-    const host = serving('/home/softov', [], over);
+    const host = serving(WORK, [], over);
     const p = peer();
     p.request = async () => ({ trusted: true });
     const client = host.accept(p);
@@ -800,7 +801,7 @@ describe('more than one directory', () => {
   });
 
   it('hands every directory the client named to the harness', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({
@@ -916,7 +917,7 @@ describe('more than one directory', () => {
    */
   const wide = async () => {
     // Each chat's CLI starts at its first send, so a test counts the ones its sends start.
-    const host = serving('/home/softov', [], startedBySend());
+    const host = serving(WORK, [], startedBySend());
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], EDITOR_WINDOW));

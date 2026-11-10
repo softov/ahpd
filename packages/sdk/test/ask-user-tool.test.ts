@@ -3,6 +3,7 @@ import { actions, createHost, echo, hello, hostTools, peer, settle } from './sup
 import type { Agent, BoundTool } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { Session } from '../src/types/session.js';
+import { WORK } from './support/work.js';
 
 /*
  * The `ask_user` tool, through the host.
@@ -24,7 +25,7 @@ const handed = new Map<string, BoundTool[]>();
 
 /** The echo backend, keeping the tools of each session, and never ending a turn by itself. */
 const quiet = (): Agent => {
-  const base = echo({ path: '/home/softov', pace: 0 });
+  const base = echo({ path: WORK, pace: 0 });
   return {
     ...base,
     create: (start) => {
@@ -54,7 +55,7 @@ const quiet = (): Agent => {
 
 /** A host that contributes its own tools, and the session it serves. */
 async function serving() {
-  const host = createHost({ path: '/home/softov', agents: [quiet()], tools: hostTools() });
+  const host = createHost({ path: WORK, agents: [quiet()], tools: hostTools() });
   const p = peer();
   const client = host.accept(p);
   await client.handle(hello(['0.9.0']));

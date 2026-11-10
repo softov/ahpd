@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { uriOf } from '../src/resources/fileuri.js';
 import type { Peer } from '../src/types/rpc.js';
+import { WORK } from './support/work.js';
 
 /*
  * A tool call that stopped because nobody has signed in.
@@ -120,7 +121,7 @@ async function running(plugins: Record<string, unknown>[] = []) {
   sdk.queries.length = 0;
   sdk.mcp = [{ name: 'desk', status: 'connected' }];
   sdk.plugins = plugins;
-  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+  const host = createHost({ path: WORK, agents: [claude({ paths: [WORK] })] });
   const p = peer();
   const client = host.accept(p);
   await client.handle({

@@ -3,6 +3,7 @@ import type { AutomationTriggerDefinition, ConfigPropertySchema } from '@microso
 import { memoryAutomations } from '../src/automations/automations.js';
 import { presetById } from '../src/automations/triggerpresets.js';
 import type { Bag } from '../src/types/common.js';
+import { WORK_URI } from './support/work.js';
 
 /*
  * The trigger types a host lists, and the configs it will not hold.
@@ -158,7 +159,7 @@ it('takes a rule about a folder, a run-made session or a turn length', () => {
   // Every fact an event carries is a fact a rule may be written on, so these
   // are kept rather than refused.
   const kept: [string, Bag][] = [
-    ['folder', { filter: { folders: ['file:///home/softov'] } }],
+    ['folder', { filter: { folders: [WORK_URI] } }],
     ['made', { filter: { automated: true } }],
     ['turn', { when: { turnLongerThan: '10m' } }],
   ];

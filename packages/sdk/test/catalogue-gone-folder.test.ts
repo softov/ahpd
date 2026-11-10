@@ -11,6 +11,7 @@ import { uriOf } from '../src/resources/fileuri.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import type { Agent, Listed } from '@ahpd/sdk';
 import type { SessionStore } from '../src/types/sessions.js';
+import { WORK } from './support/work.js';
 
 /*
  * A session whose folder has gone.
@@ -26,7 +27,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 beforeEach(resetSdk);
 
-const PATH = '/home/softov';
+const PATH = WORK;
 
 /** One row, as a backend answers it, naming the folder the session ran in. */
 const row = (id: string, title: string, folder: string): Listed => ({

@@ -12,6 +12,7 @@ import {
 import type { Bag } from '../src/types/common.js';
 import type { AutomationStore } from '../src/types/automations.js';
 import type { HostOptions } from '../src/types/host.js';
+import { WORK, WORK_URI } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -37,7 +38,7 @@ const watching = (): Bag => ({
   title: 'Triage a failed turn',
   enabled: true,
   message: { text: 'Look at {{session}}' },
-  session: { provider: 'claude', workingDirectories: ['file:///home/softov'] },
+  session: { provider: 'claude', workingDirectories: [WORK_URI] },
   triggers: [{
     id: 't1',
     kind: 'event',
@@ -105,7 +106,7 @@ describe('a session an automation began', () => {
     // store rather than from anything this process held in memory.
     await first.host.close();
     sdk.sessions.push({ sessionId: idOf(made), summary: 'Triage a failed turn', lastModified: Date.now(), cwd: folder });
-    const again = serving('/home/softov', [], { sessions: fileSessions({ dir }) });
+    const again = serving(WORK, [], { sessions: fileSessions({ dir }) });
     const client = again.accept(peer());
     await client.handle(hello(['0.9.0']));
     try {

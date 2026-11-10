@@ -4,6 +4,7 @@ import type { Agent } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { AskedQuestion, HostTool } from '../src/types/host.js';
 import type { Session } from '../src/types/session.js';
+import { WORK } from './support/work.js';
 
 /*
  * A host tool asking the person.
@@ -55,7 +56,7 @@ const said = (answer: { content: { text: string }[] }): Bag =>
  * matters is that a request this host asked never reaches it.
  */
 async function serving() {
-  const base = claude({ paths: ['/home/softov'] });
+  const base = claude({ paths: [WORK] });
   const answered: string[] = [];
   const watched: Agent = {
     ...base,

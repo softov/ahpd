@@ -8,6 +8,7 @@ import type { HostContext } from '../src/host/context.js';
 import type { SessionStore } from '../src/types/sessions.js';
 import type { SessionEvent, SessionTurn } from '../src/types/triggers.js';
 import { builtServer, claude, createHost, hello, hostTools, machine, peer, resetSdk } from './support/host.js';
+import { WORK, WORK_URI } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -33,7 +34,7 @@ const CHILD_CHAT = 'echo:/child-1/lead';
 function area(over: { kept?: SessionStore; child?: boolean } = {}) {
   const byChat = new Map([[CHAT, { uri: SESSION, chat: {} }]]);
   const subagents = new Map<string, { session: string }>();
-  const lead = { workingDirectories: () => ['file:///home/softov'] };
+  const lead = { workingDirectories: () => [WORK_URI] };
   const sessions = new Map([[SESSION, {
     defaultChat: CHAT, agent: { provider: 'echo' }, chats: new Map([[CHAT, lead]]),
   }]]);
@@ -299,7 +300,7 @@ it('says where the session works and whether a run made it, on every event', () 
   // Both are facts the host settles before an event is read, so a rule may
   // filter on them without the engine asking anybody.
   expect(heard.length).toBeGreaterThan(1);
-  expect(heard.every((one) => one.folders.join() === 'file:///home/softov' && one.automated)).toBe(true);
+  expect(heard.every((one) => one.folders.join() === WORK_URI && one.automated)).toBe(true);
 });
 
 it('says a turn started, which is what a rule about a long turn is measured from', () => {
@@ -307,7 +308,7 @@ it('says a turn started, which is what a rule about a long turn is measured from
   made.observe(CHAT, { type: 'chat/turnStarted', turnId: 't1' });
   expect(turns).toHaveLength(1);
   expect(turns[0]).toMatchObject({
-    session: SESSION, folders: ['file:///home/softov'], automated: false,
+    session: SESSION, folders: [WORK_URI], automated: false,
   });
 
   // A worker chat's turn is the session doing something rather than the turn
@@ -321,7 +322,7 @@ it('records the parent of a session the create tool started', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ahpd-made-'));
   const kept = fileSessions({ dir });
   const host = createHost({
-    path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(), sessions: kept,
+    path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), tools: hostTools(), sessions: kept,
   });
   const client = host.accept(peer());
   await client.handle(hello(['0.9.0']));
@@ -332,7 +333,7 @@ it('records the parent of a session the create tool started', async () => {
   }[] } | undefined;
   const create = served?.tools.find((one) => one.name === 'create_session');
   const said = await create?.handler({
-    relationship: 'independent', workspace: '/home/softov', title: 'Child', prompt: 'go', worktree: false,
+    relationship: 'independent', workspace: WORK, title: 'Child', prompt: 'go', worktree: false,
   });
   const child = /agent-host-session:\/\/claude\/([0-9a-f-]+)/.exec(said?.content[0]?.text ?? '')?.[1] as string;
   expect(child).toBeTruthy();

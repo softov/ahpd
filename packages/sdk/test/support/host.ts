@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import type { Peer } from '../../src/types/rpc.js';
 import type { HostOptions } from '../../src/types/host.js';
 import { SIGNED_IN, sdk, resetSdk, wrote } from './claude-sdk.js';
+import { WORK } from './work.js';
 
 export { SIGNED_IN, sdk, resetSdk, wrote };
 
@@ -72,7 +73,7 @@ export function peer(): Peer & { sent: Record<string, unknown>[]; notes: { metho
   };
 }
 
-export const open = () => serving('/home/softov').accept(peer());
+export const open = () => serving(WORK).accept(peer());
 
 export const hello = (versions: unknown[], extra: Record<string, unknown> = {}) => ({
   method: 'initialize',
@@ -80,7 +81,7 @@ export const hello = (versions: unknown[], extra: Record<string, unknown> = {}) 
 });
 
 /** A host whose Claude sessions start their CLI at their first send, as VS Code's provisional session does. */
-export const startedBySend = (path = '/home/softov'): Partial<HostOptions> => ({
+export const startedBySend = (path = WORK): Partial<HostOptions> => ({
   agents: [claude({ paths: [path], preset: { cliStart: 'send' } })],
 });
 
@@ -93,7 +94,7 @@ export const OLDER_WINDOW = { clientInfo: { name: 'vscode-editor-window', title:
 
 /** A connected client with one session, subscribed to both its channels; `extra` is what the client says at `initialize`. */
 export async function running(over: Partial<HostOptions> = {}, extra: Record<string, unknown> = {}) {
-  const host = serving('/home/softov', [], over);
+  const host = serving(WORK, [], over);
   const p = peer();
   const client = host.accept(p);
   // Root included: a catalogue notification goes to the connections watching

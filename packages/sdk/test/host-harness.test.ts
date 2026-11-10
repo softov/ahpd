@@ -7,6 +7,7 @@ import {
   SIGNED_IN, resetSdk, actions, claude, createHost, echo, emit, firstMessage, hello, machine, open, peer, sdk,
   sendAnswered, serving, settle, running,
 } from './support/host.js';
+import { WORK } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -96,9 +97,9 @@ describe('what the harness offers', () => {
   it('says the agent list when a handshake moves it whole, a rename and an empty answer among the moves', async () => {
     let models: { id: string; name: string }[] = [{ id: 'a', name: 'A' }];
     let handshake: (() => void) | undefined;
-    const base = echo({ path: '/home/softov', pace: 0 });
+    const base = echo({ path: WORK, pace: 0 });
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [{
         ...base,
         create: (start) => {
@@ -138,9 +139,9 @@ describe('what the harness offers', () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2476-L2493
    */
   it('learns the models a handshake reported before the host held its session', async () => {
-    const base = echo({ path: '/home/softov', pace: 0 });
+    const base = echo({ path: WORK, pace: 0 });
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [{
         ...base,
         create: (start) => {
@@ -167,9 +168,9 @@ describe('what the harness offers', () => {
    */
   it('says nothing when a probe finds the agent list as it was', async () => {
     let changed: (() => void) | undefined;
-    const base = echo({ path: '/home/softov', pace: 0 });
+    const base = echo({ path: WORK, pace: 0 });
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [{
         ...base,
         probe: async () => ({ models: [{ id: 'a', name: 'A' }], commands: [], customizations: [] }),
@@ -665,10 +666,10 @@ describe('what a slash offers', () => {
      */
     sdk.init = { models: [], commands: [{ name: 'batch', description: 'Run it in the background' }], agents: [] };
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [
-        claude({ paths: ['/home/softov'] }),
-        claude({ paths: ['/home/softov'], provider: 'codex', displayName: 'Codex' }),
+        claude({ paths: [WORK] }),
+        claude({ paths: [WORK], provider: 'codex', displayName: 'Codex' }),
       ],
       ...machine(),
     });
@@ -704,10 +705,10 @@ describe('what a slash offers', () => {
     sdk.init = { models: [], commands: [{ name: 'batch', description: 'Run it in the background' }], agents: [] };
     const { echo } = await import('../../../examples/echo/agent.js');
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [
-        claude({ paths: ['/home/softov'] }),
-        { ...echo({ path: '/home/softov', pace: 0 }), provider: 'codex', displayName: 'Codex' },
+        claude({ paths: [WORK] }),
+        { ...echo({ path: WORK, pace: 0 }), provider: 'codex', displayName: 'Codex' },
       ],
       ...machine(),
     });
@@ -744,7 +745,7 @@ describe('what goes after a slash', () => {
     sdk.init = {
       commands: Array.from({ length: count }, (_, i) => ({ name: `cmd${String(i).padStart(3, '0')}` })),
     };
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     // The boot probe is what learns them, and it answers on its own clock.
@@ -902,8 +903,8 @@ describe('turning a customization on and off', () => {
     const said: string[] = [];
     sdk.init = { commands: [{ name: 'review' }] };
     const host = createHost({
-      path: '/home/softov',
-      agents: [claude({ paths: ['/home/softov'] })],
+      path: WORK,
+      agents: [claude({ paths: [WORK] })],
       onEvent: (message) => said.push(message),
     });
     const p = peer();
@@ -935,8 +936,8 @@ describe('turning a customization on and off', () => {
     sdk.plugins = [{ name: 'acme', path: '/plugins/acme', source: 'acme@market' }];
     const root = uriOf('/plugins/acme');
     const host = createHost({
-      path: '/home/softov',
-      agents: [claude({ paths: ['/home/softov'] })],
+      path: WORK,
+      agents: [claude({ paths: [WORK] })],
       onEvent: (message) => said.push(message),
     });
     const p = peer();
@@ -1125,9 +1126,9 @@ describe('turning a customization on and off', () => {
 
   it('hands a background request to a backend that has the call, once, with the id', async () => {
     const asked: string[] = [];
-    const backend = claude({ paths: ['/home/softov'] });
+    const backend = claude({ paths: [WORK] });
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [{
         ...backend,
         create: (start: Parameters<typeof backend.create>[0]) => ({
@@ -1173,9 +1174,9 @@ describe('turning a customization on and off', () => {
     const server = inPlugin
       ? { type: 'plugin', id: 'plugin:tools', uri: 'tools', name: 'tools', enablement: [{ kind: 'session', enabled: true }], children: [starting] }
       : starting;
-    const backend = claude({ paths: ['/home/softov'] });
+    const backend = claude({ paths: [WORK] });
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [{
         ...backend,
         create: (start: Parameters<typeof backend.create>[0]) => {

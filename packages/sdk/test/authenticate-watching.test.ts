@@ -2,6 +2,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { ROOT } from '../src/host.js';
 import { claude, createHost, hostTools, machine, peer, resetSdk, sdk, sendAnswered, sessionQueries, settle } from './support/host.js';
 import type { Fake } from './support/claude-sdk.js';
+import { WORK } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
 
 /*
  * A token is spent only on the sessions its connection watches.
@@ -28,7 +30,7 @@ vi.mock('../../agent-claude/src/mcp.js', () => ({
 
 beforeEach(resetSdk);
 
-const DIR = '/home/softov';
+const DIR = WORK;
 const DESK = 'https://desk.example/';
 /** The server's row, named by its internal uri: no file here declares it. */
 const DESK_ID = 'claude-internal:/mcp/desk#mcp=desk';
@@ -49,7 +51,7 @@ const introduced = async (host: ReturnType<typeof createHost>, clientId: string)
 const opened = async (client: Client, uri: string): Promise<Fake> => {
   await client.handle({
     method: 'createSession',
-    params: { channel: uri, provider: 'claude', workingDirectories: [`file://${DIR}`] },
+    params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(DIR)] },
   });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   // The CLI its first send starts, whose `describe` answers on its own clock;
@@ -135,7 +137,7 @@ it('leaves a server\'s sign-in to its state, and refuses a token aimed at anothe
   const ana = await introduced(host, 'ana');
   await ana.client.handle({
     method: 'createSession',
-    params: { channel: ONE, provider: 'claude', workingDirectories: [`file://${DIR}`] },
+    params: { channel: ONE, provider: 'claude', workingDirectories: [uriOf(DIR)] },
   });
   await ana.client.handle({ method: 'subscribe', params: { channel: ONE } });
   await sendAnswered(ana.client, ONE);
