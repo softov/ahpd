@@ -25,6 +25,7 @@ import type { Agent } from '../types/agent.js';
 import type { Session } from '../types/session.js';
 import type { Claimed, Held, LiveSubagent } from './state.js';
 import type { ConnectionContext, HostContext } from './context.js';
+import type { Connection } from '../types/host.js';
 import { formIn, hostCatalogs } from './formlocale.js';
 
 /**
@@ -58,66 +59,50 @@ export interface SessionMethods {
   sessionConfigCompletions: (params: Record<string, unknown>) => Promise<unknown>;
 }
 
-export function createSessionMethods(ctx: HostContext, conn: ConnectionContext): SessionMethods {
-  const { connection } = conn;
+/**
+ * The protocol's `moveChat`, and the move a session tool is made of.
+ *
+ * One function, because a chat moves the same way whichever door it is asked
+ * at: the protocol's method and a tool's call resolve the destination, refuse
+ * in the reference's words, and change the chat's ownership in one act - see
+ * `movedTo`. The connection and the credentials are the caller's, since a tool
+ * runs in a turn rather than a method, and the connection is what an older
+ * window's visibility is read against. A caller with no connection - a turn
+ * this host holds no record of - is refused none of it, and spends no
+ * credentials it does not have.
+ */
+export function createChatMover(ctx: HostContext): (
+  connection: Connection | undefined,
+  tokensFor: (provider: string) => Record<string, string>,
+  params: Record<string, unknown>,
+) => Promise<{ session: string }> {
   const {
-    about, activeSessionsChanged, admitted, agents, projectSnapshot, backendsOwn, beginOrRun, beginTurn, beside, byChat,
-    charged, getProviderForChat, chatConfig, chatIdOf, chatShown,
-    chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
-    forWhom, forgetSendersIn, formOrdered, hold,
-    isolating, keepChat, recordSessionProvider, kept, leadOf, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
-    isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, hasActiveTurn, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
-    ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, scratchFolder, seeded,
-    projectActionForClient, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
-    snapshotOf, spawn, subagentSummary, subagents, markSummaryDirty, unheld, visible, unavailableProvider, wake,
+    activeSessionsChanged, beside, byChat, chatIdOf, chatMoveRefusal, chatSummary, chatsReordered, claims,
+    dispatch, getProviderForChat, hasActiveTurn, isStructurallyMovable, keepChat, kept, log, markSessionProvisional,
+    markSummaryDirty, options, orderChats, recordSessionProvider, sessionAdded, sessionMoveRefusal, sessionVisible,
+    sessions, subagentSummary, subagents, unheld, updateChatMovability,
   } = ctx;
 
   /**
-   * The most rows this host will serve in one page, however many were asked for.
+   * The anchor that places a moved chat after the destination's last chat.
    *
-   * The protocol says a server MAY impose its own cap, and one exists so that a
-   * client asking for a million does not turn a page into the whole catalogue
-   * plus the work of slicing it.
+   * A client's `moveChat` names a chat, or names none for the beginning of the
+   * catalogue, as the protocol says. `move_session` offers a model "omit
+   * `after` to place it at the end" instead, and VS Code resolves that to the
+   * destination's last visible chat before it moves. So a tool passes this
+   * word, and the beginning stays what a client's absent `after` means.
+   * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/agentService.ts#L7733-L7751
    */
-  const PAGE_CAP = 500;
+  const END = 'end';
 
   /**
-   * The most rows a client that asked for no page size is handed at once.
-   *
-   * Deliberately far above any real catalogue rather than at a page's size:
-   * neither client that connects to this host reads `nextCursor`, so anything
-   * smaller would be a catalogue silently cut down to it. This is not a page
-   * size - it is the point past which a single frame stops being servable at
-   * all, and reaching it is written to the log because the client cannot see it.
+   * Where a moved chat goes in the destination's order, the chat itself taken
+   * out: after the named chat, after the last one, or first.
    */
-  const PAGE_MOST = 1_000;
-
-  /**
-   * The most chats `#chat:` will offer in one answer.
-   *
-   * VS Code's `MAX_RESULTS`, unchanged: a person picking a chat is looking at a
-   * list in a box, and the newest twenty of a session's chats are the ones they
-   * are reaching for.
-   */
-  const CHAT_MOST = 20;
-
-  /** What a `#` says to introduce a chat reference, as VS Code spells it. */
-  const CHAT_PREFIX = 'chat:';
-
-  /**
-   * A pagination cursor, which is opaque by contract.
-   *
-   * It is the resource of the last row served, encoded - so it says nothing a
-   * client is invited to read, parse or keep. The protocol says cursors are
-   * server-defined and MUST be treated as opaque; encoding is what makes that
-   * true rather than merely asked for.
-   */
-  const sealed = (resource: string): string => Buffer.from(resource, 'utf8').toString('base64url');
-
-  /** The resource a cursor named, or nothing a row will match. */
-  const opened = (cursor: string): string => {
-    try { return Buffer.from(cursor, 'base64url').toString('utf8'); }
-    catch { return ''; }
+  const placedAt = (order: string[], anchor: string | undefined): number => {
+    if (anchor === undefined) return 0;
+    if (anchor === END) return order.length;
+    return order.indexOf(anchor) + 1;
   };
 
   /**
@@ -147,6 +132,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     held: Held,
     to: string | undefined,
     anchor: string | undefined,
+    tokensFor: (provider: string) => Record<string, string>,
   ): Promise<{ session: string }> => {
     /*
      * The name its backend keeps the conversation under, which a session made
@@ -233,7 +219,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     // The peers it works beside, which are the chat's own from here on.
     if (folders !== undefined) beside.set(chatUri, folders);
     ctx.chatRelaunches.set(chatUri, {
-      credentials: conn.tokensFor(held.agent.provider),
+      credentials: tokensFor(held.agent.provider),
       directory: ctx.chatRelaunches.get(chatUri)?.directory ?? held.workingDirectory,
     });
     /*
@@ -272,12 +258,13 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       claims.set(one, { kind: 'chat', of: into });
     }
     /*
-     * Where the chat sits in the destination, which is after the anchor or
-     * first: an absent `after` means the beginning, and the order the session
-     * holds is the one the next process starts its chats again in.
+     * Where the chat sits in the destination, which is after the anchor, after
+     * the last chat, or first: an absent `after` means the beginning, and the
+     * order the session holds is the one the next process starts its chats
+     * again in.
      */
     const order = [...there.chats.keys()].filter((one) => one !== chatUri);
-    order.splice(anchor === undefined ? 0 : order.indexOf(anchor) + 1, 0, chatUri);
+    order.splice(placedAt(order, anchor), 0, chatUri);
     const before = new Map(there.chats);
     there.chats.clear();
     for (const one of order) there.chats.set(one, before.get(one) as Session);
@@ -337,6 +324,227 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     updateChatMovability(chatUri);
     log(`moved ${chatUri} from ${found.uri} to ${into}`);
     return { session: into };
+  };
+
+  return async (
+    connection: Connection | undefined,
+    tokensFor: (provider: string) => Record<string, string>,
+    params: Record<string, unknown>,
+  ): Promise<{ session: string }> => {
+    const chatUri = String(params.channel ?? '');
+    const found = byChat.get(chatUri);
+    if (!found)
+      throw new RpcError(-32001, `No chat at ${chatUri}`);
+    const held = sessions.get(found.uri);
+    if (!held)
+      throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${found.uri}`);
+    /*
+     * Each refusal is the reference's: InvalidParams, its words, and the
+     * `reason` from its fixed set in `data`, for a client to explain it by.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L222-L230
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L90-L144
+     */
+    const refused = (reason: string, message: string): RpcError => new RpcError(INVALID_PARAMS, message, { reason });
+    /*
+     * Moving chats is `chatMoves.enabled`, off until a window turns it on,
+     * and asked first, as the reference host asks it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7892-L7896
+     */
+    if (ctx.rootConfig['chatMoves.enabled'] !== true) throw refused('disabled', 'Moving chats is not enabled.');
+    /*
+     * A chat of another backend stays where it is.
+     *
+     * A move starts the chat again in the session it lands in, on that
+     * session's backend - which for a chat of another backend is a harness
+     * that has never seen its transcript. Refused by saying whose the chat
+     * is, before anything has been touched - and said here rather than only
+     * by `movable`, which answers the client's move control with no room for
+     * a reason.
+     */
+    const serving = getProviderForChat(held, chatUri);
+    if (serving !== held.agent) {
+      throw refused('differentProvider', 'Chats can only move between sessions of the same agent.'
+        + ' Turn on chats with their own agents to move it to a session of another agent.');
+    }
+    /*
+     * A chat a move is made of, checked now rather than read from `movable`,
+     * which also says the chat's state: a move refuses that with its own
+     * reason. Running nothing is this host's, since a move here closes a
+     * process and starts another (plan host/47-p1).
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9214-L9223
+     */
+    if (!isStructurallyMovable(chatUri) || hasActiveTurn(chatUri)) throw refused('notMovable', `Chat ${chatUri} can't be moved.`);
+    const destination = (typeof params.destination === 'object' && params.destination !== null
+      ? params.destination
+      : {}) as Record<string, unknown>;
+    const kind = String(destination.kind ?? '');
+    if (kind !== 'session' && kind !== 'newSession') {
+      throw new RpcError(INVALID_PARAMS, kind === ''
+        ? 'a move needs a destination'
+        : `a ${kind} destination is not one this host serves yet`);
+    }
+    // A chat with no turn yet, refused before anything else is asked of the
+    // move, as VS Code's host refuses it.
+    const unstarted = chatMoveRefusal(chatUri, kind === 'newSession');
+    if (unstarted?.reason === 'notStarted') throw refused(unstarted.reason, unstarted.message);
+    // The anchor, which the protocol requires to be another chat of the
+    // destination and never the chat itself. `end` is the last chat, which a
+    // destination that holds none resolves to the beginning.
+    const anchor = destination.after === undefined ? undefined : String(destination.after);
+    if (anchor !== undefined && anchor === chatUri) throw refused('invalidAnchor', 'A chat can\'t be placed after itself.');
+    /*
+     * What the sessions and the chat itself refuse a move between sessions
+     * for, in VS Code's order: each session archived or changing its
+     * workspace, the source first, then the chat with no folder. A reorder
+     * within the session is refused none of them.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9505-L9525
+     */
+    const refuseState = (target: string | undefined): void => {
+      for (const one of target === undefined ? [found.uri] : [found.uri, target]) {
+        const refusal = sessionMoveRefusal(one);
+        if (refusal !== undefined) throw refused(refusal.reason, refusal.message);
+      }
+      const refusal = chatMoveRefusal(chatUri, target === undefined);
+      if (refusal !== undefined) throw refused(refusal.reason, refusal.message);
+    };
+    // A session made for the chat, which has no chats to be placed among yet.
+    if (kind === 'newSession') {
+      refuseState(undefined);
+      return await movedTo(chatUri, found, held, undefined, anchor, tokensFor);
+    }
+    /*
+     * The source's own session, which is the reorder. Anywhere else is a move
+     * between sessions, and this host makes one only where it can start the
+     * chat there - which is a session of the same agent, on the same machine.
+     */
+    const to = String(destination.session ?? '');
+    /*
+     * A session this client may not see is not one it can move a chat
+     * into, as the reference host answers an older VS Code window. A call
+     * from a turn this host holds no connection for has no window to be
+     * older than, so nothing is hidden from it.
+     * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2348-L2350
+     */
+    if (connection !== undefined && !sessionVisible(connection, to)) throw new RpcError(-32001, `Session not found: ${to}`);
+    if (to === found.uri) {
+      if (anchor !== undefined && anchor !== END && !held.chats.has(anchor))
+        throw refused('invalidAnchor', `Chat ${anchor} is not a visible chat of ${found.uri}.`);
+      /*
+       * The new order, which is the old one with this chat taken out and put
+       * back where it was asked for. First when no anchor was named, which is
+       * what the protocol says an absent `after` means; last for `end`, which
+       * is what `move_session` means by it.
+       */
+      const order = [...held.chats.keys()].filter((one) => one !== chatUri);
+      order.splice(placedAt(order, anchor), 0, chatUri);
+      const chats = new Map(held.chats);
+      held.chats.clear();
+      for (const one of order) held.chats.set(one, chats.get(one) as Session);
+      /*
+       * And written down, so the order is the one the next process starts
+       * them again in. A move a restart undid would be a move that lasted
+       * until the daemon was restarted, which a person would find out about
+       * days later.
+       */
+      orderChats(found.uri, order);
+      // The catalogue's own list, which names every chat the session lists -
+      // the workers included, because they are chats of the session too.
+      await chatsReordered(found.uri);
+      markSummaryDirty(found.uri);
+      log(`moved ${chatUri} in ${found.uri}`);
+      return { session: found.uri };
+    }
+    /*
+     * Somewhere else, then: another session this host is running, of the same
+     * agent and on the same machine.
+     *
+     * The same agent because a conversation belongs to the harness that wrote
+     * it, in that harness's own format and on that harness's own disk, and
+     * the same machine because the chat's folders are paths on the machine
+     * its backend ran on. Both are refused with a sentence that names the
+     * difference, and refused before anything has been touched.
+     */
+    const dest = sessions.get(to);
+    if (dest === undefined) throw refused('destinationNotFound', `Session ${to} is not available.`);
+    if (held.agent.provider !== dest.agent.provider) {
+      throw refused('differentProvider', 'Chats can only move between sessions of the same agent.'
+        + ' Turn on chats with their own agents to move it to a session of another agent.');
+    }
+    // Machines are this host's own, so the reference has no word for this
+    // one: its reason is the set's for a move a host does not make.
+    const mine = computerId(held.config.computer);
+    const theirs = computerId(dest.config.computer);
+    if (mine !== theirs) {
+      throw refused('unsupported', `a move between computers is not supported yet: ${chatUri} runs on`
+        + ` ${mine ?? 'this host'} and ${to} on ${theirs ?? 'this host'}`);
+    }
+    refuseState(to);
+    if (anchor !== undefined && anchor !== END && !dest.chats.has(anchor))
+      throw refused('invalidAnchor', `Chat ${anchor} is not a visible chat of ${to}.`);
+    return await movedTo(chatUri, found, held, to, anchor, tokensFor);
+  };
+}
+
+export function createSessionMethods(ctx: HostContext, conn: ConnectionContext): SessionMethods {
+  const { connection } = conn;
+  const {
+    about, activeSessionsChanged, admitted, agents, projectSnapshot, backendsOwn, beginOrRun, beginTurn, beside, byChat,
+    charged, getProviderForChat, chatConfig, chatIdOf, chatShown,
+    chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
+    forWhom, forgetSendersIn, formOrdered, hold,
+    isolating, keepChat, recordSessionProvider, kept, leadOf, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
+    isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, hasActiveTurn, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
+    ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, scratchFolder, seeded,
+    projectActionForClient, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
+    snapshotOf, spawn, subagentSummary, subagents, markSummaryDirty, unheld, visible, unavailableProvider, wake,
+  } = ctx;
+
+  /**
+   * The most rows this host will serve in one page, however many were asked for.
+   *
+   * The protocol says a server MAY impose its own cap, and one exists so that a
+   * client asking for a million does not turn a page into the whole catalogue
+   * plus the work of slicing it.
+   */
+  const PAGE_CAP = 500;
+
+  /**
+   * The most rows a client that asked for no page size is handed at once.
+   *
+   * Deliberately far above any real catalogue rather than at a page's size:
+   * neither client that connects to this host reads `nextCursor`, so anything
+   * smaller would be a catalogue silently cut down to it. This is not a page
+   * size - it is the point past which a single frame stops being servable at
+   * all, and reaching it is written to the log because the client cannot see it.
+   */
+  const PAGE_MOST = 1_000;
+
+  /**
+   * The most chats `#chat:` will offer in one answer.
+   *
+   * VS Code's `MAX_RESULTS`, unchanged: a person picking a chat is looking at a
+   * list in a box, and the newest twenty of a session's chats are the ones they
+   * are reaching for.
+   */
+  const CHAT_MOST = 20;
+
+  /** What a `#` says to introduce a chat reference, as VS Code spells it. */
+  const CHAT_PREFIX = 'chat:';
+
+  /**
+   * A pagination cursor, which is opaque by contract.
+   *
+   * It is the resource of the last row served, encoded - so it says nothing a
+   * client is invited to read, parse or keep. The protocol says cursors are
+   * server-defined and MUST be treated as opaque; encoding is what makes that
+   * true rather than merely asked for.
+   */
+  const sealed = (resource: string): string => Buffer.from(resource, 'utf8').toString('base64url');
+
+  /** The resource a cursor named, or nothing a row will match. */
+  const opened = (cursor: string): string => {
+    try { return Buffer.from(cursor, 'base64url').toString('utf8'); }
+    catch { return ''; }
   };
 
   /**
@@ -426,6 +634,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       ended('error', 'sendFailed'),
     );
   };
+
+  // The protocol's own move, which the mover above serves and a session tool reaches too.
+  const moveChat = createChatMover(ctx);
 
   const methods: SessionMethods = {
     /**
@@ -1515,173 +1726,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (first_ !== undefined) await acceptInitialMessage(uri, chat, held.agent.provider, first_);
       return null;
     },
-    /**
-     * Put a chat where a person wants it.
-     *
-     * The protocol's three destinations, and this host serves all of them: a
-     * `session` naming the chat's own session, which is a reorder of the
-     * catalogue and nothing more; a `session` naming another one, which takes
-     * the chat there; and `newSession`, which makes a session whose default
-     * chat is the moved one.
-     *
-     * A chat that stays in its session keeps its process, its turns and its
-     * folders, so the whole of that move is where it sits. The other two cost
-     * it a backend process, and are one act done twice - see `movedTo` above,
-     * which is where that act is kept in the order the protocol gives.
-     *
-     * Nothing is changed before every refusal has been made, because the
-     * protocol says a rejection leaves ownership, order and state as they
-     * were - so a chat that cannot move is a chat nothing happened to.
-     */
-    moveChat: async (params) => {
-      const chatUri = String(params.channel ?? '');
-      const found = byChat.get(chatUri);
-      if (!found)
-        throw new RpcError(-32001, `No chat at ${chatUri}`);
-      const held = sessions.get(found.uri);
-      if (!held)
-        throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${found.uri}`);
-      /*
-       * Each refusal is the reference's: InvalidParams, its words, and the
-       * `reason` from its fixed set in `data`, for a client to explain it by.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L222-L230
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L90-L144
-       */
-      const refused = (reason: string, message: string): RpcError => new RpcError(INVALID_PARAMS, message, { reason });
-      /*
-       * Moving chats is `chatMoves.enabled`, off until a window turns it on,
-       * and asked first, as the reference host asks it.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7892-L7896
-       */
-      if (ctx.rootConfig['chatMoves.enabled'] !== true) throw refused('disabled', 'Moving chats is not enabled.');
-      /*
-       * A chat of another backend stays where it is.
-       *
-       * A move starts the chat again in the session it lands in, on that
-       * session's backend - which for a chat of another backend is a harness
-       * that has never seen its transcript. Refused by saying whose the chat
-       * is, before anything has been touched - and said here rather than only
-       * by `movable`, which answers the client's move control with no room for
-       * a reason.
-       */
-      const serving = getProviderForChat(held, chatUri);
-      if (serving !== held.agent) {
-        throw refused('differentProvider', 'Chats can only move between sessions of the same agent.'
-          + ' Turn on chats with their own agents to move it to a session of another agent.');
-      }
-      /*
-       * A chat a move is made of, checked now rather than read from `movable`,
-       * which also says the chat's state: a move refuses that with its own
-       * reason. Running nothing is this host's, since a move here closes a
-       * process and starts another (plan host/47-p1).
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9214-L9223
-       */
-      if (!isStructurallyMovable(chatUri) || hasActiveTurn(chatUri)) throw refused('notMovable', `Chat ${chatUri} can't be moved.`);
-      const destination = (typeof params.destination === 'object' && params.destination !== null
-        ? params.destination
-        : {}) as Record<string, unknown>;
-      const kind = String(destination.kind ?? '');
-      if (kind !== 'session' && kind !== 'newSession') {
-        throw new RpcError(INVALID_PARAMS, kind === ''
-          ? 'a move needs a destination'
-          : `a ${kind} destination is not one this host serves yet`);
-      }
-      // A chat with no turn yet, refused before anything else is asked of the
-      // move, as VS Code's host refuses it.
-      const unstarted = chatMoveRefusal(chatUri, kind === 'newSession');
-      if (unstarted?.reason === 'notStarted') throw refused(unstarted.reason, unstarted.message);
-      // The anchor, which the protocol requires to be another chat of the
-      // destination and never the chat itself.
-      const anchor = destination.after === undefined ? undefined : String(destination.after);
-      if (anchor !== undefined && anchor === chatUri) throw refused('invalidAnchor', 'A chat can\'t be placed after itself.');
-      /*
-       * What the sessions and the chat itself refuse a move between sessions
-       * for, in VS Code's order: each session archived or changing its
-       * workspace, the source first, then the chat with no folder. A reorder
-       * within the session is refused none of them.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9505-L9525
-       */
-      const refuseState = (target: string | undefined): void => {
-        for (const one of target === undefined ? [found.uri] : [found.uri, target]) {
-          const refusal = sessionMoveRefusal(one);
-          if (refusal !== undefined) throw refused(refusal.reason, refusal.message);
-        }
-        const refusal = chatMoveRefusal(chatUri, target === undefined);
-        if (refusal !== undefined) throw refused(refusal.reason, refusal.message);
-      };
-      // A session made for the chat, which has no chats to be placed among yet.
-      if (kind === 'newSession') {
-        refuseState(undefined);
-        return await movedTo(chatUri, found, held, undefined, anchor);
-      }
-      /*
-       * The source's own session, which is the reorder. Anywhere else is a move
-       * between sessions, and this host makes one only where it can start the
-       * chat there - which is a session of the same agent, on the same machine.
-       */
-      const to = String(destination.session ?? '');
-      /*
-       * A session this client may not see is not one it can move a chat
-       * into, as the reference host answers an older VS Code window.
-       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2348-L2350
-       */
-      if (!sessionVisible(connection, to)) throw new RpcError(-32001, `Session not found: ${to}`);
-      if (to === found.uri) {
-        if (anchor !== undefined && !held.chats.has(anchor))
-          throw refused('invalidAnchor', `Chat ${anchor} is not a visible chat of ${found.uri}.`);
-        /*
-         * The new order, which is the old one with this chat taken out and put
-         * back where it was asked for. First when no anchor was named, which is
-         * what the protocol says an absent `after` means.
-         */
-        const order = [...held.chats.keys()].filter((one) => one !== chatUri);
-        order.splice(anchor === undefined ? 0 : order.indexOf(anchor) + 1, 0, chatUri);
-        const chats = new Map(held.chats);
-        held.chats.clear();
-        for (const one of order) held.chats.set(one, chats.get(one) as Session);
-        /*
-         * And written down, so the order is the one the next process starts
-         * them again in. A move a restart undid would be a move that lasted
-         * until the daemon was restarted, which a person would find out about
-         * days later.
-         */
-        orderChats(found.uri, order);
-        // The catalogue's own list, which names every chat the session lists -
-        // the workers included, because they are chats of the session too.
-        await chatsReordered(found.uri);
-        markSummaryDirty(found.uri);
-        log(`moved ${chatUri} in ${found.uri}`);
-        return { session: found.uri };
-      }
-      /*
-       * Somewhere else, then: another session this host is running, of the same
-       * agent and on the same machine.
-       *
-       * The same agent because a conversation belongs to the harness that wrote
-       * it, in that harness's own format and on that harness's own disk, and
-       * the same machine because the chat's folders are paths on the machine
-       * its backend ran on. Both are refused with a sentence that names the
-       * difference, and refused before anything has been touched.
-       */
-      const dest = sessions.get(to);
-      if (dest === undefined) throw refused('destinationNotFound', `Session ${to} is not available.`);
-      if (held.agent.provider !== dest.agent.provider) {
-        throw refused('differentProvider', 'Chats can only move between sessions of the same agent.'
-          + ' Turn on chats with their own agents to move it to a session of another agent.');
-      }
-      // Machines are this host's own, so the reference has no word for this
-      // one: its reason is the set's for a move a host does not make.
-      const mine = computerId(held.config.computer);
-      const theirs = computerId(dest.config.computer);
-      if (mine !== theirs) {
-        throw refused('unsupported', `a move between computers is not supported yet: ${chatUri} runs on`
-          + ` ${mine ?? 'this host'} and ${to} on ${theirs ?? 'this host'}`);
-      }
-      refuseState(to);
-      if (anchor !== undefined && !dest.chats.has(anchor))
-        throw refused('invalidAnchor', `Chat ${anchor} is not a visible chat of ${to}.`);
-      return await movedTo(chatUri, found, held, to, anchor);
-    },
+    moveChat: (params) => moveChat(connection, conn.tokensFor, params),
     /*
      * A chat this host runs taken out of its session, answered `null`, as the
      * reference host answers it. A chat with no owner here, and a session's

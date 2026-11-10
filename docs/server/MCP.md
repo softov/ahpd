@@ -50,13 +50,18 @@ The token is the one `ahpd user token <id>` prints, or one minted with `ahpd tok
 | `create_session` | Start a session, owned by the caller |
 | `create_chat` | Open another chat in a session |
 | `rename_chat` | Rename a chat |
-| `send_message` | Send a turn to a session |
+| `send_message` | Send, replace, cancel or steer a message in a session |
 | `get_session_context` | Read a session's recent context |
 | `delete_session` | Delete a session |
+| `move_session` | Reorder, move or promote a session's chats, while moving chats is on |
 
 `get_current_session`, `set_workspace` and the artifact tools act on the calling session, so there is no sessionless form of them and `/mcp` does not offer them. Connector actions and a schedule are not served here either.
 
-Each tool checks its own grants, so the list is only what the caller may run. A `member` sees all nine. A role with `mcp:call` and `session:read` only sees `list_sessions`, `list_agents`, `list_models` and `get_session_context`, and a call to `create_session` gets `No tool named create_session`.
+Each tool checks its own grants, so the list is only what the caller may run. A `member` sees all ten. A role with `mcp:call` and `session:read` only sees `list_sessions`, `list_agents`, `list_models` and `get_session_context`, and a call to `create_session` gets `No tool named create_session`.
+
+`move_session` names what to move and where: `into` is the destination session, `after` is the chat of it to sit behind (the end when left out), and `relationship: "independent"` makes a nested session its own instead. It is refused while `chatMoves.enabled` is off.
+
+`send_message` takes an `operation` of `send` (the default), `replace` or `cancel`. A send starts a turn, queues behind what the chat already runs, or updates the turn running now with `delivery: "steer"`. It answers the message's `messageId` and `revision`. A `replace` or `cancel` names that id and `expectedRevision`. Either acts only on a queued message the same chat sent, while it is still pending and at that revision.
 
 `create_session` takes an `agent`, a provider id such as `claude-deepseek-build`, and a `config`, the new session's settings checked against that agent's schema. Both are optional. Its `agent` input is an enum of the agents the caller may start, each named in its description. See [Tools](../sdk/TOOLS.md#tools-that-need-no-session).
 

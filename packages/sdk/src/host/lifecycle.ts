@@ -2,7 +2,7 @@ import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { computerId, computersFor } from '../machines/computers.js';
 import { deleteNested } from '../sessions/nested.js';
-import { uriOf } from '../resources/fileuri.js';
+import { localPath, uriOf } from '../resources/fileuri.js';
 import { idOf, uriFor, Status } from '../sessions/catalog.js';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -121,6 +121,8 @@ export interface Lifecycle {
   ): Promise<void>;
   /** The move `set_workspace` asked for, once the turn that asked is over. */
   moveSession(uri: string, move: Move): Promise<void>;
+  /** The move `set_workspace` asked for, for the one chat of a session that keeps a folder per chat. */
+  moveChatWorkspace(uri: string, move: Move): Promise<void>;
   /**
    * Relaunch one chat, in the directories it now has, as the same conversation, as VS Code relaunches a chat's
    * provider; answered once the chat that takes its place is held.
@@ -1214,6 +1216,130 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         _meta: {
           'vscode.chat.requestHiddenFromTranscript': true,
           'vscode.chat.systemInitiatedLabel': 'Continue in Requested Workspace',
+          'vscode.chat.workspaceContinuation': true,
+        },
+      },
+    );
+  };
+
+  /**
+   * The move `set_workspace` asked for, for the one chat whose turn asked.
+   *
+   * A session of an agent with a folder per chat moves the chat and not the
+   * session: every other chat keeps its folders and its process, as VS Code's
+   * host moves the current chat and leaves the rest. The folder joins the
+   * session's set before the chat is put in it, because a chat's folders are a
+   * subset of its session's. A move that asked for isolation cuts a tree from
+   * the folder first, and the chat works in that instead.
+   * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L492-L601
+   */
+  const moveChatWorkspace = async (uri: string, move: Move): Promise<void> => {
+    const held = sessions.get(uri);
+    const chatUri = move.chat;
+    if (held === undefined || !held.chats.has(chatUri)) return;
+    const effective = { ...held.agent.defaults(), ...contributedDefaults(), ...held.config };
+    const auto = autoApproved(effective, rootConfig);
+    // What the chat had, read before it is started again: its state is not
+    // re-read from the backend that takes its place, so these are the folders
+    // it leaves. A backend answers its folders as URIs, and the actions are
+    // written from local paths as every other move's are.
+    const was = (held.chats.get(chatUri)?.workingDirectories() ?? []).map(localPath);
+    const besideWas = beside.get(chatUri);
+    let at = move.directory;
+    let inTree = false;
+    try {
+      /*
+       * The window that asked is asked about the folder, before anything is
+       * moved or made, the same question a session's move asks.
+       */
+      await requireTrust({ folder: move.directory, sender: move.sender, autoApproved: auto });
+      /*
+       * The tree the chat works in from here, cut from the folder it was asked
+       * for and kept with the session's trees: a chat's worktree is the
+       * session's in everything but the chat it serves, and the session is what
+       * a person disposes of, which is what removes it.
+       */
+      if (move.isolation && options.worktrees !== undefined) {
+        const config = { ...(decided.get(uri) ?? {}), isolation: 'worktree' };
+        const made = await cutTree(options.worktrees, idOf(chatUri), config, move.directory, (repository, path) =>
+          requireWorktreeTrust({ folder: move.directory, repository, path, sender: move.sender, autoApproved: auto }));
+        const id = idOf(uri);
+        kept.setAdditionalWorktrees?.(id, [...(kept.additionalWorktrees?.(id) ?? []), made]);
+        log(`made ${made.path} on ${made.branch ?? made.base} for ${chatUri}`);
+        at = made.path;
+        inTree = true;
+      }
+      /*
+       * The folder it was sent to is the whole of where it works, as a moved
+       * chat of the reference host takes the one folder it chose, and the
+       * session's folders are not beside it.
+       */
+      beside.set(chatUri, []);
+      await relaunchChat(uri, chatUri, {}, at);
+    }
+    catch (error) {
+      if (besideWas === undefined) beside.delete(chatUri);
+      else beside.set(chatUri, besideWas);
+      /*
+       * A move that did not complete is said in the turn that continues it, as
+       * a session's move is. A chat the failed start took away has no turn to
+       * continue it in, and the failure is then the log's.
+       * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1105-L1123
+       */
+      const failure = (error instanceof Error ? error.message : String(error)).replace(/\.+$/, '');
+      const chat = byChat.get(chatUri)?.chat;
+      if (chat !== undefined) {
+        void startTurn(
+          chat,
+          crypto.randomUUID(),
+          `The requested workspace setup did not complete successfully: ${failure}. Do not run the user's task. Tell the user that workspace setup failed and include this error.`,
+          undefined,
+          {
+            origin: { kind: 'systemNotification' },
+            _meta: {
+              'vscode.chat.requestHiddenFromTranscript': true,
+              'vscode.chat.systemInitiatedLabel': 'Workspace Setup Failed',
+              'vscode.chat.workspaceContinuation': true,
+            },
+          },
+        );
+      }
+      else log.error(`${chatUri} did not come back from its move to ${at}: ${failure}`);
+      throw error;
+    }
+    /*
+     * Said after the chat is held in its new place, so a client that hears of
+     * the folder has a chat to draw in it. The session's set first, which the
+     * chat's is a subset of, then the chat's own: every folder it had leaves
+     * it, and the one it moved for enters it.
+     */
+    const known = [held.workingDirectory, ...(held.additional ?? [])].filter((one): one is string => one !== undefined);
+    if (!known.includes(at)) {
+      held.additional = [...(held.additional ?? []), at];
+      dispatch(uri, { type: 'session/workingDirectorySet', directory: uriOf(at) });
+    }
+    for (const one of was) dispatch(chatUri, { type: 'chat/workingDirectoryRemoved', directory: uriOf(one) });
+    dispatch(chatUri, { type: 'chat/workingDirectorySet', directory: uriOf(at) });
+    dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { workingDirectories: [uriOf(at)] } });
+    const lead = byChat.get(chatUri);
+    if (lead === undefined) return;
+    /*
+     * The continuation in VS Code's words and under its label, the chat alone
+     * moved.
+     * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1107-L1116
+     */
+    void startTurn(
+      lead.chat,
+      crypto.randomUUID(),
+      inTree
+        ? `Only this chat now uses the worktree at ${at}. Other chats and their folders are unchanged. The session workspace includes this worktree. Continue the user's original task here without requesting another worktree.`
+        : `Only this chat now uses the workspace at ${at}. Other chats and their folders are unchanged. Continue the user's original task here. Do not change this workspace again unless the user explicitly asks.`,
+      undefined,
+      {
+        origin: { kind: 'systemNotification' },
+        _meta: {
+          'vscode.chat.requestHiddenFromTranscript': true,
+          'vscode.chat.systemInitiatedLabel': 'Workspace Set',
           'vscode.chat.workspaceContinuation': true,
         },
       },
@@ -2603,7 +2729,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   return {
-    removeSession, respawning, restart, moveSession, relaunchChat, chatIdOf, disposeProviderChat, ranIn, backendsOwn,
+    removeSession, respawning, restart, moveSession, moveChatWorkspace, relaunchChat, chatIdOf, disposeProviderChat, ranIn, backendsOwn,
     getProviderForChat, chatConfig, effectiveChatConfigValues, initialChatConfig, keepChatOwnConfigValues, isolated, oweTree,
     requestSessionWorktreeRemoval, restoreSessionWorktree, canAutomaticallyDeleteArchivedSession, createDetachedWorktree,
     beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, scratchFolder, createProviderSession,

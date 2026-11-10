@@ -1509,6 +1509,41 @@ export interface AgentMergeToolAccessor {
 }
 
 /**
+ * One `send_message` call, in the reference host's terms.
+ *
+ * `send` creates a message, `replace` rewrites one of this chat's pending queued
+ * messages, and `cancel` takes one back. A send is either queued behind what the
+ * chat runs or steered into its running turn; a replace and a cancel name the
+ * message and the revision the earlier send answered with.
+ */
+export interface SendMessageRequest {
+  operation: 'send' | 'replace' | 'cancel';
+  /** The complete text, for `send` and `replace`. */
+  message?: string;
+  /** For `send`: `queue` starts a turn of its own, `steer` updates the running one. */
+  delivery?: 'queue' | 'steer';
+  /** For `replace` and `cancel`: the id the message was sent under. */
+  messageId?: string;
+  /** For `replace` and `cancel`: the revision the message was sent at. */
+  expectedRevision?: number;
+}
+
+/**
+ * What a `send_message` did, as the reference host answers it.
+ *
+ * The open link is the tool's to add: it knows the provider and the chat the
+ * call named. This is the part the host knows, which is what the chat's queue
+ * and its running turn hold.
+ */
+export type SendMessageAnswer =
+  | { action: 'started' | 'queued'; messageId: string; revision: number; status: 'pending' | 'processing' }
+  | { action: 'steered'; messageId: string; revision: number; status: 'processing' }
+  | { action: 'cancelled'; messageId: string; revision: number; previousStatus: 'pending' }
+  | { action: 'replaced'; messageId: string; revision: number; status: 'pending'; replacedMessage: string }
+  | { action: 'notReplaced' | 'notCancelled'; messageId: string; reason: string; status: string; revision: number }
+  | { action: 'rejected'; reason: string; messageId?: string; targetStatus?: 'idle' | 'steeringPending'; actualRevision?: number };
+
+/**
  * Where a host tool was called from, and what the host knows.
  *
  * The reason a tool is the host's rather than the backend's: an agent inside
@@ -1638,15 +1673,17 @@ export interface ToolCall {
    */
   context(session: string, chatId?: string): Promise<{ turns: Bag[]; activeTurn?: Bag; hasMoreHistory: boolean } | undefined>;
   /**
-   * A message into another chat, as a turn of its own.
+   * One `send_message` call, into another chat.
    *
-   * Started at once when nothing is running there, queued behind the running
-   * turn when something is - the queue a client sees and can reorder. `from`
-   * says who sent it (`origin.kind: agent`) and where from (`_meta`), and
-   * rides on the message so a client can draw it as delegated rather than
-   * typed. Answers which of the two happened.
+   * `send` starts a turn at once when the chat runs nothing, steers the turn
+   * that runs when `delivery` is `steer`, and queues behind what is there
+   * otherwise - the queue a client sees and can reorder. `replace` and `cancel`
+   * act on a message this calling chat sent, while it is still pending and at
+   * the revision asked for. `from` says who sent it (`origin.kind: agent`) and
+   * where from (`_meta`), and rides on the message so a client can draw it as
+   * delegated rather than typed. Answers in the reference host's own terms.
    */
-  send(session: string, chatId: string | undefined, text: string, from: Bag): Promise<'sent' | 'queued'>;
+  send(session: string, chatId: string | undefined, request: SendMessageRequest, from: Bag): Promise<SendMessageAnswer>;
   /**
    * A new session, started with its first message.
    *
@@ -1671,6 +1708,16 @@ export interface ToolCall {
     prompt: string;
     from: Bag;
   }): Promise<{ session: string; chat: string }>;
+  /**
+   * The isolation a directory takes: `'worktree'` where this host can cut a
+   * tree from it, and `'folder'` where it cannot.
+   *
+   * The host's own offer for the directory answers it, so a tool asks the
+   * question a client's picker is drawn from rather than looking at the
+   * filesystem itself. `undefined` where this host has no offer to read, as
+   * when it runs no worktrees port.
+   */
+  isolation(directory: string): Promise<'folder' | 'worktree' | undefined>;
   /**
    * A second chat in a running session, started with its first message.
    *
@@ -1705,6 +1752,22 @@ export interface ToolCall {
    * the host then continues the conversation there with a notice turn.
    */
   setWorkspace(directory: string, isolation: boolean): void;
+  /**
+   * Move one chat into another session, or into a session of its own.
+   *
+   * The host's own `moveChat` with the chat already named, so a tool and a
+   * client order sessions the same way: the destination is a session this host
+   * runs, and a chat of its own is the `newSession` kind. `after` names a chat
+   * of the destination to sit behind, or is `end` for its last chat, which is
+   * what a tool that leaves the anchor out means; a client's protocol call
+   * leaves it out for the beginning instead. The backend is closed where it
+   * ran and started again where it lands, so a chat with a turn running moves
+   * nowhere - the host refuses it in the words it refuses a client's own move
+   * with.
+   */
+  move(chat: string, destination:
+    | { kind: 'session'; session: string; after?: string }
+    | { kind: 'newSession' }): Promise<{ session: string }>;
   /**
    * Wake the calling chat once `delaySeconds` have passed, with a turn that
    * carries `prompt`.

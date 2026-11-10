@@ -49,6 +49,30 @@ export const storedAuthToken = (tokens: ReadonlyMap<string, Credential>, resourc
   return covering ?? live(tokens.get(keyOf(resource, [])));
 };
 
+/**
+ * What one connection pushed for a backend, by protected resource.
+ *
+ * The tokens a session started at that client's ask is handed: each resource
+ * the backend names, with the one token stored for the scopes it asks for, and
+ * none that has run out. A connection that is gone or pushed nothing, and a
+ * backend this host does not hold, have none.
+ */
+export const tokensForConnection = (
+  agents: ReadonlyMap<string, Agent>,
+  connection: Connection | undefined,
+  provider: string,
+): Record<string, string> => {
+  const out: Record<string, string> = {};
+  if (connection === undefined) return out;
+  for (const one of agents.get(provider)?.protectedResources ?? []) {
+    const id = (one as { resource?: unknown }).resource;
+    if (typeof id !== 'string') continue;
+    const held = storedAuthToken(connection.tokens, id, normalizeScopes((one as { scopes_supported?: unknown }).scopes_supported));
+    if (held !== undefined) out[id] = held.token;
+  }
+  return out;
+};
+
 /** What a person has to sign into, and what they have. */
 export interface Auth {
   /** The resource a client authenticates for the host's own sign-in. */

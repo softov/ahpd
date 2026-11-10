@@ -1241,6 +1241,7 @@ describe('a session entering a folder nobody vouched for', () => {
    */
   const hosted = async (here: string, {
     trusts = [], answer = () => ({ trusted: true }), root = {}, autoApprove, isolation, worktrees, window = false,
+    multipleDirectories = false,
   }: {
     trusts?: string[];
     answer?: (asked: Asked) => unknown;
@@ -1253,6 +1254,11 @@ describe('a session entering a folder nobody vouched for', () => {
      * multi-root workspace, the one a session's folders are set by.
      */
     window?: boolean;
+    /**
+     * Whether the agent works in more than one folder, which a session's
+     * folders are changed in. Off by default, so a move here is a session's.
+     */
+    multipleDirectories?: boolean;
   } = {}) => {
     const asked: Asked[] = [];
     const lines: string[] = [];
@@ -1264,7 +1270,10 @@ describe('a session entering a folder nobody vouched for', () => {
     };
     const host = createHost({
       path: here,
-      agents: [claude({ paths: [here] })],
+      // An agent with one folder for its session, so these cases are the
+      // session's move: the trust and worktree questions are the same on a
+      // chat's, and that move is set out in host-tools.test.ts.
+      agents: [{ ...claude({ paths: [here] }), multipleDirectories }],
       ...machine(),
       ...(worktrees === undefined ? {} : { worktrees }),
       tools: hostTools(),
@@ -1462,7 +1471,12 @@ describe('a session entering a folder nobody vouched for', () => {
 
   it('refuses a folder a window adds that nobody vouched for, and does not add it', async () => {
     const { here, there } = folders();
-    const { client, peer: p, uri, chatUri } = await hosted(here, { trusts: [here], answer: () => ({ trusted: false }), window: true });
+    const { client, peer: p, uri, chatUri } = await hosted(here, {
+      trusts: [here], answer: () => ({ trusted: false }), window: true,
+      // A folder is added to a session that works in more than one, which is
+      // the agent's own answer.
+      multipleDirectories: true,
+    });
     // Ready from its first turn, which a working-directory change waits for.
     await firstMessage(client, chatUri);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
