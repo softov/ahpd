@@ -424,7 +424,7 @@ interface ChatStart {
 export function createTooling(ctx: HostContext): Tooling {
   const {
     options, sessions, byChat, kept, terminals, learned, rootConfig, sentBy, about,
-    activeClientsOf, leadOf, clientResources, listSessions, setArtifacts, forWhom,
+    activeClientsOf, leadOf, clientResources, listSessions, setArtifacts, marksOf, markAnnotation, forWhom,
     principalFor, senderOf, senders,
     chatSummary, persistChatTitle, markSummaryDirty, operationsMoved, dispatch, log, fire,
     resolveCreatedSessionConfig, createProviderSession, backendsOwn, removeSession, scratchFolder, spawn,
@@ -2178,6 +2178,8 @@ export function createTooling(ctx: HostContext): Tooling {
     cancelWake: () => ctx.setWake(uri, chatUri, undefined),
     artifacts: () => [...(kept.artifacts(idOf(uri)) ?? [])],
     setArtifacts: (list) => { setArtifacts(uri, list); },
+    annotations: () => marksOf(idOf(uri)),
+    markAnnotation: (action) => { markAnnotation(uri, action); },
     terminals: () => [...terminals.values()].map((held) => ({
       uri: held.uri,
       title: held.title(),
@@ -2349,6 +2351,9 @@ export function createTooling(ctx: HostContext): Tooling {
       cancelWake: needsSession,
       artifacts: needsSession,
       setArtifacts: needsSession,
+      // A mark is drawn on a session's files, and a call with no session has none.
+      annotations: needsSession,
+      markAnnotation: needsSession,
       terminals: needsSession,
       shells: needsSession,
       read: needsSession,

@@ -5,7 +5,7 @@ import type { PublishOptions } from '../types/plugin.js';
 import type { Peer } from '../types/rpc.js';
 import type { Session } from '../types/session.js';
 import type { Bag } from '../types/common.js';
-import type { AnnotationsState } from '@microsoft/agent-host-protocol';
+import type { AnnotationsAction, AnnotationsState } from '@microsoft/agent-host-protocol';
 import type { Terminal } from '../types/terminals.js';
 import type { Principal } from '../types/users.js';
 import type { StoredWorktree } from '../types/sessions.js';
@@ -315,6 +315,14 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   attachWatch(channel: string, principal?: Principal): Promise<Bag | undefined>;
   /** The marks a session carries, as a snapshot of its annotations channel reports them. */
   marksOf: (id: string) => AnnotationsState;
+  /**
+   * Make one mark on a session, keep it and say it on its annotations channel.
+   *
+   * The one writer both a client's `annotations/*` action and a host tool's go
+   * through, so a comment added by an agent and one added by the window are the
+   * same state to every client of the session.
+   */
+  markAnnotation: (uri: string, action: AnnotationsAction, origin?: Origin | undefined) => void;
   /** The live sessions restored from a recorded one, whose workers are read back. */
   restoredSessions: Set<string>;
   /** Who is in a session, as its state reports them. */

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { annotationsReducer, IS_CLIENT_DISPATCHABLE } from '@microsoft/agent-host-protocol';
+import { IS_CLIENT_DISPATCHABLE } from '@microsoft/agent-host-protocol';
 import type { AnnotationsAction } from '@microsoft/agent-host-protocol';
 import { idOf, Status } from '../sessions/catalog.js';
 import { disableConditionsProblem } from '../automations/automations.js';
@@ -55,7 +55,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    */
   const {
     agents, byChat, cancelRun, changed, changesetAt, channelKind, daemonKey, decided,
-    dir, dispatch, homeId, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
+    dir, dispatch, homeId, homeOf, kept, learned, log, meantBy, names, options,
     ownerFor, owners, restoreSession, resolveChatOwner, permitted, presence, restart, retool,
     rootConfig, served, sessionFor, sessions, shown, starting, subagents, markSummaryDirty, terminals, toolDefinitions,
     value, unavailableProvider,
@@ -238,15 +238,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       }
       const owning = channel.slice(0, -ANNOTATIONS_PATH_SEGMENT.length);
       const id = idOf(owning);
-      const mark = (): void => {
-        const next = annotationsReducer(marksOf(id), action as unknown as AnnotationsAction);
-        marks.set(id, next);
-        // Written down as it lands, so the marks outlive the process, as the
-        // reference host persists a session's annotations on each action.
-        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10936-L10963
-        kept.setAnnotations?.(id, next as unknown as Bag);
-        dispatch(channel, action, origin);
-      };
+      const mark = (): void => { ctx.markAnnotation(owning, action as unknown as AnnotationsAction, origin); };
       const found = (): boolean => (sessions.has(owning) || owners.has(owning) || unavailableProvider(id) !== undefined)
         && ctx.nameOf(id) === owning;
       if (found()) {
