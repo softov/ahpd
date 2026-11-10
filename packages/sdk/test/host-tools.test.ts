@@ -25,6 +25,7 @@ import type { SessionAction, SessionInputRequest, SessionState } from '@microsof
 import type { Grant, Principal, Users } from '../src/types/users.js';
 import { ROOT } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
+import { gitWorktrees } from '../src/repo/worktrees.js';
 import {
   startedBySend,
   resetSdk, actions, builtServer, claude, createHost, defaultChatOf, echo, emit, firstMessage, hello, hostTools,
@@ -54,9 +55,9 @@ describe('tools the host contributes', () => {
     await firstMessage(client, await defaultChatOf(client, uri));
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   };
-  const withTools = async (tools = hostTools()) => {
+  const withTools = async (tools = hostTools(), over: Partial<HostOptions> = {}) => {
     const host = createHost({
-      path: HERE, agents: [claude({ paths: [HERE] })], ...machine(), tools,
+      path: HERE, agents: [claude({ paths: [HERE] })], ...machine(), ...over, tools,
     });
     const p = peer();
     const client = host.accept(p);
@@ -166,6 +167,19 @@ describe('tools the host contributes', () => {
       return (await tool.handler(input)).content[0]?.text ?? '';
     };
 
+    /** The folders a case made, removed after it. */
+    const dirs: string[] = [];
+    // Awaited, with retries: on Windows a process the case started can hold the folder a moment longer.
+    afterEach(async () => {
+      for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    });
+    /** A folder that is not a git repository, made fresh for one case. */
+    const plainFolder = (): string => {
+      const plain = mkdtempSync(join(tmpdir(), 'ahpd-plain-'));
+      dirs.push(plain);
+      return plain;
+    };
+
     it('says which session it is running in, with the row and the link', async () => {
       const { held } = await withTools();
       const said = JSON.parse(await call('get_current_session', {})) as Record<string, unknown>;
@@ -248,6 +262,45 @@ describe('tools the host contributes', () => {
       const rows = JSON.parse(await call('list_sessions', {})) as { sessions: { session: string }[] };
       expect(rows.sessions.map((one) => one.session)).toContain(summary?.resource);
       expect(rows.sessions.map((one) => one.session)).toContain('ahp-session:/served');
+    });
+
+    /*
+     * A folder that is not a git repository is used as it is, as VS Code's
+     * host resolves a session's isolation against the folder's own offer: the
+     * session works in the folder, and a worktree asked for there is refused
+     * rather than quietly turned into a folder session.
+     * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L960-L994
+     */
+    it('makes the session in a folder that is not a git repository, worktree left out', async () => {
+      const { client, peer: p } = await withTools(hostTools(), { worktrees: gitWorktrees() });
+      const plain = plainFolder();
+      await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+      expect(await call('create_session', {
+        relationship: 'independent', workspace: plain, title: 'No repository', prompt: 'work in the folder',
+      })).toMatch(/^New session created \(agent-host-session:\/\/claude\/[0-9a-f-]+\)\.$/);
+      await settle();
+      const added = p.notes.find((one) => one.method === 'root/sessionAdded');
+      const summary = (added?.params as { summary?: { resource: string; workingDirectories: string[] } } | undefined)?.summary;
+      expect(summary?.workingDirectories).toEqual([uriOf(plain)]);
+      // The isolation the folder takes, which a client draws beside the session.
+      const state = (await client.handle({ method: 'subscribe', params: { channel: summary?.resource } }) as {
+        snapshot: { state: { config?: { values: Record<string, unknown> } } };
+      }).snapshot.state;
+      expect(state.config?.values.isolation).toBe('folder');
+      // And the backend started in the folder itself, with no tree cut for it.
+      expect(sessionQueries().at(-1)?.options.cwd).toBe(plain);
+    });
+
+    it('refuses a worktree in a folder that is not a git repository', async () => {
+      const { client, peer: p } = await withTools(hostTools(), { worktrees: gitWorktrees() });
+      const plain = plainFolder();
+      await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+      const said = await call('create_session', {
+        relationship: 'independent', workspace: plain, title: 'No repository', prompt: 'work in a tree', worktree: true,
+      });
+      expect(said).toContain('is not a git repository, so it has no worktrees');
+      await settle();
+      expect(p.notes.filter((one) => one.method === 'root/sessionAdded')).toHaveLength(0);
     });
 
     /*

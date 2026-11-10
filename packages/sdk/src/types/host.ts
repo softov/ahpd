@@ -1668,6 +1668,16 @@ export interface ToolCall {
     from: Bag;
   }): Promise<{ session: string; chat: string }>;
   /**
+   * The isolation a directory takes: `'worktree'` where this host can cut a
+   * tree from it, and `'folder'` where it cannot.
+   *
+   * The host's own offer for the directory answers it, so a tool asks the
+   * question a client's picker is drawn from rather than looking at the
+   * filesystem itself. `undefined` where this host has no offer to read, as
+   * when it runs no worktrees port.
+   */
+  isolation(directory: string): Promise<'folder' | 'worktree' | undefined>;
+  /**
    * A second chat in a running session, started with its first message.
    *
    * `provider` names the backend that serves this chat, where it is not the

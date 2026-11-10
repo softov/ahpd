@@ -729,13 +729,23 @@ export const sessionTools = (): HostTool[] => [
       const workspace = workspaceMeant(required(input.workspace, 'workspace', tool), rows, tool);
       const worktree = flag(input.worktree, 'worktree', tool);
       const model = modelMeant(at, optional(input.model, 'model', tool), tool, agent);
+      /*
+       * What this folder takes, as the host offers it, so a folder with no git
+       * is used as it is and a worktree asked for there is refused rather than
+       * quietly made a folder.
+       * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts
+       */
+      const offers = await at.isolation(workspace);
+      if (worktree === true && offers === 'folder')
+        throw new Error(`Invalid ${tool} input: ${workspace} is not a git repository, so it has no worktrees.`);
       // What was asked; else the caller's own arrangement for its own
-      // directory, which is the folder it is in; else a worktree, which is
-      // what keeps two sessions from editing one checkout.
+      // directory, which is the folder it is in; else what the folder takes,
+      // and a worktree where the host cannot say, which is what keeps two
+      // sessions from editing one checkout.
       const own = mine?.workingDirectories[0] === undefined ? undefined : pathOf(mine.workingDirectories[0]);
       const isolation: 'worktree' | 'folder' = worktree !== undefined
         ? (worktree ? 'worktree' : 'folder')
-        : own === workspace ? 'folder' : 'worktree';
+        : own === workspace ? 'folder' : offers ?? 'worktree';
       const made = await at.create({
         workingDirectory: workspace,
         ...(agent !== undefined ? { provider: agent } : {}),

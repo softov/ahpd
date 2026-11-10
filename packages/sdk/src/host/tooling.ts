@@ -2066,6 +2066,22 @@ export function createTooling(ctx: HostContext): Tooling {
     });
   };
 
+  /**
+   * The isolation a directory takes, as this host offers it.
+   *
+   * `'worktree'` where the offer lets a tree be cut from the directory, which
+   * is a folder inside a git repository, and `'folder'` where it does not.
+   * `undefined` where the host offers no isolation at all, as one with no
+   * worktrees port: there is nothing a tool could pick between.
+   */
+  const isolationOf = async (directory: string): Promise<'folder' | 'worktree' | undefined> => {
+    const offer = await ctx.isolating(directory);
+    const property = (offer.schema.properties ?? {}) as Bag;
+    const isolation = property.isolation as Bag | undefined;
+    if (isolation === undefined) return undefined;
+    return Array.isArray(isolation.enum) && isolation.enum.includes('worktree') ? 'worktree' : 'folder';
+  };
+
   const toolContext = (uri: string, chatUri: string, provider?: string, call?: ToolCallFacts): ToolCall => ({
     session: uri,
     chat: chatUri,
@@ -2138,6 +2154,7 @@ export function createTooling(ctx: HostContext): Tooling {
         release();
       }
     },
+    isolation: isolationOf,
     create: async (asked) => {
       /*
        * The chain this session is part of, and the budget it spends.
@@ -2422,6 +2439,7 @@ export function createTooling(ctx: HostContext): Tooling {
           release();
         }
       },
+      isolation: isolationOf,
       create: async (asked) => {
         // No chain and no budget: a session made here belongs to the caller,
         // has no parent, and spends nothing a budget keeps.
