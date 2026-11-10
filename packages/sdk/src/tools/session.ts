@@ -2,7 +2,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { Status, idOf } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { flag, optional, required, when } from '../utils/toolinput.js';
-import type { HostTool, SessionlessToolCall, ToolCall } from '../types/host.js';
+import type { HostTool, SendMessageRequest, SessionlessToolCall, ToolCall } from '../types/host.js';
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Summary } from '../types/catalog.js';
 import type { Bag } from '../types/common.js';
@@ -16,8 +16,9 @@ import type { Grant } from '../types/users.js';
  * input schemas and the answer shapes are copied rather than redesigned, so a
  * prompt or a skill written against that host calls these and gets the same
  * thing back: `list_sessions` answers `{ sessions: [...] }` with the same
- * keys, `send_message` says "Message queued (link)." in the same words, and a
- * link is `agent-host-session://<provider>/<id>`, which its window opens.
+ * keys, `send_message` answers which message it queued or started, under the
+ * same id and revision, and a link is `agent-host-session://<provider>/<id>`,
+ * which its window opens.
  *
  * Every tool acts through `ToolCall`, which is what the host lets a tool see
  * and do; nothing here reaches past it. Confirmation is the backend's: these
@@ -308,7 +309,7 @@ type AnyToolCall = ToolCall | SessionlessToolCall;
  * carries the origin alone: there is nothing a window could open the message
  * from, and a source it never had would be one it could not.
  */
-const delegated = (at: AnyToolCall): Bag => ({
+const delegated = (at: AnyToolCall, messageId?: string, revision?: number): Bag => ({
   origin: { kind: 'agent' },
   ...(at.session === undefined || at.chat === undefined ? {} : {
     _meta: {
@@ -316,10 +317,18 @@ const delegated = (at: AnyToolCall): Bag => ({
         sourceSession: at.session,
         sourceChat: at.chat,
         ...(at.turn() !== undefined ? { sourceTurnId: at.turn() } : {}),
+        ...(messageId === undefined ? {} : { messageId, revision }),
       },
     },
   }),
 });
+
+/** A positive integer, or a refusal naming the tool and the field. */
+const positive = (value: unknown, field: string, tool: string): number => {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1)
+    throw new Error(`Invalid ${tool} input: ${field} must be a positive integer.`);
+  return value;
+};
 
 /** The row of the calling session, from the catalogue; nothing when there is none. */
 const self = async (at: AnyToolCall): Promise<Summary | undefined> =>
@@ -840,14 +849,18 @@ export const sessionTools = (): HostTool[] => [
     definition: {
       name: 'send_message',
       title: 'Send Message',
-      description: 'Send a message to an existing session or chat, starting a new turn there. Provide a session URI from `list_sessions` or an `agent-host-session://` link; a link carrying a chat id targets that specific chat. If the target chat is busy, the message is queued and starts after the active turn completes successfully. Delivery is asynchronous: this tool does not wait for or return the reply.',
+      description: 'Send, replace, or cancel your message in an existing session or chat. Use `delivery: "steer"` only to update an active turn; steering is handed to the provider immediately and cannot be replaced or cancelled. Use `delivery: "queue"` for a separate turn. Replace and cancel require the message ID and revision returned by an earlier call and succeed only while that queued message is pending. If it already started, the result reports `processing` or `completed`; decide whether to send a steering correction or a queued follow-up. Delivery is asynchronous; this tool does not wait for or return a reply.',
       inputSchema: {
         type: 'object',
         properties: {
+          operation: { type: 'string', enum: ['send', 'replace', 'cancel'], description: '`send` (default) creates a message, `replace` updates one of your pending queued messages, and `cancel` removes one of your pending queued messages.' },
           session: { type: 'string', description: 'The session or chat to message: a session URI from `list_sessions`, or an `agent-host-session://` link. A link carrying a chat id targets that specific chat.' },
-          message: { type: 'string', description: 'The message to send.' },
+          message: { type: 'string', description: 'The complete message text. Required for `send` and `replace`; omit for `cancel`.' },
+          delivery: { type: 'string', enum: ['queue', 'steer'], description: 'For `send`, use `steer` to update an active turn or `queue` for a separate turn. Defaults to `queue`.' },
+          messageId: { type: 'string', description: 'For `replace` or `cancel`, the ID returned when this chat sent the message.' },
+          expectedRevision: { type: 'number', description: 'For `replace` or `cancel`, the revision returned with a pending queued message. The operation fails if the message changed or started processing.' },
         },
-        required: ['session', 'message'],
+        required: ['session'],
       },
       annotations: { title: 'Send Message', readOnlyHint: false, destructiveHint: true },
     },
@@ -856,14 +869,33 @@ export const sessionTools = (): HostTool[] => [
     run: async (input, at) => {
       const tool = 'send_message';
       allowed(at, 'session:write');
-      const message = required(input.message, 'message', tool);
       const found = await known(at, required(input.session, 'session', tool), tool);
+      const operation = optional(input.operation, 'operation', tool) ?? 'send';
+      if (operation !== 'send' && operation !== 'replace' && operation !== 'cancel')
+        throw new Error(`Invalid ${tool} input: operation must be one of send, replace, cancel.`);
+      let request: SendMessageRequest;
+      if (operation === 'send') {
+        const delivery = optional(input.delivery, 'delivery', tool) ?? 'queue';
+        if (delivery !== 'queue' && delivery !== 'steer')
+          throw new Error(`Invalid ${tool} input: delivery must be one of queue, steer.`);
+        request = { operation, delivery, message: required(input.message, 'message', tool) };
+      } else {
+        const messageId = required(input.messageId, 'messageId', tool);
+        const expectedRevision = positive(input.expectedRevision, 'expectedRevision', tool);
+        request = operation === 'replace'
+          ? { operation, messageId, expectedRevision, message: required(input.message, 'message', tool) }
+          : { operation, messageId, expectedRevision };
+      }
       const chats = at.chats(found.session.resource);
       const target = found.chatId === undefined ? chats[0]?.resource : chats.find((one) => idOf(one.resource) === found.chatId)?.resource;
       if (at.chat !== undefined && target === at.chat)
         throw new Error(`Invalid ${tool} input: refusing to send a message to the current chat.`);
-      const what = await at.send(found.session.resource, found.chatId, message, delegated(at));
-      return `Message ${what} (${openLink(found.session.resource, found.session.provider, found.chatId)}).`;
+      const messageId = request.messageId ?? crypto.randomUUID();
+      // A new message is the first revision of its life; a replacement is the
+      // next one after the revision the earlier answer named.
+      const revision = request.operation === 'send' ? 1 : request.operation === 'replace' ? (request.expectedRevision ?? 0) + 1 : undefined;
+      const answer = await at.send(found.session.resource, found.chatId, { ...request, messageId }, delegated(at, messageId, revision));
+      return JSON.stringify({ ...answer, openLink: openLink(found.session.resource, found.session.provider, found.chatId) });
     },
   },
   {

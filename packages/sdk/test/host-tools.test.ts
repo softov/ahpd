@@ -184,14 +184,16 @@ describe('tools the host contributes', () => {
       await client.handle({ method: 'subscribe', params: { channel: chatUri } });
       await atRest(client, 'ahp-session:/other');
       // From the first session's tools, at the second, by its link.
-      const said = await call('send_message', { session: 'agent-host-session://claude/other', message: 'check the makefile' }, 0);
-      expect(said).toBe('Message sent (agent-host-session://claude/other).');
+      const said = JSON.parse(await call('send_message', { session: 'agent-host-session://claude/other', message: 'check the makefile' }, 0)) as Record<string, unknown>;
+      expect(said).toMatchObject({
+        action: 'started', revision: 1, status: 'processing', openLink: 'agent-host-session://claude/other',
+      });
       await settle();
       const started = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
       expect(started?.action.message).toMatchObject({
         text: 'check the makefile',
         origin: { kind: 'agent' },
-        _meta: { 'vscode.chat.delegation': { sourceSession: 'ahp-session:/served' } },
+        _meta: { 'vscode.chat.delegation': { sourceSession: 'ahp-session:/served', messageId: said.messageId, revision: 1 } },
       });
     });
 
@@ -207,8 +209,10 @@ describe('tools the host contributes', () => {
         params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
       });
       await settle();
-      const said = await call('send_message', { session: 'ahp-session:/busy', message: 'and then this' }, 0);
-      expect(said).toBe('Message queued (agent-host-session://claude/busy).');
+      const said = JSON.parse(await call('send_message', { session: 'ahp-session:/busy', message: 'and then this' }, 0)) as Record<string, unknown>;
+      expect(said).toMatchObject({
+        action: 'queued', revision: 1, status: 'pending', openLink: 'agent-host-session://claude/busy',
+      });
       await settle();
       const queued = actions(p, chatUri).find((one) => one.action.type === 'chat/pendingMessageSet');
       expect(queued?.action).toMatchObject({ kind: 'queued', message: { text: 'and then this', origin: { kind: 'agent' } } });

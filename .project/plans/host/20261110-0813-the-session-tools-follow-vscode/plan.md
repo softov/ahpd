@@ -74,7 +74,7 @@ move_session -> moveChat (chatMoves.enabled) -> session/chatRemoved, chatAdded
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - send_message replaces, cancels and steers](task-01-send-message-replaces-and-steers.md) | todo | - |
+| [01 - send_message replaces, cancels and steers](task-01-send-message-replaces-and-steers.md) | implemented | - |
 | [02 - set_workspace moves the calling chat](task-02-set-workspace-moves-the-chat.md) | todo | - |
 | [03 - create_session works with no git](task-03-create-session-works-with-no-git.md) | todo | - |
 | [04 - move_session reorganizes sessions](task-04-move-session.md) | todo | - |
@@ -85,10 +85,10 @@ move_session -> moveChat (chatMoves.enabled) -> session/chatRemoved, chatAdded
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-10.
-- **Next action:** [task-01-send-message-replaces-and-steers.md](task-01-send-message-replaces-and-steers.md).
+- **Done so far:** task 01 implemented 2026-11-10; `send_message` takes `operation`, `delivery`, `messageId` and `expectedRevision`, and answers in VS Code's terms.
+- **Next action:** [task-02-set-workspace-moves-the-chat.md](task-02-set-workspace-moves-the-chat.md).
 - **Open questions:** none.
-- **Watch out for:** VS Code's main moved past ahpd's UPSTREAM.md checkpoint, 1.143.1. Add these tools to the next pass's notes, so the pass does not do them again.
+- **Watch out for:** VS Code's main moved past ahpd's UPSTREAM.md checkpoint, 1.143.1. Add these tools to the next pass's notes, so the pass does not do them again. The prescribed sdk run leaves `watches.test.ts > honours the excludes it was given` failing while `TMPDIR` is inside the worktree: the case's own paths contain `node_modules/`. It passes with `TMPDIR` outside the repository.
 
 ## Final verification checklist
 

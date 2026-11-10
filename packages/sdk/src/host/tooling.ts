@@ -31,9 +31,9 @@ import type { Bag } from '../types/common.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { Owner } from '../types/usage.js';
 import type { ClientPlugins, SyncedPlugin } from '../types/clientplugins.js';
-import type { HostTool, SessionlessToolCall, ToolCall, ToolCaller, TitleStrategy, ToolSession } from '../types/host.js';
+import type { Connection, HostTool, SendMessageAnswer, SendMessageRequest, SessionlessToolCall, ToolCall, ToolCaller, TitleStrategy, ToolSession } from '../types/host.js';
 import type { Agent, BoundTool, McpServer, ToolCallFacts } from '../types/agent.js';
-import type { Session, TurnOptions } from '../types/session.js';
+import type { MessageFrom, Session, TurnOptions } from '../types/session.js';
 import type { DiscardedFileEdits } from '../types/changes.js';
 import type { ChatSummary, ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { ToolsEndpoint } from '../tools/server.js';
@@ -1429,6 +1429,136 @@ export function createTooling(ctx: HostContext): Tooling {
   };
 
   /**
+   * A message this host sent into a chat, where the chat holds it now.
+   *
+   * `pending` for one still waiting, with the kind it waits as; `processing`
+   * for the turn that took it up; `completed` for one whose turn is in the
+   * chat's history. Nothing for a message the chat never held.
+   * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/common/agentSessionMessage.ts#L25-L42
+   */
+  type HeldMessage =
+    | { status: 'pending'; kind: 'steering' | 'queued'; message: Bag }
+    | { status: 'processing' | 'completed'; message: Bag };
+
+  /** Where a message was sent from, as the reference client writes it on the message. */
+  const delegationOf = (message: Bag | undefined): Bag | undefined => {
+    const metaBag = message?._meta;
+    if (typeof metaBag !== 'object' || metaBag === null || Array.isArray(metaBag)) return undefined;
+    const delegation = (metaBag as Bag)['vscode.chat.delegation'];
+    return typeof delegation === 'object' && delegation !== null && !Array.isArray(delegation) ? delegation as Bag : undefined;
+  };
+
+  /** The id a message was sent under, when it carries one. */
+  const messageIdOf = (message: Bag | undefined): string | undefined => {
+    const delegation = delegationOf(message);
+    return delegation !== undefined && typeof delegation.sourceSession === 'string' && typeof delegation.messageId === 'string'
+      ? delegation.messageId : undefined;
+  };
+
+  const messageHeld = (state: Bag | undefined, id: string): HeldMessage | undefined => {
+    if (state === undefined) return undefined;
+    const steering = state.steeringMessage as Bag | undefined;
+    if (steering !== undefined && String(steering.id ?? '') === id)
+      return { status: 'pending', kind: 'steering', message: (steering.message ?? {}) as Bag };
+    const queued = Array.isArray(state.queuedMessages)
+      ? (state.queuedMessages as Bag[]).find((one) => String(one.id ?? '') === id) : undefined;
+    if (queued !== undefined) return { status: 'pending', kind: 'queued', message: (queued.message ?? {}) as Bag };
+    const active = state.activeTurn as Bag | undefined;
+    if (active !== undefined && messageIdOf(active.message as Bag | undefined) === id)
+      return { status: 'processing', message: (active.message ?? {}) as Bag };
+    const turns = Array.isArray(state.turns) ? state.turns as Bag[] : [];
+    for (let at = turns.length - 1; at >= 0; at--) {
+      const turn = turns[at];
+      if (turn !== undefined && messageIdOf(turn.message as Bag | undefined) === id)
+        return { status: 'completed', message: (turn.message ?? {}) as Bag };
+    }
+    return undefined;
+  };
+
+  /**
+   * One `send_message` against a chat this host runs, in the reference host's
+   * terms.
+   *
+   * A send starts a turn, queues behind what the chat holds or steers the turn
+   * that runs. A replace or cancel acts only on a pending message this calling
+   * chat sent, at the revision the earlier answer named, and answers with the
+   * reference host's reasons when it cannot. The open link is the tool's to
+   * add, since it knows the provider the call named.
+   * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1500-L1659
+   */
+  const deliver = (
+    chat: Session,
+    request: SendMessageRequest & { messageId: string },
+    from: Bag,
+    source: { sourceChat: string | undefined; by?: { owner?: Owner | undefined; connection?: Connection | undefined } | undefined },
+    onStart: (turnId: string) => void,
+  ): SendMessageAnswer => {
+    const chatUri = chat.chatUri;
+    const state = (ctx.stateOf(chatUri) ?? chat.chatState()) as Bag | undefined;
+    if (request.operation !== 'send') {
+      const messageId = request.messageId;
+      const held = messageHeld(state, messageId);
+      if (held === undefined) return { action: 'rejected', reason: 'messageNotFound', messageId };
+      const delegation = delegationOf(held.message);
+      const owned = delegation !== undefined && typeof delegation.sourceSession === 'string'
+        && delegation.messageId === messageId && typeof delegation.sourceChat === 'string'
+        && source.sourceChat !== undefined && delegation.sourceChat === source.sourceChat;
+      if (!owned) return { action: 'rejected', reason: 'messageNotOwned', messageId };
+      const revision = typeof delegation.revision === 'number' ? delegation.revision : 0;
+      if (held.status === 'pending' && held.kind === 'steering')
+        return {
+          action: request.operation === 'replace' ? 'notReplaced' : 'notCancelled',
+          messageId, reason: 'processing', status: 'processing', revision,
+        };
+      if (held.status !== 'pending')
+        return {
+          action: request.operation === 'replace' ? 'notReplaced' : 'notCancelled',
+          messageId, reason: held.status, status: held.status, revision,
+        };
+      if (revision !== request.expectedRevision)
+        return { action: 'rejected', reason: 'revisionConflict', messageId, actualRevision: revision };
+      if (request.operation === 'cancel') {
+        dispatch(chatUri, { type: 'chat/pendingMessageRemoved', kind: held.kind, id: messageId });
+        return { action: 'cancelled', messageId, revision, previousStatus: 'pending' };
+      }
+      const next = (request.expectedRevision ?? 0) + 1;
+      // The previous message's own keys stay: the replaced text is the change,
+      // and where it was sent from is written over with this call's.
+      const message: Bag = {
+        ...held.message,
+        text: request.message ?? '',
+        origin: { kind: 'agent' },
+        _meta: { ...(held.message._meta as Bag | undefined), ...(from._meta as Bag | undefined) },
+      };
+      dispatch(chatUri, { type: 'chat/pendingMessageSet', kind: held.kind, id: messageId, message });
+      return { action: 'replaced', messageId, revision: next, status: 'pending', replacedMessage: String(held.message.text ?? '') };
+    }
+    if (request.delivery === 'steer') {
+      if (state?.activeTurn === undefined) return { action: 'rejected', reason: 'cannotSteer', targetStatus: 'idle' };
+      // The same refusal a client's steering message hears from a backend that
+      // takes none.
+      if (chat.sendSteeringMessage === undefined) throw new Error('The session provider does not support steering messages.');
+      dispatch(chatUri, {
+        type: 'chat/pendingMessageSet',
+        kind: 'steering',
+        id: request.messageId,
+        message: ctx.messageOf(request.message ?? '', undefined, from as MessageFrom),
+      });
+      return { action: 'steered', messageId: request.messageId, revision: 1, status: 'processing' };
+    }
+    const busy = state?.activeTurn !== undefined || state?.steeringMessage !== undefined
+      || (Array.isArray(state?.queuedMessages) && state.queuedMessages.length > 0);
+    if (busy) {
+      ctx.enqueue(chatUri, request.messageId, request.message ?? '', from as MessageFrom, source.by);
+      return { action: 'queued', messageId: request.messageId, revision: 1, status: 'pending' };
+    }
+    const turnId = crypto.randomUUID();
+    onStart(turnId);
+    void ctx.startTurn(chat, turnId, request.message ?? '', undefined, from as MessageFrom);
+    return { action: 'started', messageId: request.messageId, revision: 1, status: 'processing' };
+  };
+
+  /**
    * A move a session's agent asked for, waiting for its turn to end.
    *
    * `set_workspace` is the one tool that cannot act when it is called: the
@@ -1974,7 +2104,7 @@ export function createTooling(ctx: HostContext): Tooling {
       return usableAgents(person, person === undefined);
     },
     context: contextOf,
-    send: async (at, chatId, text, from) => {
+    send: async (at, chatId, request, from) => {
       /*
        * The budget of the session the call is made from, which is the one it
        * is counted against.
@@ -1983,10 +2113,11 @@ export function createTooling(ctx: HostContext): Tooling {
        * it runs: the session that asked for the message is the one whose budget
        * an agent is spending, and charging the target instead would let one
        * runaway send a hundred messages into each of any number of sessions
-       * without ever meeting a limit.
+       * without ever meeting a limit. Only a `send` is a message: a replacement
+       * and a cancellation act on one already counted.
        */
       const budget = budgetOf(idOf(uri));
-      room(budget, 'messages');
+      if (request.operation === 'send') room(budget, 'messages');
       // A session asleep in the catalogue is woken for the message, and held
       // awake until it has begun.
       const release = ctx.hold(at);
@@ -1995,22 +2126,14 @@ export function createTooling(ctx: HostContext): Tooling {
         const held = sessions.get(at);
         const found = held === undefined ? undefined : chatMeant(held, chatId);
         if (found === undefined) throw new Error(`${at} is not a session this host is running`);
-        const state = (ctx.stateOf(found.chat.chatUri) ?? found.chat.chatState()) as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
-        const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
-          || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
-        if (busy) {
-          // The chat's queued message, sent by whoever sent the calling turn.
-          const calling = activeTurnOf(chatUri);
-          ctx.enqueue(found.chat.chatUri, crypto.randomUUID(), text, from,
-            calling === undefined ? undefined : { owner: senderOf(calling), connection: sentBy.get(calling) });
-          countUp(budget, 'messages');
-          return 'queued';
-        }
-        const started = crypto.randomUUID();
-        remember(chatUri, started);
-        void ctx.startTurn(found.chat, started, text, undefined, from);
-        countUp(budget, 'messages');
-        return 'sent';
+        // The chat's queued message, sent by whoever sent the calling turn.
+        const calling = activeTurnOf(chatUri);
+        const answer = deliver(found.chat, { ...request, messageId: request.messageId ?? crypto.randomUUID() }, from, {
+          sourceChat: chatUri,
+          by: calling === undefined ? undefined : { owner: senderOf(calling), connection: sentBy.get(calling) },
+        }, (turnId) => { remember(chatUri, turnId); });
+        if (request.operation === 'send') countUp(budget, 'messages');
+        return answer;
       } finally {
         release();
       }
@@ -2282,7 +2405,7 @@ export function createTooling(ctx: HostContext): Tooling {
       providers: providersKnown,
       agents: () => usableAgents(caller.principal, caller.root === true),
       context: contextOf,
-      send: async (at, chatId, text, from) => {
+      send: async (at, chatId, request, from) => {
         // A session asleep in the catalogue is woken for the message, and held
         // awake until it has begun - the same road a call from a session takes.
         const release = ctx.hold(at);
@@ -2291,17 +2414,10 @@ export function createTooling(ctx: HostContext): Tooling {
           const held = sessions.get(at);
           const found = held === undefined ? undefined : chatMeant(held, chatId);
           if (found === undefined) throw new Error(`${at} is not a session this host is running`);
-          const state = (ctx.stateOf(found.chat.chatUri) ?? found.chat.chatState()) as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
-          const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
-            || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
-          if (busy) {
-            ctx.enqueue(found.chat.chatUri, crypto.randomUUID(), text, from, { owner: sender });
-            return 'queued';
-          }
-          const first = crypto.randomUUID();
-          sent(first);
-          void ctx.startTurn(found.chat, first, text, undefined, from);
-          return 'sent';
+          // Nobody is in a chat here, so a replacement or a cancellation is
+          // nobody's: the message was never this caller's to change.
+          return deliver(found.chat, { ...request, messageId: request.messageId ?? crypto.randomUUID() }, from,
+            { sourceChat: undefined, by: { owner: sender } }, (turnId) => { sent(turnId); });
         } finally {
           release();
         }
