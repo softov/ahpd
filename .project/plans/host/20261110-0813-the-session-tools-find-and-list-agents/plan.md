@@ -73,7 +73,7 @@ tools/list (per caller) -> list_sessions / list_agents / list_models / create_se
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - list_sessions finds by more](task-01-list-sessions-finds-by-more.md) | implemented | - |
-| [02 - list_agents and list_models](task-02-list-agents-and-list-models.md) | todo | - |
+| [02 - list_agents and list_models](task-02-list-agents-and-list-models.md) | implemented | - |
 | [03 - create_session names the agents](task-03-create-session-names-the-agents.md) | todo | 02 |
 
 ## Risks and tradeoffs
@@ -83,8 +83,8 @@ tools/list (per caller) -> list_sessions / list_agents / list_models / create_se
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-10; task-01 implemented 2026-11-10.
-- **Next action:** [task-02-list-agents-and-list-models.md](task-02-list-agents-and-list-models.md).
+- **Done so far:** planned 2026-11-10; task-01 implemented 2026-11-10; task-02 implemented 2026-11-10.
+- **Next action:** [task-03-create-session-names-the-agents.md](task-03-create-session-names-the-agents.md).
 - **Open questions:** none.
 - **Watch out for:** `/mcp` and each session's `/ahp-mcp/<uuid>` serve the same tools; a change reaches both. The prescribed `TMPDIR` inside the worktree turns eight git/filesystem cases red (`changes-refresh`, `git`, `watches`, `worktrees`), which pass with `TMPDIR` outside the repository.
 

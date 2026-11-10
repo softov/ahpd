@@ -13,6 +13,7 @@ import { CREATED_BY_META, SEND_REMOTE_MESSAGE } from '../sessions/remotesession.
 import { SESSION_TOOL_NAMES } from '../tools/session.js';
 import { ENABLE_CUSTOM_TERMINAL_TOOL, SHELL_TOOL_NAMES } from '../tools/shell.js';
 import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
+import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { groupOf } from '../access/users.js';
 import { teamsOf } from '../usage/scopes.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
@@ -1867,6 +1868,30 @@ export function createTooling(ctx: HostContext): Tooling {
   /** Every backend this host offers, whether or not it has named a model yet. */
   const providersKnown = (): string[] => [...ctx.agents.keys()];
 
+  /**
+   * The agents one call may start, with what a tool answers about each.
+   *
+   * `nobody` is a call with no person behind it: no agent a record holds is
+   * named to it, because it may start none of them. `undefined` is a call
+   * whose person the host cannot name - a turn this host's own root connection
+   * sent, or a host with no users directory - and keeps every agent, as `may`
+   * refuses it nothing.
+   */
+  const usableAgents = (
+    person: Principal | 'nobody' | undefined,
+    root: boolean,
+  ): { provider: string; name: string; schema: Bag }[] => {
+    const owners = options.agentOwners?.();
+    const hasDirectory = options.users !== undefined;
+    return [...ctx.agents.values()]
+      .filter((agent) => mayUseAgent(
+        person === 'nobody' ? undefined : person,
+        ownershipOf(owners, agent.provider),
+        { root, hasDirectory },
+      ))
+      .map((agent) => ({ provider: agent.provider, name: agent.displayName, schema: ctx.sessionSchema(agent) }));
+  };
+
   /** A chat's conversation, as its channel snapshot carries it. */
   const contextOf = async (
     session: string, chatId?: string,
@@ -1918,6 +1943,12 @@ export function createTooling(ctx: HostContext): Tooling {
     chats: chatsOf,
     models: modelsKnown,
     providers: providersKnown,
+    agents: () => {
+      const person = personOf(chatUri);
+      // No person named is a root turn or a host with no users directory, and
+      // either keeps every agent.
+      return usableAgents(person, person === undefined);
+    },
     context: contextOf,
     send: async (at, chatId, text, from) => {
       /*
@@ -2225,6 +2256,7 @@ export function createTooling(ctx: HostContext): Tooling {
       chats: chatsOf,
       models: modelsKnown,
       providers: providersKnown,
+      agents: () => usableAgents(caller.principal, caller.root === true),
       context: contextOf,
       send: async (at, chatId, text, from) => {
         // A session asleep in the catalogue is woken for the message, and held

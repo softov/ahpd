@@ -365,7 +365,7 @@ const modelMeant = (at: AnyToolCall, asked: string | undefined, tool: string, pr
   if (asked === undefined) return undefined;
   const pool = at.models().filter((one) => provider === undefined || one.provider === provider);
   const found = pool.find((one) => one.id === asked) ?? pool.find((one) => one.name.toLowerCase() === asked.toLowerCase());
-  if (found === undefined) throw new Error(`Invalid ${tool} input: model "${asked}" is not one this host offers${provider ? ` for ${provider}` : ''}.`);
+  if (found === undefined) throw new Error(`Invalid ${tool} input: model "${asked}" is not one this host offers${provider ? ` for ${provider}` : ''}. See list_models for the models an agent offers.`);
   return { id: found.id, provider: found.provider };
 };
 
@@ -414,6 +414,15 @@ const workspaceMeant = (asked: string, rows: Summary[], tool: string): string =>
 };
 
 const LIST_STATUS = ['idle', 'inProgress', 'inputNeeded', 'error', 'archived'];
+
+/**
+ * How many models a `list_agents` row names.
+ *
+ * The first five the host learned for that agent, which is the order its probe
+ * lists them in and the only order there is: nothing else ranks a model, and
+ * the default is the one a probe names first. `list_models` has them all.
+ */
+const TOP_MODELS = 5;
 
 /** What `rename_chat` does today, for a session that names its own chats. */
 const RENAME_CHAT_DESCRIPTION = 'Rename one specific chat so it is easy to find later. Renaming the default chat also names its owning session, while peer-chat titles remain independent. Use a short, human-friendly chat name in sentence case (1-4 words). Pass an `agent-host-session://` session or chat link to target another chat, or omit `chat` to rename the chat in which this tool is running. Name a fresh chat once its scope is clear. Call this tool again whenever the user explicitly asks to rename the chat; every invocation replaces the current title.';
@@ -488,6 +497,64 @@ export const sessionTools = (): HostTool[] => [
       return JSON.stringify({
         sessions: kept.map(serializeSession),
         ...(kept.length < found.length ? { truncated: true } : {}),
+      });
+    },
+  },
+  {
+    definition: {
+      name: 'list_agents',
+      title: 'List Agents',
+      description: 'List the agents a new session may be started on, each with the `agent` id `create_session` and `list_sessions` take, the name a person reads, the settings its `config` accepts, and its first five models. Use this before `create_session` to choose the agent, its model and its settings.',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { title: 'List Agents', readOnlyHint: true, openWorldHint: false },
+    },
+    /*
+     * A reader, cut to what this call's person may start: the list is built
+     * for the caller, so an agent held by somebody else is not named.
+     */
+    sessionless: true,
+    grant: 'session:read',
+    run: (_input, at) => {
+      const models = at.models();
+      return JSON.stringify({
+        agents: at.agents().map((one) => ({
+          agent: one.provider,
+          name: one.name,
+          config: one.schema,
+          models: models.filter((model) => model.provider === one.provider).slice(0, TOP_MODELS)
+            .map((model) => ({ id: model.id, name: model.name })),
+        })),
+      });
+    },
+  },
+  {
+    definition: {
+      name: 'list_models',
+      title: 'List Models',
+      description: 'List the models the agents offer, in the order the host learned them. Pass `agent` for one agent\'s models; omit it for every agent\'s. Each model answers the `id` and `name` that `create_session` and `create_chat` take as `model`, under the `agent` it belongs to.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', description: 'Only return this agent\'s models: a provider id from `list_agents`. Omit to return every agent\'s.' },
+        },
+      },
+      annotations: { title: 'List Models', readOnlyHint: true, openWorldHint: false },
+    },
+    sessionless: true,
+    grant: 'session:read',
+    run: (input, at) => {
+      const tool = 'list_models';
+      const asked = optional(input.agent, 'agent', tool);
+      const agents = at.agents();
+      if (asked !== undefined && !agents.some((one) => one.provider === asked))
+        throw new Error(`Invalid ${tool} input: agent "${asked}" is not one this host offers${agents.length > 0 ? `; it offers ${agents.map((one) => one.provider).join(', ')}` : ''}.`);
+      const models = at.models();
+      const named = asked === undefined ? agents : agents.filter((one) => one.provider === asked);
+      return JSON.stringify({
+        agents: named.map((one) => ({
+          agent: one.provider,
+          models: models.filter((model) => model.provider === one.provider).map((model) => ({ id: model.id, name: model.name })),
+        })),
       });
     },
   },
@@ -834,7 +901,7 @@ export const sessionTools = (): HostTool[] => [
  *
  * Read off `sessionTools()` rather than written out a second time, so the list
  * cannot drift from the tools themselves: one added there is one the option
- * switches off, and one taken away leaves the list. Only these nine are the
+ * switches off, and one taken away leaves the list. Only these eleven are the
  * session tools - the artifact tools, `ahp_resource`, `ahp_terminals` and
  * `schedule_wakeup` are this host's own and are offered whatever the option
  * says.

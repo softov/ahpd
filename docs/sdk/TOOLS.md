@@ -26,11 +26,13 @@ Terms, one line each:
 
 ## The host's own tools
 
-The nine session tools are the reference host's, by name and by schema, so a skill written against it works here unchanged. Each is a thing an agent inside one session cannot see for itself: the sessions running beside it, the chats inside them, and the terminals a person is watching.
+The nine session tools are the reference host's, by name and by schema, so a skill written against it works here unchanged. Each is a thing an agent inside one session cannot see for itself: the sessions running beside it, the chats inside them, and the terminals a person is watching. This host adds two readers beside them, `list_agents` and `list_models`, whose text is this host's own in the reference's style.
 
 | Tool | What it does |
 | --- | --- |
 | `list_sessions` | The catalogue, the same rows `listSessions` answers from |
+| `list_agents` | The agents a new session may be started on, each with the `agent` id `create_session` takes, the name a person reads, the settings its `config` accepts, and its first five models |
+| `list_models` | The models the agents offer, in the order the host learned them: one agent's when `agent` is named, every agent's otherwise |
 | `get_current_session` | Its own session, as `list_sessions` would describe it |
 | `get_session_context` | A chat's turns, its active turn, and whether there is history before them |
 | `send_message` | A message into any chat of any session this host runs: sent when the chat is free, queued when it is busy |
@@ -56,7 +58,9 @@ A tool with `sessionless: true` runs with no calling session. Its `run` is given
 
 The caller is this host's root connection, `{ root: true }`, or a person, `{ principal }`. `grant` is the grant a caller needs to see a tool in that list: root sees every listed tool, a principal sees the ones whose `grant` it holds, and a host with no users directory sees all of them. A tool that names no grant is one every caller sees.
 
-Seven of the nine session tools are listed. `list_sessions` and `get_session_context` ask `session:read`, and `create_session`, `create_chat`, `rename_chat`, `send_message` and `delete_session` ask `session:write`, the same grants the table under Grants names for a turn. `get_current_session` and `set_workspace` are not listed, because each is about the session the call came from and about nothing else.
+Nine of the eleven session tools are listed. `list_sessions`, `list_agents`, `list_models` and `get_session_context` ask `session:read`, and `create_session`, `create_chat`, `rename_chat`, `send_message` and `delete_session` ask `session:write`, the same grants the table under Grants names for a turn. `get_current_session` and `set_workspace` are not listed, because each is about the session the call came from and about nothing else.
+
+`list_agents` and `list_models` answer only the agents the caller may start, the rule a start on an agent is refused by: an agent a record holds for somebody else is not named, as an unsigned caller is told the host's agents alone. `list_agents` names each agent's first five models, the order its probe lists them in, and `list_models` names every one.
 
 A call with no session is the agent's own, with no delegation `_meta`, so no turn above it can be named. It refuses what needs one: `create_session` refuses `relationship: currentSession` with `currentSession needs a calling session; use independent`, and `create_chat`, `rename_chat`, `send_message` and `get_session_context` refuse a call that names no session. What it makes is the caller's: a session `create_session` opens with `independent` is owned by the caller and has no parent, so it is no link in any chain, and a message `send_message` sends is a turn recorded as the caller's. A call with no session also spends none of the tree budgets under Limits, since there is no tree to charge. A `tool_call` event for one names the person and no session.
 

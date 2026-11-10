@@ -14,6 +14,7 @@ import {
 import { directory, hello, root, signIn } from './users-gate-helpers.js';
 import { SIGNED_IN, builtCount, builtServer, claude, echo, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
 import type { Agent, Start } from '../src/types/agent.js';
+import type { AgentOwner } from '../src/types/agents.js';
 import type { Summary } from '../src/types/catalog.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
 import { sdkVersion } from '../src/version.js';
@@ -311,11 +312,11 @@ describe('a transcript as get_session_context answers it', () => {
 });
 
 describe('the set itself', () => {
-  it('is the reference host\'s nine, by name, with the required fields it requires', () => {
+  it('is the reference host\'s nine in its order, then the two readers this host adds', () => {
     const tools = sessionTools();
     expect(tools.map((one) => one.definition.name)).toEqual([
-      'list_sessions', 'get_current_session', 'set_workspace', 'create_session', 'create_chat',
-      'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+      'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace',
+      'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
     ]);
     const schema = (name: string) => tools.find((one) => one.definition.name === name)?.definition.inputSchema as { required?: string[] };
     expect(schema('create_session').required).toEqual(['relationship', 'prompt', 'title']);
@@ -1187,16 +1188,17 @@ describe('a tool a person calls with no session', () => {
     return await tool.run(input);
   };
 
-  it('offers a member the seven session tools, and a guest only the two it may read', async () => {
+  it('offers a member the nine session tools, and a guest only the four it may read', async () => {
     const { host, users } = hosting();
-    const seven = [
-      'list_sessions', 'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+    const nine = [
+      'list_sessions', 'list_agents', 'list_models', 'create_session', 'create_chat', 'rename_chat', 'send_message',
+      'get_session_context', 'delete_session',
     ];
-    expect(Object.keys(offered(host, { principal: await principal(users, 'member') }))).toEqual(seven);
+    expect(Object.keys(offered(host, { principal: await principal(users, 'member') }))).toEqual(nine);
     expect(Object.keys(offered(host, { principal: await principal(users, 'guest') })))
-      .toEqual(['list_sessions', 'get_session_context']);
+      .toEqual(['list_sessions', 'list_agents', 'list_models', 'get_session_context']);
     // This host's own connection is refused nothing it asks about, either.
-    expect(Object.keys(offered(host, { root: true }))).toEqual(seven);
+    expect(Object.keys(offered(host, { root: true }))).toEqual(nine);
   });
 
   it('leaves out a tool that says nothing, and an advanced one while the host forbids them', async () => {
@@ -1214,7 +1216,80 @@ describe('a tool a person calls with no session', () => {
     const names = Object.keys(offered(host, { principal: await principal(users, 'member') }));
     expect(names).not.toContain('plain_tool');
     expect(names).not.toContain('advanced_tool');
-    expect(names).toHaveLength(7);
+    expect(names).toHaveLength(9);
+  });
+
+  /*
+   * The two readers, cut to the agents the caller may start: an agent a record
+   * holds for somebody else is not named, as a start on it is refused.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3288-L3291
+   */
+  describe('what a caller may start', () => {
+    /**
+     * An agent with a probe, so the host learns its models; `one` names six,
+     * more than a `list_agents` row answers with.
+     */
+    const backend = (id: string, models: number): Agent => ({
+      ...echo({ path: root, pace: 0 }),
+      provider: id,
+      displayName: id === 'one' ? 'One' : 'Two',
+      probe: async () => ({
+        models: Array.from({ length: models }, (_, at) => ({ id: `${id}-${at + 1}`, name: `${id} ${at + 1}` })),
+        commands: [],
+        customizations: [],
+      }),
+    });
+
+    /** A host of two agents, neither a host agent: both a record's, `user:cy`'s. */
+    const hostingTwo = (owners?: ReadonlyMap<string, AgentOwner>) => hosting(
+      [], undefined, [backend('one', 6), backend('two', 2)],
+      owners === undefined ? {} : { agentOwners: () => owners },
+    );
+
+    it('answers each agent a caller may start, with its first five models', async () => {
+      const { host } = hostingTwo();
+      // The probes answer a tick after the host is made, and that is what it learns the models from.
+      await settle(8);
+      const answer = JSON.parse(await run(host, { root: true }, 'list_agents', {})) as {
+        agents: { agent: string; name: string; config: Record<string, unknown>; models: { id: string; name: string }[] }[];
+      };
+      expect(answer.agents.map((one) => one.agent)).toEqual(['one', 'two']);
+      expect(answer.agents.map((one) => one.name)).toEqual(['One', 'Two']);
+      expect(answer.agents[0]?.models.map((one) => one.id)).toEqual(['one-1', 'one-2', 'one-3', 'one-4', 'one-5']);
+      expect(answer.agents[1]?.models.map((one) => one.id)).toEqual(['two-1', 'two-2']);
+      // The settings its `config` accepts, as a session's schema would fold them.
+      expect(answer.agents[0]?.config).toBeTypeOf('object');
+    });
+
+    it('answers two rows to a caller that may start both, and an empty list to one that may start none', async () => {
+      const owners = new Map<string, AgentOwner>([['one', 'user:cy'], ['two', 'user:cy']]);
+      const { host, users } = hostingTwo(owners);
+      // The daemon itself keeps every agent, whoever a record holds it for.
+      expect((JSON.parse(await run(host, { root: true }, 'list_agents', {})) as { agents: unknown[] }).agents)
+        .toHaveLength(2);
+      // A person the records are not theirs keeps none of them, and is not told they exist.
+      expect((JSON.parse(await run(host, { principal: await principal(users, 'member') }, 'list_agents', {})) as { agents: unknown[] }).agents)
+        .toEqual([]);
+    });
+
+    it('answers list_models the agent it names, and refuses one this caller may not start', async () => {
+      const hosts = hostingTwo(new Map<string, AgentOwner>([['one', 'user:cy'], ['two', 'user:cy']]));
+      await settle(8);
+      const member = await principal(hosts.users, 'member');
+      const answer = JSON.parse(await run(hosts.host, { root: true }, 'list_models', { agent: 'one' })) as {
+        agents: { agent: string; models: { id: string; name: string }[] }[];
+      };
+      expect(answer.agents).toEqual([{
+        agent: 'one',
+        models: [1, 2, 3, 4, 5, 6].map((at) => ({ id: `one-${at}`, name: `one ${at}` })),
+      }]);
+      // Every agent's, in the order the host learned them, when none is named.
+      expect((JSON.parse(await run(hosts.host, { root: true }, 'list_models', {})) as { agents: { agent: string }[] }).agents.map((one) => one.agent))
+        .toEqual(['one', 'two']);
+      // An agent the caller may not start is one this host does not offer it.
+      await expect(run(hosts.host, { principal: member }, 'list_models', { agent: 'one' }))
+        .rejects.toThrow('Invalid list_models input: agent "one" is not one this host offers.');
+    });
   });
 
   it('refuses a tool the operator\'s rule names, before the tool runs', async () => {

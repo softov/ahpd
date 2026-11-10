@@ -45,6 +45,8 @@ The token is the one `ahpd user token <id>` prints, or one minted with `ahpd tok
 | Tool | Does |
 | --- | --- |
 | `list_sessions` | The sessions here, filtered by status, agent, title, path, workspace, changes, unread, pull request, created or modified time, newest first, up to `limit` |
+| `list_agents` | The agents a new session may be started on, each with its id, its name, its settings and its first five models |
+| `list_models` | The models the agents offer, one agent's or every agent's |
 | `create_session` | Start a session, owned by the caller |
 | `create_chat` | Open another chat in a session |
 | `rename_chat` | Rename a chat |
@@ -54,9 +56,11 @@ The token is the one `ahpd user token <id>` prints, or one minted with `ahpd tok
 
 `get_current_session`, `set_workspace` and the artifact tools act on the calling session, so there is no sessionless form of them and `/mcp` does not offer them. Connector actions and a schedule are not served here either.
 
-Each tool checks its own grants, so the list is only what the caller may run. A `member` sees all seven. A role with `mcp:call` and `session:read` only sees `list_sessions` and `get_session_context`, and a call to `create_session` gets `No tool named create_session`.
+Each tool checks its own grants, so the list is only what the caller may run. A `member` sees all nine. A role with `mcp:call` and `session:read` only sees `list_sessions`, `list_agents`, `list_models` and `get_session_context`, and a call to `create_session` gets `No tool named create_session`.
 
 `create_session` takes an `agent`, a provider id such as `claude-deepseek-build`, and a `config`, the new session's settings checked against that agent's schema. Both are optional. See [Tools](../sdk/TOOLS.md#tools-that-need-no-session).
+
+`list_agents` and `list_models` are the readers beside it: both are cut to the agents the caller may start, and `list_models` answers the `id` and `name` that `create_session` and `create_chat` take as `model`. Use them to choose an agent, its model and its settings before a start.
 
 A session made here belongs to the caller and has no parent. Its turns are the caller's, so the caller's grants follow them.
 
