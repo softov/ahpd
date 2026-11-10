@@ -32,7 +32,8 @@ Work saved under an old owner such as `plugin:@ahpd/bot` reads as `plugin:bot`, 
 - After task 07, the test gate passes with 5105 tests, and agent-cofold, agent-pi and tunnel-devtunnel pass with 444 tests.
 - In ahpw, `pnpm typecheck` passes, and `pnpm test` passes with 282 tests.
 - Task 06 found no reader to change, so its gates are those of task 05.
-- The checks by hand with a running daemon wait in [linux-checks.md](../../../pending/linux-checks.md).
+- The checks by hand passed. The webhook, the scope and the page under `/plugins/web/` passed on 2026-10-20, and the old owner on 2026-11-03.
+- The sign-in of ahpw under its slug passed on 2026-11-09, on a Debian 13 test VM. The check was `pending/linux-checks.md`, last held at git://45983f869.
 
 ## Departures from the plan
 

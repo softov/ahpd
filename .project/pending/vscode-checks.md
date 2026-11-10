@@ -29,10 +29,13 @@ Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `setting
 
 ## host/105: a synced skill is named by its plugin
 
-1. Sync a plugin from the window that has only `.plugin/plugin.json`, such as the Windows run's `advisor` skill.
-2. Open a session on `ahpd-check`, and type `/` in the composer.
-3. Check that the skill is in the slash list once, as `vs-code-synced-data:advisor`, with no number in its name.
-4. Run the skill, and check that it answers.
+VS Code sends a user skill to the agent host inside a plugin named "VS Code Synced Data". Before host/105, the slash list named that skill by a number, such as `/1683262406:advisor`.
+
+1. Make the user skill `~/.copilot/skills/check-skill/SKILL.md`. Its frontmatter is `name: check-skill` and `description: Answers ok.`, and its body is `Answer "ok".`
+2. Reload the VS Code window.
+3. Open a Claude session on `ahpd-check`, and type `/` in the composer.
+4. Check that the skill is in the slash list once, as `vs-code-synced-data:check-skill`, with no number in its name.
+5. Run the skill, and check that it answers "ok".
 
 ## host/99: the account menu shows the Codex account
 
@@ -44,6 +47,14 @@ Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `setting
 ## Reply
 
 Write "pass" for each section, or what you saw. Stop the test daemon with `ahpd stop`.
+
+## Results on Linux, 2026-11-09
+
+Run by Softov in VS Code on Linux.
+
+- **host/104:** not checked. The plugin's menu had "Disable" and "Disable (Workspace)", and no "Disable (Session)". "Disable" also turned the plugin off in an older session, which is what the global scope does. VS Code at `171e90619c72` builds "Disable (Session)" for every plugin that a host lists (`agentPluginActions.ts`, `getAgentHostPluginEnablementActions`). Which plugin and which menu were used is not recorded.
+- **host/105:** not checked, because the steps were not clear. They are written again. A skill of the window did not show in the slash list.
+- **host/99:** not checked. The account menu was not found. Softov suggests that the Codex agent shows its account, as the Claude agent does.
 
 ## Results on Windows, 2026-10-16
 

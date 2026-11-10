@@ -32,7 +32,6 @@ Restart the daemon on main first. Do them from the top down.
 
 A Debian 13 GNOME VM on Softov's Proxmox node, with passwordless sudo, reached through the node. It suits a check that needs sudo, a second user or a clean GNOME login. Claude runs the shell steps over ssh, and Softov does the steps at the GNOME desktop. Never write the VM's name, address or user names in a record.
 
-- [linux-checks.md](linux-checks.md) - 10 min, the sign-in only. A browser in GNOME, and a clone of ahpd at `/github/ahpd` for `test-daemon.sh`.
 - [update-checks.md](update-checks.md) - about 60 min, the Debian sections as a throwaway user. The systemd section waits on a version after 0.15.0-rc.1, and the HTTP section needs `httpApi`, a token and a person. The Windows section runs on the Windows 10 VM.
 
 Before and after a check on the VM:

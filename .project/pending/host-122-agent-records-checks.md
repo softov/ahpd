@@ -24,7 +24,9 @@ node --conditions development --import ./scripts/dev.mjs packages/server/src/mai
 1. List the agents in a client, and find `claude-deepseek-build` and the others.
 2. Start a session on `claude-deepseek-build`, and send one turn.
 3. Add a second agent-cofold record in ahpw, and send it one turn.
-4. Change the key of a record in ahpw while its session runs, and send one more turn.
+4. Keep the session of step 3 open. In ahpw, edit its record, and replace its `apiKey` with a wrong one, such as `sk-wrong`.
+5. Send one more turn in that session. Expect it to fail on the key, because an edit applies at the next turn.
+6. Put the good key back in ahpw, and send one more turn. Expect it to answer.
 
 ## Reply
 
