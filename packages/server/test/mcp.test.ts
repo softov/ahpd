@@ -95,7 +95,7 @@ const listed = (said: Record<string, unknown>): string[] =>
 const call = (handler: RequestHandler, name: string, args: Record<string, unknown>, token: string) =>
   ask(handler, 'tools/call', { name, arguments: args }, token);
 
-const SEVEN = ['list_sessions', 'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session'];
+const NINE = ['list_sessions', 'list_agents', 'list_models', 'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session'];
 
 describe('/mcp is off unless the deployment turns it on', () => {
   it('answers 404 for every request while mcpTools is none', async () => {
@@ -144,12 +144,12 @@ describe('/mcp serves the sessionless tools a caller may run', () => {
     expect((await door()(new Request(`${ORIGIN}/mcp`, { headers: { authorization: `Bearer ${ana}` } }))).status).toBe(405);
   });
 
-  it('lists the seven session tools for a member', async () => {
-    expect(listed((await ask(door(), 'tools/list', undefined, ana)).said)).toEqual(SEVEN);
+  it('lists the nine session tools for a member', async () => {
+    expect(listed((await ask(door(), 'tools/list', undefined, ana)).said)).toEqual(NINE);
   });
 
-  it('lists a viewer the two it may read', async () => {
-    expect(listed((await ask(door(), 'tools/list', undefined, gus)).said)).toEqual(['list_sessions', 'get_session_context']);
+  it('lists a viewer the four it may read', async () => {
+    expect(listed((await ask(door(), 'tools/list', undefined, gus)).said)).toEqual(['list_sessions', 'list_agents', 'list_models', 'get_session_context']);
   });
 
   it('runs create_session for a member, and the session it makes is the caller\'s', async () => {
@@ -179,7 +179,7 @@ describe('/mcp serves the sessionless tools a caller may run', () => {
   });
 
   it('lists every sessionless tool for the deployment token, which is root', async () => {
-    expect(listed((await ask(door(), 'tools/list', undefined, ROOT_TOKEN)).said)).toEqual(SEVEN);
+    expect(listed((await ask(door(), 'tools/list', undefined, ROOT_TOKEN)).said)).toEqual(NINE);
   });
 
   it('refuses a tool the operator\'s rule names, and runs one it does not', async () => {
@@ -249,7 +249,7 @@ describe('/mcp asks who is calling before it reads the call', () => {
   it('lists the tools for a member in no team: /mcp charges nothing', async () => {
     await users.add('nia', ['member']);
     const nia = await users.mint('nia');
-    expect(listed((await ask(door(), 'tools/list', undefined, nia)).said)).toEqual(SEVEN);
+    expect(listed((await ask(door(), 'tools/list', undefined, nia)).said)).toEqual(NINE);
   });
 
   it('refuses a caller without mcp:call with 403, naming the grant', async () => {

@@ -1262,6 +1262,15 @@ export interface ToolSession {
    * it, a workspace it took since included.
    */
   startedWorkspaceless?: boolean | undefined;
+  /**
+   * The agents the caller of this tool may start, with the name a person
+   * reads, for a tool that names them.
+   *
+   * It is the list `mayUseAgent` allows and `list_agents` answers, so what a
+   * tool offers and what it refuses are one reading: absent leaves a tool as
+   * it is, and an empty list is a caller that may start none.
+   */
+  agents?: { provider: string; name: string }[] | undefined;
 }
 
 /**
@@ -1564,6 +1573,20 @@ export interface ToolCall {
    * refuses one an input names.
    */
   providers(): string[];
+  /**
+   * The agents this call may start, in the order the host holds them.
+   *
+   * Each with the id a session is made on, the name a person reads, and the
+   * schema its `config` is checked against - what a tool answering "which
+   * agents may I start" says, and nothing a caller may not use: an agent held
+   * by a person or a team somebody else belongs to is not named to them, the
+   * same rule that decides whether a session may start on it.
+   *
+   * A call nobody is behind is told about the host's own agents alone, which
+   * is what it may start; a root call, like a host with no users directory,
+   * keeps every agent.
+   */
+  agents(): { provider: string; name: string; schema: Bag }[];
   /**
    * A chat's conversation, as its channel snapshot carries it.
    *

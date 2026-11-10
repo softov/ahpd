@@ -76,8 +76,8 @@ describe('tools the host contributes', () => {
       snapshot: { state: { serverTools?: { name: string }[] } };
     }).snapshot.state;
     expect(state.serverTools?.map((one) => one.name)).toEqual([
-      'list_sessions', 'get_current_session', 'set_workspace', 'create_session', 'create_chat',
-      'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+      'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace',
+      'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
       'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
       'ahp_resource', 'ahp_terminals', 'schedule_wakeup', 'ask_user',
     ]);

@@ -13,6 +13,7 @@ import { CREATED_BY_META, SEND_REMOTE_MESSAGE } from '../sessions/remotesession.
 import { SESSION_TOOL_NAMES } from '../tools/session.js';
 import { ENABLE_CUSTOM_TERMINAL_TOOL, SHELL_TOOL_NAMES } from '../tools/shell.js';
 import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
+import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { groupOf } from '../access/users.js';
 import { teamsOf } from '../usage/scopes.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
@@ -612,6 +613,7 @@ export function createTooling(ctx: HostContext): Tooling {
     config: kept.config(idOf(uri)),
     bindings: sessionBindings(uri),
     startedWorkspaceless: ctx.startedWorkspaceless.has(uri),
+    agents: agentNamesOf(uri),
   });
   /**
    * One tool's definition for a session, shaped for it, or nothing where the
@@ -1867,6 +1869,53 @@ export function createTooling(ctx: HostContext): Tooling {
   /** Every backend this host offers, whether or not it has named a model yet. */
   const providersKnown = (): string[] => [...ctx.agents.keys()];
 
+  /**
+   * The agents one call may start, with what a tool answers about each.
+   *
+   * `nobody` is a call with no person behind it: no agent a record holds is
+   * named to it, because it may start none of them. `undefined` is a call
+   * whose person the host cannot name - a turn this host's own root connection
+   * sent, or a host with no users directory - and keeps every agent, as `may`
+   * refuses it nothing.
+   */
+  const usableAgents = (
+    person: Principal | 'nobody' | undefined,
+    root: boolean,
+  ): { provider: string; name: string; schema: Bag }[] => {
+    const owners = options.agentOwners?.();
+    const hasDirectory = options.users !== undefined;
+    return [...ctx.agents.values()]
+      .filter((agent) => mayUseAgent(
+        person === 'nobody' ? undefined : person,
+        ownershipOf(owners, agent.provider),
+        { root, hasDirectory },
+      ))
+      .map((agent) => ({ provider: agent.provider, name: agent.displayName, schema: ctx.sessionSchema(agent) }));
+  };
+
+  /** The agents one call may start, by id and the name a person reads. */
+  const agentNames = (
+    person: Principal | 'nobody' | undefined,
+    root: boolean,
+  ): { provider: string; name: string }[] =>
+    usableAgents(person, root).map((one) => ({ provider: one.provider, name: one.name }));
+
+  /**
+   * The agents a session's owner may start, for a tool that names them in a
+   * session's definition.
+   *
+   * The owner the session was started for, which is who a session it starts is
+   * owned by: a `root:` owner, or a session with no owner at all, is the daemon
+   * rather than nobody, and keeps every agent. A person this process has not
+   * met since it started is a caller nobody is behind, and is told the host's
+   * own agents alone.
+   */
+  const agentNamesOf = (uri: string): { provider: string; name: string }[] => {
+    const owner = kept.owner(idOf(uri));
+    if (owner === undefined || owner.startsWith('root:')) return agentNames(undefined, true);
+    return agentNames(principalFor(owner) ?? 'nobody', false);
+  };
+
   /** A chat's conversation, as its channel snapshot carries it. */
   const contextOf = async (
     session: string, chatId?: string,
@@ -1918,6 +1967,12 @@ export function createTooling(ctx: HostContext): Tooling {
     chats: chatsOf,
     models: modelsKnown,
     providers: providersKnown,
+    agents: () => {
+      const person = personOf(chatUri);
+      // No person named is a root turn or a host with no users directory, and
+      // either keeps every agent.
+      return usableAgents(person, person === undefined);
+    },
     context: contextOf,
     send: async (at, chatId, text, from) => {
       /*
@@ -2225,6 +2280,7 @@ export function createTooling(ctx: HostContext): Tooling {
       chats: chatsOf,
       models: modelsKnown,
       providers: providersKnown,
+      agents: () => usableAgents(caller.principal, caller.root === true),
       context: contextOf,
       send: async (at, chatId, text, from) => {
         // A session asleep in the catalogue is woken for the message, and held
@@ -2320,7 +2376,7 @@ export function createTooling(ctx: HostContext): Tooling {
       if (one.grant !== undefined && !callerMay(caller, one.grant)) return [];
       // No session means no strategy of its own: the deferred one this host
       // gives every session is the one a person is offered.
-      const session: ToolSession = { titleStrategy: strategyOf('') };
+      const session: ToolSession = { titleStrategy: strategyOf(''), agents: agentNames(caller.principal, caller.root === true) };
       if (one.isEnabledForSession?.(session) === false) return [];
       const asked = one.forSession?.(session);
       const definition = asked?.definition === undefined ? one.definition : { ...one.definition, ...asked.definition };
