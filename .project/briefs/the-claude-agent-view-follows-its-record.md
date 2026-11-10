@@ -31,7 +31,7 @@ Softov checked the Claude resume on 2026-11-09, and found two gaps in the Claude
 
 ## Who writes
 
-- PR #268, a Claude folder that is watched once, changes `packages/agent-claude/src/session/watch.ts` and its test. It does not touch `logins.ts`, `views.ts` or `probe.ts`.
+- No open PR on `softov/ahpd` touches `logins.ts`, `views.ts` or `probe.ts`. #268 merged, and changed only `session/watch.ts` in agent-claude.
 - No other open PR or plan touches the Claude agent's view.
 
 ## The change

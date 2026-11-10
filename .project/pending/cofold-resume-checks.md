@@ -29,6 +29,10 @@ Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `setting
 6. Make a turn fail, and click retry. Send a second prompt while the retry runs. Expect it to run after the retry.
 7. Point the session at a folder ahpd cannot use, so the turn fails before it runs. Expect no retry control.
 
+## Results so far
+
+- 2026-11-09: Softov set `baseUrl` and `apiKey` on the cofold agent record, as the record allows since host/122. The agent then listed no model. The cause is not checked.
+
 ## A bad key
 
 cofold reads its providers and keys from the file `PAPO_CONFIG` names, over papo's own file (`packages/agent-cofold/README.md`, *Options*). To give it a bad key:
