@@ -233,6 +233,16 @@ export interface Managed {
 const HANDED = 'restart: handed to the service manager';
 
 /**
+ * The exit a restart under a container leaves for the container's restart
+ * policy: `EX_TEMPFAIL`.
+ *
+ * `on-failure`, `unless-stopped` and `always` all start again what leaves with
+ * a non-zero code, and a unit's own `Restart=` leaves a zero exit stopped,
+ * which is why a manager's hand exits 0 and a container's exits this.
+ */
+export const CONTAINER_EXIT = 75;
+
+/**
  * Stop this daemon and let the service manager start it again.
  *
  * No successor is started here and no line is read: the line this daemon was
@@ -241,9 +251,11 @@ const HANDED = 'restart: handed to the service manager';
  * daemon that comes up next serves this same configuration folder and reads a
  * record still naming this process as a live daemon beside it. A way down or a
  * call that failed exits 1: nothing is listening by then, and an exit of zero
- * is one the unit's own policy leaves stopped.
+ * is one the unit's own policy leaves stopped. `code` is what this leaves once
+ * the hand resolves: 0 for a manager, which starts the next daemon itself, and
+ * `CONTAINER_EXIT` for a container runtime, which starts it on that code.
  */
-export async function restartUnderManager(steps: Managed): Promise<void> {
+export async function restartUnderManager(steps: Managed, code = 0): Promise<void> {
   /** As a shutdown does: a record that is not this daemon's to remove, or cannot be, is not a way up. */
   const drop = (): void => {
     try { steps.forget(); }
@@ -268,7 +280,7 @@ export async function restartUnderManager(steps: Managed): Promise<void> {
     return;
   }
   steps.log(HANDED);
-  steps.exit(0);
+  steps.exit(code);
 }
 
 /** A daemon's two ways down: a stop, and a restart. */
@@ -298,6 +310,12 @@ export interface LifecycleSteps extends Omit<InPlace, 'close' | 'stopped' | 'sta
    * everything left in it.
    */
   hand?(): Promise<void>;
+  /**
+   * What a handed restart exits with once `hand` resolves: `CONTAINER_EXIT`
+   * for a container, whose restart policy starts it again, and nothing, which
+   * is 0, for a manager, which starts the next daemon itself.
+   */
+  handExit?: number;
 }
 
 /**
@@ -377,7 +395,7 @@ export function lifecycle(steps: LifecycleSteps): Lifecycle {
               forget: steps.forget,
               log: steps.log,
               exit: steps.exit,
-            }));
+            }, steps.handExit));
       });
     },
   };
@@ -698,6 +716,31 @@ export interface ParkedRestart {
   parked: string;
 }
 
+/** A restart asked of a container daemon, which the container runtime answers. */
+export interface AskedRestart {
+  /** The pid that was signalled, and goes down for the container's restart policy. */
+  container: number;
+}
+
+/**
+ * Send a container daemon its restart signal, and answer the pid it reached.
+ *
+ * Nothing is waited for and nothing is read: this daemon writes its own words
+ * to the container's log, not to `daemon.log`, and the container runtime starts
+ * the next daemon once this one has left, so there is no successor record for
+ * this terminal to answer. The record that comes next is the one the next
+ * daemon writes, which `ahpd status` reads.
+ */
+const askedOfContainer = async (record: Running, force: boolean, steps: AtTerminal): Promise<AskedRestart> => {
+  try {
+    await steps.signal(record, force ? FORCED_SIGNAL : RESTART_SIGNAL);
+  }
+  catch (error) {
+    conflict(unsignalled(record.pid, error));
+  }
+  return { container: record.pid };
+};
+
 /**
  * Signal the recorded daemon and wait for its answer in the log: a refusal,
  * the restart parked until the turns end, a successor that did not start, or
@@ -713,12 +756,15 @@ export interface ParkedRestart {
  *
  * A record that names a service manager is not one of these: that daemon is
  * restarted through the manager, since a signal to it is a crash the manager
- * answers by starting it again.
+ * answers by starting it again. A record that names a container is signalled
+ * and answered at once, since the container runtime starts the next daemon and
+ * this terminal cannot see the record it writes.
  */
-export async function restartAtTerminal(force: boolean, steps: AtTerminal): Promise<Running | ParkedRestart> {
+export async function restartAtTerminal(force: boolean, steps: AtTerminal): Promise<Running | ParkedRestart | AskedRestart> {
   const record = steps.running();
   if (record === undefined) conflict('None running in the background; a daemon run in the foreground is restarted where it runs.');
   const service = record.service;
+  if (service === 'container') return askedOfContainer(record, force, steps);
   if (service !== undefined) return restartedUnderService(record, service, steps);
   if (record.argv === undefined) conflict(OLDER);
   const signal = force ? FORCED_SIGNAL : RESTART_SIGNAL;
@@ -796,7 +842,7 @@ export async function restartAtTerminal(force: boolean, steps: AtTerminal): Prom
  * the signal, the answer read in the log and the successor it names are one
  * path, not two that would have to agree.
  */
-export const restartFromTerminal = (force: boolean): Promise<Running | ParkedRestart> => restartAtTerminal(force, realTerminal());
+export const restartFromTerminal = (force: boolean): Promise<Running | ParkedRestart | AskedRestart> => restartAtTerminal(force, realTerminal());
 
 /**
  * What a restart asked of the daemon serving it answers, over the API and over
@@ -886,6 +932,12 @@ export const declareRestart = (registry: Registry<object>, served?: ServedFacts)
     if (served === undefined) {
       const before = running();
       const begun = await restartAtTerminal(context.flag('force'), realTerminal());
+      if ('container' in begun) {
+        return output(
+          { restarting: true, pid: begun.container },
+          `Asked the container daemon (pid ${String(begun.container)}) to restart; the container starts it again when it exits.\n`,
+        );
+      }
       if ('parked' in begun) return output({ parked: begun.parked }, `${begun.parked}\n`);
       // The successor's own skips, from the record it wrote of its own start, in
       // the terminal that asked for it and above the line that says it is up.

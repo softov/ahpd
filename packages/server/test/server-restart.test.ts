@@ -21,13 +21,13 @@ import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { conflict, type Options } from '../src/commands/options.js';
 import {
-  FORCED_SIGNAL, RESTARTING, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, parking, restartAtTerminal, restartInPlace,
+  CONTAINER_EXIT, FORCED_SIGNAL, RESTARTING, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, parking, restartAtTerminal, restartInPlace,
 } from '../src/commands/restart.js';
 import type { AtTerminal, InPlace, LifecycleSteps, Parking } from '../src/commands/restart.js';
 import { apiOrigins } from '../src/commands/run.js';
 import { servedRegistry, type ServedFacts } from '../src/commands/served.js';
 import type { ControlledSignal, Running } from '../src/daemon.js';
-import type { Manager, Service } from '../src/service.js';
+import type { Held, Manager, Service } from '../src/service.js';
 import { apiHandler } from '../src/http.js';
 
 const AUTHORITY = '127.0.0.1:9350';
@@ -478,10 +478,52 @@ describe('lifecycle', () => {
     // is the failure one: this process does not stay up serving nothing.
     expect(said).toEqual(['forget', 'Could not restart it: systemctl --user --no-block restart ahpd failed: Job for ahpd.service failed', 'exit 1']);
   });
+
+  /*
+   * A container has no manager to ask: the hand asks nothing, and the process
+   * leaves `EX_TEMPFAIL`, which the container's restart policy starts again.
+   * The way down, the dropped record and the exit are the manager's path; only
+   * what is handed over and the code it leaves differ.
+   */
+  it('hands a container restart to the container runtime, starts no successor, and exits 75', async () => {
+    const said: string[] = [];
+    const way = lifecycle({
+      down: () => { said.push('down'); return Promise.resolve(); },
+      start: async () => { said.push('start'); return { pid: 7, url: '', connectUrl: '', paths: [], startedAt: '' }; },
+      stop: () => { said.push('stop'); },
+      forget: () => { said.push('forget'); },
+      log: (line) => { said.push(line); },
+      exit: (code) => { said.push(`exit ${String(code)}`); },
+      later: (step) => { step(); },
+      hand: async () => {},
+      handExit: CONTAINER_EXIT,
+    });
+    way.restart(ARGV);
+    await settle();
+    expect(said).toEqual(['down', 'forget', 'restart: handed to the service manager', 'exit 75']);
+  });
+
+  it('exits 1 when a container daemon could not close, whatever the policy would do with 75', async () => {
+    const said: string[] = [];
+    const way = lifecycle({
+      down: () => Promise.reject(new Error('the listener would not close')),
+      start: async () => { said.push('start'); return { pid: 7, url: '', connectUrl: '', paths: [], startedAt: '' }; },
+      stop: () => {},
+      forget: () => { said.push('forget'); },
+      log: (line) => { said.push(line); },
+      exit: (code) => { said.push(`exit ${String(code)}`); },
+      later: (step) => { step(); },
+      hand: async () => {},
+      handExit: CONTAINER_EXIT,
+    });
+    way.restart(ARGV);
+    await settle();
+    expect(said).toEqual(['forget', 'Could not restart it: the listener would not close', 'exit 1']);
+  });
 });
 
 /** A record naming `pid`, with or without the line it was started with, and the manager that holds it. */
-const recordFor = (pid: number, argv: string[] | null = ARGV, service?: Service): Running => ({
+const recordFor = (pid: number, argv: string[] | null = ARGV, service?: Held): Running => ({
   pid, url: `ws://127.0.0.1:${String(9000 + pid)}`, connectUrl: `ws://127.0.0.1:${String(9000 + pid)}/`,
   paths: ['/x'], startedAt: '', ...(argv === null ? {} : { argv }), ...(service === undefined ? {} : { service }),
 });
@@ -853,10 +895,11 @@ describe('restartAtTerminal', () => {
     state.record = recordFor(pid);
     state.log += `2026-09-30T00:00:00.000Z restart: stopping (${signal})\nrestart: starting the successor\nrestarted as ws://127.0.0.1:${String(9000 + pid)} (pid ${String(pid)})\n`;
   };
-  /** The terminal's restart in a case that waits for a successor, which a parked restart is not. */
+  /** The terminal's restart in a case that waits for a successor, which a parked or container restart is not. */
   const successorOf = async (force: boolean, steps: AtTerminal): Promise<Running> => {
     const begun = await restartAtTerminal(force, steps);
     if ('parked' in begun) throw new Error(`parked: ${begun.parked}`);
+    if ('container' in begun) throw new Error(`asked a container: ${String(begun.container)}`);
     return begun;
   };
 
@@ -891,6 +934,25 @@ describe('restartAtTerminal', () => {
   it('sends the forced signal with --force', async () => {
     const { state, steps } = faked(recordFor(7), restarted(8));
     await restartAtTerminal(true, steps);
+    expect(state.signals).toEqual([`7 ${FORCED_SIGNAL}`]);
+  });
+
+  /*
+   * A container daemon is signalled and answered at once: it has no line to
+   * name a successor with, and the container runtime starts the next one once
+   * it has left, so there is nothing here to wait for. The manager is never
+   * asked - `noManager` rejects - and the record goes on the daemon's way down.
+   */
+  it('sends a container daemon the restart signal, answers its pid, and waits for nothing', async () => {
+    const { state, steps } = faked(recordFor(7, null, 'container'));
+    expect(await restartAtTerminal(false, steps)).toEqual({ container: 7 });
+    expect(state.signals).toEqual([`7 ${RESTART_SIGNAL}`]);
+    expect(state.waits).toBe(0);
+  });
+
+  it('sends a container daemon the forced signal with --force', async () => {
+    const { state, steps } = faked(recordFor(7, null, 'container'));
+    expect(await restartAtTerminal(true, steps)).toEqual({ container: 7 });
     expect(state.signals).toEqual([`7 ${FORCED_SIGNAL}`]);
   });
 
