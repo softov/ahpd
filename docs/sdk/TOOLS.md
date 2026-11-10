@@ -16,7 +16,7 @@ Terms, one line each:
 
 ## The four sources
 
-**This host's own**, from `hostTools()`: the reference host's nine session tools, its three artifact tools, its six comment tools, its four Agent Merge tools, and this host's own three. They are the protocol's `serverTools`, reported on `SessionState.serverTools`, offered to every backend that can take tools, and replaced whole - which is what `session/serverToolsChanged` means.
+**This host's own**, from `hostTools()`: the reference host's ten session tools, its three artifact tools, its six comment tools, its four Agent Merge tools, and this host's own three. They are the protocol's `serverTools`, reported on `SessionState.serverTools`, offered to every backend that can take tools, and replaced whole - which is what `session/serverToolsChanged` means.
 
 **A plugin's**, through `host.registerTool(tool)`, which appends one to the same set. The computer plugin contributes three this way - [PLUGINS.md](../plugins/PLUGINS.md#what-you-can-register).
 
@@ -26,7 +26,7 @@ Terms, one line each:
 
 ## The host's own tools
 
-The nine session tools are the reference host's, by name and by schema, so a skill written against it works here unchanged. Each is a thing an agent inside one session cannot see for itself: the sessions running beside it, the chats inside them, and the terminals a person is watching. This host adds two readers beside them, `list_agents` and `list_models`, whose text is this host's own in the reference's style.
+The ten session tools are the reference host's, by name and by schema, so a skill written against it works here unchanged. Each is a thing an agent inside one session cannot see for itself: the sessions running beside it, the chats inside them, and the terminals a person is watching. This host adds two readers beside them, `list_agents` and `list_models`, whose text is this host's own in the reference's style.
 
 | Tool | What it does |
 | --- | --- |
@@ -41,10 +41,11 @@ The nine session tools are the reference host's, by name and by schema, so a ski
 | `rename_chat` | Title a chat. The session's title is its first chat's |
 | `set_workspace` | Move the session to another directory, acted on when the turn ends rather than mid-turn |
 | `delete_session` | Delete a session this host runs, refused for the one it was called from |
+| `move_session` | Reorder a nested session in its session, move it into another session, or make it its own |
 
 `create_session` takes two settings of its own. `agent` names the backend the new session runs, by provider id; absent, the choice is the provider of the `model` asked for, then the calling chat's, then the first backend the host holds. The input is an enum of the agents the caller may start, each named in its description, so an agent a record holds for somebody else is neither offered nor accepted. A provider the host does not offer is refused, and the refusal names the providers it does. `config` is the new session's settings, as that backend's schema names them, checked the way `createChat` checks a chat's: a value the schema rules out is refused before anything starts, and the host's own `isolation` and `model` win over a key of the same name. With `relationship: currentSession`, both reach the new chat instead, so it runs on the named backend with those settings while the session keeps its own. What a call leaves out it takes from the chat the tool runs in, as VS Code's host does with its `getCreationDefaults`: where the two run one backend, the calling chat's model when the call names none (its running turn's, else its draft's, else its last turn's), and for a new session the settings that backend names as inherited from the calling chat's config (`Agent.inheritedChatConfig`), under any the call names. A call with no calling chat, as through the `/mcp` door, has no defaults to take, and names what it wants.
 
-`set_workspace` is the one that cannot act when it is called: the agent is restarted in the new directory, and a restart mid-turn is a turn that never finishes, so the request waits for the turn to end, and is carried out when the turn completes and dropped when it is cancelled or fails, as VS Code's host carries out a workspace change. A worktree the session worked in stays the session's, as [SESSIONS.md](SESSIONS.md#isolation-and-worktrees) says. `delete_session` acts as the person whose turn it was called in, and as the owner of the session it was called from where no turn is running: it is never the model, and never whichever connection started the session it names.
+`set_workspace` is the one that cannot act when it is called: the agent is restarted in the new directory, and a restart mid-turn is a turn that never finishes, so the request waits for the turn to end, and is carried out when the turn completes and dropped when it is cancelled or fails, as VS Code's host carries out a workspace change. A worktree the session worked in stays the session's, as [SESSIONS.md](SESSIONS.md#isolation-and-worktrees) says. `delete_session` acts as the person whose turn it was called in, and as the owner of the session it was called from where no turn is running: it is never the model, and never whichever connection started the session it names. `move_session` is the host's `moveChat`, so a tool's move and a client's make the same actions and are refused in the same words: it names what to move, `into` for the destination, `after` for the chat to sit behind (the end when left out), or `relationship: "independent"` for a session of its own. It is refused while `chatMoves.enabled` is off.
 
 The three artifact tools write the session's `_meta['agentHost/sessionArtifacts']` through the session store: `add_artifact_or_reference`, `remove_artifact_or_reference` and `list_artifacts_and_references`. An artifact is a deliverable - an issue or a pull request being created or fixed, a result somebody will reopen - and a reference is an existing thing somebody will want to look at. Adding one promotes a matching reference and keeps its id, so a reference that turns out to be a deliverable does not become a second entry.
 
@@ -62,7 +63,7 @@ A tool with `sessionless: true` runs with no calling session. Its `run` is given
 
 The caller is this host's root connection, `{ root: true }`, or a person, `{ principal }`. `grant` is the grant a caller needs to see a tool in that list: root sees every listed tool, a principal sees the ones whose `grant` it holds, and a host with no users directory sees all of them. A tool that names no grant is one every caller sees.
 
-Nine of the eleven session tools are listed. `list_sessions`, `list_agents`, `list_models` and `get_session_context` ask `session:read`, and `create_session`, `create_chat`, `rename_chat`, `send_message` and `delete_session` ask `session:write`, the same grants the table under Grants names for a turn. `get_current_session` and `set_workspace` are not listed, because each is about the session the call came from and about nothing else.
+Ten of the twelve session tools are listed. `list_sessions`, `list_agents`, `list_models` and `get_session_context` ask `session:read`, and `create_session`, `create_chat`, `rename_chat`, `send_message`, `delete_session` and `move_session` ask `session:write`, the same grants the table under Grants names for a turn. `get_current_session` and `set_workspace` are not listed, because each is about the session the call came from and about nothing else.
 
 `list_agents` and `list_models` answer only the agents the caller may start, the rule a start on an agent is refused by: an agent a record holds for somebody else is not named, as an unsigned caller is told the host's agents alone. `list_agents` names each agent's first five models, the order its probe lists them in, and `list_models` names every one.
 
@@ -113,7 +114,7 @@ The three that declare it are the computer's: `request_disposable_computer`, whi
 
 ## Which sessions are offered the session tools
 
-An install can turn the nine session tools off, as one answer or per provider, with two daemon keys. `sessionTools` is the switch: `true`, the default, offers them; `false` offers them to no session. `sessionToolsProviders` is a list of provider ids and narrows the switch to those providers' sessions; empty, the default, narrows nothing.
+An install can turn the ten session tools off, as one answer or per provider, with two daemon keys. `sessionTools` is the switch: `true`, the default, offers them; `false` offers them to no session. `sessionToolsProviders` is a list of provider ids and narrows the switch to those providers' sessions; empty, the default, narrows nothing.
 
 They are two keys rather than one because a key carries one type, and one key cannot be both a boolean and a list: `sessionTools` is a control a settings screen draws, and `sessionToolsProviders` is a list it draws. The list narrows rather than replaces, so `false` with a list still offers the tools to nobody.
 
@@ -150,7 +151,7 @@ A backend that cannot - an ACP agent, which asks its client for tools - is hande
 | Key | Values | Default | What changes |
 | --- | --- | --- | --- |
 | `advancedTools` | `true` or `false` | `false` | Offer the tools that declare `advancedPermission` to every session's model. Applies live |
-| `sessionTools` | `true` or `false` | `true` | Whether the nine session tools are offered at all. Applies live, and is worked out per session |
+| `sessionTools` | `true` or `false` | `true` | Whether the ten session tools are offered at all. Applies live, and is worked out per session |
 | `sessionToolsProviders` | a list of provider ids | none | Offer the session tools to the sessions of these providers alone. Empty offers them to every provider. Applies live, and is worked out per session |
 | `mcpServers` | an object of server entries | none | The MCP servers every session is offered. Applies live, and is read again for each session opened |
 | `clientToolTimeoutMs` | integer, milliseconds | `600000` (ten minutes) | How long a tool call a client runs may wait for that client. `0` waits for ever |
@@ -185,6 +186,7 @@ A session tool is reached from a turn and not from a socket, and the turn says w
 | `rename_chat` | `session:write` |
 | `send_message` | `session:write` |
 | `delete_session` | `session:write`, and then the owner's own say: only the session's owner, or a person holding `session:*`, may delete one |
+| `move_session` | `session:write` |
 | `schedule_wakeup` | None, because it acts on the calling chat alone |
 | `add_artifact_or_reference`, `remove_artifact_or_reference`, `list_artifacts_and_references` | None: they write the calling session's own record |
 | `addComment`, `replyToComment`, `resolveComments`, `deleteComments`, `viewUnreviewedComments` | `session:review`, the grant that says a person may write a review on this session |

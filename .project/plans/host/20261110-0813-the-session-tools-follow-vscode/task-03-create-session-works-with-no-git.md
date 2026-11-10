@@ -1,6 +1,6 @@
 ---
 title: create_session works with no git
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -29,3 +29,4 @@ refs:
 
 ## Resume
 
+Implemented 2026-11-10. `create_session` asks the host what a folder takes, through a new `ToolCall.isolation(directory)`. It picks that answer when `worktree` is left out and the folder is not the caller's own. A folder with no git therefore gets `folder`, where the host used to fold the tool's `worktree` to it silently. `worktree: true` in that folder is refused with `Invalid create_session input: <folder> is not a git repository, so it has no worktrees.`, which keeps the host's sentence. The reader is `isolationOf` in `packages/sdk/src/host/tooling.ts`, wired into `toolContext` and `sessionlessContext`. It reads `ctx.isolating`, and answers `undefined` where the host offers no isolation, as with no worktrees port. The tool's `worktree` default stands there. `packages/sdk/src/types/host.ts` declares the member; those two files are beyond this task's Files. `packages/sdk/test/host-tools.test.ts` has both cases, each in a folder with no git, and the worktree-driven host they need. Gate: typecheck clean. The sdk suite passed 4625 and failed 1, `watches.test.ts > honours the excludes it was given`, the prescribed `TMPDIR` failure task 01 records.

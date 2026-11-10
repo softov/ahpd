@@ -217,7 +217,7 @@ session it called from. They are reported on `SessionState.serverTools`, given
 to every backend that can take tools, and replaced whole with `host.setTools()`
 - which dispatches `session/serverToolsChanged` to every running session.
 
-`hostTools()` is the set that ships: the reference host's nine session tools
+`hostTools()` is the set that ships: the reference host's ten session tools
 (`list_sessions`, `get_current_session`, `get_session_context`, `send_message`,
 `create_session`, `create_chat`, `rename_chat`, `delete_session`,
 `set_workspace`), with its names, input schemas and answers, so a skill written

@@ -1816,7 +1816,14 @@ export function createSpawn(ctx: HostContext): Spawn {
           // Whether its chats may move, which the move asked for kept from them.
           for (const one of sessions.get(uri)?.chats.keys() ?? []) updateChatMovability(one);
           if (action.type === 'chat/turnComplete') {
-            void ctx.moveSession(uri, move).catch((error: unknown) => {
+            /*
+             * The chat alone where its agent keeps a folder per chat, as
+             * VS Code's host moves the current chat and leaves its session's
+             * other chats where they are; the session where it has one folder.
+             * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L457-L461
+             */
+            const chatOnly = sessions.get(uri)?.agent.multipleDirectories === true;
+            void (chatOnly ? ctx.moveChatWorkspace(uri, move) : ctx.moveSession(uri, move)).catch((error: unknown) => {
               log.error(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);
             });
           }

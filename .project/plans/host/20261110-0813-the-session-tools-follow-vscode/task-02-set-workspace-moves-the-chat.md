@@ -1,6 +1,6 @@
 ---
 title: set_workspace moves the calling chat
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -34,4 +34,6 @@ For an agent with `multipleDirectories`, `set_workspace` moves only the calling 
 - `pnpm typecheck`, then the sdk suite.
 
 ## Resume
+
+Implemented 2026-11-10. `set_workspace` keeps the move with the calling chat's URI. At its turn's end, `moveChatWorkspace` moves that chat alone when the agent has `multipleDirectories`. It asks the window about the folder. It cuts a worktree when isolation was asked for, and keeps that tree with the session's. It restarts the chat resumed in the new folder with `relaunchChat`. It adds the folder to the session's set before replacing the chat's folders. It starts the continuation turn in the chat with VS Code's `Workspace Set` label and its words for a chat alone. An agent without `multipleDirectories` keeps `moveSession` and its `Continue in the requested workspace.` turn. A failed move continues the chat's turn under `Workspace Setup Failed` in VS Code's words, as a session's move does. `packages/sdk/test/host-tools.test.ts` has a chat-alone move and a two-chat move. In the two-chat move, the other chat keeps its folder and its process. Its session-move case and `packages/sdk/test/host-files.test.ts` now run an agent without `multipleDirectories`. The host-files cases that change a session's folders run one with it. Gate: typecheck clean. The sdk suite passed 4623 and failed 1, `watches.test.ts > honours the excludes it was given`. That failure is the prescribed `TMPDIR` inside the worktree that task 01 records. Step 6 was not done: this mode starts no daemon and neither client is in this repository.
 

@@ -312,16 +312,17 @@ describe('a transcript as get_session_context answers it', () => {
 });
 
 describe('the set itself', () => {
-  it('is the reference host\'s nine in its order, then the two readers this host adds', () => {
+  it('is the reference host\'s, in its order, with the two readers this host adds', () => {
     const tools = sessionTools();
     expect(tools.map((one) => one.definition.name)).toEqual([
       'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace',
       'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+      'move_session',
     ]);
     const schema = (name: string) => tools.find((one) => one.definition.name === name)?.definition.inputSchema as { required?: string[] };
     expect(schema('create_session').required).toEqual(['relationship', 'prompt', 'title']);
     expect(schema('set_workspace').required).toEqual(['workspaceFolder', 'isolation']);
-    expect(schema('send_message').required).toEqual(['session', 'message']);
+    expect(schema('send_message').required).toEqual(['session']);
     expect(schema('rename_chat').required).toEqual(['title']);
   });
 
@@ -676,17 +677,29 @@ describe("VS Code's limits on spawning and messaging", () => {
   // text, marked as an error, which is how a model hears what it got wrong.
   const said = (one: Answer): string => one.content[0]?.text ?? '';
 
-  /** A host with nobody to ask, and a client on it. */
-  const top = async (): Promise<Client> => {
+  /** A host with nobody to ask, and a client on it, with the actions it is told. */
+  const topped = async (): Promise<{ client: Client; p: ReturnType<typeof peer> }> => {
     const host = createHost({
       path: root, agents: [claude({ paths: [root] })], ...machine(), tools: hostTools(),
       sleepAfterMinutes: 0,
     });
     hosts.push(host);
-    const client = host.accept(peer());
+    const p = peer();
+    const client = host.accept(p);
     await hello(client);
-    return client;
+    return { client, p };
   };
+
+  /** A host with nobody to ask, and a client on it. */
+  const top = async (): Promise<Client> => (await topped()).client;
+
+  type Said = { channel: string; action: { type?: string; kind?: string; id?: string; message?: unknown } };
+  /** The actions a client was told, by channel. */
+  const saidOn = (p: ReturnType<typeof peer>, channel: string): Said['action'][] => p.notes
+    .filter((one) => one.method === 'action')
+    .map((one) => one.params as Said)
+    .filter((one) => one.channel === channel)
+    .map((one) => one.action);
 
   /**
    * A session on this host, and the tools its own model reaches.
@@ -715,6 +728,30 @@ describe("VS Code's limits on spawning and messaging", () => {
   /** One session's tools send a message to another, which is where a send goes. */
   const telling = (at: number, to: string, message: string): Promise<Answer> =>
     call('send_message', { session: to, message }, at);
+
+  /** What a send answered, in the reference host's spelling. */
+  const answered = (one: Answer): { action: string; messageId: string; revision: number; openLink: string } =>
+    JSON.parse(said(one)) as { action: string; messageId: string; revision: number; openLink: string };
+
+  type HeldMessage = { id: string; message: { text?: string; _meta?: Record<string, unknown> } };
+  /** A chat's state, as a client subscribing to it reads it. */
+  const chatState = async (client: Client, chat: string): Promise<{
+    activeTurn?: { id?: string };
+    queuedMessages?: HeldMessage[];
+    steeringMessage?: HeldMessage;
+  }> => (await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
+    snapshot: { state: { activeTurn?: { id?: string }; queuedMessages?: HeldMessage[]; steeringMessage?: HeldMessage } };
+  }).snapshot.state;
+
+  /** A turn begun in a chat by a client watching it, which leaves it running. */
+  const turning = async (client: Client, chat: string): Promise<void> => {
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
+    });
+    await settle(8);
+  };
 
   /**
    * VS Code's refusal for a tree out of room, with the tree where VS Code
@@ -933,7 +970,7 @@ describe("VS Code's limits on spawning and messaging", () => {
     // queued behind it, which is one of the two ways a send is answered: both
     // are messages the host took, and both count.
     for (let i = 0; i < 100; i++) {
-      expect(said(await telling(from.at, to.held, `word ${i}`)), `word ${i}`).toMatch(/^Message (sent|queued) \(/);
+      expect(answered(await telling(from.at, to.held, `word ${i}`)).action, `word ${i}`).toMatch(/^(started|queued)$/);
     }
 
     const refused = await telling(from.at, to.held, 'one more');
@@ -957,7 +994,7 @@ describe("VS Code's limits on spawning and messaging", () => {
     expect(said(missed)).toContain('is not a session this host is running');
 
     for (let i = 0; i < 100; i++) {
-      expect(said(await telling(from.at, to.held, `word ${i}`)), `word ${i}`).toMatch(/^Message (sent|queued) \(/);
+      expect(answered(await telling(from.at, to.held, `word ${i}`)).action, `word ${i}`).toMatch(/^(started|queued)$/);
     }
     expect(said(await telling(from.at, to.held, 'one more')))
       .toMatch(outOfRoom('send more messages', 100));
@@ -977,10 +1014,10 @@ describe("VS Code's limits on spawning and messaging", () => {
      * in - and it is that session's tree the refusal names.
      */
     for (let i = 0; i < 50; i++) {
-      expect(said(await telling(from.at, one.held, `to one, ${i}`)), `to one, ${i}`)
-        .toMatch(/^Message (sent|queued) \(/);
-      expect(said(await telling(from.at, two.held, `to two, ${i}`)), `to two, ${i}`)
-        .toMatch(/^Message (sent|queued) \(/);
+      expect(answered(await telling(from.at, one.held, `to one, ${i}`)).action, `to one, ${i}`)
+        .toMatch(/^(started|queued)$/);
+      expect(answered(await telling(from.at, two.held, `to two, ${i}`)).action, `to two, ${i}`)
+        .toMatch(/^(started|queued)$/);
     }
 
     const refused = await telling(from.at, two.held, 'one more');
@@ -988,7 +1025,90 @@ describe("VS Code's limits on spawning and messaging", () => {
     expect(refused.isError).toBe(true);
     // And the sessions it was writing into are untouched by the refusal: what
     // ran out is the sender's budget, not theirs.
-    expect(said(await telling(two.at, from.held, 'and back again'))).toMatch(/^Message (sent|queued) \(/);
+    expect(answered(await telling(two.at, from.held, 'and back again')).action).toMatch(/^(started|queued)$/);
+  });
+
+  it('steers the turn a chat runs, and answers the message it steered', async () => {
+    const { client, p } = await topped();
+    const from = await started(client, 'from');
+    const to = await started(client, 'to');
+    const chat = await mintedChat(client, to.held);
+    await turning(client, chat);
+
+    const steer = answered(await call('send_message', {
+      session: to.held, operation: 'send', delivery: 'steer', message: 'not that, this',
+    }, from.at));
+    expect(steer).toMatchObject({ action: 'steered', revision: 1, status: 'processing', openLink: 'agent-host-session://claude/to' });
+    // The steer is the chat's pending steering, sent from the calling chat, so
+    // a client draws it as this session's and no other's. The backend may take
+    // it up as soon as it is handed on, so the action is what is checked.
+    const steering = saidOn(p, chat).find((one) => one.type === 'chat/pendingMessageSet' && one.kind === 'steering');
+    expect(steering).toMatchObject({
+      id: steer.messageId,
+      message: {
+        text: 'not that, this',
+        origin: { kind: 'agent' },
+        _meta: { 'vscode.chat.delegation': { sourceSession: from.held, messageId: steer.messageId, revision: 1 } },
+      },
+    });
+
+    // A chat that runs nothing has nothing to steer, and steering cannot be
+    // queued instead: the answer says which chat it was refused against.
+    const calm = await started(client, 'calm');
+    const refused = answered(await call('send_message', {
+      session: calm.held, operation: 'send', delivery: 'steer', message: 'stop',
+    }, from.at));
+    expect(refused).toMatchObject({ action: 'rejected', reason: 'cannotSteer', targetStatus: 'idle', openLink: 'agent-host-session://claude/calm' });
+  });
+
+  it('replaces and cancels a queued message at the revision it was sent', async () => {
+    const client = await top();
+    const from = await started(client, 'from');
+    const to = await started(client, 'to');
+    const chat = await mintedChat(client, to.held);
+    await turning(client, chat);
+
+    const queued = answered(await call('send_message', { session: to.held, message: 'first draft' }, from.at));
+    expect(queued).toMatchObject({ action: 'queued', revision: 1, status: 'pending', openLink: 'agent-host-session://claude/to' });
+
+    const replaced = answered(await call('send_message', {
+      session: to.held, operation: 'replace', messageId: queued.messageId, expectedRevision: 1, message: 'second draft',
+    }, from.at));
+    expect(replaced).toMatchObject({
+      action: 'replaced', messageId: queued.messageId, revision: 2, status: 'pending', replacedMessage: 'first draft',
+    });
+    let held = await chatState(client, chat);
+    expect(held.queuedMessages).toEqual([
+      expect.objectContaining({ id: queued.messageId, message: expect.objectContaining({ text: 'second draft' }) }),
+    ]);
+    // The replacement is the next revision of the same message, not a new one.
+    expect((held.queuedMessages?.[0]?.message._meta as Record<string, Record<string, unknown>> | undefined)?.['vscode.chat.delegation'])
+      .toMatchObject({ sourceSession: from.held, messageId: queued.messageId, revision: 2 });
+
+    // The revision the earlier answer gave is stale once the message changed,
+    // and the answer names the revision it actually holds.
+    const stale = answered(await call('send_message', {
+      session: to.held, operation: 'replace', messageId: queued.messageId, expectedRevision: 1, message: 'third draft',
+    }, from.at));
+    expect(stale).toMatchObject({
+      action: 'rejected', reason: 'revisionConflict', messageId: queued.messageId, actualRevision: 2,
+    });
+
+    const cancelled = answered(await call('send_message', {
+      session: to.held, operation: 'cancel', messageId: queued.messageId, expectedRevision: 2,
+    }, from.at));
+    expect(cancelled).toMatchObject({
+      action: 'cancelled', messageId: queued.messageId, revision: 2, previousStatus: 'pending',
+    });
+    held = await chatState(client, chat);
+    expect(held.queuedMessages ?? []).toHaveLength(0);
+
+    // A message that is gone is not one a stale call can still name.
+    expect(answered(await call('send_message', {
+      session: to.held, operation: 'cancel', messageId: queued.messageId, expectedRevision: 2,
+    }, from.at))).toMatchObject({
+      action: 'rejected', reason: 'messageNotFound', messageId: queued.messageId,
+    });
   });
 });
 
@@ -1188,17 +1308,17 @@ describe('a tool a person calls with no session', () => {
     return await tool.run(input);
   };
 
-  it('offers a member the nine session tools, and a guest only the four it may read', async () => {
+  it('offers a member the ten session tools, and a guest only the four it may read', async () => {
     const { host, users } = hosting();
-    const nine = [
+    const ten = [
       'list_sessions', 'list_agents', 'list_models', 'create_session', 'create_chat', 'rename_chat', 'send_message',
-      'get_session_context', 'delete_session',
+      'get_session_context', 'delete_session', 'move_session',
     ];
-    expect(Object.keys(offered(host, { principal: await principal(users, 'member') }))).toEqual(nine);
+    expect(Object.keys(offered(host, { principal: await principal(users, 'member') }))).toEqual(ten);
     expect(Object.keys(offered(host, { principal: await principal(users, 'guest') })))
       .toEqual(['list_sessions', 'list_agents', 'list_models', 'get_session_context']);
     // This host's own connection is refused nothing it asks about, either.
-    expect(Object.keys(offered(host, { root: true }))).toEqual(nine);
+    expect(Object.keys(offered(host, { root: true }))).toEqual(ten);
   });
 
   it('leaves out a tool that says nothing, and an advanced one while the host forbids them', async () => {
@@ -1216,7 +1336,7 @@ describe('a tool a person calls with no session', () => {
     const names = Object.keys(offered(host, { principal: await principal(users, 'member') }));
     expect(names).not.toContain('plain_tool');
     expect(names).not.toContain('advanced_tool');
-    expect(names).toHaveLength(9);
+    expect(names).toHaveLength(10);
   });
 
   /*
