@@ -1271,6 +1271,14 @@ export interface ToolSession {
    * it is, and an empty list is a caller that may start none.
    */
   agents?: { provider: string; name: string }[] | undefined;
+  /**
+   * Whether the session's agent works in more than one folder, as its
+   * `multipleDirectories` says.
+   *
+   * A chat of such a session keeps a folder of its own while its session holds
+   * the set, which is what a tool that moves one chat alone needs.
+   */
+  multipleDirectories?: boolean | undefined;
 }
 
 /**
@@ -1353,6 +1361,16 @@ interface HostToolCommon {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L90-L93
    */
   forSession?: (session: ToolSession) => { definition?: Partial<ToolDefinition>; deferLoading?: boolean } | undefined;
+  /**
+   * Whether the tool is offered only to a chat the session holds.
+   *
+   * A worker chat a call spawned is not one a person sees, and its work is the
+   * work of the chat that spawned it: a tool that acts on "this chat" withholds
+   * itself there, as VS Code's `topLevelChatOnly` withholds one from a
+   * subagent's chat. Undefined offers the tool to every chat.
+   * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/sessionIsolationTools.ts#L23
+   */
+  topLevelChatOnly?: boolean;
   /**
    * A host-side hint that the harness may hide this tool behind tool search.
    *
@@ -1752,6 +1770,14 @@ export interface ToolCall {
    * the host then continues the conversation there with a notice turn.
    */
   setWorkspace(directory: string, isolation: boolean): void;
+  /**
+   * The folders the calling chat works in, as `file://` URIs.
+   *
+   * Empty for a chat this host does not hold as one of the session's, which is
+   * a worker chat a call spawned: its work is the work of the chat that
+   * spawned it, and it has no folders of its own to move.
+   */
+  workingDirectories(): string[];
   /**
    * Move one chat into another session, or into a session of its own.
    *

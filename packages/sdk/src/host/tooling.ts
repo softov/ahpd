@@ -203,7 +203,7 @@ export interface Tooling {
   /** The connectors a session may use, by alias, read live. */
   sessionBindings(uri: string): Record<string, string>;
   /** One tool's definition for a session, after the strategy's shaping. */
-  shapedDefinition(one: HostTool, uri: string): ToolDefinition | undefined;
+  shapedDefinition(one: HostTool, uri: string, provider?: string): ToolDefinition | undefined;
   /** The definitions alone for one session, which is the half that goes on the wire. */
   toolDefinitions(uri: string): ToolDefinition[];
   /** Say a session's server tools where its list moved. */
@@ -609,13 +609,20 @@ export function createTooling(ctx: HostContext): Tooling {
       onProblem: (message) => log.warn(message),
     });
   ctx.contributing = permitted([...ctx.contributed, ...ctx.actionTools]);
-  /** What one session brings to a tool asking about it. */
-  const toolSession = (uri: string): ToolSession => ({
+  /**
+   * What one session brings to a tool asking about it.
+   *
+   * `multipleDirectories` is read off the held session, or off the agent the
+   * tools are being bound for when there is no held session yet: a session's
+   * start binds its tools before the host holds it.
+   */
+  const toolSession = (uri: string, provider?: string): ToolSession => ({
     titleStrategy: strategyOf(uri),
     config: kept.config(idOf(uri)),
     bindings: sessionBindings(uri),
     startedWorkspaceless: ctx.startedWorkspaceless.has(uri),
     agents: agentNamesOf(uri),
+    multipleDirectories: (sessions.get(uri)?.agent ?? (provider === undefined ? undefined : ctx.agents.get(provider)))?.multipleDirectories === true,
   });
   /**
    * One tool's definition for a session, shaped for it, or nothing where the
@@ -624,8 +631,8 @@ export function createTooling(ctx: HostContext): Tooling {
    * `getDefinitionForSession`.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L213-L216
    */
-  const shapedDefinition = (one: HostTool, uri: string): ToolDefinition | undefined => {
-    const session = toolSession(uri);
+  const shapedDefinition = (one: HostTool, uri: string, provider?: string): ToolDefinition | undefined => {
+    const session = toolSession(uri, provider);
     if (one.isEnabledForSession?.(session) === false) return undefined;
     const asked = one.forSession?.(session);
     return asked?.definition === undefined ? one.definition : { ...one.definition, ...asked.definition };
@@ -2311,6 +2318,12 @@ export function createTooling(ctx: HostContext): Tooling {
       // Whether its chats may move, which a session changing its workspace's may not.
       for (const one of sessions.get(uri)?.chats.keys() ?? []) ctx.updateChatMovability(one);
     },
+    /*
+     * A chat's own folders, which a session's are not: an agent with a folder
+     * per chat keeps one chat in a folder the session does not name, and a
+     * worker chat a call spawned is not one of the session's chats at all.
+     */
+    workingDirectories: () => sessions.get(uri)?.chats.get(chatUri)?.workingDirectories() ?? [],
     move: (chat, destination) => {
       // The connection that sent the calling turn: the move runs in it, so it
       // is the window an older client's visibility is read against, and its
@@ -2506,6 +2519,8 @@ export function createTooling(ctx: HostContext): Tooling {
         await removeSession(session, caller.root === true ? sender : caller.principal ?? sender);
       },
       setWorkspace: needsSession,
+      // A call with no chat works in no folder, so there is none of it to name.
+      workingDirectories: () => [],
       // A move is a chat's, named by the call; a caller with no session has no
       // turn behind it, so the chat starts again with no credentials of one.
       move: (chat, destination) =>
@@ -2719,10 +2734,16 @@ export function createTooling(ctx: HostContext): Tooling {
   const offeredTools = (uri: string, chatUri: string, provider?: string): BoundTool[] => [
     ...clientTools(uri),
     ...contributingTo(uri, provider).flatMap((one): BoundTool[] => {
-      const definition = shapedDefinition(one, uri);
+      /*
+       * A tool for the session's own chats alone, as VS Code's
+       * `topLevelChatOnly`: a worker chat a call spawned is not a chat a
+       * person sees, and its work is the work of the chat that spawned it.
+       */
+      if (one.topLevelChatOnly === true && ctx.subagents.has(chatUri)) return [];
+      const definition = shapedDefinition(one, uri, provider);
       // Deferred as the session asks, where it asks, as VS Code's
       // `getDefinitionForSession` answers a definition's `deferLoading`.
-      const deferLoading = one.forSession?.(toolSession(uri))?.deferLoading ?? one.deferLoading;
+      const deferLoading = one.forSession?.(toolSession(uri, provider))?.deferLoading ?? one.deferLoading;
       return definition === undefined ? [] : [{
         /*
          * A frozen copy: this one leaves the host with the backend, and a

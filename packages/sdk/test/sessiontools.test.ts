@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { uriOf } from '../src/resources/fileuri.js';
+import { localPath, uriOf } from '../src/resources/fileuri.js';
 import { Status } from '../src/sessions/catalog.js';
 import { ROOT, createHost } from '../src/host.js';
 import { fileSessions } from '../src/sessions/sessions.js';
@@ -315,7 +315,7 @@ describe('the set itself', () => {
   it('is the reference host\'s, in its order, with the two readers this host adds', () => {
     const tools = sessionTools();
     expect(tools.map((one) => one.definition.name)).toEqual([
-      'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace',
+      'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace', 'isolate_session',
       'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
       'move_session',
     ]);
@@ -324,6 +324,56 @@ describe('the set itself', () => {
     expect(schema('set_workspace').required).toEqual(['workspaceFolder', 'isolation']);
     expect(schema('send_message').required).toEqual(['session']);
     expect(schema('rename_chat').required).toEqual(['title']);
+  });
+
+  /*
+   * VS Code's `isolate_session`: no input at all, deferred, for the session's
+   * own chats alone, and offered only where the agent keeps a folder per chat.
+   * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/sessionIsolationTools.ts
+   */
+  it('offers isolate_session only to an agent that keeps a folder per chat', () => {
+    const isolate = sessionTools().find((one) => one.definition.name === 'isolate_session');
+    expect(isolate?.definition.inputSchema).toEqual({ type: 'object', properties: {} });
+    expect(isolate?.definition.description).toContain('Requires a chat working in one local Git folder.');
+    expect(isolate?.deferLoading).toBe(true);
+    expect(isolate?.topLevelChatOnly).toBe(true);
+    expect(isolate?.isEnabledForSession?.({ titleStrategy: 'deferred', multipleDirectories: true })).toBe(true);
+    expect(isolate?.isEnabledForSession?.({ titleStrategy: 'deferred', multipleDirectories: false })).toBe(false);
+    expect(isolate?.isEnabledForSession?.({ titleStrategy: 'deferred' })).toBe(false);
+  });
+
+  /*
+   * The refusals, in VS Code's words where it has them: no turn, an argument,
+   * a chat this host does not hold - a worker chat - and a folder it cannot
+   * cut a tree from.
+   */
+  it('refuses isolate_session with no turn, with an argument, or from a chat it cannot move', async () => {
+    const isolate = sessionTools().find((one) => one.definition.name === 'isolate_session');
+    if (isolate?.run === undefined) throw new Error('no isolate_session');
+    const moved = vi.fn();
+    const folder = localPath(uriOf('/tmp'));
+    const at = (over: Partial<ToolCall>): ToolCall => ({
+      session: 'ahp-session:/one', chat: 'ahp-chat:/one', turn: () => 't1',
+      may: () => true, refusal: () => 'refused', teams: () => [],
+      workingDirectories: () => [uriOf('/tmp')], isolation: async () => 'worktree',
+      setWorkspace: moved,
+      ...over,
+    } as unknown as ToolCall);
+    await expect(isolate.run({}, at({ turn: () => undefined })))
+      .rejects.toThrow('Changing a chat\'s workspace with this tool requires an active turn.');
+    await expect(isolate.run({ workspaceFolder: '/tmp' }, at({})))
+      .rejects.toThrow('isolate_session takes no arguments.');
+    // A chat a call spawned is not one of the session's, so it has no folder.
+    await expect(isolate.run({}, at({ workingDirectories: () => [] })))
+      .rejects.toThrow('isolate_session: it needs a chat working in one local Git folder.');
+    // A folder this host cuts no tree from.
+    await expect(isolate.run({}, at({ isolation: async () => 'folder' })))
+      .rejects.toThrow(`this host cannot cut a Git worktree from ${uriOf('/tmp')}`);
+    expect(moved).not.toHaveBeenCalled();
+    // And a call it may make keeps the move for the chat it came from.
+    const said = await isolate.run({}, at({}));
+    expect(said).toContain('Moving this chat to a new worktree is scheduled.');
+    expect(moved).toHaveBeenCalledWith(folder, true);
   });
 
   /*

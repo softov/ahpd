@@ -708,6 +708,47 @@ export const sessionTools = (): HostTool[] => [
     },
   },
   {
+    definition: {
+      name: 'isolate_session',
+      title: 'Change Workspace to a New Worktree',
+      description: 'Move only the current chat to a new Git worktree when the user wants to continue this task without changing its current checkout. This preserves the chat and its history; it does not create a separate task or move other chats, even those sharing the same folder. The session workspace will include the new worktree. The original folder is unchanged, and uncommitted edits are not copied except configured worktree include-files. Requires a chat working in one local Git folder. Follow the tool confirmation flow. Make this the final tool call and end the turn after it succeeds; the host then moves this chat and continues its task automatically. Do not poll or repeat the request.',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { title: 'Change Workspace to a New Worktree', readOnlyHint: false, destructiveHint: true },
+    },
+    /*
+     * Deferred, and for the session's own chats alone, as VS Code's is: a
+     * worker chat a call spawned has no folder of its own to move. Offered
+     * only where the agent keeps a folder per chat, since a session with one
+     * folder moves as a whole, which is `set_workspace`'s.
+     * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/sessionIsolationTools.ts#L19-L28
+     */
+    deferLoading: true,
+    topLevelChatOnly: true,
+    isEnabledForSession: ({ multipleDirectories }) => multipleDirectories === true,
+    run: async (input, at) => {
+      const tool = 'isolate_session';
+      allowed(at, 'session:write');
+      // The checks are VS Code's, in its order: a turn first, then the arguments.
+      if (at.turn() === undefined)
+        throw new Error('Changing a chat\'s workspace with this tool requires an active turn.');
+      const args: unknown = input;
+      if (typeof args !== 'object' || args === null || Array.isArray(args) || Object.keys(args).length > 0)
+        throw new Error('isolate_session takes no arguments.');
+      /*
+       * The folder is the chat's own, which a chat this host does not hold -
+       * a worker chat a call spawned - has none of.
+       */
+      const folders = at.workingDirectories();
+      const folder = folders.length === 1 ? localPath(folders[0] ?? '') : '';
+      if (folder === '')
+        throw new Error(`Invalid ${tool}: it needs a chat working in one local Git folder.`);
+      if (await at.isolation(folder) !== 'worktree')
+        throw new Error(`Invalid ${tool}: this host cannot cut a Git worktree from ${uriOf(folder)}.`);
+      at.setWorkspace(folder, true);
+      return 'Moving this chat to a new worktree is scheduled. End this turn now without calling more tools or replying. The host will move only this chat to a new worktree, update the session workspace, and continue the original task automatically. Other chats remain unchanged.';
+    },
+  },
+  {
     definition: CREATE_SESSION,
     /*
      * The `agent` input is one caller's list, so the definition is shaped for
@@ -1145,7 +1186,7 @@ export const sessionTools = (): HostTool[] => [
  *
  * Read off `sessionTools()` rather than written out a second time, so the list
  * cannot drift from the tools themselves: one added there is one the option
- * switches off, and one taken away leaves the list. Only these twelve are the
+ * switches off, and one taken away leaves the list. Only these thirteen are the
  * session tools - the artifact tools, `ahp_resource`, `ahp_terminals` and
  * `schedule_wakeup` are this host's own and are offered whatever the option
  * says.
