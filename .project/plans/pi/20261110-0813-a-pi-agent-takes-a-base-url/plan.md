@@ -75,7 +75,7 @@ record { baseUrl, apiKey } -> optionsOfRecord -> backend -> session runtime
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A pi turn runs on the record's endpoint](task-01-a-pi-turn-runs-on-the-endpoint.md) | implemented | - |
-| [02 - The probe lists the endpoint's models](task-02-the-probe-lists-the-endpoint.md) | todo | 01 |
+| [02 - The probe lists the endpoint's models](task-02-the-probe-lists-the-endpoint.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -84,10 +84,10 @@ record { baseUrl, apiKey } -> optionsOfRecord -> backend -> session runtime
 
 ## Resume state
 
-- **Done so far:** task 01 is implemented: a record with `baseUrl` and `apiKey` registers one OpenAI-compatible provider under its id on the session's runtime, and a turn on `<id>/<model>` streams through it. The endpoint test saw the key on the request. The suite is 270 of 271, with `agent-pi-lazy.test.ts` timing out at its own 4 s import budget under the other builds' load.
-- **Next action:** [task-02-the-probe-lists-the-endpoint.md](task-02-the-probe-lists-the-endpoint.md).
-- **Open questions:** none.
-- **Watch out for:** pi's `useEnv` already sets per-session keys on the runtime; the new provider is not undone by it, because `keyOf` resolves the record's key through the provider's auth. The probe still reads pi's own files only, which task 02 changes.
+- **Done so far:** both tasks are implemented: a record with `baseUrl` and `apiKey` registers one OpenAI-compatible provider under its id on each session's runtime, a turn on `<id>/<model>` streams through it, and the probe lists the endpoint's models, reading the record again on each probe. The suite is 273 of 274, with `agent-pi-lazy.test.ts` timing out at its own 4 s import budget under the other builds' load.
+- **Next action:** Softov reviews both tasks.
+- **Open questions:** a record with `baseUrl` and no `apiKey` registers its provider but lists no models, because pi marks a provider configured only with a credential or a key; the plan's *Answers* do not settle a keyless endpoint.
+- **Watch out for:** pi's `useEnv` already sets per-session keys on the runtime; the new provider is not undone by it, because `keyOf` resolves the record's key through the provider's auth.
 
 ## Final verification checklist
 

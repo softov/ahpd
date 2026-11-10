@@ -1,6 +1,6 @@
 ---
 title: The probe lists the endpoint's models
-status: todo
+status: implemented
 depends:
   - task-01-a-pi-turn-runs-on-the-endpoint.md
 layer: "agent-pi, docs"
@@ -39,4 +39,11 @@ The probe reads them again each time.
 - `pnpm typecheck`, then `pnpm exec vitest run packages/agent-pi`.
 
 ## Resume
+
+- **Done so far:** `EndpointOptions` names the record's provider id, `baseUrl` and `apiKey`, and one `registerEndpoint` registers it on any runtime, a session's or the probe's, with a `refreshModels` that reads `<baseUrl>/models` with the key again. `RuntimeModels` takes the endpoint, and `runtimeModels` registers it on the runtime it builds before `getAvailable()`, so the probe lists its models beside pi's own and a provider of the same id is replaced for that list. The probe reads `options.recordOf?.()` on each call, so an edit of the record's `baseUrl` lists the new endpoint's models at the next probe. A failed listing registers the provider with no models, and the probe answers what it has rather than failing. The endpoint test covers a listing under the record's id, the key the listing carried, an edit of `baseUrl`, and a failed listing. The README's options and record tables were added with task 01; this task adds the two paragraphs they leave untrue and one line under *Unreleased*, *Plugins* in `docs/updates/v0_15.md`.
+- **Next action:** review. Both tasks are implemented; nothing is left in the plan's steps.
+- **Open questions:** a record with `baseUrl` and no `apiKey` registers its provider, but pi marks a provider configured only with a credential or a key, so the probe lists none of its models. The plan's *Answers* do not say what a keyless endpoint does, and this task did not change it.
+- **Watch out for:** the suite is 273 of 274 on this box; `agent-pi-lazy.test.ts` fails only at its own 4000 ms import budget, with the cold import of the plugin entry measured at about 4.0 s here and at 7.985 s and 8.389 s under the other builds' load. The same case passes with a 30 s budget.
+
+Files changed by this task: `packages/agent-pi/src/backend.ts`, `packages/agent-pi/src/agent.ts`, `packages/agent-pi/test/agent-pi-endpoint.test.ts`, `packages/agent-pi/README.md`, `docs/updates/v0_15.md`.
 

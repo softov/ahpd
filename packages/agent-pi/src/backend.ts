@@ -286,12 +286,31 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
     sessionManager,
     ...(options.tools !== undefined && options.tools.length > 0 ? { customTools: options.tools } : {}),
   });
-  await registerEndpoint(sdk, session, options);
+  const endpoint = endpointOf(options);
+  if (endpoint !== undefined) await registerEndpoint(sdk, session.modelRuntime, endpoint);
   return wrap(sdk, session, found);
 }
 
 /** How long an endpoint's model list may take before it is read as none. */
 const ENDPOINT_TIMEOUT_MS = 10_000;
+
+/**
+ * The endpoint a record runs on, as one provider of a runtime.
+ *
+ * The id is the record's own, so a model the endpoint lists is named
+ * `<record id>/<model id>`, as pi spells a model of its configured providers.
+ */
+export interface EndpointOptions {
+  /** The id the provider is registered under. */
+  provider: string;
+  /** The OpenAI-compatible endpoint, such as `https://api.example.com/v1`. */
+  baseUrl: string;
+  /** The key its requests carry, or nothing to send none. */
+  apiKey?: string;
+}
+
+/** The runtime a provider is registered on, one per session and one per probe. */
+type Runtime = ConstructorParameters<Pi['ModelRegistry']>[0];
 
 /**
  * One model an OpenAI-compatible endpoint lists, as pi's provider takes it.
@@ -349,25 +368,37 @@ export const endpointModels = async (baseUrl: string, apiKey: string | undefined
 };
 
 /**
- * Give this session's runtime the record's OpenAI-compatible endpoint.
+ * Give a runtime the record's OpenAI-compatible endpoint.
  *
- * `ModelRegistry` is a facade over the runtime pi made for this session, so the
- * provider lives only here: registered after pi is built, it replaces a
- * provider of the same id for this session's turns and for no other session's.
- * A record with no `baseUrl` is pi's own providers, untouched.
+ * `ModelRegistry` is a facade over one runtime, so the provider lives only
+ * there: registered on a session's runtime after pi is built, it replaces a
+ * provider of the same id for that session's turns and for no other session's;
+ * registered on the probe's own runtime, it is in the list the probe reads.
+ *
+ * The provider's models are the endpoint's `/models` as the registration is
+ * made, and `refreshModels` reads them again when pi asks for a refresh, as an
+ * extension's provider does. A listing that fails is an empty list, so a
+ * record whose endpoint cannot answer still opens and still probes.
  */
-const registerEndpoint = async (sdk: Pi, session: AgentSession, options: BackendOptions): Promise<void> => {
-  if (options.baseUrl === undefined) return;
-  const id = options.provider ?? 'pi';
-  const models = await endpointModels(options.baseUrl, options.apiKey);
-  new sdk.ModelRegistry(session.modelRuntime).registerProvider(id, {
-    name: id,
-    baseUrl: options.baseUrl,
-    ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+const registerEndpoint = async (sdk: Pi, runtime: Runtime, endpoint: EndpointOptions): Promise<void> => {
+  const models = await endpointModels(endpoint.baseUrl, endpoint.apiKey);
+  new sdk.ModelRegistry(runtime).registerProvider(endpoint.provider, {
+    name: endpoint.provider,
+    baseUrl: endpoint.baseUrl,
+    ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }),
     api: 'openai-completions',
     models,
+    refreshModels: () => endpointModels(endpoint.baseUrl, endpoint.apiKey),
   });
 };
+
+/** The endpoint a backend's options name, or nothing when they name none. */
+const endpointOf = (options: BackendOptions): EndpointOptions | undefined =>
+  options.baseUrl === undefined ? undefined : {
+    provider: options.provider ?? 'pi',
+    baseUrl: options.baseUrl,
+    ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+  };
 
 /**
  * The first user message on a branch after an entry, from its root when there
@@ -467,13 +498,16 @@ export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager
 }
 
 /**
- * How the models pi's own runtime has are read, before any session exists,
- * each with the thinking levels pi's own rule gives it.
+ * How the models a runtime has are read, before any session exists, each with
+ * the thinking levels pi's own rule gives it.
  *
  * The default reads pi's agent directory; a caller may pass its own, as a
- * session may pass its own `open`.
+ * session may pass its own `open`. A record's endpoint is given as well, so the
+ * list is what a session of that record would report, its provider included.
  */
-export type RuntimeModels = () => Promise<{ model: PiModel; levels: string[]; startsOn?: string }[]>;
+export type RuntimeModels = (
+  endpoint?: EndpointOptions,
+) => Promise<{ model: PiModel; levels: string[]; startsOn?: string }[]>;
 
 /**
  * The models pi's runtime has for its agent directory.
@@ -482,15 +516,18 @@ export type RuntimeModels = () => Promise<{ model: PiModel; levels: string[]; st
  * `models.json` in the agent directory, so the list is the one a session
  * opened anywhere would report, less what a project's own extensions add; the
  * level pi starts each on from the agent directory's own settings, no
- * project's.
+ * project's. A record's endpoint is registered on that runtime first, so its
+ * models are listed beside pi's own, and a provider of the same id is replaced
+ * for this list as it is for the session's.
  */
-export const runtimeModels: RuntimeModels = async () => {
+export const runtimeModels: RuntimeModels = async (endpoint) => {
   const sdk = await loadPi();
   const agentDir = sdk.getAgentDir();
   const runtime = await sdk.ModelRuntime.create({
     authPath: join(agentDir, 'auth.json'),
     modelsPath: join(agentDir, 'models.json'),
   });
+  if (endpoint !== undefined) await registerEndpoint(sdk, runtime, endpoint);
   const settings = sdk.SettingsManager.create(agentDir, agentDir, { projectTrusted: false });
   const available = await runtime.getAvailable();
   return (available as unknown as PiModel[]).map((model) => {
