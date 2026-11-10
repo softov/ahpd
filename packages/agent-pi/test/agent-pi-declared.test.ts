@@ -10,6 +10,7 @@ import { fakePty } from '../../sdk/test/support/pty.js';
 import { piAgent } from '../src/agent.js';
 import { piSession } from '../src/session.js';
 import { fakePi, opened, root, settled as settledPi, streamed } from './fake-pi.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /** The space a command is typed after, which keeps it out of a POSIX shell's history; PowerShell, Windows' shell here, keeps none. */
 const HISTORY_SPACE = process.platform === 'win32' ? '' : ' ';
@@ -23,12 +24,13 @@ const HISTORY_SPACE = process.platform === 'win32' ? '' : ' ';
  */
 
 /** Let a run's zero-delay work finish; nothing here waits on a real model. */
-const until = async (check: () => boolean, times = 2000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((done) => { setTimeout(done, 0); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {

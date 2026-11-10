@@ -24,6 +24,7 @@ import { echo } from '../../../examples/echo/agent.js';
 import type { ChangesetFile, ChangesetSource } from '../src/types/changes.js';
 import type { Bag } from '../src/types/common.js';
 import type { Peer } from '../src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 let made: string[] = [];
 afterEach(() => {
@@ -137,12 +138,13 @@ const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
 };
 
-const until = async (ready: () => boolean, what: string): Promise<void> => {
-  for (let i = 0; i < 400; i++) {
+const until = async (ready: () => boolean, what: string, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (ready()) return;
     await settle(1);
   }
-  throw new Error(`${what} never happened`);
+  throw new Error(`${what} never happened in ${ms} ms`);
 };
 
 const SESSION = 'ahp-session:/s';

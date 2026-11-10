@@ -23,6 +23,7 @@ import type { LoaderContext, TriggerTypeDefinition } from '../src/types/plugin.j
 import type { Request, Peer } from '../src/types/rpc.js';
 import type { ResourceProvider } from '../src/types/resources.js';
 import type { Principal, Users } from '../src/types/users.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * What a value may not do once it has crossed the plugin boundary.
@@ -525,12 +526,13 @@ const runs = (store: ReturnType<typeof memoryAutomations>): Bag[] =>
   ((store.get(AUTOMATION)?.runs ?? []) as Bag[]);
 
 /** Yield between looks until `done` says so, so a fast run is not timed by ticks. */
-const until = async (done: () => boolean, what: string, tries = 600): Promise<void> => {
-  for (let i = 0; i < tries; i++) {
+const until = async (done: () => boolean, what: string, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (done()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`${what} never happened`);
+  throw new Error(`${what} never happened in ${ms} ms`);
 };
 
 it('refuses every registration a plugin makes after apply returned', () => {

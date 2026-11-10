@@ -19,6 +19,7 @@ import type { Policies } from '../../sdk/src/types/policies.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { SessionStore } from '../../sdk/src/types/sessions.js';
 import type { Users } from '../../sdk/src/types/users.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A session that names a machine runs there.
@@ -44,12 +45,13 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
   };
 }
 
-const until = async (check: () => boolean, times = 3000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 type Note = { channel: string; action: Record<string, unknown>; rejectionReason?: string };

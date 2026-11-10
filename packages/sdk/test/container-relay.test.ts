@@ -8,6 +8,7 @@ import { createHost, ROOT } from '../src/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { ContainerPort, ContainerSink } from '../src/types/containers.js';
 import type { Peer } from '../src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * The relay, end to end, with a real host on the other side of it.
@@ -117,12 +118,13 @@ const frames = (peer: ReturnType<typeof watching>, id: number): Bag[] => peer.se
   .map((one) => JSON.parse(String(one.params.data)) as Bag)
   .filter((one) => one.id === id);
 
-const until = async (check: () => boolean, times = 1200): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 5); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 it('a session\'s host on the other side of the relay is a real one', async () => {

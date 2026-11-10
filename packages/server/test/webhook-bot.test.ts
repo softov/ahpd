@@ -14,6 +14,7 @@ import type { ServedAdapter } from '../../sdk/src/types/connectors.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Users } from '../../sdk/src/types/users.js';
 import type { Vault } from '../../sdk/src/types/vault.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A webhook call that talks to a bot, on a daemon with both plugins loaded.
@@ -78,12 +79,13 @@ const peer = (): Peer => ({
 });
 
 /** Yield between looks until `done` says so. */
-const until = async (done: () => Promise<boolean>, what: string, tries = 600): Promise<void> => {
-  for (let i = 0; i < tries; i++) {
+const until = async (done: () => Promise<boolean>, what: string, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (await done()) return;
     await new Promise((r) => { setTimeout(r, 5); });
   }
-  throw new Error(`${what} never happened`);
+  throw new Error(`${what} never happened in ${ms} ms`);
 };
 
 /** A daemon with the bot and webhook plugins on it, up to the moment the socket is bound. */

@@ -15,6 +15,7 @@ import type { Host } from '../src/types/host.js';
 import type { NodeChange } from '../src/types/host.js';
 import type { Listener } from '../src/types/listen.js';
 import type { Handler } from '../src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * The hub's half of a join: who may dial the join path, what a node says when
@@ -55,12 +56,13 @@ afterEach(async () => {
 });
 
 /** Wait for something that happens asynchronously, without a fixed sleep. */
-const until = async (check: () => boolean, times = 600): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((resolve) => { setTimeout(resolve, 5); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** The chat the hub minted for a session, read off its state as a client reads it. */

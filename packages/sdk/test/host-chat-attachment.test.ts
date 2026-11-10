@@ -5,6 +5,7 @@ import {
   resetSdk, actions, claude, createHost, emit, hello, machine, peer, sdk, settle,
 } from './support/host.js';
 import type { Bag } from '../src/types/common.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -22,8 +23,9 @@ beforeEach(resetSdk);
 describe('a chat attached to a message', () => {
   type Client = ReturnType<ReturnType<typeof createHost>['accept']>;
 
-  const until = async (ready: () => boolean, tries = 400): Promise<void> => {
-    for (let i = 0; i < tries && !ready(); i++) await settle(1);
+  const until = async (ready: () => boolean): Promise<void> => {
+    const end = Date.now() + WAIT_MS;
+    while (!ready() && Date.now() < end) await settle(1);
   };
 
   /**

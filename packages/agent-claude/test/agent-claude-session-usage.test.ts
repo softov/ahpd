@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { Bag } from '@ahpd/sdk';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A session says its context, plan limits and plan before a turn.
@@ -88,11 +89,12 @@ const settle = async (times = 40): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
-/** Wait for `done` to hold, for three seconds at most, and then for what follows from it. */
+/** Wait for `done` to hold, until `WAIT_MS` by the clock, and then for what follows from it. */
 const until = async (done: () => boolean): Promise<void> => {
-  for (let i = 0; i < 300 && !done(); i++) await new Promise((r) => { setTimeout(r, 10); });
+  const end = Date.now() + WAIT_MS;
+  while (!done() && Date.now() < end) await new Promise((r) => { setTimeout(r, 10); });
   await settle();
-  if (!done()) throw new Error('still waiting');
+  if (!done()) throw new Error(`still waiting after ${WAIT_MS} ms`);
 };
 
 /** The account a Max plan answers, with the fields that must never leave. */

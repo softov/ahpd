@@ -10,6 +10,7 @@ import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { acpAgent } from '../src/index.js';
 import { anyone, signIn } from './people.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A shell the agent opened, still running when its call is over.
@@ -37,12 +38,13 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
 }
 
 /** Let the subprocess's work finish, up to a point; the fixture never sleeps. */
-const until = async (check: () => boolean | Promise<boolean>, times = 4000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean | Promise<boolean>, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (await check()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** Lets `times` timer ticks pass, for a check that something did not happen. */

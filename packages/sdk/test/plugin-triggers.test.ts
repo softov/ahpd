@@ -9,6 +9,7 @@ import { sdkVersion } from '../src/version.js';
 import type { Bag } from '../src/types/common.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { LoaderContext, TriggerTypeDefinition } from '../src/types/plugin.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { WORK } from './support/work.js';
 import { uriOf } from '../src/resources/fileuri.js';
 
@@ -86,12 +87,13 @@ const bag = (value: unknown): Bag => (typeof value === 'object' && value !== nul
   : {});
 
 /** Yield between looks until `done` says so, so a fast run is not timed by ticks. */
-const until = async (done: () => boolean, what: string, tries = 600): Promise<void> => {
-  for (let i = 0; i < tries; i++) {
+const until = async (done: () => boolean, what: string, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (done()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`${what} never happened`);
+  throw new Error(`${what} never happened in ${ms} ms`);
 };
 
 /**

@@ -31,6 +31,7 @@ import type { HostOptions } from '../src/types/host.js';
 import type { Session } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Terminal } from '../src/types/terminals.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 let made: string[] = [];
 afterEach(() => {
@@ -56,9 +57,13 @@ const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
-const until = async (ready: () => boolean, tries = 200): Promise<void> => {
-  for (let i = 0; i < tries && !ready(); i++) await settle(1);
-  if (!ready()) throw new Error(`still waiting after ${tries} tries`);
+const until = async (ready: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (ready()) return;
+    await settle(1);
+  }
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** What a case sets on the sessions the backend makes, and reads back from them. */

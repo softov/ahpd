@@ -10,6 +10,7 @@ import { cofoldAgent, cofoldTools } from '../src/index.js';
 import type { ClientToolRelay } from '../src/index.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { BoundTool } from '../../sdk/src/types/agent.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A tool a connected client runs, driven through the real host.
@@ -38,12 +39,13 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
 }
 
 /** Let the run's zero-delay work finish, up to a point; no wall-clock waiting on a real model. */
-const until = async (check: () => boolean, times = 400): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 0); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** A fixed number of turns of the event loop, for asserting that nothing happens. */

@@ -16,6 +16,7 @@ import type { ComputerRuntime } from '../src/runtime.js';
 import type { HostTool, ToolCall } from '../../sdk/src/types/host.js';
 import type { ChannelHandle, PluginHost } from '../../sdk/src/types/plugin.js';
 import type { Principal } from '../../sdk/src/types/users.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * The `x-ahpd-computers://` channel.
@@ -218,7 +219,8 @@ it('tells a subscriber of a machine the plugin makes and releases on its own', a
     .filter((one) => one.method === 'action' && one.params.channel === URI)
     .map((one) => `${String(one.params.action.type).split('/').pop()} ${String(one.params.action.id)}${one.params.action.record === undefined ? '' : ` ${String(one.params.action.record.state)}`}`);
   const until = async (count: number): Promise<void> => {
-    for (let i = 0; i < 400 && heard().length < count; i++) await new Promise((done) => { setTimeout(done, 10); });
+    const end = Date.now() + WAIT_MS;
+    while (heard().length < count && Date.now() < end) await new Promise((done) => { setTimeout(done, 10); });
   };
 
   // The tools a model calls go through the same wrapper a disposable machine's

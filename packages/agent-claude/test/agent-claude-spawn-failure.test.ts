@@ -8,6 +8,7 @@ import { claude } from '../src/claude.js';
 import { spawnInside } from '../src/spawn.js';
 import { createSession } from '../src/session.js';
 import type { Asked, SpawnedProcess } from '../src/spawn.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A CLI that never started fails its turn in the SDK's own words, as VS Code's
@@ -28,12 +29,13 @@ const MISSING = '/definitely/not/here/claude';
 const NOT_FOUND = 'Claude Code native binary not found at claude';
 
 /** What the session said, and nothing while it has not said it yet. */
-const until = async (check: () => boolean, times = 4000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((done) => { setTimeout(done, 1); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /**
