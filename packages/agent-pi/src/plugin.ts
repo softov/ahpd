@@ -84,7 +84,7 @@ export const optionsOf = (values: Record<string, unknown>): PiOptions => values 
 const NOT_A_RECORD = new Set(['provider', 'displayName', 'description', 'model']);
 
 /** The fields of a record that become an option a turn runs on. */
-const RECORD_FIELDS = ['projectTrust', 'sessionDir', 'hostTools'] as const;
+const RECORD_FIELDS = ['projectTrust', 'sessionDir', 'hostTools', 'baseUrl', 'apiKey'] as const;
 
 /** A value read from somewhere else: `{ "$secret": "<name>" }` or `{ "fromEnv": "<VAR>" }`, as a Claude record's `env` takes one. */
 const REFERENCE = (keyword: '$secret' | 'fromEnv'): Record<string, unknown> => ({
@@ -126,6 +126,9 @@ const kindSchema = (): Record<string, unknown> => ({
   additionalProperties: false,
   properties: {
     ...Object.fromEntries(Object.entries(optionsSchema.properties).filter(([key]) => !NOT_A_RECORD.has(key))),
+    // A record's key is the channel's to vault: its schema says `secret`, so
+    // the value is kept there and a record holds the reference to it.
+    apiKey: { ...optionsSchema.properties.apiKey, secret: true },
     hostTools: { type: 'boolean', description: "Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting." },
     env: {
       type: 'object',

@@ -18,6 +18,7 @@ import type {
   AgentSession,
   AgentSessionEvent,
   ExtensionAPI,
+  InlineExtension,
   LoadExtensionsResult,
   PromptTemplate,
   ResourceDiagnostic,
@@ -177,6 +178,15 @@ export interface BackendOptions {
   id?: string;
   /** Where pi keeps its sessions; its own default when left out. */
   sessionDir?: string;
+  /** The id the endpoint's provider is registered under; `pi` when left out. */
+  provider?: string;
+  /**
+   * The OpenAI-compatible endpoint this session runs on, or nothing to run on
+   * pi's own providers. Its models are read from `<baseUrl>/models`.
+   */
+  baseUrl?: string;
+  /** The key the endpoint's requests carry, or nothing to send none. */
+  apiKey?: string;
   /** Whether the project's own pi extensions, skills and prompts are loaded. */
   trustProject?: boolean;
   /** The custom tools pi offers the model, on top of its own. */
@@ -239,21 +249,41 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
    */
   const switchedOff = options.switchedOff ?? new Set<string>();
   const found: PiResources = { skills: [], prompts: [], extensions: [] };
+  const endpoint = endpointOf(options);
+  /*
+   * This host's inline extensions: the tool-call policy, and for an endpoint
+   * with no key, the handler that removes the placeholder key's header. pi
+   * builds the header from the registered key, so `null` here is what keeps a
+   * keyless endpoint's requests keyless.
+   */
+  const inlineExtensions: InlineExtension[] = [];
+  if (onToolCall !== undefined) {
+    inlineExtensions.push({
+      name: 'ahpd',
+      hidden: true,
+      factory: (pi: ExtensionAPI): void => {
+        pi.on('tool_call', (event) => onToolCall(event));
+      },
+    });
+  }
+  if (endpoint !== undefined && endpoint.apiKey === undefined) {
+    inlineExtensions.push({
+      name: 'ahpd-endpoint',
+      hidden: true,
+      factory: (pi: ExtensionAPI): void => {
+        // Only the endpoint's own requests go keyless: a model of another
+        // provider in the same session keeps the key its provider sends.
+        pi.on('before_provider_headers', (event, ctx) => {
+          if (ctx.model?.provider === endpoint.provider) event.headers.authorization = null;
+        });
+      },
+    });
+  }
   const loaderOptions = {
     ...(instructions.length > 0
       ? { appendSystemPromptOverride: (base: string[]) => [...base, ...instructions] }
       : {}),
-    ...(onToolCall !== undefined
-      ? {
-          extensionFactories: [{
-            name: 'ahpd',
-            hidden: true,
-            factory: (pi: ExtensionAPI): void => {
-              pi.on('tool_call', (event) => onToolCall(event));
-            },
-          }],
-        }
-      : {}),
+    ...(inlineExtensions.length > 0 ? { extensionFactories: inlineExtensions } : {}),
     skillsOverride: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
       found.skills = base.skills;
       return { ...base, skills: base.skills.filter((one) => !switchedOff.has(one.filePath)) };
@@ -277,8 +307,133 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
     sessionManager,
     ...(options.tools !== undefined && options.tools.length > 0 ? { customTools: options.tools } : {}),
   });
+  if (endpoint !== undefined) await registerEndpoint(sdk, session.modelRuntime, endpoint);
   return wrap(sdk, session, found);
 }
+
+/** How long an endpoint's model list may take before it is read as none. */
+const ENDPOINT_TIMEOUT_MS = 10_000;
+
+/**
+ * The key a keyless endpoint's provider is registered with.
+ *
+ * pi counts a provider as configured only when it has a key, and its
+ * OpenAI-compatible adapter sends whatever key it is given as an
+ * `Authorization` header. This placeholder is that key: the provider counts as
+ * configured, and the session's own extension removes the header before the
+ * request leaves, as `before_provider_headers` does with a `null`.
+ */
+const KEYLESS_API_KEY = 'ahpd-keyless';
+
+/**
+ * The endpoint a record runs on, as one provider of a runtime.
+ *
+ * The id is the record's own, so a model the endpoint lists is named
+ * `<record id>/<model id>`, as pi spells a model of its configured providers.
+ */
+export interface EndpointOptions {
+  /** The id the provider is registered under. */
+  provider: string;
+  /** The OpenAI-compatible endpoint, such as `https://api.example.com/v1`. */
+  baseUrl: string;
+  /** The key its requests carry, or nothing to send none. */
+  apiKey?: string;
+}
+
+/** The runtime a provider is registered on, one per session and one per probe. */
+type Runtime = ConstructorParameters<Pi['ModelRegistry']>[0];
+
+/**
+ * One model an OpenAI-compatible endpoint lists, as pi's provider takes it.
+ *
+ * The endpoint may know more than its `/models` answers, so the defaults are
+ * pi's own for a model defined from a name alone: text in, no cost, pi's
+ * context window and token ceiling.
+ */
+interface EndpointModel {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  input: ('text' | 'image')[];
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  contextWindow: number;
+  maxTokens: number;
+}
+
+/** One model the endpoint listed, by its id. */
+const endpointModel = (id: string): EndpointModel => ({
+  id,
+  name: id,
+  reasoning: false,
+  input: ['text'],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 128_000,
+  maxTokens: 16_384,
+});
+
+/**
+ * The models an OpenAI-compatible endpoint lists, at `<baseUrl>/models`.
+ *
+ * Anything that goes wrong - a refused connection, a wrong shape, a timeout -
+ * is an empty list: a record whose endpoint cannot answer still opens, and the
+ * probe answers none of that endpoint's models rather than failing.
+ */
+export const endpointModels = async (baseUrl: string, apiKey: string | undefined): Promise<EndpointModel[]> => {
+  try {
+    const at = `${baseUrl.replace(/\/+$/u, '')}/models`;
+    const answer = await fetch(at, {
+      ...(apiKey === undefined ? {} : { headers: { authorization: `Bearer ${apiKey}` } }),
+      signal: AbortSignal.timeout(ENDPOINT_TIMEOUT_MS),
+    });
+    if (!answer.ok) return [];
+    const said = await answer.json() as { data?: unknown };
+    if (!Array.isArray(said.data)) return [];
+    return said.data.flatMap((one) => {
+      const id = (one as { id?: unknown } | null)?.id;
+      return typeof id === 'string' && id !== '' ? [endpointModel(id)] : [];
+    });
+  }
+  catch {
+    return [];
+  }
+};
+
+/**
+ * Give a runtime the record's OpenAI-compatible endpoint.
+ *
+ * `ModelRegistry` is a facade over one runtime, so the provider lives only
+ * there: registered on a session's runtime after pi is built, it replaces a
+ * provider of the same id for that session's turns and for no other session's;
+ * registered on the probe's own runtime, it is in the list the probe reads.
+ *
+ * The provider's models are the endpoint's `/models` as the registration is
+ * made, and `refreshModels` reads them again when pi asks for a refresh, as an
+ * extension's provider does. A listing that fails is an empty list, so a
+ * record whose endpoint cannot answer still opens and still probes.
+ *
+ * A record with no key registers the placeholder key, because pi counts a
+ * provider configured only with one; both listings go to the endpoint with no
+ * `Authorization` header, as the record asked.
+ */
+const registerEndpoint = async (sdk: Pi, runtime: Runtime, endpoint: EndpointOptions): Promise<void> => {
+  const models = await endpointModels(endpoint.baseUrl, endpoint.apiKey);
+  new sdk.ModelRegistry(runtime).registerProvider(endpoint.provider, {
+    name: endpoint.provider,
+    baseUrl: endpoint.baseUrl,
+    apiKey: endpoint.apiKey ?? KEYLESS_API_KEY,
+    api: 'openai-completions',
+    models,
+    refreshModels: () => endpointModels(endpoint.baseUrl, endpoint.apiKey),
+  });
+};
+
+/** The endpoint a backend's options name, or nothing when they name none. */
+const endpointOf = (options: BackendOptions): EndpointOptions | undefined =>
+  options.baseUrl === undefined ? undefined : {
+    provider: options.provider ?? 'pi',
+    baseUrl: options.baseUrl,
+    ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+  };
 
 /**
  * The first user message on a branch after an entry, from its root when there
@@ -378,13 +533,16 @@ export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager
 }
 
 /**
- * How the models pi's own runtime has are read, before any session exists,
- * each with the thinking levels pi's own rule gives it.
+ * How the models a runtime has are read, before any session exists, each with
+ * the thinking levels pi's own rule gives it.
  *
  * The default reads pi's agent directory; a caller may pass its own, as a
- * session may pass its own `open`.
+ * session may pass its own `open`. A record's endpoint is given as well, so the
+ * list is what a session of that record would report, its provider included.
  */
-export type RuntimeModels = () => Promise<{ model: PiModel; levels: string[]; startsOn?: string }[]>;
+export type RuntimeModels = (
+  endpoint?: EndpointOptions,
+) => Promise<{ model: PiModel; levels: string[]; startsOn?: string }[]>;
 
 /**
  * The models pi's runtime has for its agent directory.
@@ -393,15 +551,18 @@ export type RuntimeModels = () => Promise<{ model: PiModel; levels: string[]; st
  * `models.json` in the agent directory, so the list is the one a session
  * opened anywhere would report, less what a project's own extensions add; the
  * level pi starts each on from the agent directory's own settings, no
- * project's.
+ * project's. A record's endpoint is registered on that runtime first, so its
+ * models are listed beside pi's own, and a provider of the same id is replaced
+ * for this list as it is for the session's.
  */
-export const runtimeModels: RuntimeModels = async () => {
+export const runtimeModels: RuntimeModels = async (endpoint) => {
   const sdk = await loadPi();
   const agentDir = sdk.getAgentDir();
   const runtime = await sdk.ModelRuntime.create({
     authPath: join(agentDir, 'auth.json'),
     modelsPath: join(agentDir, 'models.json'),
   });
+  if (endpoint !== undefined) await registerEndpoint(sdk, runtime, endpoint);
   const settings = sdk.SettingsManager.create(agentDir, agentDir, { projectTrusted: false });
   const available = await runtime.getAvailable();
   return (available as unknown as PiModel[]).map((model) => {

@@ -1,6 +1,6 @@
 ---
 title: A pi turn runs on the record's endpoint
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -11,8 +11,9 @@ refs:
 
 ## Objective
 
-A pi agent with `baseUrl` registers one OpenAI-compatible provider under its id on each session's runtime, with its `apiKey`.
-A turn on `<id>/<model>` runs through it.
+A pi agent with `baseUrl` registers one OpenAI-compatible provider under its id on each session's runtime.
+The provider carries the record's `apiKey`, or a placeholder key when the record has none.
+A turn on `<id>/<model>` runs through it, carrying the key or no `Authorization` header.
 
 ## Files
 
@@ -37,8 +38,16 @@ A turn on `<id>/<model>` runs through it.
 ## Validation
 
 - `agent-pi-endpoint.test.ts`: the stub server sees the turn's request with `Authorization: Bearer <apiKey>`.
+- A record with `baseUrl` and no `apiKey` runs a turn on the stub with no `Authorization` header.
 - A record with no `baseUrl` makes no request to the stub.
 - `pnpm typecheck`, then `pnpm exec vitest run packages/agent-pi`.
 
 ## Resume
+
+- **Done so far:** `PiOptions` has `baseUrl` and `apiKey`, and `BackendOptions` has `provider`, `baseUrl` and `apiKey`; `provider` is added to the object `piSession` hands the backend, and `RECORD_FIELDS` and `kindSchema` carry the record's two, `apiKey` as `secret: true`. `openPi` calls `registerEndpoint` after the session is made and before `wrap`: it reads `<baseUrl>/models` with the key, and registers one provider under `options.provider ?? 'pi'` on `session.modelRuntime` through `new sdk.ModelRegistry(...).registerProvider(id, { name, baseUrl, apiKey, api: 'openai-completions', models })`. `Pi` takes `ModelRegistry` from the SDK. A record with no `baseUrl` registers nothing and makes no request. `useEnv` leaves the provider's key in place, because `keyOf` resolves it through the provider's auth. The plugin's `apiKey` option is `writeOnly`, and the README names both fields. A record with no `apiKey` registers `KEYLESS_API_KEY`, because pi counts a provider configured only with a key. The session then gets an `ahpd-endpoint` inline extension whose `before_provider_headers` handler sets `Authorization` to `null`, so the adapter's `Bearer <placeholder>` never leaves the process; a turn on that record reaches the stub with no `Authorization` header.
+- **Next action:** [task-02-the-probe-lists-the-endpoint.md](task-02-the-probe-lists-the-endpoint.md).
+- **Open questions:** none.
+- **Watch out for:** the suite is 275 of 276 on this box; `agent-pi-lazy.test.ts` fails only at its own 4000 ms import budget, with a cold import of the plugin entry measured at about 4.0 s on an idle retry and at 7.985 s and 8.389 s under the other builds' load, and the same case passes with a 30 s budget. The endpoint case's stub binds an ephemeral port on 127.0.0.1.
+
+Files changed by this task: `packages/agent-pi/package.json`, `packages/agent-pi/src/backend.ts`, `packages/agent-pi/src/pi.ts`, `packages/agent-pi/src/plugin.ts`, `packages/agent-pi/src/session.ts`, `packages/agent-pi/src/types.ts`, `packages/agent-pi/test/agent-pi-delete.test.ts`, `packages/agent-pi/test/agent-pi-lazy.test.ts`, `packages/agent-pi/test/engine.test.ts`, `packages/agent-pi/test/agent-pi-endpoint.test.ts`, `packages/agent-pi/README.md`.
 
