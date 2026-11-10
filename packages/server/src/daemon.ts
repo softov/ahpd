@@ -694,10 +694,14 @@ export async function start(
  *
  * Checked again at the write rather than only before the spawn, because a
  * start can take seconds and a person can `ahpd stop` and `ahpd start` in them.
+ *
+ * A record that names `record`'s own pid is not another daemon: no other live
+ * process has that pid here. It is one a container left on its volume, since
+ * every container's entrypoint execs ahpd at the same pid.
  */
 export function claim(record: Running, replacing?: number): Running | undefined {
   const already = recorded();
-  if (already !== undefined && already.pid !== replacing && alive(already.pid)) return already;
+  if (already !== undefined && already.pid !== replacing && already.pid !== record.pid && alive(already.pid)) return already;
   sweepTemps([daemonPath()]);
   // Owner-only: the record holds `connectUrl`, which is the origin with the
   // token in it.
