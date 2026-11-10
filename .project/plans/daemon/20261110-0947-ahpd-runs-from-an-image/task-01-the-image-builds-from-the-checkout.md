@@ -1,6 +1,6 @@
 ---
 title: The image builds from the checkout
-status: todo
+status: implemented
 depends: []
 layer: "image"
 refs:
@@ -43,4 +43,11 @@ node-pty is built in the image, so a terminal is a pseudoterminal.
 - The build context sent to Docker holds no `*.jsonl` file.
 
 ## Resume
+
+- **Done so far:** `Dockerfile` has the three stages. `pack` runs `corepack enable`, `pnpm install --frozen-lockfile`, `pnpm build` and `pnpm -r exec pnpm pack --pack-destination /out`, the pack command of `release.yml`. `install` adds `python3 make g++`, reads `npm --version`, passes `--allow-scripts=node-pty` only from npm 11.16 as `selfupdate.ts` does, and runs `npm install -g --prefix /opt/ahpd` on the `@ahpd/server` and `@ahpd/sdk` tarballs. `runtime` renames the base image's `node` user and group to `ahpd`, moves the home to `/home/ahpd`, sets uid `AHPD_UID`, adds the five packages, copies `/opt/ahpd`, and sets `PATH`, `NPM_CONFIG_PREFIX`, `AHPD_SERVICE=container`, `VOLUME`, `WORKDIR /work`, `EXPOSE 9187`, `USER ahpd`, the health check, the three OCI labels and the default command. `.dockerignore` holds the seven patterns.
+- **Next action:** review the Docker checks below, which Docker refused to run in this session.
+- **Open questions:** none.
+- **Watch out for:** the checks that start a container are left for review, because Docker is denied in this mode: `docker build -t ahpd:dev .`, the `id` and `sh -c 'test -w /opt/ahpd'` runs, and the `--version` run, which needs task 02's entrypoint as its own note says. The build context of this worktree holds no `*.jsonl` file, and `.dockerignore` excludes them. The plan's step 10 does not name the build args, so this task chose `VERSION`, `REVISION` and `SOURCE` with defaults; the sibling release plan makes the same labels with `docker/metadata-action`, which overrides them.
+
+Files changed by this task: `Dockerfile`, `.dockerignore`.
 
