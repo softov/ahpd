@@ -22,7 +22,7 @@ import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@
 import { harnessConfig, harnessConfigPath } from './config.js';
 import type { HarnessConfig } from './config.js';
 import type { ToolsConfig } from './capabilities.js';
-import { cofoldSession } from './session.js';
+import { cofoldSession, takeRecord } from './session.js';
 import { turnsOf } from './transcript.js';
 import { commandsOf } from './turnagent.js';
 
@@ -1021,6 +1021,10 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
      * endpoint in `options` is not necessarily one it wants asked.
      */
     probe: async (): Promise<Offered> => {
+      // The record as it is now: an edit keeps this backend, and the host asks
+      // again once the channel says the record moved. A record that cannot be
+      // used keeps the options it had, and its turn says why.
+      takeRecord(options);
       /*
        * Every provider is asked in parallel, and the rows are merged in the
        * file's order. A provider that fails answers an empty list, so its rows

@@ -170,6 +170,9 @@ const TEMPLATES: AgentTemplate[] = [
   { name: 'Beta', description: 'Another target.', icon: { src: 'mark:beta' }, icons: BETA_ICONS, config: { command: 'checker-beta' } },
 ];
 
+/** The id of each record a `prober` backend was asked about, in order. */
+const probed: string[] = [];
+
 /**
  * One engine, over the echo backend.
  *
@@ -200,8 +203,10 @@ const engineOf = (name: string, opened: Opened[], probing: boolean, handles: Map
       ...(probing
         ? {
             probe: async () => {
-              if (record.config['target'] === 'broken') throw new Error('no answer from the target');
-              return { models: [], customizations: [], commands: [] };
+              probed.push(record.id);
+              const target = String(record.config['target']);
+              if (target === 'broken') throw new Error('no answer from the target');
+              return { models: [{ id: `on-${target}`, name: `On ${target}` }], customizations: [], commands: [] };
             },
           }
         : {}),
@@ -432,6 +437,44 @@ it('edits a record on the view open was handed, without opening it again', async
   expect(opened[0]?.description).toBe('One line');
   expect(opened[0]?.config).toEqual({ target: 'b' });
   expect((await cy.rows())['mine']).toMatchObject({ name: 'Mine, renamed', description: 'One line' });
+  await close();
+});
+
+it('asks an edited agent again what it offers, and not one whose record did not move', async () => {
+  probed.splice(0);
+  const { host, users, close } = await served();
+  const cy = await as(host, users, 'cy');
+  /** The model ids the root state lists for `mine`, once they are `want`. */
+  const offered = async (want: string[]): Promise<string[]> => {
+    let ids: string[] = [];
+    const end = Date.now() + WAIT_MS;
+    while (Date.now() < end) {
+      const answer = await cy.call('subscribe', { channel: ROOT }) as Bag;
+      const agents = (answer['result'] as Bag)['snapshot'].state.agents as { provider: string; models?: { id: string }[] }[];
+      ids = agents.find((one) => one.provider === 'mine')?.models?.map((one) => one.id) ?? [];
+      if (JSON.stringify(ids) === JSON.stringify(want)) return ids;
+      await new Promise((done) => { setTimeout(done, 5); });
+    }
+    return ids;
+  };
+  await cy.call('x-ahpd/agents/put', {
+    id: 'mine', engine: 'prober', owner: 'user:cy', name: 'Mine', config: { target: 'a' },
+  });
+  expect(await offered(['on-a'])).toEqual(['on-a']);
+  expect(probed).toEqual(['mine']);
+
+  // A new name moves nothing the backend offers from, so it is not asked again.
+  await cy.call('x-ahpd/agents/put', {
+    id: 'mine', engine: 'prober', owner: 'user:cy', name: 'Mine, renamed', config: { target: 'a' },
+  });
+  expect(probed).toEqual(['mine']);
+
+  // A new target is what it offers from: the same backend is asked again.
+  await cy.call('x-ahpd/agents/put', {
+    id: 'mine', engine: 'prober', owner: 'user:cy', name: 'Mine, renamed', config: { target: 'b' },
+  });
+  expect(await offered(['on-b'])).toEqual(['on-b']);
+  expect(probed).toEqual(['mine', 'mine']);
   await close();
 });
 
