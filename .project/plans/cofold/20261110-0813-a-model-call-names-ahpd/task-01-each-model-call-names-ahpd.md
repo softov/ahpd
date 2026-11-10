@@ -1,6 +1,6 @@
 ---
 title: Each model call names ahpd
-status: todo
+status: implemented
 depends: []
 layer: "agent-cofold"
 refs:
@@ -16,6 +16,7 @@ A cofold agent builds every provider and model with `app: { name: 'ahpd', versio
 
 - `UPDATE: packages/agent-cofold/package.json:72` - `@cofold/model-openai-compat` `^0.3.0`.
 - `UPDATE: pnpm-lock.yaml` - the lock for the new range.
+- `UPDATE: pnpm-workspace.yaml:24` - the minimum-release-age exclusion takes `0.3.0` as well.
 - `UPDATE: packages/agent-cofold/src/agent.ts:29-131` - `CofoldOptions` takes `app`.
 - `UPDATE: packages/agent-cofold/src/agent.ts:527` - `openaiCompat` gets `app`.
 - `UPDATE: packages/agent-cofold/src/agent.ts:721-733` - `openaiCompatProvider` gets `app`.
@@ -42,4 +43,10 @@ A cofold agent builds every provider and model with `app: { name: 'ahpd', versio
 - `pnpm typecheck`, then `pnpm exec vitest run packages/agent-cofold`.
 
 ## Resume
+
+- `CofoldOptions` takes `app`, and `providerOf` and `openaiCompat` pass it to cofold.
+- `apply` builds `{ name: 'ahpd', version: host.version, url: 'https://ahpio.com' }`, and each record's options inherit it.
+- `@cofold/model-openai-compat` is `^0.3.0`. The package's changes from `0.2.1` are the app identity, its headers and the API that carries it; the wire and streaming code is unchanged.
+- The models test covers the OpenRouter headers, another host, a turn's own transport and a provider's own `user-agent`.
+- Validation passed: typecheck clean, agent-cofold 322 passed.
 
