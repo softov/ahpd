@@ -14,21 +14,40 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const script = fileURLToPath(new URL('../install.ps1', import.meta.url));
 
-function hasPwsh(): boolean {
-  const probe = spawnSync('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], {
+/** The folder PowerShell 7 runs from, or undefined when there is none. */
+function pwshFolder(): string | undefined {
+  const probe = spawnSync('pwsh', ['-NoProfile', '-Command', '(Get-Process -Id $PID).Path'], {
     encoding: 'utf8',
   });
-  return probe.status === 0;
+  return probe.status === 0 ? dirname(probe.stdout.trim()) : undefined;
 }
 
-const pwshHere = hasPwsh();
+const pwshAt = pwshFolder();
+const pwshHere = pwshAt !== undefined;
 const canRun = process.platform === 'win32' && pwshHere;
+
+/*
+ * What a case's PATH holds besides its own folders: PowerShell's folder, for
+ * `pwsh`, and Windows' own, for the `cmd` the stubs run in.
+ *
+ * Not the PATH this run inherited. On a person's machine that holds their own
+ * ahpd, Bun or Deno, and the script found the person's ahpd there in place of
+ * a stub, or of none.
+ */
+const windowsFolder = process.env.SystemRoot ?? 'C:\\Windows';
+const basePath = [pwshAt, join(windowsFolder, 'System32'), windowsFolder]
+  .filter((one) => one !== undefined)
+  .join(';');
+
+/** The run's environment without its PATH, which a case names itself; Windows spells the key `Path`. */
+const inherited = (): NodeJS.ProcessEnv =>
+  Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'PATH'));
 
 function stub(box: Box, name: string, lines: string[]): void {
   writeFileSync(join(box.bin, `${name}.cmd`), `@echo off\r\n${lines.join('\r\n')}\r\n`);
@@ -65,7 +84,7 @@ function makeBox(options: { node?: string; ahpd?: boolean } = {}): Box {
       HOME: home,
       XDG_CONFIG_HOME: join(root, 'config'),
       AHPD_TEST_LOG: log,
-      PATH: `${bin};${process.env.PATH ?? ''}`,
+      PATH: `${bin};${basePath}`,
       AHPD_SCRIPT: script,
       AHPD_INSTALL_NO_RUN: '1',
       AHPD_VERSION: '',
@@ -175,7 +194,7 @@ interface Result {
 
 function run(box: Box, extra: Record<string, string> = {}): Result {
   const result = spawnSync('pwsh', ['-NoProfile', '-Command', '. $env:AHPD_SCRIPT; Invoke-AhpdInstall'], {
-    env: { ...process.env, ...box.env, ...extra },
+    env: { ...inherited(), ...box.env, ...extra },
     encoding: 'utf8',
   });
   return { code: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
@@ -184,7 +203,7 @@ function run(box: Box, extra: Record<string, string> = {}): Result {
 function runFile(box: Box, args: string[], extra: Record<string, string> = {}): Result {
   const result = spawnSync('pwsh', ['-NoProfile', '-File', script, ...args], {
     // The gate would otherwise skip the run the case is asking for.
-    env: { ...process.env, ...box.env, AHPD_INSTALL_NO_RUN: '0', ...extra },
+    env: { ...inherited(), ...box.env, AHPD_INSTALL_NO_RUN: '0', ...extra },
     encoding: 'utf8',
   });
   return { code: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };

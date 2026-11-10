@@ -12,6 +12,7 @@ import { adoptedDevContainer, dockerRuntime } from '../src/runtime.js';
 import type { DockerOptions } from '../src/runtime.js';
 import type { MadePart } from '../src/parts.js';
 import type { ContainerSink } from '../../sdk/src/types/containers.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * The launcher: the Dev Container CLI, the host inside, and the pipes.
@@ -129,12 +130,13 @@ const shell = (): string[] => ran().commands
   .map((one) => one.command.join(' ').replace(/^\/bin\/sh -c /, ''))
   .filter((one) => !one.startsWith('getent passwd') && !one.includes('/proc/self/environ'));
 
-const until = async (check: () => boolean, times = 600): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 5); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 const connect = { connectionId: 'a', workspaceFolder: '', name: 'Box' };

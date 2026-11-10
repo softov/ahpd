@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fileProcessor } from '../src/files.js';
 import type { ApFile, ApStreamingFile } from '../src/files.js';
+import { fileLinks } from '../../../tools/links.ts';
 
 /*
  * The file one FILE value names, as the engine's `fileProcessor` makes it.
@@ -89,13 +90,19 @@ describe('an attachment', () => {
     expect(whole(await fileProcessor(FILE, join(dir, 'sub', 'deep.md'), dir)).filename).toBe('deep.md');
   });
 
-  it('is no file outside the folder, through a link, or with no folder', async () => {
+  // A link to a file, which a Windows machine makes only with Developer Mode or as an administrator.
+  it.skipIf(!fileLinks)('is no file outside the folder through a link', async () => {
     const dir = withFiles({ 'notes.txt': 'hello' });
     const outside = withFiles({ 'secret.txt': 'secret' });
     symlinkSync(join(outside, 'secret.txt'), join(dir, 'link.txt'));
+    expect(await fileProcessor(FILE, 'link.txt', dir)).toBeNull();
+  });
+
+  it('is no file outside the folder, or with no folder', async () => {
+    const dir = withFiles({ 'notes.txt': 'hello' });
+    const outside = withFiles({ 'secret.txt': 'secret' });
     expect(await fileProcessor(FILE, `../${basename(outside)}/secret.txt`, dir)).toBeNull();
     expect(await fileProcessor(FILE, join(outside, 'secret.txt'), dir)).toBeNull();
-    expect(await fileProcessor(FILE, 'link.txt', dir)).toBeNull();
     expect(await fileProcessor(FILE, 'notes.txt', undefined)).toBeNull();
     expect(await fileProcessor(FILE, 'missing.txt', dir)).toBeNull();
   });

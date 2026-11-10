@@ -11,6 +11,7 @@ import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { HostTool } from '../../sdk/src/types/host.js';
 import type { Session } from '../../sdk/src/types/session.js';
 import { startedNow } from '../../sdk/test/support/started.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * What a cofold turn says it used, as the steps of that turn go by.
@@ -104,12 +105,13 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
 }
 
 /** Let the run's zero-delay work finish, up to a point; no wall-clock waiting on a real model. */
-const until = async (check: () => boolean, times = 400): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 0); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 type Note = { channel: string; action: Record<string, unknown> };

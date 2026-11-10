@@ -15,6 +15,7 @@ import type { MachineNeed } from '../../sdk/src/types/machine.js';
 
 import type { Vault } from '../../sdk/src/types/vault.js';
 import type { Usage, UsageEntry, UsageTotal } from '../../sdk/src/types/usage.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A profile whose machines are made on a box's Docker, reached as
@@ -62,12 +63,13 @@ const held = (file: string): Held => (existsSync(file)
 /** The file the scripted Docker keeps for the box at this address. */
 const farFile = (local: string, address = 'ssh://dev02'): string => `${local}.${encodeURIComponent(address)}`;
 
-const until = async (check: () => boolean, times = 1000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 5); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 function meter(): Usage & { entries: UsageEntry[] } {

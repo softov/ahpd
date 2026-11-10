@@ -7,7 +7,7 @@ created: 2026-11-02
 revalidated: 2026-11-02
 refs:
   - git://9d1cc04e - the commit of ahpd this plan was checked at
-  - "[code://.project/working/maycxc-union-20261101-review.md](../../../working/maycxc-union-20261101-review.md) - Softov's review: for invalid rows, `owed` sets `closed: asked.closed`"
+  - "git://f48055f0 - the last commit that holds `.project/working/maycxc-union-20261101-review.md`; Softov's review: for invalid rows, `owed` sets `closed: asked.closed`"
   - "[code://packages/sdk/test/ahp-test-cases.test.ts#L303-L341](../../../../packages/sdk/test/ahp-test-cases.test.ts#L303-L341) - the negotiation cases: what the host answered, and what it owes"
   - "[code://packages/sdk/src/host/handshake.ts#L263-L289](../../../../packages/sdk/src/host/handshake.ts#L263-L289) - the host's answer to an offer, malformed or with nothing in common"
 ---

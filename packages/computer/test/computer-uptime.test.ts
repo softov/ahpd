@@ -14,6 +14,7 @@ import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Principal, Users } from '../../sdk/src/types/users.js';
 import type { Usage, UsageEntry, UsageTotal } from '../../sdk/src/types/usage.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * The up time a machine is charged for.
@@ -79,12 +80,14 @@ const dockerHeld = (state: string): DockerHeld => (existsSync(state)
   ? JSON.parse(readFileSync(state, 'utf8')) as DockerHeld
   : { machines: [], calls: [] });
 
-const until = async (check: () => boolean, times = 1000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+/** By `performance.now()`, which no case here fakes: some fake `Date`, and a deadline on a still clock never comes. */
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = performance.now() + ms;
+  while (performance.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 5); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** Lets `times` timer ticks pass, for a check that something did not happen. */

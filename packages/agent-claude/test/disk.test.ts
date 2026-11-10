@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseYaml } from '@cofold/yaml';
+import { posix } from '../../../tools/posix.ts';
 import { configDirOf, filesOf as readFiles, frontmatterOf, managedDirOf, projectDirOf } from '../src/session/disk.js';
 import type { DiskRoots } from '../src/session/disk.js';
 
@@ -136,15 +137,18 @@ describe('what each file is read for', () => {
 
   it('walks a rules folder once when links in it point back up', () => {
     const root = tree({ 'rules/style.md': '# Style\n' });
-    symlinkSync('.', join(root, 'rules', 'a'), 'dir');
-    symlinkSync('.', join(root, 'rules', 'b'), 'dir');
+    // A junction on Windows, which links a folder with no privilege; it takes
+    // its target whole, so the folder each link sits in is named, not `.`.
+    symlinkSync(join(root, 'rules'), join(root, 'rules', 'a'), posix ? 'dir' : 'junction');
+    symlinkSync(join(root, 'rules'), join(root, 'rules', 'b'), posix ? 'dir' : 'junction');
     expect(filesOf({ configDir: root }).filter((one) => one.kind === 'rule').map((one) => one.path))
       .toEqual([join(root, 'rules', 'style.md')]);
   }, 5000);
 
   it('reads the rules of a linked folder that is not a loop', () => {
     const root = tree({ 'rules/own.md': '# Own\n', 'shared/api.md': '# Api\n' });
-    symlinkSync(join(root, 'shared'), join(root, 'rules', 'shared'), 'dir');
+    // A junction on Windows, which links a folder with no privilege.
+    symlinkSync(join(root, 'shared'), join(root, 'rules', 'shared'), posix ? 'dir' : 'junction');
     expect(filesOf({ configDir: root }).filter((one) => one.kind === 'rule').map((one) => one.name).sort())
       .toEqual(['api.md', 'own.md']);
   });

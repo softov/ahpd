@@ -10,6 +10,7 @@ import {
   resetSdk, actions, emit, sdk, sessionQueries, settle, running, peer, hello,
 } from './support/host.js';
 import type { Bag } from '../src/types/common.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -727,8 +728,9 @@ describe('a message that carries attachments', () => {
   };
 
   /** Wait for what the host writes and the CLI reads, which is off a promise. */
-  const until = async (ready: () => boolean, tries = 200): Promise<void> => {
-    for (let i = 0; i < tries && !ready(); i++) await settle(1);
+  const until = async (ready: () => boolean): Promise<void> => {
+    const end = Date.now() + WAIT_MS;
+    while (!ready() && Date.now() < end) await settle(1);
   };
 
   const png = (label = 'pasted.png'): Bag => ({

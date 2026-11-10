@@ -23,6 +23,7 @@ import type { HostOptions, HostTool } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Session } from '../src/types/session.js';
 import type { Users } from '../src/types/users.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 const SESSION = 'ahp-session:/one';
 /** The session's chat, which the host mints: read off the session's state by `serving`. */
@@ -56,12 +57,13 @@ const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
 };
 
-const until = async (ready: () => boolean, what: string): Promise<void> => {
-  for (let i = 0; i < 2000; i++) {
+const until = async (ready: () => boolean, what: string, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (ready()) return;
     await settle(1);
   }
-  throw new Error(`${what} never happened`);
+  throw new Error(`${what} never happened in ${ms} ms`);
 };
 
 /** One answer a backend was handed: the call, whether it was approved, and the option. */

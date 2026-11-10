@@ -14,6 +14,7 @@ import type { PluginSpec } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { ModelUse, Usage } from '../../sdk/src/types/usage.js';
 import type { Users } from '../../sdk/src/types/users.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A plugin on the other side of its own host's door.
@@ -52,12 +53,13 @@ const peer = (): Peer & { notes: { method: string; params: unknown }[] } => {
 };
 
 /** Yield between looks until `done` says so, so a fast run is not timed by ticks. */
-const until = async (done: () => boolean, what: string, tries = 600): Promise<void> => {
-  for (let i = 0; i < tries; i++) {
+const until = async (done: () => boolean, what: string, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (done()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`${what} never happened`);
+  throw new Error(`${what} never happened in ${ms} ms`);
 };
 
 /** The sign-in record a host with a directory advertises, which the type requires. */

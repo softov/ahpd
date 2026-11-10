@@ -7,6 +7,8 @@ import { loadPlugins, readManifest } from '../src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { PluginSpec } from '../../sdk/src/types/plugin.js';
+import { fileLinks } from '../../../tools/links.ts';
+import { posix } from '../../../tools/posix.ts';
 
 /*
  * The catalogs a manifest names in `ahpd.i18n`.
@@ -111,18 +113,23 @@ describe('ahpd.i18n', () => {
     expect(readManifest(named).i18nProblems).toEqual(['plugin i18n-escape: the i18n folder ../outside points outside the plugin package']);
 
     const linked = pkg('i18n-link', { i18n: 'i18n' });
-    symlinkSync(join(home, 'outside'), join(linked, 'i18n'));
+    // A junction on Windows, which links a folder with no privilege.
+    symlinkSync(join(home, 'outside'), join(linked, 'i18n'), posix ? 'dir' : 'junction');
     expect(readManifest(linked).i18n).toBeUndefined();
 
+    const { loaded, problems } = await load([named]);
+    expect(problems).toEqual(['plugin i18n-escape: the i18n folder ../outside points outside the plugin package']);
+    expect(loaded.map((one) => one.name)).toEqual(['i18n-escape']);
+  });
+
+  // A link to a file, which a Windows machine makes only with Developer Mode or as an administrator.
+  it.skipIf(!fileLinks)('refuses a catalog that links out of the package, and keeps the others', () => {
+    write('outside/pt.json', JSON.stringify({ meta: { title: 'Fora' } }));
     const filed = pkg('i18n-file-link', { i18n: 'i18n' });
     write('i18n-file-link/i18n/es.json', JSON.stringify({ meta: { title: 'Dentro' } }));
     symlinkSync(join(home, 'outside', 'pt.json'), join(filed, 'i18n', 'pt.json'));
     expect(readManifest(filed).i18n).toEqual({ es: { meta: { title: 'Dentro' } } });
     expect(readManifest(filed).i18nProblems).toEqual(['plugin i18n-file-link: the catalog i18n/pt.json points outside the plugin package']);
-
-    const { loaded, problems } = await load([named]);
-    expect(problems).toEqual(['plugin i18n-escape: the i18n folder ../outside points outside the plugin package']);
-    expect(loaded.map((one) => one.name)).toEqual(['i18n-escape']);
   });
 
   it('refuses a value that is not a string, and names the field', async () => {

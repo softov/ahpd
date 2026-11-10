@@ -4,6 +4,7 @@ import { echo } from '../../../examples/echo/agent.js';
 import type { ChangesetOperation, ChangesetSource } from '../src/types/changes.js';
 import type { BroughtBack, ComputerPort } from '../src/types/computers.js';
 import type { Peer } from '../src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * The machine, put where the host's branch is before a turn reads it.
@@ -41,9 +42,13 @@ const settle = async (times = 8): Promise<void> => {
 };
 
 /** Settle until something is true, rather than a fixed number of times. */
-const until = async (ready: () => boolean, tries = 80): Promise<void> => {
-  for (let i = 0; i < tries && !ready(); i++) await settle(2);
-  if (!ready()) throw new Error(`still waiting after ${tries} tries`);
+const until = async (ready: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (ready()) return;
+    await settle(2);
+  }
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** A port with one machine called `box`, saying everything it was asked. */

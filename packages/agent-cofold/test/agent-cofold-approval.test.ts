@@ -13,6 +13,7 @@ import type { HostTool } from '../../sdk/src/types/host.js';
 import { checker } from '../../../tools/wire.mjs';
 import { undeclaredIn } from '../../sdk/test/support/wire.js';
 import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A cofold run that stops for a person, as a client drives it.
@@ -42,12 +43,13 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
 }
 
 /** Let the run's zero-delay work finish, up to a point; no wall-clock waiting on a real model. */
-const until = async (check: () => boolean, times = 400): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 0); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** A fixed number of turns of the event loop, for asserting that nothing happens. */

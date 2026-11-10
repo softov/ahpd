@@ -7,7 +7,7 @@ created: 2026-11-02
 revalidated: 2026-11-02
 refs:
   - git://e4694965 - R1's continuation, the commit this plan was checked at
-  - "[code://.project/working/maycxc-union-20261101-review.md](../../../working/maycxc-union-20261101-review.md) - Softov's review: a steering message a client takes back is neither answered nor withdrawn"
+  - "git://f48055f0 - the last commit that holds `.project/working/maycxc-union-20261101-review.md`; Softov's review: a steering message a client takes back is neither answered nor withdrawn"
   - "[code://packages/sdk/src/host/chatactions.ts#L1603-L1650](../../../../packages/sdk/src/host/chatactions.ts#L1603-L1650) - the removal: `unqueue`, then the refusal during a turn, or the host's own removal"
   - "[code://packages/sdk/src/types/session.ts#L671-L672](../../../../packages/sdk/src/types/session.ts#L671-L672) - `unqueue`: take one back, while it is still waiting"
   - "[code://packages/agent-cofold/src/turns.ts#L787-L793](../../../../packages/agent-cofold/src/turns.ts#L787-L793) - cofold's `unqueue`, which looks in `queued` alone"

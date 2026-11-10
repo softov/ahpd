@@ -11,6 +11,7 @@ import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * What the computer plugin stops when the daemon stops.
@@ -82,13 +83,19 @@ const tree = (dir: string): string[] => readdirSync(dir, { recursive: true })
 const realSetTimeout = setTimeout;
 const wait = (ms: number): Promise<void> => new Promise((resolve) => { realSetTimeout(resolve, ms); });
 
-/** Yield to the event loop until the check holds, for a real subprocess. */
-const until = async (check: () => boolean, times = 1000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+/**
+ * Yield to the event loop until the check holds, for a real subprocess.
+ *
+ * By `performance.now()`, which no case here fakes: some fake `Date`, and a
+ * deadline on a still clock never comes.
+ */
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = performance.now() + ms;
+  while (performance.now() < end) {
     if (check()) return;
     await wait(5);
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 const settle = async (times = 30): Promise<void> => {

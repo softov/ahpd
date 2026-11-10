@@ -15,6 +15,7 @@ import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Principal, Users } from '../../sdk/src/types/users.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * Whose a machine is, recorded with the machine.
@@ -71,12 +72,13 @@ const devCalls = (state: string): string[][] => (existsSync(state)
   ? JSON.parse(readFileSync(state, 'utf8')) as { calls: string[][] }
   : { calls: [] }).calls;
 
-const until = async (check: () => boolean, times = 1000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 5); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 const RECORD = {

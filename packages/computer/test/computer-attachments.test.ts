@@ -15,6 +15,7 @@ import type { ComputerPort } from '../../sdk/src/types/computers.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { SessionStore } from '../../sdk/src/types/sessions.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A session in a machine reads its attachments at the path the host wrote.
@@ -84,12 +85,13 @@ const devHeld = (state: string): DevHeld => (existsSync(state)
   ? JSON.parse(readFileSync(state, 'utf8')) as DevHeld
   : { calls: [] });
 
-const until = async (check: () => boolean, times = 1000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((r) => { setTimeout(r, 5); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** The one a case waited for, which nothing hands back without one. */

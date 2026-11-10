@@ -36,8 +36,12 @@ refs:
 - The provider also checks the subscription's keys, not only the endpoint host. A `p256dh` that is not an uncompressed P-256 point, or an `auth` that is not 16 octets, is refused `-32602`.
 - `contact` is not validated beyond being a non-blank string. When it is given, it is sent as `sub` on every request.
 
+## Checks by hand
+
+Softov ran the checks on a test daemon from main on 2026-11-09, and they passed in Chrome and in Firefox. The check was `pending/push-web-checks.md`, last held at git://2c9bb2717.
+
 ## Left for later
 
-- A real Chrome and Firefox subscription, and a Safari one that answers whether Apple needs a `sub` claim. See `.project/pending/push-web-checks.md`.
+- A Safari subscription, which answers whether Apple needs a `sub` claim. It is *Push in Safari* in [macos-checks.md](../../../pending/macos-checks.md).
 - Windows CI is not run here. The plan's checklist still says it should be green.
 - The whole repo suite was not run. The push package, the typecheck, the boundary check, the build and the docs build were.

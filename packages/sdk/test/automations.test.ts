@@ -17,6 +17,7 @@ import type { AutomationRun, AutomationStore, StartSession } from '../src/types/
 import type { Principal, Users } from '../src/types/users.js';
 import type { Chosen, Session } from '../src/types/session.js';
 import type { Worktrees } from '../src/types/worktrees.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * Automations, on a host that holds no clock.
@@ -42,12 +43,13 @@ const settle = async (times = 8): Promise<void> => {
 };
 
 /** Yield between looks until `done` says so, so a fast run is not timed by ticks. */
-const until = async (done: () => boolean | Promise<boolean>, tries = 200): Promise<void> => {
-  for (let i = 0; i < tries; i++) {
+const until = async (done: () => boolean | Promise<boolean>, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (await done()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`still waiting after ${tries} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 async function connected(withStore = true, pace = 0, held = memoryAutomations()) {
@@ -1238,7 +1240,7 @@ it('answers a press with its run once the run is recorded, and makes the session
     void (client.handle({
       method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
     }) as Promise<{ resource: string }>).then((one) => { answer = one; });
-    await until(() => answer !== undefined, 100);
+    await until(() => answer !== undefined);
     const resource = answer?.resource ?? '';
     expect(resource.startsWith('ahp-automation-run:/')).toBe(true);
     expect((await runState(client, resource)).sessions).toEqual([]);

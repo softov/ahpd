@@ -5,6 +5,7 @@ import { expect, it } from 'vitest';
 import { SNAPSHOT_TAG } from '@ahpd/sdk';
 import type { Bag, MessageAttachment } from '@ahpd/sdk';
 import { fakePi, opened } from './fake-pi.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * A pi turn reads its message's attachments.
@@ -26,12 +27,13 @@ import { fakePi, opened } from './fake-pi.js';
  * `partsOf` reads real bytes off the disk, so a turn here settles over a few
  * turns of the event loop rather than on the first one.
  */
-const until = async (check: () => boolean, times = 2000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((done) => { setTimeout(done, 0); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** What the fake pi was asked to prompt, in the order it was asked. */

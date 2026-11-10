@@ -7,6 +7,7 @@ import { afterEach, expect, it } from 'vitest';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { acpAgent } from '../src/index.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * An ACP agent in a folder nobody vouched for.
@@ -33,12 +34,13 @@ afterEach(async () => {
 });
 
 /** The subprocess's work finishing, up to a point. */
-const until = async (check: () => boolean, times = 3000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (check()) return;
     await new Promise((resolve) => { setTimeout(resolve, 1); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** A folder of its own, with the file the fixture logs its requests to. */

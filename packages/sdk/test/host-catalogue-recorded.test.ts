@@ -8,6 +8,7 @@ import { chatUriFor } from '../src/host/channels.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import type { Agent, Listed, SessionAt } from '@ahpd/sdk';
 import type { SessionStore } from '../src/types/sessions.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { WORK } from './support/work.js';
 import { uriOf } from '../src/resources/fileuri.js';
 
@@ -89,9 +90,13 @@ const list = async (client: { handle(request: unknown): Promise<unknown> }) =>
   };
 
 /** Ticks until this is true, or long enough that it plainly is not. */
-const until = async (wanted: () => boolean): Promise<void> => {
-  for (let i = 0; i < 500 && !wanted(); i++) await settle(2);
-  if (!wanted()) throw new Error('still waiting');
+const until = async (wanted: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (wanted()) return;
+    await settle(2);
+  }
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** A session recorded where it ran, as the store keeps it. */

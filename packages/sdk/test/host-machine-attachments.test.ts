@@ -27,6 +27,7 @@ import type { Bag } from '../src/types/common.js';
 import type { ComputerPort } from '../src/types/computers.js';
 import type { MessageAttachment, MessageFrom, Session } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /** A PNG's first bytes. Nothing here decodes it, so a header is a picture. */
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489', 'hex');
@@ -47,9 +48,13 @@ const settle = async (times = 20): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
-const until = async (ready: () => boolean, tries = 400): Promise<void> => {
-  for (let i = 0; i < tries && !ready(); i++) await settle(1);
-  if (!ready()) throw new Error(`still waiting after ${tries} tries`);
+const until = async (ready: () => boolean, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (ready()) return;
+    await settle(1);
+  }
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 /** The one a case waited for, which nothing hands back without one. */

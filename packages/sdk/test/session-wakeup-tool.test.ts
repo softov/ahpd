@@ -21,6 +21,7 @@ import type { Host } from '../src/types/host.js';
 import type { Session } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { SessionStore } from '../src/types/sessions.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 let made: string[] = [];
 afterEach(() => {
@@ -46,12 +47,13 @@ const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
-const until = async (ready: () => boolean | Promise<boolean>, what: string, tries = 400): Promise<void> => {
-  for (let i = 0; i < tries; i++) {
+const until = async (ready: () => boolean | Promise<boolean>, what: string, ms = WAIT_MS): Promise<void> => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
     if (await ready()) return;
     await settle(1);
   }
-  throw new Error(`${what} never happened`);
+  throw new Error(`${what} never happened in ${ms} ms`);
 };
 
 /** What the backend was asked for, and the tools each chat was handed. */

@@ -7,7 +7,7 @@ created: 2026-11-02
 revalidated: 2026-11-02
 refs:
   - git://9d1cc04e - the commit of ahpd this plan was checked at
-  - "[code://.project/working/maycxc-union-20261101-review.md](../../../working/maycxc-union-20261101-review.md) - Softov's review: a nested session's customization switch may reach outer clients twice"
+  - "git://f48055f0 - the last commit that holds `.project/working/maycxc-union-20261101-review.md`; Softov's review: a nested session's customization switch may reach outer clients twice"
   - "[code://packages/sdk/src/sessions/nested.ts#L483](../../../../packages/sdk/src/sessions/nested.ts#L483) - `answering`, the client actions the host inside owes an answer"
   - "[code://packages/sdk/src/sessions/nested.ts#L510-L531](../../../../packages/sdk/src/sessions/nested.ts#L510-L531) - `deliver` and `carry`"
   - "[code://packages/sdk/src/sessions/nested.ts#L933-L983](../../../../packages/sdk/src/sessions/nested.ts#L933-L983) - `pump`, which passes an inner action out with the answer it owes, or none"
