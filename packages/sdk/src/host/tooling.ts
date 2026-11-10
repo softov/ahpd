@@ -27,6 +27,8 @@ import { asksForTool } from './permissions.js';
 import { preambleOf } from './preamble.js';
 import { readAggregate, startsRead } from './chatactions.js';
 import { refusalReason } from './gate.js';
+import { tokensForConnection } from './auth.js';
+import { createChatMover } from './sessionmethods.js';
 import type { Bag } from '../types/common.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { Owner } from '../types/usage.js';
@@ -1694,6 +1696,17 @@ export function createTooling(ctx: HostContext): Tooling {
   };
 
   /**
+   * The host's own chat move, reached from a turn.
+   *
+   * The function the protocol's `moveChat` is, so a tool's move and a client's
+   * resolve the destination, refuse it and make it in one code path. The
+   * connection and the credentials are the caller's: a connection older than
+   * the chat URIs it can address hides the destination, and its tokens are
+   * what the chat starts again with where it lands.
+   */
+  const mover = createChatMover(ctx);
+
+  /**
    * Whether a grant is one of the read half of whatever it names.
    *
    * `read` and `write` are the groups and never operations - so a
@@ -2298,6 +2311,14 @@ export function createTooling(ctx: HostContext): Tooling {
       // Whether its chats may move, which a session changing its workspace's may not.
       for (const one of sessions.get(uri)?.chats.keys() ?? []) ctx.updateChatMovability(one);
     },
+    move: (chat, destination) => {
+      // The connection that sent the calling turn: the move runs in it, so it
+      // is the window an older client's visibility is read against, and its
+      // tokens are the ones the chat starts again with.
+      const turn = activeTurnOf(chatUri);
+      const sender = turn === undefined ? undefined : sentBy.get(turn);
+      return mover(sender, (provider) => tokensForConnection(ctx.agents, sender, provider), { channel: chat, destination });
+    },
     scheduleWake: (delaySeconds, prompt) => {
       const at = (options.now?.() ?? new Date()).getTime() + delaySeconds * 1000;
       /*
@@ -2477,6 +2498,10 @@ export function createTooling(ctx: HostContext): Tooling {
         await removeSession(session, caller.root === true ? sender : caller.principal ?? sender);
       },
       setWorkspace: needsSession,
+      // A move is a chat's, named by the call; a caller with no session has no
+      // turn behind it, so the chat starts again with no credentials of one.
+      move: (chat, destination) =>
+        mover(undefined, (provider) => tokensForConnection(ctx.agents, undefined, provider), { channel: chat, destination }),
       // A row is drawn in a chat, and a call with no session has none.
       background: needsSession,
       scheduleWake: needsSession,

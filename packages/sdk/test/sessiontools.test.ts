@@ -312,11 +312,12 @@ describe('a transcript as get_session_context answers it', () => {
 });
 
 describe('the set itself', () => {
-  it('is the reference host\'s nine in its order, then the two readers this host adds', () => {
+  it('is the reference host\'s, in its order, with the two readers this host adds', () => {
     const tools = sessionTools();
     expect(tools.map((one) => one.definition.name)).toEqual([
       'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace',
       'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+      'move_session',
     ]);
     const schema = (name: string) => tools.find((one) => one.definition.name === name)?.definition.inputSchema as { required?: string[] };
     expect(schema('create_session').required).toEqual(['relationship', 'prompt', 'title']);
@@ -1307,17 +1308,17 @@ describe('a tool a person calls with no session', () => {
     return await tool.run(input);
   };
 
-  it('offers a member the nine session tools, and a guest only the four it may read', async () => {
+  it('offers a member the ten session tools, and a guest only the four it may read', async () => {
     const { host, users } = hosting();
-    const nine = [
+    const ten = [
       'list_sessions', 'list_agents', 'list_models', 'create_session', 'create_chat', 'rename_chat', 'send_message',
-      'get_session_context', 'delete_session',
+      'get_session_context', 'delete_session', 'move_session',
     ];
-    expect(Object.keys(offered(host, { principal: await principal(users, 'member') }))).toEqual(nine);
+    expect(Object.keys(offered(host, { principal: await principal(users, 'member') }))).toEqual(ten);
     expect(Object.keys(offered(host, { principal: await principal(users, 'guest') })))
       .toEqual(['list_sessions', 'list_agents', 'list_models', 'get_session_context']);
     // This host's own connection is refused nothing it asks about, either.
-    expect(Object.keys(offered(host, { root: true }))).toEqual(nine);
+    expect(Object.keys(offered(host, { root: true }))).toEqual(ten);
   });
 
   it('leaves out a tool that says nothing, and an advanced one while the host forbids them', async () => {
@@ -1335,7 +1336,7 @@ describe('a tool a person calls with no session', () => {
     const names = Object.keys(offered(host, { principal: await principal(users, 'member') }));
     expect(names).not.toContain('plain_tool');
     expect(names).not.toContain('advanced_tool');
-    expect(names).toHaveLength(9);
+    expect(names).toHaveLength(10);
   });
 
   /*

@@ -77,7 +77,7 @@ move_session -> moveChat (chatMoves.enabled) -> session/chatRemoved, chatAdded
 | [01 - send_message replaces, cancels and steers](task-01-send-message-replaces-and-steers.md) | implemented | - |
 | [02 - set_workspace moves the calling chat](task-02-set-workspace-moves-the-chat.md) | implemented | - |
 | [03 - create_session works with no git](task-03-create-session-works-with-no-git.md) | implemented | - |
-| [04 - move_session reorganizes sessions](task-04-move-session.md) | todo | - |
+| [04 - move_session reorganizes sessions](task-04-move-session.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -85,8 +85,8 @@ move_session -> moveChat (chatMoves.enabled) -> session/chatRemoved, chatAdded
 
 ## Resume state
 
-- **Done so far:** task 01 implemented 2026-11-10; `send_message` takes `operation`, `delivery`, `messageId` and `expectedRevision`, and answers in VS Code's terms. Task 02 implemented 2026-11-10; `set_workspace` moves only the calling chat for an agent with `multipleDirectories`, and the session's folders gain the new one. Task 03 implemented 2026-11-10; `create_session` picks the folder a host offers for a directory with no git, and refuses `worktree: true` there.
-- **Next action:** [task-04-move-session.md](task-04-move-session.md).
+- **Done so far:** task 01 implemented 2026-11-10; `send_message` takes `operation`, `delivery`, `messageId` and `expectedRevision`, and answers in VS Code's terms. Task 02 implemented 2026-11-10; `set_workspace` moves only the calling chat for an agent with `multipleDirectories`, and the session's folders gain the new one. Task 03 implemented 2026-11-10; `create_session` picks the folder a host offers for a directory with no git, and refuses `worktree: true` there. Task 04 implemented 2026-11-10; `move_session` reorders, moves and frees a nested chat over `moveChat`, with the `end` anchor, and refuses in VS Code's words.
+- **Next action:** Softov's review of the four tasks. No task is left to build.
 - **Open questions:** none.
 - **Watch out for:** VS Code's main moved past ahpd's UPSTREAM.md checkpoint, 1.143.1. Add these tools to the next pass's notes, so the pass does not do them again. The prescribed sdk run leaves `watches.test.ts > honours the excludes it was given` failing while `TMPDIR` is inside the worktree: the case's own paths contain `node_modules/`. It passes with `TMPDIR` outside the repository.
 

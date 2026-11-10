@@ -1712,6 +1712,22 @@ export interface ToolCall {
    */
   setWorkspace(directory: string, isolation: boolean): void;
   /**
+   * Move one chat into another session, or into a session of its own.
+   *
+   * The host's own `moveChat` with the chat already named, so a tool and a
+   * client order sessions the same way: the destination is a session this host
+   * runs, and a chat of its own is the `newSession` kind. `after` names a chat
+   * of the destination to sit behind, or is `end` for its last chat, which is
+   * what a tool that leaves the anchor out means; a client's protocol call
+   * leaves it out for the beginning instead. The backend is closed where it
+   * ran and started again where it lands, so a chat with a turn running moves
+   * nowhere - the host refuses it in the words it refuses a client's own move
+   * with.
+   */
+  move(chat: string, destination:
+    | { kind: 'session'; session: string; after?: string }
+    | { kind: 'newSession' }): Promise<{ session: string }>;
+  /**
    * Wake the calling chat once `delaySeconds` have passed, with a turn that
    * carries `prompt`.
    *

@@ -79,6 +79,7 @@ describe('tools the host contributes', () => {
     expect(state.serverTools?.map((one) => one.name)).toEqual([
       'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace',
       'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+      'move_session',
       'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
       'ahp_resource', 'ahp_terminals', 'schedule_wakeup', 'ask_user',
     ]);
@@ -739,6 +740,116 @@ describe('tools the host contributes', () => {
       expect(worktree).toContain(`An isolated worktree will be created from ${uriOf(join(WORK, 'a#b'))} and set as the workspace`);
       const direct = await call('set_workspace', { workspaceFolder: join(WORK, 'a#b'), isolation: false });
       expect(direct).toContain(`Workspace will be set to ${uriOf(join(WORK, 'a#b'))} after this turn ends`);
+    });
+
+    /** Moving chats on, as a VS Code window with its move setting on turns it on. */
+    const movingOn = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<void> => {
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+      });
+      await settle();
+    };
+
+    /**
+     * A peer chat of a session, in a turn it has already ended.
+     *
+     * `own` is the conversation id its backend keeps it under, which a move
+     * reads as the chat's own and starts it again by: the reference starts a
+     * chat that cannot be resumed nowhere.
+     */
+    const nested = async (client: ReturnType<ReturnType<typeof createHost>['accept']>, session: string, chat: string, own: string): Promise<void> => {
+      await client.handle({ method: 'createChat', params: { channel: session, chat } });
+      await client.handle({ method: 'subscribe', params: { channel: chat } });
+      await firstMessage(client, chat);
+      await emit({ type: 'system', subtype: 'init', session_id: own });
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4, session_id: own });
+      await settle();
+    };
+
+    /*
+     * A nested session moved into another one, at its end.
+     *
+     * The schema says an omitted `after` is the end, while the protocol's own
+     * move reads an absent anchor as the beginning, so the tool passes the
+     * host's word for the end and the chat lands behind the destination's
+     * default chat.
+     */
+    it('moves a nested session into another session, at its end', async () => {
+      const { client } = await withTools();
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/target', provider: 'claude' } });
+      await atRest(client, 'ahp-session:/target');
+      const target = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/target' } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state;
+      const id = '2a2a2a2a-0000-4000-8000-000000000001';
+      await nested(client, 'ahp-session:/served', `ahp-chat:/${id}`, 'sdk-moved');
+      await movingOn(client);
+
+      expect(await call('move_session', {
+        session: `agent-host-session://claude/served?chat=${id}`,
+        into: 'agent-host-session://claude/target',
+      })).toBe(`Nested session moved into agent-host-session://claude/target (agent-host-session://claude/target?chat=${id}).`);
+
+      const order = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/target' } }) as {
+        snapshot: { state: { chats?: { resource: string }[] } };
+      }).snapshot.state.chats?.map((one) => one.resource);
+      expect(order).toEqual([target.defaultChat, `ahp-chat:/${id}`]);
+    });
+
+    it('reorders a nested session after another in its own session', async () => {
+      const { client } = await withTools();
+      const one = '3a3a3a3a-0000-4000-8000-000000000001';
+      const two = '3b3b3b3b-0000-4000-8000-000000000002';
+      await nested(client, 'ahp-session:/served', `ahp-chat:/${one}`, 'sdk-one');
+      await nested(client, 'ahp-session:/served', `ahp-chat:/${two}`, 'sdk-two');
+      await movingOn(client);
+
+      expect(await call('move_session', {
+        session: `agent-host-session://claude/served?chat=${one}`,
+        into: 'agent-host-session://claude/served',
+        after: `agent-host-session://claude/served?chat=${two}`,
+      })).toBe(`Nested session reordered in its session (agent-host-session://claude/served?chat=${one}).`);
+
+      const order = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/served' } }) as {
+        snapshot: { state: { defaultChat: string; chats?: { resource: string }[] } };
+      }).snapshot.state;
+      expect(order.chats?.map((each) => each.resource)).toEqual([order.defaultChat, `ahp-chat:/${two}`, `ahp-chat:/${one}`]);
+    });
+
+    it('makes a nested session its own', async () => {
+      const { client } = await withTools();
+      const id = '4a4a4a4a-0000-4000-8000-000000000001';
+      const chat = `ahp-chat:/${id}`;
+      await nested(client, 'ahp-session:/served', chat, 'sdk-own');
+      await movingOn(client);
+
+      // The session the chat is given is named by its own conversation, which
+      // is where a restart resumes it.
+      expect(await call('move_session', { session: `agent-host-session://claude/served?chat=${id}`, relationship: 'independent' }))
+        .toBe('Nested session moved to its own session (agent-host-session://claude/sdk-own).');
+
+      const own = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/sdk-own' } }) as {
+        snapshot: { state: { defaultChat: string; chats?: { resource: string }[] } };
+      }).snapshot.state;
+      expect(own.defaultChat).toBe(chat);
+      expect(own.chats?.map((one) => one.resource)).toEqual([chat]);
+    });
+
+    /*
+     * Moving is `chatMoves.enabled`, off until a window turns it on, and the
+     * tool says the host's refusal in the reference's words for a model.
+     * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/sessionMoveTools.ts#L197-L225
+     */
+    it('refuses a move while moving sessions is off, in VS Code\'s words', async () => {
+      const { client } = await withTools();
+      const id = '5a5a5a5a-0000-4000-8000-000000000001';
+      await nested(client, 'ahp-session:/served', `ahp-chat:/${id}`, 'sdk-off');
+
+      expect(await call('move_session', {
+        session: `agent-host-session://claude/served?chat=${id}`,
+        into: 'agent-host-session://claude/served',
+      })).toBe('Cannot move: Moving sessions is turned off; tell the user it needs the `chat.agentHost.moveChats.enabled` setting.');
     });
   });
 

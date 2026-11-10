@@ -3,7 +3,7 @@ import { RUN_HISTORY_LIMIT } from '../automations/automations.js';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { uriOf } from '../resources/fileuri.js';
 import { bag, str } from '../utils/values.js';
-import { keyOf, normalizeScopes, storedAuthToken } from './auth.js';
+import { keyOf, normalizeScopes, tokensForConnection } from './auth.js';
 import { AUTOMATIONS_TEMPLATE, ownerUriOf, ROOT, spaceOf } from './channels.js';
 import { BANG } from './common.js';
 import type { Bag } from '../types/common.js';
@@ -165,17 +165,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
    * the client was about to be told is gone.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1983-L1987
    */
-  const tokensFor = (provider: string): Record<string, string> => {
-    const agent = agents.get(provider);
-    const out: Record<string, string> = {};
-    for (const one of agent?.protectedResources ?? []) {
-      const id = (one as { resource?: unknown }).resource;
-      if (typeof id !== 'string') continue;
-      const held = storedAuthToken(connection.tokens, id, normalizeScopes((one as { scopes_supported?: unknown }).scopes_supported));
-      if (held !== undefined) out[id] = held.token;
-    }
-    return out;
-  };
+  const tokensFor = (provider: string): Record<string, string> => tokensForConnection(agents, connection, provider);
   /**
    * When a sign-in or a token runs out, the client that pushed it is told,
    * with `auth/required` and `reason: 'expired'`, the moment the `expiresIn`
