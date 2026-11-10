@@ -34,7 +34,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
   - [claude-resume-checks.md](claude-resume-checks.md), [cofold-resume-checks.md](cofold-resume-checks.md) and [pi-resume-checks.md](pi-resume-checks.md).
   - [host-1347-mcp-checks.md](host-1347-mcp-checks.md), the tools at `/mcp`.
   - [update-checks.md](update-checks.md).
-  - [install-path-checks.md](install-path-checks.md), [macos-checks.md](macos-checks.md) and [daemon-41-windows-checks.md](daemon-41-windows-checks.md), for the install on each system.
+  - [macos-checks.md](macos-checks.md) and [daemon-41-windows-checks.md](daemon-41-windows-checks.md), for the install on macOS and Windows. The install on Linux passed on 2026-11-09.
   - The grant role editor in ahpw: the subjects of #205, such as `operation`, `tunnel` and `client`, show and save. No file yet.
 
 ## Not in this release

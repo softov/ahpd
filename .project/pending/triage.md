@@ -6,15 +6,13 @@ title: The checks by hand that wait, in order
 
 Every file in this folder is a check by hand. This file lists each one once, with who runs it and what it needs first. When a check passes, delete its file and its line here, in the same commit.
 
-Checked against main at 6d224b339 on 2026-11-09.
+Checked against main at fd9a94e5b on 2026-11-09.
 
 ## Softov, on this machine
 
 Restart the daemon on main first. Do them from the top down.
 
-- [install-path-checks.md](install-path-checks.md) - 20 min, sudo and a test user. Claude cannot add a system user here.
 - [plugin-63-model-list-checks.md](plugin-63-model-list-checks.md) - 10 min.
-- [linux-checks.md](linux-checks.md) - 10 min, the sign-in only.
 - [plugin-70-file-checks.md](plugin-70-file-checks.md) - 15 min, a Slack or Jira Cloud connector.
 - [host-122-agent-records-checks.md](host-122-agent-records-checks.md) - 15 min, ahpw for steps 3 and 4.
 - [plugin-71-sign-in-checks.md](plugin-71-sign-in-checks.md) - 15 min, an OpenRouter account.
@@ -30,7 +28,19 @@ Restart the daemon on main first. Do them from the top down.
 - [host-108-token-checks.md](host-108-token-checks.md) - 25 min, a second computer that reaches port 37537.
 - [plugin-54-webhook-checks.md](plugin-54-webhook-checks.md) - 60 min, a public port, a GitHub repo, a Slack app, users `alice` and `bob`, and the webhook plugin's grants.
 - [plugin-50-first-pieces.md](plugin-50-first-pieces.md) - 60 to 120 min, one account per piece.
-- [update-checks.md](update-checks.md) - about 60 min, Debian here, then Windows. The systemd section waits on a version after 0.15.0-rc.1, and the HTTP section needs `httpApi`, a token and a person.
+
+## The Linux test VM
+
+A Debian 13 GNOME VM on Softov's Proxmox node, with passwordless sudo, reached through the node. It suits a check that needs sudo, a second user or a clean GNOME login. Claude runs the shell steps over ssh, and Softov does the steps at the GNOME desktop. Never write the VM's name, address or user names in a record.
+
+- [linux-checks.md](linux-checks.md) - 10 min, the sign-in only. A browser in GNOME, and a clone of ahpd at `/github/ahpd` for `test-daemon.sh`.
+- [update-checks.md](update-checks.md) - about 60 min, the Debian sections as a throwaway user. The systemd section waits on a version after 0.15.0-rc.1, and the HTTP section needs `httpApi`, a token and a person. The Windows section runs on the Windows 10 VM.
+
+Before and after a check on the VM:
+
+- A new user can get a uid that already owns a system path, such as an orphaned uid that owns `/usr/local/lib/node_modules`. For a user who must not write `/usr/local`, check that `sudo -iu <user> touch /usr/local/lib/node_modules/x` fails.
+- After a GNOME logout, run `loginctl terminate-user <user>`, and wait before `deluser --remove-home`. An ibus that still exits can write `~/.cache` again.
+- To tell nvm's npm from another npm, start the daemon with the nvm Node, on a PATH whose `npm` is not nvm's.
 
 ## Claude can run these on a test daemon
 
@@ -52,7 +62,7 @@ Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 - [macos-service-checks.md](macos-service-checks.md) - a Mac, the launchd sections, 25 min.
 - [macos-checks.md](macos-checks.md) - a Mac with VS Code, 90 min.
 - [vm-01-dev02-libvirt.md](vm-01-dev02-libvirt.md) - dev02 with sudo, and a choice on the iptables rules, 15 min.
-- [vm-06-proxmox-node.md](vm-06-proxmox-node.md) - a Proxmox node, not named yet, 45 min.
+- [vm-06-proxmox-node.md](vm-06-proxmox-node.md) - Softov's Proxmox node, 45 min. Left: Softov makes the template, the API user and its token on the node, as steps 2 and 3 say.
 - [container-05-p10-hub-checks.md](container-05-p10-hub-checks.md) - a node behind NAT, such as the Windows VM.
 
 ## Blocked
