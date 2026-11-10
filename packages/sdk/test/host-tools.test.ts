@@ -1,6 +1,7 @@
 import { loggerOf } from '../src/log.js';
 import { WAIT_MS } from '../../../tools/wait.ts';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -10,7 +11,7 @@ import { sessionReducer } from '@microsoft/agent-host-protocol';
 import { clientPluginsIn } from '../src/plugins/clientplugins.js';
 import { enablementKeyOf, memoryEnablement } from '../src/plugins/enablement.js';
 import type { EnablementStore } from '../src/plugins/enablement.js';
-import { uriOf } from '../src/resources/fileuri.js';
+import { localPath, uriOf } from '../src/resources/fileuri.js';
 import { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../src/tools/clientcalls.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
 import { sdkVersion } from '../src/version.js';
@@ -25,7 +26,7 @@ import type { SessionAction, SessionInputRequest, SessionState } from '@microsof
 import type { Grant, Principal, Users } from '../src/types/users.js';
 import { ROOT } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
-import { gitWorktrees } from '../src/repo/worktrees.js';
+import { gitWorktrees, worktreesOf } from '../src/repo/worktrees.js';
 import {
   startedBySend,
   resetSdk, actions, builtServer, claude, createHost, defaultChatOf, echo, emit, firstMessage, hello, hostTools,
@@ -77,7 +78,7 @@ describe('tools the host contributes', () => {
       snapshot: { state: { serverTools?: { name: string }[] } };
     }).snapshot.state;
     expect(state.serverTools?.map((one) => one.name)).toEqual([
-      'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace',
+      'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace', 'isolate_session',
       'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
       'move_session',
       'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
@@ -742,6 +743,116 @@ describe('tools the host contributes', () => {
       expect(worktree).toContain(`An isolated worktree will be created from ${uriOf(join(WORK, 'a#b'))} and set as the workspace`);
       const direct = await call('set_workspace', { workspaceFolder: join(WORK, 'a#b'), isolation: false });
       expect(direct).toContain(`Workspace will be set to ${uriOf(join(WORK, 'a#b'))} after this turn ends`);
+    });
+
+    /*
+     * VS Code's `isolate_session`: the chat is moved to a new worktree cut from
+     * its own folder, and the tree carries the session's include-files.
+     * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/sessionIsolationTools.ts
+     */
+    it('moves only the chat that asked into a new worktree, with the session\'s include-files', async () => {
+      /*
+       * A real repository, because the whole question is what git does when a
+       * tree is cut from it: the layout it makes, and the ignored file that a
+       * checkout leaves behind arriving with it.
+       */
+      const root = mkdtempSync(join(tmpdir(), 'ahpd-isolate-'));
+      dirs.push(root);
+      const repo = join(root, 'project');
+      mkdirSync(repo);
+      const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+      git('init', '-q', '-b', 'main');
+      git('config', 'user.email', 'test@example.com');
+      git('config', 'user.name', 'Test');
+      writeFileSync(join(repo, 'tracked.txt'), 'tracked\n');
+      writeFileSync(join(repo, '.gitignore'), '.env\n');
+      writeFileSync(join(repo, '.env'), 'SECRET=1\n');
+      git('add', '-A');
+      git('commit', '-q', '-m', 'first');
+
+      const host = createHost({
+        path: repo, agents: [claude({ paths: [repo] })], ...machine(), tools: hostTools(), worktrees: gitWorktrees(),
+      });
+      const p = peer();
+      p.request = async () => ({ trusted: true });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0']));
+      const uri = 'ahp-session:/isolated';
+      await client.handle({
+        method: 'createSession',
+        params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(repo)], config: { worktreeIncludeFiles: ['.env'] } },
+      });
+      const chatUri = await defaultChatOf(client, uri);
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      // A first turn, ended, so the session's backend is up and it is at rest.
+      await atRest(client, uri);
+      await settle(8);
+      // No turn, and any argument at all, are VS Code's refusals.
+      expect(await call('isolate_session', {})).toContain('requires an active turn');
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'continue this task without changing the checkout' } } },
+      });
+      await settle();
+      expect(await call('isolate_session', { workspaceFolder: repo })).toBe('isolate_session takes no arguments.');
+      expect(await call('isolate_session', {}))
+        .toBe('Moving this chat to a new worktree is scheduled. End this turn now without calling more tools or replying. The host will move only this chat to a new worktree, update the session workspace, and continue the original task automatically. Other chats remain unchanged.');
+      // Nothing is cut while the turn runs.
+      expect(actions(p, uri).some((one) => one.action.type === 'session/workingDirectorySet')).toBe(false);
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+      /*
+       * The move is a git worktree cut and a backend started again, so it is
+       * waited for rather than ticked: the session says the tree joined it.
+       */
+      const moved = async (): Promise<boolean> => ((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { workingDirectories?: string[] } };
+      }).snapshot.state.workingDirectories ?? []).some((one) => localPath(one).startsWith(worktreesOf(repo)));
+      for (const until = Date.now() + WAIT_MS; Date.now() < until && !(await moved());) await new Promise((r) => { setTimeout(r, 20); });
+
+      // A tree of the session's, cut from the folder the chat worked in.
+      const added = actions(p, uri).find((one) => one.action.type === 'session/workingDirectorySet');
+      const where = localPath((added?.action as { directory: string }).directory);
+      expect(where.startsWith(worktreesOf(repo))).toBe(true);
+      expect(readFileSync(join(where, '.env'), 'utf8')).toBe('SECRET=1\n');
+      expect(readFileSync(join(where, 'tracked.txt'), 'utf8')).toBe('tracked\n');
+      // The chat left the folder it had and entered the tree; the session's
+      // own folder is the one it started with, and the tree joined the set.
+      expect(actions(p, chatUri).filter((one) => one.action.type === 'chat/workingDirectoryRemoved')
+        .map((one) => (one.action as { directory: string }).directory)).toEqual([uriOf(repo)]);
+      expect(actions(p, chatUri).find((one) => one.action.type === 'chat/workingDirectorySet')?.action)
+        .toMatchObject({ directory: uriOf(where) });
+      // The backend started again in the tree, and the turn that continues the
+      // task says so in VS Code's words for a chat alone.
+      expect(sessionQueries().at(-1)?.options.cwd).toBe(where);
+      // And the turn that continues the task, once the host has started it.
+      const continuing = (): boolean => {
+        const last = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
+        return ((last?.action.message as { _meta?: Record<string, unknown> } | undefined)?._meta?.['vscode.chat.systemInitiatedLabel']) === 'Workspace Set';
+      };
+      for (const until = Date.now() + WAIT_MS; Date.now() < until && !continuing();) await new Promise((r) => { setTimeout(r, 20); });
+      const notice = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
+      expect(notice?.action.message).toMatchObject({
+        origin: { kind: 'systemNotification' },
+        _meta: { 'vscode.chat.systemInitiatedLabel': 'Workspace Set' },
+      });
+      expect((notice?.action.message as { text: string }).text).toBe(
+        `Only this chat now uses the worktree at ${where}. Other chats and their folders are unchanged. The session workspace includes this worktree. Continue the user's original task here without requesting another worktree.`,
+      );
+    });
+
+    /*
+     * A session whose agent keeps one folder for its chats has no chat to move
+     * alone, so VS Code's tool is not offered there - and a pi agent is one of
+     * those.
+     */
+    it('is not offered to an agent that keeps one folder for its session', async () => {
+      const { client, uri } = await withTools(hostTools(), {
+        agents: [{ ...claude({ paths: [HERE] }), multipleDirectories: false }],
+      });
+      const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { serverTools?: { name: string }[] } };
+      }).snapshot.state;
+      expect(state.serverTools?.map((one) => one.name)).not.toContain('isolate_session');
     });
 
     /** Moving chats on, as a VS Code window with its move setting on turns it on. */

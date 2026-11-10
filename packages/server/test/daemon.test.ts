@@ -342,6 +342,17 @@ describe('the record on disk', () => {
     expect(onDisk()).toBe(process.ppid);
   });
 
+  /*
+   * A container on a volume a removed container left its record in: the
+   * entrypoint execs ahpd, so every container's daemon has the same pid, and
+   * the record names the daemon that is claiming it.
+   */
+  it('writes over a record that names the claiming daemon\'s own pid', () => {
+    put({ ...naming(process.pid), url: 'ws://0.0.0.0:9187' });
+    expect(claim({ ...naming(process.pid), url: 'ws://127.0.0.1:9187' })).toBeUndefined();
+    expect((JSON.parse(readFileSync(join(home, 'ahpd', 'daemon.json'), 'utf8')) as Running).url).toBe('ws://127.0.0.1:9187');
+  });
+
   // A stop delivered as a SIGTERM; on Windows a stop goes over the control pipe, which control.test drives.
   it.skipIf(!posix)('leaves a record a successor claimed while a stop was signalling the daemon it read', async () => {
     const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });

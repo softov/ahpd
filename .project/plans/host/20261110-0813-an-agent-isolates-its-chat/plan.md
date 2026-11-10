@@ -67,7 +67,7 @@ isolate_session -> confirmation "Change Workspace?" -> setWorkspace(chat, worktr
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - isolate_session moves the chat to a worktree](task-01-isolate-session.md) | todo | - |
+| [01 - isolate_session moves the chat to a worktree](task-01-isolate-session.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -75,10 +75,14 @@ isolate_session -> confirmation "Change Workspace?" -> setWorkspace(chat, worktr
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-10.
-- **Next action:** [task-01-isolate-session.md](task-01-isolate-session.md), once the required plan's task 02 is built.
+- **Done so far:** task 01 implemented 2026-11-10.
+- **Next action:** Softov's review, then `done` on the task. No task is left.
 - **Open questions:** none.
-- **Watch out for:** VS Code refuses any input; a call with one is refused in its words.
+- **Watch out for:**
+  1. VS Code's confirmation title and message have no field in `ToolDefinition`, so task 01 carries neither, and the backend's own policy asks.
+  2. With TMPDIR under the worktree, the suites fail on a case that makes a folder that is not a repository, or a folder outside `node_modules`.
+  3. With the default TMPDIR, only the two `host-permissions` cases fail.
+  4. Windows CI was not run here.
 
 ## Final verification checklist
 
