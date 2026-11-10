@@ -23,7 +23,7 @@ Update, remove and one-run flags such as `--plugin` are in [Plugins](https://git
 
 ### What it needs
 
-- At least one model provider set up in pi's own settings. pi reads its model providers and credentials from its own settings, so nothing here needs configuring. Running `pi` by hand in the same directory is the quickest check.
+- At least one model provider set up in pi's own settings, or a record with its own `baseUrl` and `apiKey`. pi reads its model providers and credentials from its own settings, so nothing here needs configuring for those. Running `pi` by hand in the same directory is the quickest check.
 
 ## Agents
 
@@ -48,6 +48,8 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | Option | Default | What it does |
 | --- | --- | --- |
 | `model` | pi's own default | The model a record that names none runs on, as `provider/modelId`; a turn may choose another, and a resumed or forked session keeps its own |
+| `baseUrl` | pi's own providers | The OpenAI-compatible endpoint a record that names none runs on, such as `https://api.example.com/v1` |
+| `apiKey` | none | The key that endpoint's requests carry. A read answers `<set>`: the value stays in the configuration file |
 | `projectTrust` | `trust` | Whether a record that names none loads a project's own pi extensions, skills and prompts |
 | `sessionDir` | pi's own | Where a record that names none keeps its pi sessions |
 | `hostTools` | `true` | Whether the host's own tools reach each session. A record can turn them off for one agent |
@@ -67,6 +69,8 @@ A record of the engine holds what one pi agent runs on, and the channel owns its
 | Field | What it does |
 | --- | --- |
 | `model` | The model this agent runs on, as `provider/modelId` |
+| `baseUrl` | The OpenAI-compatible endpoint this agent runs on. Its models are listed as `<record id>/<model id>` |
+| `apiKey` | The key that endpoint's requests carry. Kept in the vault, as a `secret` field |
 | `projectTrust` | `trust` or `deny`, as above |
 | `sessionDir` | Where this agent's pi sessions live. Host records only |
 | `hostTools` | Whether the host's own tools reach this agent's sessions. Off drops them and keeps each client's tools |
@@ -93,7 +97,9 @@ A client puts the key's value, and the channel moves it to the vault under `host
 
 A client makes one with `x-ahpd/agents/put`, and the daemon keeps it at `agents/<id>.json` in its configuration folder. A record whose `config` no longer fits, or whose `$secret` the vault cannot answer, is written and shown as `invalid` with one line naming it, and no value; a record whose engine no plugin registers any more is kept and shown as `unavailable`.
 
-No option of this plugin holds a credential, so it needs no `ahpd vault`. A key for a record belongs in the record's `env`, which the channel vaults; a key for a machine is the `@ahpd/computer` profile's, as below.
+`apiKey` is a `writeOnly` option: it is checked as any other is, stays in the configuration file, and a read answers `<set>`. A record's own `apiKey` is a `secret` field, so the channel keeps it in the vault under the record and no client is shown the value again. A key for a machine is the `@ahpd/computer` profile's, as below.
+
+A record with a `baseUrl` and no `apiKey` runs on a keyless endpoint: it lists that endpoint's models and runs turns on them, and its requests carry no `Authorization` header, as a cofold agent's do.
 
 ## In your own host
 
@@ -133,7 +139,7 @@ Some of pi lands on the protocol without adaptation:
 - **Steering** is pi's own `steer()`, so a message sent into a running turn is the thing the protocol means rather than a queued message pretending to be one. The message is said back as the chat's steering message as it is taken, which answers the client that sent it, and taken out once pi's queue no longer holds it: pi says its queue on every change, and reads its steering messages in the order it was handed them.
 - **Truncation** is `navigateTree`. pi's sessions are append-only trees: the leaf moves back and the abandoned path stops being context, which is exactly what `chat/truncated` asks for. A turn read back from pi's file ends at the entry the file says it did, so it can be truncated like one this session watched. A `!command` turn and one whose `prompt` threw leave no point to cut at, and the host refuses to truncate them.
 - **The thinking level** rides in each model's own `configSchema`, the protocol's escape hatch for a model that needs an answer beside its name. A client draws it as a form beside the model and sends the values back in `ModelSelection.config`. It is VS Code's "Effort Level" property over the levels pi gives the model, one level included, labelled and described in VS Code's words, its default the level pi's settings start the model on.
-- **Models** are identified as `provider/modelId`, the way pi's own configuration spells one, so two providers serving a model of the same name stay apart. The probe lists the models pi's own runtime has for its agent directory, so a client's picker has them before any session opens and after a restart. A provider only a project's extension registers arrives when a session in that project opens.
+- **Models** are identified as `provider/modelId`, the way pi's own configuration spells one, so two providers serving a model of the same name stay apart. The probe lists the models pi's own runtime has for its agent directory, so a client's picker has them before any session opens and after a restart. A record with a `baseUrl` is listed from its endpoint's `/models` as well, read with the record's key, or with no `Authorization` header when it has none, on each probe, so an edit of the endpoint lists the new models. A provider only a project's extension registers arrives when a session in that project opens.
 - **Resuming a failed turn** is pi's `agent.continue()`. The reply that failed leaves the model's context and pi continues from the call before it, so the tools the turn already ran are not run again. Only a failed model call is resumable, the latest turn, and after a restart too. A turn that failed before pi had its prompt is not.
 - **Forking a turn** is `SessionManager.createBranchedSession`. The entry a turn settled at is what a fork cuts at, and branching there writes the conversation through that turn, answer included, under a new id, leaving the source file as it was.
 - **The session file** is a real path, so the reference client's "open session state file" opens the conversation pi actually wrote.

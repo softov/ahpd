@@ -119,6 +119,22 @@ export interface PiOptions {
    */
   model?: string;
   /**
+   * The OpenAI-compatible endpoint a session runs on, such as
+   * `https://api.example.com/v1`, when it should not use pi's own providers.
+   *
+   * A session with one registers it under the record's id, so the models it
+   * lists are named `<id>/<model>` and a turn on one streams through it.
+   */
+  baseUrl?: string;
+  /**
+   * The key the endpoint's requests carry, as `Authorization: Bearer <key>`.
+   *
+   * A record's key is kept in the vault and read back by the channel; it goes
+   * to the session's runtime and nowhere else, as the record's other variables
+   * do.
+   */
+  apiKey?: string;
+  /**
    * What to do about a project's own pi resources - its extensions, skills and
    * prompts, which are code in the directory being worked in.
    *

@@ -57,6 +57,8 @@ knownAgents.copapo -> presets.copapo { command: copapo, args: [acp] } -> agent-a
 | The machine is `xdgOf('copapo', ['config.json'])`, with `COFOLD_HOME` in its state folder | (defaulted: the `opencode` row's shape, plus copapo's session folder) | 01 |
 | The part is an npm part, `@cofold/copapo@0.1.0`, with the bin `copapo` | (defaulted: the `pi` and `dsh` parts' shape) | 01 |
 | The site is `https://github.com/softov/cofold` | (defaulted: copapo's repository; Softov may name another) | 01 |
+| The company is `https://softov.dev` | Softov, 2026-11-10 | 01 |
+| The MCP fact goes in a comment beside the preset and in the release note line; `KnownAgent` gains no field | Softov, 2026-11-10 | 01 |
 
 ## Proposed architecture
 
@@ -70,19 +72,21 @@ knownAgents.copapo -> presets.copapo { command: copapo, args: [acp] } -> agent-a
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - copapo is a shipped ACP agent](task-01-copapo-is-a-shipped-acp-agent.md) | todo | - |
+| [01 - copapo is a shipped ACP agent](task-01-copapo-is-a-shipped-acp-agent.md) | implemented | - |
 
 ## Risks and tradeoffs
 
-- copapo ignores a client's MCP servers over ACP. The row's description says so, and nothing in ahpd works around it.
+- copapo ignores a client's MCP servers over ACP. A comment beside its preset and the release note say so, and nothing in ahpd works around it.
 - copapo is at `0.1.0`. A later copapo that changes its ACP arguments changes the preset.
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-10.
-- **Next action:** [task-01-copapo-is-a-shipped-acp-agent.md](task-01-copapo-is-a-shipped-acp-agent.md).
+- **Done so far:** task 01 implemented 2026-11-10: the `copapo` row, the preset with its MCP comment, the npm part and its locks, the four test files and the release note line.
+- **Next action:** Softov reviews task 01, then the by-hand item: install `@cofold/copapo`, add a copapo agent and send a turn in a trusted folder.
 - **Open questions:** none.
-- **Watch out for:** the acp catalogue tests count the shipped rows and the parts; a new row changes those counts.
+- **Watch out for:** `packages/computer/images/parts/copapo/` is untracked, since `git add` is denied here and the commit carries no new files.
+- **Watch out for:** the sdk suite's two `host-permissions` cases fail while `os.tmpdir()` is a dot-folder of the home (`platformRestricted` always asks about a write there); this sandbox's is `/home/softov/.local/cache/tmp`, and setting `TMPDIR` is denied here.
+- **Watch out for:** `packages/sdk/test/fixtures/wire.jsonl` is dirty from the sdk suite and could not be restored.
 
 ## Final verification checklist
 

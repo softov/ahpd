@@ -71,7 +71,7 @@ apply(host) -> cofoldAgent({ app }) -> providerOf / openaiCompat({ app }) -> eac
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Each model call names ahpd](task-01-each-model-call-names-ahpd.md) | todo | - |
+| [01 - Each model call names ahpd](task-01-each-model-call-names-ahpd.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -79,10 +79,10 @@ apply(host) -> cofoldAgent({ app }) -> providerOf / openaiCompat({ app }) -> eac
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-10.
-- **Next action:** [task-01-each-model-call-names-ahpd.md](task-01-each-model-call-names-ahpd.md).
+- **Done so far:** task 01 implemented 2026-11-10.
+- **Next action:** Softov's review, then `done` on the task. No task is left.
 - **Open questions:** none.
-- **Watch out for:** a test that stubs `fetch` reads the headers; the `answering` helpers in `agent-cofold-models.test.ts` keep `init.headers`.
+- **Watch out for:** Windows CI was not run here. A bump of `@cofold/model-openai-compat` past 0.3.0 can change more than the app, so read its changes first.
 
 ## Final verification checklist
 

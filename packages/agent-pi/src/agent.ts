@@ -116,16 +116,29 @@ export function piAgent(
     chats: { fork: true },
 
     /**
-     * What pi offers before a session exists: the models of pi's own runtime.
+     * What pi offers before a session exists: the models of pi's own runtime,
+     * and the models of the record's endpoint when it names one.
      *
      * Listed as a session lists them. A provider only a project's extension
      * registers is not here, and arrives with that session's own list. A
      * runtime that cannot be built, for a credentials or models file pi cannot
      * read, answers no models rather than failing the probe.
+     *
+     * The record is read on each probe, so an edit of its `baseUrl` lists the
+     * new endpoint's models, as an edit of any other field applies at the next
+     * turn.
      */
     probe: async (): Promise<Offered> => {
       let found: Offered['models'] = [];
-      try { found = (await models()).map(({ model, levels, startsOn }) => listed(model, levels, startsOn)); }
+      try {
+        const now = options.recordOf?.() ?? options;
+        const endpoint = now.baseUrl === undefined ? undefined : {
+          provider: now.provider ?? provider,
+          baseUrl: now.baseUrl,
+          ...(now.apiKey === undefined ? {} : { apiKey: now.apiKey }),
+        };
+        found = (await models(endpoint)).map(({ model, levels, startsOn }) => listed(model, levels, startsOn));
+      }
       catch { found = []; }
       return { models: found, customizations: [], commands: [] };
     },
