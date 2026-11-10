@@ -1,0 +1,7 @@
+**/node_modules
+**/dist
+*.jsonl
+*.tsbuildinfo
+.project
+docs
+.git

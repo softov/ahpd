@@ -17,7 +17,8 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { installPlace } from '../src/selfupdate.js';
+import type { Running } from '../src/daemon.js';
+import { IN_IMAGE, installPlace, planUpdate } from '../src/selfupdate.js';
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ahpd-place-')); });
@@ -99,5 +100,29 @@ describe('the install place', () => {
     // an install this update can name a prefix for.
     const server = join(folder, 'node_modules', '@ahpd', 'server');
     expect(refusal(() => installPlace({ root: server, platform: 'linux' }))).toContain(server);
+  });
+});
+
+describe('planning an update', () => {
+  /** A record of a daemon the container runtime holds. */
+  const held: Running = {
+    pid: 7,
+    url: 'ws://127.0.0.1:9',
+    connectUrl: 'ws://127.0.0.1:9/',
+    paths: [],
+    startedAt: '2026-11-10T00:00:00.000Z',
+    service: 'container',
+  };
+
+  it('refuses a container record with the image sentence, and reads no install place', async () => {
+    const plan = await planUpdate({
+      version: '999.0.0',
+      record: held,
+      // A place this plan never reaches: reading it would refuse with its own
+      // sentence naming the folder, which is what the answer below is not.
+      place: { root: join(root, 'no', 'such', 'install') },
+    });
+    expect(plan).toMatchObject({ why: IN_IMAGE });
+    expect(plan).not.toHaveProperty('place');
   });
 });

@@ -24,11 +24,19 @@ import { join, resolve } from 'node:path';
 import { configHome } from './config.js';
 
 /**
- * The managers ahpd installs under, which is the two names a record's `service`
- * field holds: `daemon.ts` reads one out of `AHPD_SERVICE`, and nothing else
- * writes that field.
+ * The managers ahpd installs under, and the two names a unit or an agent is
+ * written for: `ahpd service install` takes one of these, so `container` never
+ * reaches a unit or a plist writer.
  */
 export type Service = 'systemd' | 'launchd';
+
+/**
+ * The kinds that hold a daemon, which is the values a record's `service` field
+ * holds: a manager it was installed under, or the container runtime that runs
+ * it as an image's main process. `daemon.ts` reads one out of `AHPD_SERVICE`,
+ * and nothing else writes that field.
+ */
+export type Held = Service | 'container';
 
 /** The unit systemd holds the daemon in. */
 export const UNIT = 'ahpd';

@@ -1,0 +1,28 @@
+# The same service built from this checkout rather than from GHCR:
+#
+#   mkdir docker/work
+#   docker compose -f docker/compose.dev.yaml up -d --build
+#
+# The folder ./work is beside this file, as it is beside compose.yaml.
+services:
+  ahpd:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ahpd:dev
+    restart: unless-stopped
+    stop_grace_period: 40s
+    ports:
+      - "127.0.0.1:9187:9187"
+    volumes:
+      - ahpd-home:/home/ahpd
+      - ./work:/work
+    environment:
+      # The web UI. Add an agent to it, as in `@ahpd/web,@ahpd/agent-claude`,
+      # and its command is installed into the volume on the next start.
+      AHPD_PLUGINS: "@ahpd/web"
+    # Run as whoever owns ./work, when that is not uid 1000:
+    # user: "1000:1000"
+
+volumes:
+  ahpd-home:
