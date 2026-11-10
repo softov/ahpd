@@ -1,0 +1,7 @@
+{
+  "name": "ahpd-part-copapo",
+  "private": true,
+  "dependencies": {
+    "@cofold/copapo": "0.1.0"
+  }
+}
