@@ -72,7 +72,7 @@ setAgentMergeEnabled -> folder state -> watch: checks, review threads, mergeable
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - GitHub reads checks and review threads](task-01-github-reads-checks-and-threads.md) | implemented | - |
-| [02 - The watch starts a repair turn](task-02-the-watch-starts-a-repair-turn.md) | todo | 01 |
+| [02 - The watch starts a repair turn](task-02-the-watch-starts-a-repair-turn.md) | implemented | 01 |
 | [03 - The four Agent Merge tools](task-03-the-four-agent-merge-tools.md) | todo | 02 |
 | [04 - prepare-pull-request offers Agent Merge](task-04-prepare-pull-request-offers-it.md) | todo | 03 |
 
@@ -83,8 +83,8 @@ setAgentMergeEnabled -> folder state -> watch: checks, review threads, mergeable
 
 ## Resume state
 
-- **Done so far:** task 01. `githubPullRequests()` answers `detail`, `jobs` and `jobLog` through a lent token or `gh`, with the CI evidence capped at 48,000 characters.
-- **Next action:** [task-02-the-watch-starts-a-repair-turn.md](task-02-the-watch-starts-a-repair-turn.md).
+- **Done so far:** task 01. `githubPullRequests()` answers `detail`, `jobs` and `jobLog` through a lent token or `gh`, with the CI evidence capped at 48,000 characters. Task 02. `ctx.agentMerge` watches each folder's pull request every 60 s and starts one repair turn for a failed required check, an unresolved review thread or a conflict, as the root keys and the folder's overrides allow, and never merges.
+- **Next action:** [task-03-the-four-agent-merge-tools.md](task-03-the-four-agent-merge-tools.md).
 - **Open questions:** none.
 - **Watch out for:** a pending review reply stops the folder's monitoring when the turn ends, as VS Code does; the person turns it on again.
 

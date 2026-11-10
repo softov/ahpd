@@ -369,6 +369,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // First, while the chats are still here to be recognised: a closed chat is
     // one no map names, and a record left behind is a row nothing can reach.
     ctx.background.forgetSession(uri);
+    // And the watches a chat of the session turned Agent Merge on, which a
+    // turn nothing will end does not ask again.
+    ctx.agentMerge.forgetSession(uri);
     // And the shells its agent ran commands in, which the closed chats above
     // have already ended: a map left behind names terminals nothing owns.
     ctx.shells.forgetSession(uri);

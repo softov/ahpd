@@ -94,6 +94,7 @@ import { createSnapshots } from './host/snapshots.js';
 import { createSleep } from './host/sleep.js';
 import { createSessionLifecycle } from './host/sessionlifecycle.js';
 import { createWakes } from './host/wakes.js';
+import { createAgentMerge } from './host/agentmerge.js';
 import { createQueueDrain } from './host/queuedrain.js';
 import { createTelemetry } from './host/telemetry.js';
 import { createAuth } from './host/auth.js';
@@ -1098,7 +1099,13 @@ export function createHost(options: HostOptions): Host {
       ctx.recordFailedTurn(sessionFor(channel), channel, (states.get(channel)?.state.turns ?? []) as Bag[], String(action.turnId ?? ''));
     }
     // What the chat's queue drain does with it: a turn's end, or any other action of the chat.
-    if (ending) ctx.turnEnded(channel, action);
+    if (ending) {
+      ctx.turnEnded(channel, action);
+      // And Agent Merge, whose repair turn ran in the chat: a review reply
+      // left unpublished stops the folder's watch, and any other end asks the
+      // pull request again.
+      ctx.agentMerge.turnEnded(channel);
+    }
     else if (states.get(channel)?.kind === 'chat') ctx.observed(channel, action, origin);
     /*
      * A terminal's title and claim are on the root's list of terminals too,
@@ -1652,6 +1659,7 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createSleep(ctx));
   Object.assign(ctx, createSessionLifecycle(ctx));
   Object.assign(ctx, createWakes(ctx));
+  ctx.agentMerge = createAgentMerge(ctx);
   Object.assign(ctx, createQueueDrain(ctx));
   /*
    * Every subscription passes here - the command, and the two handshakes that
@@ -2090,6 +2098,7 @@ export function createHost(options: HostOptions): Host {
         ctx.flushPendingSessionSummaries();
         ctx.stopSleep();
         ctx.stopWakes();
+        ctx.agentMerge.stop();
         ctx.disposeSessionLifecycle();
         ctx.closed = true;
         ctx.stopLapses();
