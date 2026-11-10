@@ -32,6 +32,8 @@ Each of these is refused before anything is installed:
 
 The answer names the refusal, and the daemon keeps running. `--check` answers the same refusals as `why`, beside `may: false`.
 
+In a container, a newer version is a newer image, and the entrypoint moves the plugins when the image's version differs from the volume's. An image older than the volume is refused before the daemon runs, because the plugins there follow a newer sdk. Set `AHPD_ALLOW_DOWNGRADE=1` to start it anyway, and expect a plugin to fail to load. See [Docker](DOCKER.md#rollback).
+
 ## HTTP and AHP
 
 An update replaces the code the daemon runs. Over HTTP and AHP it is the deployment's own token and never a person. A person's token is refused with 403, and a person's AHP call with `-32009`.
