@@ -424,6 +424,20 @@ it('lists the endpoint again at each probe, and keeps the last good list when a 
   expect((await agent.probe?.())?.models.map((one) => one.id)).toEqual(every);
 });
 
+it('lists the endpoint a record names after an edit, with the record\'s key', async () => {
+  // No harness file: the record is the only source of an endpoint.
+  const { seen } = answeringEach({ 'models.example.com': { data: LISTED } });
+  let record: Record<string, unknown> = {};
+  const agent = cofoldAgent({ provider: 'mine', recordOf: () => ({ provider: 'mine', ...record }) });
+  expect((await agent.probe?.())?.models).toEqual([]);
+
+  // The edit keeps this backend; the next probe reads the record as it is now.
+  record = { baseUrl: 'https://models.example.com/v1', apiKey: 'k-record' };
+  const offered = await agent.probe?.();
+  expect(seen).toEqual([{ url: 'https://models.example.com/v1/models', authorization: 'Bearer k-record' }]);
+  expect(offered?.models.map((one) => one.id)).toEqual(LISTED.map((one) => `mine/${one.id}`));
+});
+
 it('offers the configured model alone once the record\'s catalogueTimeoutMs has passed with no answer', async () => {
   put(CONFIG);
   const hung = hanging();

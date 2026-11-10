@@ -55,6 +55,39 @@ export const sessionIdOf = (uri: string): string => idOf(uri);
 const LIVE_KEYS = ['model', 'baseUrl', 'models', 'apiKey', 'instructions', 'resource', 'autoCompactTokens', 'autoCompactAt', 'tools'] as const;
 
 /**
+ * Read the record again, and put what it says now on the options a turn runs
+ * on, and the backend's catalogue is read from.
+ *
+ * The turn already running is not touched: a session reads this at the start
+ * of a turn, so an edit lands on the next one and a turn that is streaming
+ * ends on what it started with. A record that can no longer be used - a key
+ * the vault would not read back, a form the kind no longer describes - comes
+ * back as a sentence, which the turn answers instead of running.
+ *
+ * The sentence names the record and never what it holds: the config it was
+ * built from has each key already read from the vault, and that is exactly
+ * what must not reach a client.
+ */
+export const takeRecord = (options: CofoldOptions): string | undefined => {
+  const live = options.recordOf;
+  if (live === undefined) return undefined;
+  let now: CofoldOptions;
+  try {
+    now = live();
+  }
+  catch (error) {
+    return `${options.provider ?? 'cofold'}: the record cannot be used: ${reason(error)}`;
+  }
+  const holding = options as unknown as Record<string, unknown>;
+  const read = now as unknown as Record<string, unknown>;
+  for (const key of LIVE_KEYS) {
+    if (read[key] === undefined) delete holding[key];
+    else holding[key] = read[key];
+  }
+  return undefined;
+};
+
+/**
  * One conversation over a cofold agent.
  *
  * `options` is the backend's identity and wiring: the provider it was
@@ -112,38 +145,7 @@ export function cofoldSession(
    */
   const store = sharedStore ?? storeOf(options);
 
-  /**
-   * Read the record again, and put what it says now on the options a turn runs
-   * on.
-   *
-   * The turn already running is not touched: a session reads this at the start
-   * of a turn, so an edit lands on the next one and a turn that is streaming
-   * ends on what it started with. A record that can no longer be used - a key
-   * the vault would not read back, a form the kind no longer describes - comes
-   * back as a sentence, which the turn answers instead of running.
-   *
-   * The sentence names the record and never what it holds: the config it was
-   * built from has each key already read from the vault, and that is exactly
-   * what must not reach a client.
-   */
-  const refreshOptions = (): string | undefined => {
-    const live = options.recordOf;
-    if (live === undefined) return undefined;
-    let now: CofoldOptions;
-    try {
-      now = live();
-    }
-    catch (error) {
-      return `${provider}: the record cannot be used: ${reason(error)}`;
-    }
-    const holding = options as unknown as Record<string, unknown>;
-    const read = now as unknown as Record<string, unknown>;
-    for (const key of LIVE_KEYS) {
-      if (read[key] === undefined) delete holding[key];
-      else holding[key] = read[key];
-    }
-    return undefined;
-  };
+  const refreshOptions = (): string | undefined => takeRecord(options);
 
   /** Finished turns. The running one is `active` and is deliberately not here. */
   const turns: Bag[] = [...(start.seed ?? [])];

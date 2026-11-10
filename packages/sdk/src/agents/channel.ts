@@ -163,6 +163,11 @@ interface Opened {
   view: OpenView;
   /** The backend, which a session holds and reads at its next turn. */
   agent: Agent;
+  /**
+   * What the host asked to hear through the backend's `probeChanged`, called
+   * when an edit moves the record: what the backend offers is read from it.
+   */
+  edits: Set<() => void>;
 }
 
 /** An agents channel, the commands beside it, and the agents it has open. */
@@ -377,7 +382,22 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     if (agent.provider !== record.id) {
       throw new Error(`${engine.name} opened ${record.id} as ${agent.provider}, and an agent is served by the id of its record`);
     }
-    return { engine, view, agent };
+    /*
+     * An edit keeps this backend, so the host would never ask it again what it
+     * offers. Its `probeChanged` also hears each edit, beside whatever the
+     * engine's own watch hears.
+     */
+    const edits = new Set<() => void>();
+    const own = agent.probeChanged?.bind(agent);
+    agent.probeChanged = (onChange) => {
+      edits.add(onChange);
+      const stop = own?.(onChange);
+      return () => {
+        edits.delete(onChange);
+        stop?.();
+      };
+    };
+    return { engine, view, agent, edits };
   };
 
   /**
@@ -483,7 +503,14 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       // backend the old module built would otherwise serve on.
       if (entry !== undefined && entry.engine === engine) {
         try {
+          const was = JSON.stringify([entry.view.model, entry.view.config]);
           fill(entry.view, record, owner, await resolvedRecord(configOf(record), owner, options.vault(), AGENT_SECRETS));
+          if (JSON.stringify([entry.view.model, entry.view.config]) !== was) {
+            for (const onChange of [...entry.edits]) {
+              try { onChange(); }
+              catch (error) { problem(`${record.id} was edited, and the host was not told: ${reason(error)}`); }
+            }
+          }
         } catch (error) {
           /*
            * The vault was unreadable, which says nothing about the record: the
