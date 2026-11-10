@@ -1,6 +1,7 @@
 ---
 title: Check ahpd on macOS
-plans: []
+plans:
+  - plans/plugin/20261031-0804-a-browser-gets-a-push/plan.md
 ---
 
 # Check ahpd on macOS
@@ -63,6 +64,16 @@ Write down any error from `node-pty` in `pnpm install`.
 
 1. In a git folder, start a session that makes a worktree.
 2. Check that the worktree is made, and that its folder links resolve.
+
+## Push in Safari
+
+The push plugin passed in Chrome and Firefox on 2026-11-09. Apple's push service may also need a `sub` claim, which only Safari shows. Safari needs ahpw over https, such as through the system tunnel.
+
+1. Add `$HOME/ahpd-check/packages/push` to `plugins` in `/tmp/ahpd-chk/ahpd/config.json`.
+2. Run `ahpd plugin install @ahpd/web@next`, then restart the daemon.
+3. Open ahpw in Safari over https, and run "Notify me when this tab is closed".
+4. Make a notification, and read `/tmp/ahpd-chk/ahpd/daemon.log`. Expect a delivery, or a 403 that names the `sub` claim.
+5. If Apple refuses it, the plugin's `contact` option needs a default. Say so in the reply, with the log line Safari's push service gave.
 
 ## Reply
 

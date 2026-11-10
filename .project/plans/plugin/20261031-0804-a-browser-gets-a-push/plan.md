@@ -113,15 +113,15 @@ backend input_needed_set or turn_end -> push plugin -> audience by person or by 
 ## Resume state
 
 - **Done so far:** drafted 2026-10-31; Softov sent it to build the same day. Task 01 is implemented: a device keeps its person and an `audience`, and `audience` reads `sessionOwner` once per send. Task 02 is implemented: a browser registers under `platform: 'web'`, the host keeps a VAPID pair in `push-vapid.json`, and `push://vapid` serves its public key. Task 03 is implemented: `webpush.ts` seals an RFC 8291 `aes128gcm` body (its appendix A vector matches byte for byte) and signs a VAPID ES256 header, `notify` splits phones and browsers, and a 404 or 410 removes the device. Task 04 is implemented: the README and the plugin page name the web body, `push://vapid`, `audience`, `webPushHosts` and `contact`.
-- **Next action:** none; every task is done. The review fixed a seal that threw out of `send`, and PR #171 merged as `9c2fe3d1`. The manual checks are in `.project/pending/push-web-checks.md`, and `implemented.md` records the build.
+- **Next action:** none; every task is done. The review fixed a seal that threw out of `send`, and PR #171 merged as `9c2fe3d1`. Chrome and Firefox passed by hand on 2026-11-09. The Safari check is in [macos-checks.md](../../../pending/macos-checks.md), and `implemented.md` records the build.
 - **Open questions:** none.
 - **Watch out for:** Not checked: whether Apple's push service refuses a VAPID JWT with no `sub`. If it does, `contact` needs a default.
 
 ## Final verification checklist
 
 - [ ] The web sender's encryption matches the RFC 8291 appendix A vector byte for byte.
-- [ ] A Chrome and a Firefox subscription from ahpw get a notification with the tab closed.
-- [ ] A `device` device does not hear a session that another client of its person created.
+- [x] A Chrome and a Firefox subscription from ahpw get a notification with the tab closed.
+- [x] A `device` device does not hear a session that another client of its person created.
 - [ ] A `person` device hears a session that another client of its person created.
 - [ ] A 410 from a push service removes the device.
 - [ ] An endpoint off the `webPushHosts` list is refused at the write.

@@ -19,7 +19,6 @@ Restart the daemon on main first. Do them from the top down.
 - [canvas-example-checks.md](canvas-example-checks.md) - 15 min, VS Code.
 - [host-1347-mcp-checks.md](host-1347-mcp-checks.md) - 25 min, VS Code as the MCP client. It adds a member and a guest.
 - [plugin-view-checks.md](plugin-view-checks.md) - 10 min, VS Code through the system tunnel, and the network off for a minute.
-- [push-web-checks.md](push-web-checks.md) - 25 min, Chrome and Firefox. The Apple question needs a Mac and the daemon over https, such as the system tunnel.
 - [the-pt-catalogs-read-right.md](the-pt-catalogs-read-right.md) - 30 min.
 - [vscode-checks.md](vscode-checks.md) - 40 min.
 - [claude-resume-checks.md](claude-resume-checks.md) - 30 min, VS Code. Step 2 needs a way to give a bad key.
@@ -60,7 +59,7 @@ Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 - [devcontainer-checks.md](devcontainer-checks.md) - VS Code on Windows, your daemon on main with the `devtunnel` connector signed in to that VS Code's GitHub account, 45 min.
 - [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md) - Windows and a Mac, 20 min each. It passed on Linux.
 - [macos-service-checks.md](macos-service-checks.md) - a Mac, the launchd sections, 25 min.
-- [macos-checks.md](macos-checks.md) - a Mac with VS Code, 90 min.
+- [macos-checks.md](macos-checks.md) - a Mac with VS Code, 90 min. Its Safari push section needs ahpw over https, such as the system tunnel.
 - [vm-01-dev02-libvirt.md](vm-01-dev02-libvirt.md) - dev02 with sudo, and a choice on the iptables rules, 15 min.
 - [vm-06-proxmox-node.md](vm-06-proxmox-node.md) - Softov's Proxmox node, 45 min. Left: Softov makes the template, the API user and its token on the node, as steps 2 and 3 say.
 - [container-05-p10-hub-checks.md](container-05-p10-hub-checks.md) - a node behind NAT, such as the Windows VM.
