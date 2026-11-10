@@ -131,6 +131,15 @@
     "bin": ["dsh"]
   },
   {
+    "id": "copapo",
+    "name": "copapo",
+    "kind": "npm",
+    "version": "0.1.0",
+    "requires": ["node"],
+    "packages": ["@cofold/copapo"],
+    "bin": ["copapo"]
+  },
+  {
     "id": "devin",
     "name": "Devin",
     "kind": "archive",
