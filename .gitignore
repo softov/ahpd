@@ -13,6 +13,9 @@ dist
 # Wire captures from scripts/tee.mjs.
 /ahp-*.jsonl
 
+# The capture `packages/sdk/test/wire.test.ts` writes on every run.
+/packages/sdk/test/fixtures/wire.jsonl
+
 # Generated from the protocol package by `npm run schema`.
 /tools/ahp.strict.schema.json
 
