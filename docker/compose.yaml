@@ -1,0 +1,32 @@
+# The default install: one ahpd, its state in the volume `ahpd-home`, and the
+# folder beside this file served as /work.
+#
+#   mkdir work
+#   curl -fsSLO https://raw.githubusercontent.com/softov/ahpd/v0.15.0-rc.1/docker/compose.yaml
+#   docker compose up -d
+#
+# It listens on 127.0.0.1 only. The token is in the volume, at
+# ~/.config/ahpd/connection-token, and is never a flag.
+services:
+  ahpd:
+    image: ghcr.io/softov/ahpd:${AHPD_TAG:-0.15.0-rc.1}
+    restart: unless-stopped
+    # Longer than the 30 s `ahpd stop` waits, so a stop finishes rather than
+    # being killed at the end of the wait.
+    stop_grace_period: 40s
+    ports:
+      - "127.0.0.1:9187:9187"
+    volumes:
+      # Everything that changes: the configuration, the plugin root, the token,
+      # the vault, the sessions and the agents' own folders.
+      - ahpd-home:/home/ahpd
+      - ./work:/work
+    environment:
+      # The web UI. Add an agent to it, as in `@ahpd/web,@ahpd/agent-claude`,
+      # and its command is installed into the volume on the next start.
+      AHPD_PLUGINS: "@ahpd/web"
+    # Run as whoever owns ./work, when that is not uid 1000:
+    # user: "1000:1000"
+
+volumes:
+  ahpd-home:
