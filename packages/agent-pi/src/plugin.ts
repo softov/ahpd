@@ -89,8 +89,8 @@ const RECORD_FIELDS = ['projectTrust', 'sessionDir', 'hostTools'] as const;
 /**
  * The engine's form: what a record may set, and nothing a second engine spells.
  *
- * Every variable pi takes a key from is declared `secret`, so a client is
- * told it is a credential and never what it is. The channel vaults those by
+ * `env` is an open map, as a Claude record's is: a person types the variable's
+ * name. The channel vaults the variables pi takes a key from, by
  * `keyVariables`; a host record may also set any other variable, which stays a
  * plain string and is refused to a team's or a person's record, because a free
  * environment can run a program.
@@ -106,8 +106,7 @@ const kindSchema = (): Record<string, unknown> => ({
     hostTools: { type: 'boolean', description: "Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting." },
     env: {
       type: 'object',
-      description: "Variables pi is given, by name. One pi takes a key from is kept in the vault and never shown again; only a host record may set any other.",
-      properties: Object.fromEntries(PI_KEY_VARIABLES.map((name) => [name, { type: 'string', secret: true }])),
+      description: "Variables pi is given, by name, such as OPENROUTER_API_KEY. One pi takes a key from is kept in the vault and never shown again; only a host record may set any other.",
       additionalProperties: { type: 'string' },
     },
   },

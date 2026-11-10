@@ -117,16 +117,11 @@ it('registers the pi engine, its form, its template, its host-only field and its
     expect(fields).not.toContain(owned);
   }
 
-  // Every variable pi takes a key from is declared, and declared secret: a
-  // client is told it is set and never what it is. The channel vaults those by
-  // `keyVariables`, which is the same list.
+  // `env` is an open map, as a Claude record's is: no variable is listed. The
+  // channel vaults the variables pi takes a key from by `keyVariables`, and
+  // refuses any other to a team's or a person's record by the same list.
   const env = (engine.schema.properties as Bag)['env'] as Bag;
-  expect(Object.keys(env.properties as Bag).sort()).toEqual([...PI_KEY_VARIABLES].sort());
-  for (const variable of PI_KEY_VARIABLES) {
-    expect((env.properties as Bag)[variable]).toMatchObject({ type: 'string', secret: true });
-  }
-  // A host record may set any other variable; a team's or a person's may not,
-  // which the channel refuses by the same list.
+  expect(env.properties).toBeUndefined();
   expect(env.additionalProperties).toEqual({ type: 'string' });
   expect(engine.keyVariables).toEqual([...PI_KEY_VARIABLES]);
 
