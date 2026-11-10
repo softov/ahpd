@@ -3,9 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { ModelAdapter } from '@cofold/agents';
-import type { Bag, Start } from '@ahpd/sdk';
+import type { AgentView, Bag, Engine, PluginHost, Start } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { EFFORT_LEVELS, cofoldAgent, modelOf } from '../src/index.js';
+import { apply } from '../src/plugin.js';
 import { startedNow } from '../../sdk/test/support/started.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
@@ -43,6 +44,9 @@ const CONFIG = {
   model: 'open_router/deepseek/deepseek-chat',
 };
 
+/** Who a model call says it comes from, as this package's plugin names ahpd. */
+const APP = { name: 'ahpd', version: '1.2.3', url: 'https://ahpio.com' };
+
 const put = (value: unknown): void => {
   mkdirSync(join(home, 'copapo'), { recursive: true });
   writeFileSync(join(home, 'copapo', 'config.json'), JSON.stringify(value));
@@ -71,15 +75,17 @@ const PUBLISHED = {
 };
 
 /** Stand in for the endpoint, recording what it was asked. */
-const answering = (body: unknown, status = 200): { seen: { url: unknown; authorization: unknown; calls: number } } => {
+const answering = (body: unknown, status = 200): { seen: { url: unknown; authorization: unknown; calls: number }; headersOf: () => Record<string, string> } => {
   const seen = { url: undefined as unknown, authorization: undefined as unknown, calls: 0 };
+  let asked: Record<string, string> = {};
   globalThis.fetch = (async (input: unknown, init?: { headers?: Record<string, string> }) => {
     seen.calls += 1;
     seen.url = input;
+    asked = init?.headers ?? {};
     seen.authorization = init?.headers?.authorization;
     return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
-  return { seen };
+  return { seen, headersOf: () => asked };
 };
 
 const refusing = (): { calls: () => number } => {
@@ -100,16 +106,22 @@ const TWO = {
 };
 
 /** Stand in for several endpoints, answering each and recording what it was asked. */
-const answeringEach = (bodies: Record<string, unknown>): { seen: { url: string; authorization: unknown }[] } => {
+const answeringEach = (bodies: Record<string, unknown>): {
+  seen: { url: string; authorization: unknown }[];
+  asked: { url: string; headers: Record<string, string> }[];
+} => {
   const seen: { url: string; authorization: unknown }[] = [];
+  const asked: { url: string; headers: Record<string, string> }[] = [];
   globalThis.fetch = (async (input: unknown, init?: { headers?: Record<string, string> }) => {
     const url = String(input);
-    seen.push({ url, authorization: init?.headers?.authorization });
+    const headers = init?.headers ?? {};
+    seen.push({ url, authorization: headers.authorization });
+    asked.push({ url, headers });
     const body = bodies[new URL(url).host];
     if (body === undefined) throw new Error(`no endpoint for ${url}`);
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
-  return { seen };
+  return { seen, asked };
 };
 
 /** Stand in for an endpoint that takes the connection and never answers it. */
@@ -144,6 +156,68 @@ it('offers every model the endpoint serves, under the provider it was read from'
     // A row with no name of its own is offered under its id rather than dropped.
     { id: 'open_router/qwen/qwen3-8b', name: 'qwen/qwen3-8b' },
   ]);
+});
+
+/*
+ * Every model call names ahpd to its endpoint. OpenRouter also gets the two
+ * headers its app attribution reads, so the usage appears on ahpd's page
+ * rather than on the transport's.
+ * https://openrouter.ai/docs/app-attribution
+ */
+it('names ahpd on every model call, and OpenRouter as its app', async () => {
+  put(TWO);
+  let engine: Engine | undefined;
+  apply({ version: '1.2.3', registerEngine: (one: Engine) => { engine = one; } } as unknown as PluginHost, {});
+  const { asked } = answeringEach({
+    'openrouter.ai': { data: [] },
+    'api.moonshot.ai': { data: [] },
+  });
+  const record: AgentView = {
+    id: 'open_router',
+    engine: 'cofold',
+    owner: 'host',
+    name: 'OpenRouter',
+    description: undefined,
+    icon: undefined,
+    model: undefined,
+    config: { memory: true },
+  };
+  await engine?.open(record).probe?.();
+
+  const headersOf = (host: string): Record<string, string> =>
+    asked.find((one) => new URL(one.url).host === host)?.headers ?? {};
+  expect(headersOf('openrouter.ai')['user-agent']).toBe('ahpd/1.2.3');
+  expect(headersOf('openrouter.ai')['http-referer']).toBe('https://ahpio.com');
+  expect(headersOf('openrouter.ai')['x-openrouter-title']).toBe('ahpd');
+
+  // Another host gets the name alone: the other two headers are OpenRouter's.
+  expect(headersOf('api.moonshot.ai')['user-agent']).toBe('ahpd/1.2.3');
+  expect(headersOf('api.moonshot.ai')['http-referer']).toBeUndefined();
+  expect(headersOf('api.moonshot.ai')['x-openrouter-title']).toBeUndefined();
+});
+
+it('names ahpd on a turn that builds its own transport', async () => {
+  put({ providers: [] });
+  const { headersOf } = answering({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: {} });
+  await modelOf({ baseUrl: 'https://api.example.com/v1', model: 'm', apiKey: 'k', app: APP })
+    .complete({ instructions: 'x', messages: [], tools: [] } as never);
+  expect(headersOf()['user-agent']).toBe('ahpd/1.2.3');
+  expect(headersOf()['http-referer']).toBeUndefined();
+  expect(headersOf()['x-openrouter-title']).toBeUndefined();
+});
+
+it('lets a provider keep its own user-agent header', async () => {
+  put({
+    providers: [{
+      id: 'mine',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'k',
+      headers: { 'user-agent': 'mine/9' },
+    }],
+  });
+  const { headersOf } = answering({ data: [] });
+  await cofoldAgent({ app: APP }).probe?.();
+  expect(headersOf()['user-agent']).toBe('mine/9');
 });
 
 it('offers every provider in the file, each under its own id', async () => {

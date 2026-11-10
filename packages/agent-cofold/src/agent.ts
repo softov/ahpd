@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import { EFFORT_LEVELS, PERMISSION_MODES, PERMISSION_MODE_DESCRIPTIONS, createMemoryStore, effortOf, textOf } from '@cofold/agents';
 import type { ModelAdapter, ModelInfo, ModelProvider, Policy, SessionRecord, Store } from '@cofold/agents';
 import { openaiCompat, openaiCompatProvider, splitModel } from '@cofold/model-openai-compat';
-import type { OpenAICompatOptions, OpenAICompatProviderOptions, ProviderConfig } from '@cofold/model-openai-compat';
+import type { AppIdentity, OpenAICompatOptions, OpenAICompatProviderOptions, ProviderConfig } from '@cofold/model-openai-compat';
 import { createFileStore, resolveHome } from '@cofold/store-file';
 import { getReasoningEffortDescription, getReasoningEffortLabel, ReasoningEffortConfigKey, titleFrom, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@ahpd/sdk';
@@ -38,6 +38,14 @@ export interface CofoldOptions {
   baseUrl?: string;
   /** The key to send, or a function asked once per request so an expired one is not cached. */
   apiKey?: string | (() => string | Promise<string>);
+  /**
+   * Who each request says it comes from: `User-Agent: <name>/<version>`, and
+   * to OpenRouter the two headers its app attribution reads.
+   *
+   * Absent means cofold's own identity. The plugin passes ahpd's, so a model
+   * call is attributed to this host rather than to the transport.
+   */
+  app?: AppIdentity;
   /**
    * The protected resource a client authenticates against.
    *
@@ -524,7 +532,7 @@ export const modelOf = (
       ...chosen,
     });
   }
-  return openaiCompat({ ...adapter, ...chosen });
+  return openaiCompat({ ...adapter, ...(options.app === undefined ? {} : { app: options.app }), ...chosen });
 };
 
 /** The store this backend keeps its sessions and runs in. */
@@ -727,6 +735,7 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
       baseUrl: endpoint.baseUrl,
       ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }),
       ...(endpoint.headers === undefined ? {} : { headers: endpoint.headers }),
+      ...(options.app === undefined ? {} : { app: options.app }),
     });
     providers.set(key, built);
     return built;
