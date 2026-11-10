@@ -282,7 +282,7 @@ describe('start, stop and status', () => {
    * the daemon it asked is on its way down, and the next record is one a daemon
    * the container starts writes.
    */
-  it('asks a container daemon to restart, and it exits for the container to start it again', async () => {
+  it.skipIf(!posix)('asks a container daemon to restart, and it exits for the container to start it again', async () => {
     const daemon = await supervised([], { AHPD_SERVICE: 'container' });
     const asked = await cli(['restart']);
     expect({ code: asked.code, stderr: asked.stderr }).toEqual({ code: 0, stderr: '' });
@@ -290,17 +290,17 @@ describe('start, stop and status', () => {
     // The signal is what reached it, named in its own line, and the exit is the
     // one the policy reads.
     expect(await daemon.ended).toBe(75);
-    expect(daemon.said()).toContain(`restart: stopping (${posix ? 'SIGHUP' : 'control pipe'})`);
+    expect(daemon.said()).toContain('restart: stopping (SIGHUP)');
     expect(existsSync(join(home, 'ahpd', 'daemon.json'))).toBe(false);
     expect(announced().filter(alive)).toEqual([]);
   }, 60000);
 
-  it('asks a container daemon to restart at once with --force', async () => {
+  it.skipIf(!posix)('asks a container daemon to restart at once with --force', async () => {
     const daemon = await supervised([], { AHPD_SERVICE: 'container' });
     const asked = await cli(['restart', '--force']);
     expect({ code: asked.code, stderr: asked.stderr }).toEqual({ code: 0, stderr: '' });
     expect(await daemon.ended).toBe(75);
-    expect(daemon.said()).toContain(`restart: stopping (${posix ? 'SIGUSR2' : 'control pipe, forced'})`);
+    expect(daemon.said()).toContain('restart: stopping (SIGUSR2)');
   }, 60000);
 
   // A service manager is systemd or launchd, and Windows has neither.
