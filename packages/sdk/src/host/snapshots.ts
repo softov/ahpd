@@ -415,7 +415,8 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      *
      * Held rather than produced. A mark arrives from a client, or from one of
      * this host's own comment tools (`addComment`, `replyToComment`,
-     * `resolveComments`, `deleteComments`), through the same writer, and what
+     * `resolveComments`, `deleteComments`, `viewUnreviewedComments`), through
+     * the same writer, and what
      * this host contributes is that a mark one client made is one every other
      * client in the session can see. The channel is served rather than refused
      * even when it is empty, because a client subscribes to it as part of

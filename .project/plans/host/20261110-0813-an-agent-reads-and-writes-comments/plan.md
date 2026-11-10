@@ -67,7 +67,7 @@ listComments / viewUnreviewedComments -> the channel's annotations with vscode.a
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - Five comment tools on the channel](task-01-five-comment-tools.md) | implemented | - |
-| [02 - viewUnreviewedComments asks first](task-02-view-unreviewed-comments.md) | todo | 01 |
+| [02 - viewUnreviewedComments asks first](task-02-view-unreviewed-comments.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -75,10 +75,10 @@ listComments / viewUnreviewedComments -> the channel's annotations with vscode.a
 
 ## Resume state
 
-- **Done so far:** task 01 is implemented. The host serves VS Code's five comment tools on the session's annotations channel, a comment is an annotation with the `vscode.agentFeedback` meta, and every write goes through the same writer a client's `annotations/*` action takes. `docs/sdk/TOOLS.md` and `docs/updates/v0_15.md` say so.
-- **Next action:** [task-02-view-unreviewed-comments.md](task-02-view-unreviewed-comments.md).
+- **Done so far:** both tasks are implemented. The host serves VS Code's six comment tools on the session's annotations channel. A comment is an annotation with the `vscode.agentFeedback` meta, and every write goes through the same writer a client's `annotations/*` action takes. `viewUnreviewedComments` asks the person first, and `listComments` names the comments that wait. `docs/sdk/TOOLS.md` and `docs/updates/v0_15.md` say so.
+- **Next action:** Softov reviews. The by-hand VS Code checks in task 01 have not been run.
 - **Open questions:** none.
-- **Watch out for:** an annotation with no `vscode.agentFeedback` meta is not a comment; the tools leave it alone. The by-hand VS Code check in task 01 has not been run.
+- **Watch out for:** an annotation with no `vscode.agentFeedback` meta is not a comment; the tools leave it alone. No client lets the person pick which comments to reveal, so an answer of yes reveals every waiting one.
 
 ## Final verification checklist
 
