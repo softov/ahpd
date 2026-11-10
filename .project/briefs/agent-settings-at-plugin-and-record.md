@@ -3,6 +3,7 @@ title: Agent settings at the plugin and the record
 created: 2026-11-05
 refs:
   - git://9c3418cb - the commit of ahpd the facts were checked at
+  - git://7d76d5895 - the `hostTools` row, checked again: claude, cofold and pi have it at both levels
   - "[code://packages/agent-acp/package.json](../../packages/agent-acp/package.json) - the acp plugin's options"
   - "[code://packages/agent-claude/package.json](../../packages/agent-claude/package.json) - the claude plugin's options"
   - "[code://packages/agent-cofold/package.json](../../packages/agent-cofold/package.json) - the cofold plugin's options"
@@ -55,7 +56,7 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 | `thinking` |  |  |  | ✓ |  | 🔵 |  | 🔵 |
 | `autoCompactTokens` |  |  |  |  | ✓ | ✓ |  | 🔵 |
 | **Host tools** | | | | | | | | |
-| `hostTools` | ✓ | ✓ | 🔵 | 🔵 | 🔵 | 🔵 | 🔵 | 🔵 |
+| `hostTools` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `toolsChanged` | ✓ | ✓ |  |  |  |  |  |  |
 | `hostTasks` |  |  |  | ✓ |  |  |  |  |
 | `enableTasks` |  |  |  | ✓ |  |  |  |  |
@@ -92,19 +93,18 @@ The table comes from the four `optionsSchema` blocks and from the schema each en
 ## Why each blue circle
 
 - **claude `model`.** Every record has a top-level `model`, and acp, cofold and pi start a session on it. Claude's engine does not read it, so a Claude agent starts on the CLI's default. See [`code://packages/agent-claude/src/plugin.ts#L125-L135`](../../packages/agent-claude/src/plugin.ts#L125-L135). A plugin-wide default is missing too.
-- **pi record `models`, pi `baseUrl` and `apiKey`.** pi's SDK takes a provider at run time with `ModelRegistry.registerProvider(name, { baseUrl, apiKey, api, models })`. ahpd reads only pi's own `models.json` and `auth.json`. See [`code://packages/agent-pi/src/backend.ts#L335-L344`](../../packages/agent-pi/src/backend.ts#L335-L344). A record's `env` holds keys for pi's built-in providers only, by their own variables, so a provider at another URL has no key. See [`code://packages/agent-pi/src/machine.ts#L25`](../../packages/agent-pi/src/machine.ts#L25). Softov asked for a pi `baseUrl` as cofold has on 2026-11-10, after the pi resume check.
+- **pi record `models`, pi `baseUrl` and `apiKey`.** pi's SDK takes a provider at run time with `ModelRegistry.registerProvider(name, { baseUrl, apiKey, api, models })`. ahpd reads only pi's own `models.json` and `auth.json`. See [`code://packages/agent-pi/src/backend.ts#L335-L344`](../../packages/agent-pi/src/backend.ts#L335-L344). A record's `env` holds keys for pi's built-in providers only, by their own variables, so a provider at another URL has no key. See [`code://packages/agent-pi/src/machine.ts#L25`](../../packages/agent-pi/src/machine.ts#L25). Softov asked for a pi `baseUrl` as cofold has on 2026-11-10, after the pi resume check. Plan pi/20261110-0813-a-pi-agent-takes-a-base-url builds it.
 - **claude and pi `instructions`.** Claude's SDK takes a prompt to append, and ahpd already sends the host's instructions through it. See [`code://packages/agent-claude/src/session/query.ts#L451`](../../packages/agent-claude/src/session/query.ts#L451). pi's SDK replaces or appends to its system prompt. cofold has `instructions` at both levels.
 - **pi record `thinking`.** pi's `createAgentSession` takes a `thinkingLevel`, and claude has `thinking` on the record.
 - **cofold record `thinking`.** cofold reads an effort level per session, from the session's `effortLevel` setting. See [`code://packages/agent-cofold/src/agent.ts#L424-L431`](../../packages/agent-cofold/src/agent.ts#L424-L431). A record cannot set a default.
 - **claude and pi record `tools`.** Claude's SDK takes `allowedTools` and `disallowedTools`, and ahpd already sends both. See [`code://packages/agent-claude/src/session/query.ts#L135`](../../packages/agent-claude/src/session/query.ts#L135). pi's `createAgentSession` takes `tools` and `excludeTools`.
 - **pi record `autoCompactTokens`.** pi's `SettingsManager` holds compaction settings, and cofold has the field on the record.
-- **claude, cofold and pi `hostTools`.** The host offers its tools to every session. Only acp can turn them off for one plugin or one agent.
 - **claude record `computerConfigDir`.** cofold lets a host record set it, and claude has it at the plugin only.
 - **cofold `projectTrust`.** Softov, 2026-11-05: "cofold need the same level Trust as pi." ahpd's cofold loads no project files today. The setting gates what cofold loads once it does.
 
 ## What disagrees
 
-- **Host tools.** Only acp has a `hostTools` switch, at the plugin and on the record. Claude, cofold and pi have none. Their sessions get the host's tools from the daemon's `sessionTools` and `sessionToolsProviders`, which gate acp too. Claude's `hostTasks` is a different thing: it hands Claude's own task tools to the host's.
+- **Host tools.** All four now have a `hostTools` switch, at the plugin and on the record. Only acp has `toolsChanged`. Claude's `hostTasks` is a different thing: it hands Claude's own task tools to the host's.
 - **The acp `toolsChanged` description.** The plugin's text says it wins "over each record's own", but the code takes the record's value first.
 - **The default model.** cofold and pi set it at the plugin, as `model`. Claude sets a list per record, as `models` and `modelSources`. acp has none, and the agent picks.
 - **Folders.** Only claude has `paths`. pi reads the host's paths with no option. acp and cofold read none.
