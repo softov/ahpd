@@ -80,6 +80,8 @@
       "type": "object",
       "properties": {
         "model": { "type": "string", "description": "Default model for agents that don't set one, as 'provider/modelId'." },
+        "baseUrl": { "type": "string", "description": "Default OpenAI-compatible endpoint for agents that don't set one." },
+        "apiKey": { "type": "string", "writeOnly": true, "description": "Default API key for agents that don't set one." },
         "projectTrust": {
           "type": "string",
           "enum": ["trust", "deny"],

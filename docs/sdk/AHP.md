@@ -1296,10 +1296,10 @@ produces goes through ajv against it. An undeclared key and a missing required
 one both fail the build, which is the only reason either is findable before a
 client trips over it.
 
-The frames are written out as
-[`packages/sdk/test/fixtures/wire.jsonl`](../../packages/sdk/test/fixtures/wire.jsonl): a capture of the
+Each run of the test writes the frames out as
+`packages/sdk/test/fixtures/wire.jsonl`: a capture of the
 commands and actions above, with timestamps and generated ids replaced by
-stable ones so it can be diffed when something moves. The same check runs over
+stable ones so two runs can be diffed. Git ignores the file. The same check runs over
 a recording taken off a real daemon, and over a capture in either shape:
 `ahpd --wire` writes its capture in the shape VS Code's agent host uses, the
 message with `_ahpLog` beside it, and a capture in the older line with the

@@ -47,8 +47,8 @@ const CONFIG = {
 };
 
 const put = (value: unknown): void => {
-  mkdirSync(join(home, 'papo'), { recursive: true });
-  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify(value));
+  mkdirSync(join(home, 'copapo'), { recursive: true });
+  writeFileSync(join(home, 'copapo', 'config.json'), JSON.stringify(value));
 };
 
 /** The window the catalogue listed for the configured model. */
@@ -328,7 +328,7 @@ it('runs /compact as a command, and reads it back as the turn drew it', async ()
 });
 
 /*
- * The notice in cofold's own app's words, papo's `compactedNotice`.
+ * The notice in cofold's own app's words, copapo's `compactedNotice`.
  * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/blocks.ts#L50-L55
  */
 it('words the notice as cofold\'s own app does', () => {

@@ -23,6 +23,12 @@ export interface Pi {
   parseSessionEntries: typeof PiCodingAgent.parseSessionEntries;
   SettingsManager: typeof PiCodingAgent.SettingsManager;
   ModelRuntime: typeof PiCodingAgent.ModelRuntime;
+  /**
+   * The registration seam an extension has over a runtime, taken here for a
+   * record's own provider: a session's runtime is the one its turns stream on,
+   * so a provider registered over it reaches them and no other session's.
+   */
+  ModelRegistry: typeof PiCodingAgent.ModelRegistry;
   createAgentSessionServices: typeof PiCodingAgent.createAgentSessionServices;
   createAgentSessionFromServices: typeof PiCodingAgent.createAgentSessionFromServices;
   defineTool: typeof PiCodingAgent.defineTool;
@@ -55,6 +61,7 @@ export function loadPi(): Promise<Pi> {
       parseSessionEntries: coding.parseSessionEntries,
       SettingsManager: coding.SettingsManager,
       ModelRuntime: coding.ModelRuntime,
+      ModelRegistry: coding.ModelRegistry,
       createAgentSessionServices: coding.createAgentSessionServices,
       createAgentSessionFromServices: coding.createAgentSessionFromServices,
       defineTool: coding.defineTool,

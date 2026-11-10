@@ -1009,6 +1009,11 @@ export function piSession(
       // the host records after.
       ...(first && resume === undefined ? { id: writtenAs } : {}),
       ...(options.sessionDir !== undefined ? { sessionDir: options.sessionDir } : {}),
+      // The record's endpoint, registered on this session's runtime by the
+      // backend, and the id its models are named under.
+      provider,
+      ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+      ...(options.apiKey !== undefined ? { apiKey: options.apiKey } : {}),
       ...(tools.length > 0 ? { tools } : {}),
       ...(instructions.length > 0 ? { instructions } : {}),
       // The inline extension pi loads is this host's, and this is the handler
