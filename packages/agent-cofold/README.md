@@ -42,9 +42,9 @@ In the configuration file, with the plugin's own options as the defaults every r
 }
 ```
 
-With no model named anywhere, the providers, keys and model come from the configuration cofold's own app, papo, reads, through cofold's resolver under papo's name: `$XDG_CONFIG_HOME/papo/config.json` or `~/.config/papo/config.json`, then the nearest `.papo.json` at or above a session's folder, then the file `$PAPO_CONFIG` names, each merging over the one before. Inside a machine `PAPO_CONFIG` is what finds it.
+With no model named anywhere, the providers, keys and model come from the configuration cofold's own app, copapo, reads, through cofold's resolver under copapo's name: `$XDG_CONFIG_HOME/copapo/config.json` or `~/.config/copapo/config.json`, then the nearest `.copapo.json` at or above a session's folder, then the file `$COPAPO_CONFIG` names, each merging over the one before. Inside a machine `COPAPO_CONFIG` is what finds it.
 
-`PAPO_BASE_URL`, `PAPO_API_KEY` and `PAPO_MODEL`, or `COFOLD_BASE_URL`, `COFOLD_API_KEY` and `COFOLD_MODEL` where papo's own are unset, are read on top of those files, as papo reads them: the URL adds or replaces a provider called `default` with the key as its key, and a model with no slash is a model of `default`. A model id with a slash of its own, as OpenRouter's are, is written after `default/`, because the first slash ends the provider: `default/deepseek/deepseek-chat`. A machine profile names them as the needs `cofoldBaseUrl`, `cofoldApiKey` and `cofoldModel`, the key from the vault, so a machine on another box gets a provider with no file holding the key.
+`COPAPO_BASE_URL`, `COPAPO_API_KEY` and `COPAPO_MODEL`, or `COFOLD_BASE_URL`, `COFOLD_API_KEY` and `COFOLD_MODEL` where copapo's own are unset, are read on top of those files, as copapo reads them: the URL adds or replaces a provider called `default` with the key as its key, and a model with no slash is a model of `default`. A model id with a slash of its own, as OpenRouter's are, is written after `default/`, because the first slash ends the provider: `default/deepseek/deepseek-chat`. A machine profile names them as the needs `cofoldBaseUrl`, `cofoldApiKey` and `cofoldModel`, the key from the vault, so a machine on another box gets a provider with no file holding the key.
 
 Every provider in the cofold file is asked for its models, each with its own key. Each id is offered as `<provider id>/<model id>`, such as `open_router/moonshotai/kimi-k3.1-pro`. The backend's own id is the prefix for an explicit `baseUrl`. A turn that nothing gives an endpoint, no `baseUrl` and no provider in the file, is refused as a turn that nothing gives a model is.
 
@@ -64,7 +64,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `apiKey` | the cofold file's | The daemon's own key, for a record that names none. `{ "$secret": "host:<name>" }` reads it from the vault; an embedder may pass a function asked once per request |
 | `resource` | the endpoint's origin when it is `https` | The protected resource a client authenticates against |
 | `autoCompactTokens` | the `autoCompactAt` share of the model's listed context, or of 32000 | The estimated history size at which a session compacts, never above that share |
-| `autoCompactAt` | `0.8`, papo's | The share of the model's listed context, or of 32000, a session compacts at when `autoCompactTokens` names no lower point |
+| `autoCompactAt` | `0.8`, copapo's | The share of the model's listed context, or of 32000, a session compacts at when `autoCompactTokens` names no lower point |
 | `catalogueTimeoutMs` | `15000` | How long, in milliseconds, the endpoint is given to publish its catalogue before the configured model stands alone, the time VS Code gives a runtime's model catalogue |
 | `hostTools` | `true` | Whether the host's own tools reach each session. A record can turn them off for one agent |
 

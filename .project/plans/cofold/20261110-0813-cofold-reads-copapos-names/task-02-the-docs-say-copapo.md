@@ -1,6 +1,6 @@
 ---
 title: The docs say copapo
-status: todo
+status: implemented
 depends:
   - task-01-the-harness-reads-copapos-names.md
 layer: "docs"
@@ -42,4 +42,10 @@ A person who upgrades is told to move the file and remake a cofold machine.
 - `pnpm -s docs` or the docs build passes, if the repository has one.
 
 ## Resume
+
+- The README, `package.json`, `PLUGINS.md` and `COMPUTERS.md` name copapo's file, project file and variables.
+- The release notes say to move `~/.config/papo/config.json`, rename the variables and remake a cofold machine.
+- The spec is corrected in place.
+- `git grep -i papo` finds only the two release-note lines that name the old names, as step 2 requires.
+- Validation passed: the docs build with `pnpm -s docs:build`, and the agent-cofold suite passes with 319 tests.
 
