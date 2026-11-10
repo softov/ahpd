@@ -1251,14 +1251,14 @@ export function gitChanges(): ChangesetSource {
         repository: `${repo.owner}/${repo.repo}`,
         autoMergeAllowed: false,
         mergeMethods: [],
-        agentMergeAvailable: false,
+        agentMergeAvailable: github.ask.detail !== undefined,
         context: contextOf(dir, repo, at),
       };
       return { followUp: { content: { uri: `data:application/json,${encodeURIComponent(JSON.stringify(details))}`, contentType: 'application/json' } } };
     }
     if (asked !== undefined) {
       if (typeof asked.title !== 'string' || asked.title.trim() === '') throw new Error('A pull request title is required.');
-      if (asked.agentMerge === true) throw new Error('Agent Merge is not available on this host.');
+      if (asked.agentMerge === true && github.ask.detail === undefined) throw new Error('Agent Merge is not available on this host.');
       if (asked.autoMergeMethod !== undefined) throw new Error('The repository does not allow the requested auto-merge method.');
     }
     const dirty = (await git(dir, ['status', '--porcelain']))?.trim() !== '';
@@ -1330,6 +1330,9 @@ export function gitChanges(): ChangesetSource {
           title: existing.title ?? said.title,
           branch: head,
         },
+        // The host turns Agent Merge on for this folder, on the branch and
+        // page the operation landed on, which are the request's own answer.
+        ...(asked?.agentMerge === true ? { agentMerge: true as const } : {}),
       };
     }
     const opened = await github.ask.create(repo, {
@@ -1347,6 +1350,7 @@ export function gitChanges(): ChangesetSource {
         title: opened.title ?? said.title,
         branch: head,
       },
+      ...(asked?.agentMerge === true ? { agentMerge: true as const } : {}),
     };
   };
 

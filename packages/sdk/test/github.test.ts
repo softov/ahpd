@@ -139,3 +139,150 @@ describe('one pull request by its page', () => {
     expect(readFileSync(join(dir, 'asked'), 'utf8').trim()).toBe('pr view https://github.com/softov/ahpd/pull/9 --json url,state,title');
   });
 });
+
+describe('what a repair turn reads of one pull request', () => {
+  const page = 'https://github.com/softov/ahpd/pull/9';
+
+  /** The four REST answers and the one query a detail read asks for, keyed by what asks. */
+  const detailAnswers = (): Map<string, unknown> => new Map<string, unknown>([
+    ['repos/softov/ahpd/pulls/9', {
+      html_url: page,
+      number: 9,
+      state: 'open',
+      merged_at: null,
+      title: 'Repair the merge',
+      draft: false,
+      mergeable: true,
+      mergeable_state: 'clean',
+      head: { sha: 'abc123', ref: 'fix/x', repo: { permissions: { push: false } } },
+      base: { ref: 'main', repo: { permissions: { push: true } } },
+    }],
+    ['repos/softov/ahpd/commits/abc123/check-runs?per_page=100', {
+      check_runs: [{ id: 1, name: 'build', status: 'completed', conclusion: 'success', details_url: 'https://github.com/softov/ahpd/runs/1' }],
+    }],
+    ['repos/softov/ahpd/commits/abc123/status', {
+      statuses: [{ context: 'ci/lint', state: 'success', target_url: 'https://ci.example.com/lint' }],
+    }],
+    ['repos/softov/ahpd/branches/main/protection/required_status_checks', {
+      contexts: ['build'],
+      checks: [{ context: 'ci/lint' }],
+    }],
+  ]);
+
+  const answerFor = (answers: Map<string, unknown>) => async (url: string) => {
+    if (url === 'https://api.github.com/graphql') {
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: { nodes: [{
+                  id: 'PRRT_1', path: 'src/a.ts', line: 12, isResolved: false,
+                  comments: { nodes: [{ author: { login: 'reviewer' }, body: 'This leaks.', createdAt: '2026-11-01T00:00:00Z' }] },
+                }] },
+                reviews: { nodes: [{ id: 'PRR_1', state: 'CHANGES_REQUESTED', body: 'Not yet.', submittedAt: '2026-11-01T01:00:00Z', author: { login: 'reviewer' } }] },
+                comments: { nodes: [{ id: 'IC_1', body: 'A note.', createdAt: '2026-11-01T02:00:00Z', author: { login: 'softov' } }] },
+              },
+            },
+          },
+        }),
+      };
+    }
+    const path = url.slice('https://api.github.com/'.length);
+    const found = answers.get(path);
+    return found === undefined
+      ? { ok: false, status: 404, json: async () => ({}) }
+      : { ok: true, status: 200, text: async () => JSON.stringify(found), json: async () => found };
+  };
+
+  it('reads the core, both kinds of check, mergeability and the reviews from the token', async () => {
+    vi.stubGlobal('fetch', answerFor(detailAnswers()));
+    const detail = await githubPullRequests().detail?.(page, 'gho_x', '/tmp');
+    expect(detail).toEqual({
+      core: {
+        url: page, number: 9, state: 'open', title: 'Repair the merge', headSha: 'abc123',
+        baseRef: 'main', headRef: 'fix/x', draft: false,
+      },
+      checks: {
+        checks: [
+          { id: '1', name: 'build', type: 'checkRun', status: 'completed', conclusion: 'success', required: true, detailsUrl: 'https://github.com/softov/ahpd/runs/1' },
+          { id: 'ci/lint/success', name: 'ci/lint', type: 'statusContext', status: 'SUCCESS', required: true, detailsUrl: 'https://ci.example.com/lint' },
+        ],
+        requirednessComplete: true,
+      },
+      // What merging needs is on the base repository, not the head's fork.
+      mergeability: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', viewerCanMerge: true },
+      reviewThreads: [{
+        id: 'PRRT_1', path: 'src/a.ts', line: 12, isResolved: false,
+        comments: [{ author: 'reviewer', body: 'This leaks.', createdAt: '2026-11-01T00:00:00Z' }],
+      }],
+      submittedReviews: [{ id: 'PRR_1', state: 'CHANGES_REQUESTED', author: 'reviewer', body: 'Not yet.', submittedAt: '2026-11-01T01:00:00Z' }],
+      topLevelComments: [{ id: 'IC_1', author: 'softov', body: 'A note.', createdAt: '2026-11-01T02:00:00Z' }],
+    });
+  });
+
+  it('marks requiredness unknown when branch protection cannot be read, rather than guessing', async () => {
+    // A 403 is "you may not see the protection"; a 404 would be "the branch is
+    // not protected", which is a complete answer of no required checks.
+    const answers = answerFor(detailAnswers());
+    vi.stubGlobal('fetch', async (url: string) => url.endsWith('/protection/required_status_checks')
+      ? { ok: false, status: 403, json: async () => ({}) }
+      : answers(url));
+    const detail = await githubPullRequests().detail?.(page, 'gho_x', '/tmp');
+    expect(detail?.checks.requirednessComplete).toBe(false);
+    expect(detail?.checks.checks.map((check) => check.required)).toEqual([undefined, undefined]);
+  });
+
+  it('reads the jobs of a run, and caps a log at what readAgentMergeCI keeps', async () => {
+    const job = {
+      id: 7, run_id: 9, name: 'build', status: 'completed', conclusion: 'failure',
+      head_sha: 'abc123', run_attempt: 1, check_run_url: 'https://api.github.com/repos/softov/ahpd/check-runs/1',
+      steps: [{ number: 1, name: 'compile', status: 'completed', conclusion: 'failure' }],
+    };
+    const long = 'x'.repeat(50_000);
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.endsWith('/actions/runs/9/jobs?per_page=100')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ jobs: [job] }), json: async () => ({ jobs: [job] }) };
+      }
+      if (url.endsWith('/actions/jobs/7/logs')) {
+        return { ok: true, status: 200, text: async () => long, json: async () => ({}) };
+      }
+      return { ok: false, status: 404, text: async () => '', json: async () => ({}) };
+    });
+    const port = githubPullRequests();
+    expect(await port.jobs?.(page, '9', 'gho_x', '/tmp')).toEqual([{
+      id: '7', runId: '9', name: 'build', status: 'completed', conclusion: 'failure',
+      headSha: 'abc123', runAttempt: 1, checkRunId: '1',
+      steps: [{ number: 1, name: 'compile', status: 'completed', conclusion: 'failure' }],
+    }]);
+    expect(await port.jobLog?.(page, '7', 'gho_x', '/tmp')).toEqual({ text: 'x'.repeat(48_000), truncated: true });
+  });
+
+  it('answers nothing for a log that is gone', async () => {
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 404, text: async () => '', json: async () => ({}) }));
+    expect(await githubPullRequests().jobLog?.(page, '7', 'gho_x', '/tmp')).toBeUndefined();
+  });
+
+  // `fakeGh` puts a `#!/bin/sh` script first on `PATH`, and the host runs it:
+  // a POSIX shell outside a terminal, which Windows has not.
+  it.skipIf(!posix)('reads it through gh too, when no token was lent', async () => {
+    const dir = fakeGh(JSON.stringify({ jobs: [{ id: 7, run_id: 9, name: 'build' }] }));
+    expect(await githubPullRequests().jobs?.(page, '9', undefined, dir)).toEqual([
+      { id: '7', runId: '9', name: 'build' },
+    ]);
+    const { readFileSync } = await import('node:fs');
+    expect(readFileSync(join(dir, 'asked'), 'utf8').trim())
+      .toBe('api repos/softov/ahpd/actions/runs/9/jobs?per_page=100');
+  });
+
+  it('answers nothing where there is neither a token nor a gh to ask', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'ahpd-no-gh-'));
+    made.push(empty);
+    process.env.PATH = empty;
+    expect(await githubPullRequests().detail?.(page, undefined, empty)).toBeUndefined();
+    expect(await githubPullRequests().jobs?.(page, '9', undefined, empty)).toBeUndefined();
+    expect(await githubPullRequests().jobLog?.(page, '7', undefined, empty)).toBeUndefined();
+  });
+});
+

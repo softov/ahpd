@@ -40,6 +40,7 @@ import type { Automations } from './automations.js';
 import type { SessionEvents } from './sessionevents.js';
 import type { Sleep } from './sleep.js';
 import type { Wakes } from './wakes.js';
+import type { AgentMerge } from './agentmerge.js';
 import type { QueueDrain } from './queuedrain.js';
 import type { SessionLifecycle } from './sessionlifecycle.js';
 import type { Canvases } from './canvases.js';
@@ -79,6 +80,13 @@ export interface DetachedWorktree {
 export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Outputs, LocalTurns, Automations, Sleep, Wakes, QueueDrain, SessionLifecycle {
   /** The background tasks a backend reported, by chat. */
   background: Background;
+  /**
+   * Agent Merge's watches, one per chat that turned it on.
+   *
+   * Under its own name rather than spread flat, because `stateOf` and `stop`
+   * are words other areas reach for.
+   */
+  agentMerge: AgentMerge;
   /** The canvases each chat shows, and the plugin that opened each one. */
   canvases: Canvases;
   /** The shells each chat's agent runs its commands in, one set a chat. */

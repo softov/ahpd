@@ -44,8 +44,8 @@ const repository = (): { dir: string; origin: string } => {
   return { dir, origin };
 };
 
-/** GitHub, as far as this source asks it. */
-const github = (existing: PullRequest[] = []) => {
+/** GitHub, as far as this source asks it. `canRead` is a port that can also read a pull request. */
+const github = (existing: PullRequest[] = [], canRead = false) => {
   const opened: NewPullRequest[] = [];
   const asked: { branch: string; token: string | undefined }[] = [];
   return {
@@ -58,6 +58,7 @@ const github = (existing: PullRequest[] = []) => {
         opened.push(wanted);
         return { url: `https://github.com/softov/ahpd/pull/${opened.length}`, state: 'open' as const };
       },
+      ...(canRead ? { detail: async () => undefined } : {}),
     },
   };
 };
@@ -124,6 +125,26 @@ describe('preparing a pull request', () => {
 });
 
 describe('creating a pull request', () => {
+  it('offers Agent Merge where the pull request can be read, and asks the host to turn it on when the form wants it', async () => {
+    const { dir } = repository();
+    git(dir, 'checkout', '-q', '-b', 'fix/kqueue');
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    git(dir, 'commit', '-qam', 'Port it');
+    const fake = github([], true);
+    const prepared = await invoke(dir, 'prepare-pull-request', withGithub(fake), undefined, 'Fix the kqueue build');
+    const details = JSON.parse(decodeURIComponent((prepared?.followUp?.content.uri ?? '').slice('data:application/json,'.length))) as Record<string, unknown>;
+    expect(details.agentMergeAvailable).toBe(true);
+    // The source does not turn it on: it names the branch and page the host
+    // starts the watch on, which are the operation's own answer.
+    writeFileSync(join(dir, 'tracked.txt'), 'three\n');
+    const said = await invoke(dir, 'create-pr', withGithub(fake), {
+      'vscode.pullRequest': { title: 'Fix the kqueue build', description: '', draft: false, agentMerge: true },
+    });
+    expect(said?.agentMerge).toBe(true);
+    expect(said?.pullRequest?.branch).toBe('fix/kqueue');
+    expect(fake.opened).toHaveLength(1);
+  });
+
   it('commits, branches off the base, pushes, and opens it with what the form said', async () => {
     const { dir, origin } = repository();
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');

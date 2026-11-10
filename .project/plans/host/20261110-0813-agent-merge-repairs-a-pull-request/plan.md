@@ -71,10 +71,10 @@ setAgentMergeEnabled -> folder state -> watch: checks, review threads, mergeable
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - GitHub reads checks and review threads](task-01-github-reads-checks-and-threads.md) | todo | - |
-| [02 - The watch starts a repair turn](task-02-the-watch-starts-a-repair-turn.md) | todo | 01 |
-| [03 - The four Agent Merge tools](task-03-the-four-agent-merge-tools.md) | todo | 02 |
-| [04 - prepare-pull-request offers Agent Merge](task-04-prepare-pull-request-offers-it.md) | todo | 03 |
+| [01 - GitHub reads checks and review threads](task-01-github-reads-checks-and-threads.md) | implemented | - |
+| [02 - The watch starts a repair turn](task-02-the-watch-starts-a-repair-turn.md) | implemented | 01 |
+| [03 - The four Agent Merge tools](task-03-the-four-agent-merge-tools.md) | implemented | 02 |
+| [04 - prepare-pull-request offers Agent Merge](task-04-prepare-pull-request-offers-it.md) | implemented | 03 |
 
 ## Risks and tradeoffs
 
@@ -83,10 +83,10 @@ setAgentMergeEnabled -> folder state -> watch: checks, review threads, mergeable
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-10.
-- **Next action:** [task-01-github-reads-checks-and-threads.md](task-01-github-reads-checks-and-threads.md).
+- **Done so far:** task 01. `githubPullRequests()` answers `detail`, `jobs` and `jobLog` through a lent token or `gh`, with the CI evidence capped at 48,000 characters. Task 02. `ctx.agentMerge` watches each folder's pull request every 60 s and starts one repair turn for a failed required check, an unresolved review thread or a conflict, as the root keys and the folder's overrides allow, and never merges. Task 03. The four Agent Merge tools are served under VS Code's names and text, registered beside `artifactTools`; the last three refuse outside a repair turn Agent Merge started, a review reply is published before its thread is resolved, and a rerun is asked once. Task 04. `prepare-pull-request` answers `agentMergeAvailable: true` where the GitHub port can read a pull request, and a create that asks for Agent Merge tells the host to watch the branch and page it opened, through `ctx.agentMerge.enableFor`.
+- **Next action:** none; all four tasks are implemented and wait for Softov's review.
 - **Open questions:** none.
-- **Watch out for:** a pending review reply stops the folder's monitoring when the turn ends, as VS Code does; the person turns it on again.
+- **Watch out for:** a pending review reply stops the folder's monitoring when the turn ends, as VS Code does; the person turns it on again. A create's watch starts on the branch and page the operation answered, which is why the host enables it from the result rather than the session's facts. `packages/sdk/src/host/agentmerge.ts`, `packages/sdk/src/tools/agentmerge.ts` and `packages/sdk/test/agentmerge-watch.test.ts` are new, and `git add` is denied here, so they are untracked and the task commits do not carry them.
 
 ## Final verification checklist
 
