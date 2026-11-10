@@ -25,6 +25,7 @@ const sidebar: DefaultTheme.SidebarItem[] = [
     items: [
       page('Get started', '/server/GET-STARTED'),
       page('Install', '/server/INSTALL'),
+      page('Docker', '/server/DOCKER'),
       page('Upgrade', '/server/UPGRADE'),
       page('Run', '/server/RUN'),
       page('Configure', '/server/CONFIGURE'),

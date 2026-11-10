@@ -99,11 +99,11 @@ docker compose up -> tini -> entrypoint.sh run -> missing plugins installed -> v
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The image builds from the checkout](task-01-the-image-builds-from-the-checkout.md) | todo | - |
-| [02 - The entrypoint seeds plugins and runs ahpd](task-02-the-entrypoint-seeds-plugins.md) | todo | 01 |
-| [03 - Compose runs the image](task-03-compose-runs-the-image.md) | todo | 02 |
-| [04 - CI runs the image checks](task-04-ci-runs-the-image-checks.md) | todo | 03 |
-| [05 - The docs say how to run it in Docker](task-05-the-docs-say-how-to-run-in-docker.md) | todo | 03 |
+| [01 - The image builds from the checkout](task-01-the-image-builds-from-the-checkout.md) | implemented | - |
+| [02 - The entrypoint seeds plugins and runs ahpd](task-02-the-entrypoint-seeds-plugins.md) | implemented | 01 |
+| [03 - Compose runs the image](task-03-compose-runs-the-image.md) | implemented | 02 |
+| [04 - CI runs the image checks](task-04-ci-runs-the-image-checks.md) | implemented | 03 |
+| [05 - The docs say how to run it in Docker](task-05-the-docs-say-how-to-run-in-docker.md) | implemented | 03 |
 
 ## Risks and tradeoffs
 
@@ -115,8 +115,8 @@ docker compose up -> tini -> entrypoint.sh run -> missing plugins installed -> v
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-10.
-- **Next action:** [task-01-the-image-builds-from-the-checkout.md](task-01-the-image-builds-from-the-checkout.md), once [daemon/20261110-0947-a-container-holds-the-daemon](../20261110-0947-a-container-holds-the-daemon/plan.md) is built.
+- **Done so far:** tasks 01 to 05 are implemented: the image builds from the checkout, `docker/entrypoint.sh` seeds and updates the volume's plugins, the two Compose files run it on loopback, the `image` CI job builds it and runs `docker/test/smoke.sh`, and `docs/server/DOCKER.md` says how to install, configure, upgrade, back up and move a host install, with `.project/pending/docker-checks.md` for the two checks CI cannot run. Every Docker check is left for review, because Docker is denied in this session.
+- **Next action:** review, and run `docker build`, `docker/test/smoke.sh ahpd:dev` and the two pending checks on a host with Docker.
 - **Open questions:** none.
 - **Watch out for:**
 The pack stage must run pnpm, not npm, or the tarballs carry `workspace:^`.

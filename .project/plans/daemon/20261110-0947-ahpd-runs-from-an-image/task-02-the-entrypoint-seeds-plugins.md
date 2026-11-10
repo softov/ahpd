@@ -1,6 +1,6 @@
 ---
 title: The entrypoint seeds plugins and runs ahpd
-status: todo
+status: implemented
 depends: [task-01-the-image-builds-from-the-checkout.md]
 layer: "image"
 refs:
@@ -40,4 +40,11 @@ An image older than the volume's `image-version` does not start, unless `AHPD_AL
 - `shellcheck docker/entrypoint.sh` passes.
 
 ## Resume
+
+- **Done so far:** `docker/entrypoint.sh` is POSIX `sh` with `set -eu`. A first argument that is not `run` is `exec ahpd "$@"`, so `docker run <image> --version` reads as ahpd and touches no volume. A start reads `ahpd --version` and `~/.config/ahpd/image-version`, refuses an older image on a newer volume with one line unless `AHPD_ALLOW_DOWNGRADE=1`, and takes `@ahpd/web` when `AHPD_PLUGINS` is unset and none when it is empty. It splits the list on commas and spaces, asks `ahpd plugin list --json` for the names the configuration holds, and installs each missing one with `ahpd plugin install`. When the two versions differ it runs `ahpd plugin update all` and writes `image-version` atomically. It ends with `exec ahpd "$@"`. Every step sets `STEP` and its own failure prints that name. The `Dockerfile` copies the script to `/opt/ahpd/entrypoint.sh` at mode 0755, owned by root, with `COPY --chmod`.
+- **Next action:** review the Docker checks below.
+- **Open questions:** none.
+- **Watch out for:** the checks that start a container are left for review, because Docker is denied in this mode: a fresh volume, a second start on it, `AHPD_PLUGINS=""`, a volume above the image, and `docker run --rm ahpd:dev --version`. `shellcheck` is not installed on this box, so it was not run either; the one deliberate word split carries `# shellcheck disable=SC2086`. The rule the plan leaves open is the separator inside `AHPD_PLUGINS`: this task takes commas or spaces, because Compose gives one string. The first start of a fresh volume runs `ahpd plugin update all` once, because there is no `image-version` to match, which is the expected answer and installs nothing.
+
+Files changed by this task: `docker/entrypoint.sh`, `Dockerfile`.
 

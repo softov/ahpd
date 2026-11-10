@@ -12,6 +12,7 @@ For a person who runs the `ahpd` daemon: its commands, its flags and its configu
 | --- | --- |
 | [GET-STARTED.md](server/GET-STARTED.md) | Install, configure, start, and connect VS Code |
 | [INSTALL.md](server/INSTALL.md) | Install, and run on Node, Bun or Deno |
+| [DOCKER.md](server/DOCKER.md) | Run it in a container: Compose, the volume, plugins and upgrades |
 | [UPGRADE.md](server/UPGRADE.md) | Upgrade the daemon and its plugins, and the update check |
 | [RUN.md](server/RUN.md) | Start, stop, restart, the files the daemon keeps, and served folders |
 | [CONFIGURE.md](server/CONFIGURE.md) | `ahpd configure`, `config.json`, and which setting wins |
