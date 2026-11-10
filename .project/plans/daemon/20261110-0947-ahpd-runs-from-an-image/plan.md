@@ -100,7 +100,7 @@ docker compose up -> tini -> entrypoint.sh run -> missing plugins installed -> v
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - The image builds from the checkout](task-01-the-image-builds-from-the-checkout.md) | implemented | - |
-| [02 - The entrypoint seeds plugins and runs ahpd](task-02-the-entrypoint-seeds-plugins.md) | todo | 01 |
+| [02 - The entrypoint seeds plugins and runs ahpd](task-02-the-entrypoint-seeds-plugins.md) | implemented | 01 |
 | [03 - Compose runs the image](task-03-compose-runs-the-image.md) | todo | 02 |
 | [04 - CI runs the image checks](task-04-ci-runs-the-image-checks.md) | todo | 03 |
 | [05 - The docs say how to run it in Docker](task-05-the-docs-say-how-to-run-in-docker.md) | todo | 03 |
@@ -115,8 +115,8 @@ docker compose up -> tini -> entrypoint.sh run -> missing plugins installed -> v
 
 ## Resume state
 
-- **Done so far:** task 01 is implemented: `Dockerfile` has the `pack`, `install` and `runtime` stages, and `.dockerignore` is written. Its Docker checks are left for review, because Docker is denied in this session.
-- **Next action:** [task-02-the-entrypoint-seeds-plugins.md](task-02-the-entrypoint-seeds-plugins.md).
+- **Done so far:** tasks 01 and 02 are implemented: `Dockerfile` has the three stages, `.dockerignore` is written, and `docker/entrypoint.sh` seeds the volume's plugins, refuses a downgrade and execs ahpd. Their Docker checks are left for review, because Docker is denied in this session.
+- **Next action:** [task-03-compose-runs-the-image.md](task-03-compose-runs-the-image.md).
 - **Open questions:** none.
 - **Watch out for:**
 The pack stage must run pnpm, not npm, or the tarballs carry `workspace:^`.
