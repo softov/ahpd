@@ -55,7 +55,7 @@ The token is the one `ahpd user token <id>` prints, or one minted with `ahpd tok
 | `delete_session` | Delete a session |
 | `move_session` | Reorder, move or promote a session's chats, while moving chats is on |
 
-`get_current_session`, `set_workspace` and the artifact tools act on the calling session, so there is no sessionless form of them and `/mcp` does not offer them. Connector actions and a schedule are not served here either.
+`get_current_session`, `set_workspace`, `isolate_session` and the artifact tools act on the calling session, so there is no sessionless form of them and `/mcp` does not offer them. Connector actions and a schedule are not served here either.
 
 Each tool checks its own grants, so the list is only what the caller may run. A `member` sees all ten. A role with `mcp:call` and `session:read` only sees `list_sessions`, `list_agents`, `list_models` and `get_session_context`, and a call to `create_session` gets `No tool named create_session`.
 

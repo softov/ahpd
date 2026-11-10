@@ -217,15 +217,16 @@ session it called from. They are reported on `SessionState.serverTools`, given
 to every backend that can take tools, and replaced whole with `host.setTools()`
 - which dispatches `session/serverToolsChanged` to every running session.
 
-`hostTools()` is the set that ships: the reference host's ten session tools
+`hostTools()` is the set that ships: the reference host's eleven session tools
 (`list_sessions`, `get_current_session`, `get_session_context`, `send_message`,
 `create_session`, `create_chat`, `rename_chat`, `delete_session`,
-`set_workspace`), with its names, input schemas and answers, so a skill written
-against VS Code's host calls them here unchanged; and two of this host's own,
-`ahp_resource` and `ahp_terminals`, both read-only, answering what an agent
-inside one session cannot see for itself - a client's resource and
-the terminals a person is watching; and the reference host's three artifact
-tools (`add_artifact_or_reference`, `remove_artifact_or_reference`,
+`set_workspace`, `move_session`, `isolate_session`), with its names, input
+schemas and answers, so a skill written against VS Code's host calls them here
+unchanged; and two of this host's own, `ahp_resource` and `ahp_terminals`, both
+read-only, answering what an agent inside one session cannot see for itself - a
+client's resource and the terminals a person is watching; and the reference
+host's three artifact tools (`add_artifact_or_reference`,
+`remove_artifact_or_reference`,
 `list_artifacts_and_references`), which write the session's
 `_meta['agentHost/sessionArtifacts']` through the session store. `sessionTools()`
 and `artifactTools()` are each set on their own. A tool may carry an
