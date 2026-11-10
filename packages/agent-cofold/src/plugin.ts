@@ -219,7 +219,7 @@ const engineOf = (defaults: CofoldOptions): Engine => ({
   schema: kindSchema(),
   templates: [{
     name: 'Cofold',
-    description: 'Cofold on the harness configuration papo reads, ~/.config/papo/config.json and a project\'s .papo.json, with nothing set here.',
+    description: 'Cofold on the harness configuration copapo reads, ~/.config/copapo/config.json and a project\'s .copapo.json, with nothing set here.',
     config: {},
   }],
   hostOnly: ['computerConfigDir', 'store', 'memory'],
@@ -247,5 +247,13 @@ export function apply(host: PluginHost, values: Record<string, unknown>): void {
   for (const [key, where] of Object.entries(perRecord)) {
     if (values[key] !== undefined) throw new Error(`options.${key} is written per record now, as ${where}`);
   }
-  host.registerEngine(engineOf(optionsOf(values)));
+  host.registerEngine(engineOf({
+    ...optionsOf(values),
+    /*
+     * Every model call names this host rather than the transport that carried
+     * it, and OpenRouter attributes the usage to ahpd's app page.
+     * https://openrouter.ai/docs/app-attribution
+     */
+    app: { name: 'ahpd', version: host.version, url: 'https://ahpio.com' },
+  }));
 }

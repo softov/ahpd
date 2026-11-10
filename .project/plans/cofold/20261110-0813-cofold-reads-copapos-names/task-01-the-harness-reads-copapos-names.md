@@ -1,6 +1,6 @@
 ---
 title: The harness reads copapo's names
-status: todo
+status: implemented
 depends: []
 layer: "agent-cofold"
 refs:
@@ -51,4 +51,10 @@ agent-cofold reads `COPAPO_CONFIG`, `copapo/config.json`, `.copapo.json` and `CO
 - `pnpm typecheck`, then `pnpm exec vitest run packages/agent-cofold`, then the sdk and server suites, one at a time.
 
 ## Resume
+
+- `config.ts` reads `COPAPO_CONFIG`, `copapo/config.json`, `.copapo.json` and `COPAPO_*` over `COFOLD_*`, with no papo fallback.
+- A machine seeds and mounts `copapo/config.json` and sets `COPAPO_CONFIG`.
+- The template description, the comments and `tools/test-tmpdir.ts` name copapo.
+- `git grep -i papo -- packages tools` finds only links to cofold commits.
+- Validation passed: typecheck clean, agent-cofold 319 passed, sdk 4612 passed and 5 skipped, server 1858 passed and 3 skipped.
 

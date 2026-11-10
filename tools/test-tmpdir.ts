@@ -43,7 +43,7 @@ export default function setup(): () => void {
   process.env.CLAUDE_CONFIG_DIR = join(run, 'claude-config');
   /*
    * And a config home of the run's own, for the same reason: cofold's backend
-   * reads the person's `~/.config/papo/config.json` as its harness layer, and
+   * reads the person's `~/.config/copapo/config.json` as its harness layer, and
    * a model named there was read into a case that expected none. The daemon's
    * own `~/.config/ahpd` is under it too. A test that names one still sets its
    * own.

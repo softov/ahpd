@@ -65,7 +65,7 @@ const editPathOf = (workspace: string, tool: Tool<any, any>, input: unknown): st
  * The share of a model's window a session folds its history at, unless the
  * record's `autoCompactAt` says otherwise.
  *
- * The same 80% papo keeps. A summary is written by asking the model, so the
+ * The same 80% copapo keeps. A summary is written by asking the model, so the
  * step that writes it needs room of its own, and a point at the window itself
  * would fold a history the summary step could not fit either.
  * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/agent.ts#L11

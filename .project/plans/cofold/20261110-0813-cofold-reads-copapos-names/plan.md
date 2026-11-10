@@ -70,8 +70,8 @@ machine needs -> cofoldState seed and cofoldConfig mount at <configDir>/<name>/c
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The harness reads copapo's names](task-01-the-harness-reads-copapos-names.md) | todo | - |
-| [02 - The docs say copapo](task-02-the-docs-say-copapo.md) | todo | 01 |
+| [01 - The harness reads copapo's names](task-01-the-harness-reads-copapos-names.md) | implemented | - |
+| [02 - The docs say copapo](task-02-the-docs-say-copapo.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -80,8 +80,8 @@ machine needs -> cofoldState seed and cofoldConfig mount at <configDir>/<name>/c
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-10.
-- **Next action:** [task-01-the-harness-reads-copapos-names.md](task-01-the-harness-reads-copapos-names.md).
+- **Done so far:** tasks 01 and 02 implemented 2026-11-10.
+- **Next action:** Softov's review, then `done` on each task. No task is left.
 - **Open questions:** none.
 - **Watch out for:** `tools/test-tmpdir.ts` keeps a test from reading the person's own file. Point it at copapo's file, or a test reads `~/.config/copapo/config.json` on Softov's box.
 

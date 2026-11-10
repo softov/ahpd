@@ -141,6 +141,7 @@ it('registers the acp engine, its templates, host-only fields and key variables'
     'AMP_API_KEY',
     'CLINE_API_KEY',
     'CODEX_API_KEY',
+    'COPAPO_API_KEY',
     'COPILOT_GITHUB_TOKEN',
     'CURSOR_API_KEY',
     'DEEPSEEK_API_KEY',
@@ -167,7 +168,7 @@ it('registers the acp engine, its templates, host-only fields and key variables'
   // made from it runs the agent the row describes, and its vendor's key
   // variables as fields set empty.
   const templates = engine?.templates ?? [];
-  expect(templates).toHaveLength(14);
+  expect(templates).toHaveLength(15);
   expect(templates.slice(0, 3).map((one) => one.name)).toEqual(['Codex', 'Gemini', 'Copilot']);
   const codex = templates[0]?.config ?? {};
   expect(codex).toMatchObject({
