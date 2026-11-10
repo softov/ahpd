@@ -191,7 +191,7 @@ beforeAll(async () => {
    * and not there answers no providers, which is what a machine that never ran
    * the harness has.
    */
-  vi.stubEnv('PAPO_CONFIG', join(tmpdir(), 'ahpd-schema-gaps-no-papo.json'));
+  vi.stubEnv('COPAPO_CONFIG', join(tmpdir(), 'ahpd-schema-gaps-no-copapo.json'));
 
   for (const sample of SAMPLES) {
     const configDir = sample.configDir

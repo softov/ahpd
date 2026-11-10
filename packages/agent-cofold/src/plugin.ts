@@ -219,7 +219,7 @@ const engineOf = (defaults: CofoldOptions): Engine => ({
   schema: kindSchema(),
   templates: [{
     name: 'Cofold',
-    description: 'Cofold on the harness configuration papo reads, ~/.config/papo/config.json and a project\'s .papo.json, with nothing set here.',
+    description: 'Cofold on the harness configuration copapo reads, ~/.config/copapo/config.json and a project\'s .copapo.json, with nothing set here.',
     config: {},
   }],
   hostOnly: ['computerConfigDir', 'store', 'memory'],
