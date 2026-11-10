@@ -7,7 +7,7 @@ created: 2026-11-02
 revalidated: 2026-11-02
 refs:
   - git://e4694965 - R1's continuation, the commit this plan was checked at
-  - "[code://.project/working/maycxc-union-20261101-review.md](../../../working/maycxc-union-20261101-review.md) - Softov's review: `conformance.test.ts:906` sends `permissionMode` where it sent `mode`"
+  - "git://f48055f0 - the last commit that holds `.project/working/maycxc-union-20261101-review.md`; Softov's review: `conformance.test.ts:906` sends `permissionMode` where it sent `mode`"
   - "[code://packages/agent-claude/src/session/config.ts#L114-L125](../../../../packages/agent-claude/src/session/config.ts#L114-L125) - `permissionFor`, which maps `autoApprove` and `mode` onto the mode the CLI takes"
   - "[code://packages/agent-claude/src/session/config.ts#L248-L310](../../../../packages/agent-claude/src/session/config.ts#L248-L310) - `setConfig`, which answers a mapped key as the mode it moved"
   - "[code://packages/sdk/test/conformance.test.ts#L885-L899](../../../../packages/sdk/test/conformance.test.ts#L885-L899) - the unit case of `permissionFor`"

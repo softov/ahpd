@@ -7,7 +7,7 @@ created: 2026-11-02
 revalidated: 2026-11-02
 refs:
   - git://9d1cc04e - the commit of ahpd this plan was checked at
-  - "[code://.project/working/maycxc-union-20261101-review.md](../../../working/maycxc-union-20261101-review.md) - Softov's review: host-turn no longer checks the session-level error, host-deltas no longer lands a delta while the snapshot read waits"
+  - "git://f48055f0 - the last commit that holds `.project/working/maycxc-union-20261101-review.md`; Softov's review: host-turn no longer checks the session-level error, host-deltas no longer lands a delta while the snapshot read waits"
   - "[code://packages/sdk/test/host-turn.test.ts#L429-L478](../../../../packages/sdk/test/host-turn.test.ts#L429-L478) - the failed turn case, which reads the chat channel alone"
   - "[code://packages/sdk/test/host-deltas.test.ts#L145-L203](../../../../packages/sdk/test/host-deltas.test.ts#L145-L203) - the awaited snapshot case, whose delta lands after the read resumed"
   - "[code://packages/sdk/src/host/catalogue.ts#L1458-L1480](../../../../packages/sdk/src/host/catalogue.ts#L1458-L1480) - `chatMoved`, which keeps the session's row for a chat in step with it"

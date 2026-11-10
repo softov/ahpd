@@ -7,7 +7,7 @@ created: 2026-11-01
 revalidated: 2026-11-01
 refs:
   - git://39d1f22a - the commit of ahpd this plan was checked at
-  - "[code://.project/working/maycxc-union-20261101-review.md](../../../working/maycxc-union-20261101-review.md) - Softov's review: an owed answer keyed by the action's type and id alone, and `ctx.commandTurns` keyed by turn id across chats"
+  - "git://f48055f0 - the last commit that holds `.project/working/maycxc-union-20261101-review.md`; Softov's review: an owed answer keyed by the action's type and id alone, and `ctx.commandTurns` keyed by turn id across chats"
   - "[code://packages/sdk/src/host.ts#L751-L812](../../../../packages/sdk/src/host.ts#L751-L812) - the owed answers: `owedKey` is the action's type and the id it names, with no chat"
   - "[code://packages/sdk/src/host.ts#L877-L890](../../../../packages/sdk/src/host.ts#L877-L890) - a turn's end lets go of what it owed, under the same key"
   - "[code://packages/sdk/src/host.ts#L1208](../../../../packages/sdk/src/host.ts#L1208) - `owe`, which holds the dispatch being applied under that key"

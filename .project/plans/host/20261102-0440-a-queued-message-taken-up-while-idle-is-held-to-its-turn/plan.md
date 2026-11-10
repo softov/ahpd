@@ -7,7 +7,7 @@ created: 2026-11-02
 revalidated: 2026-11-02
 refs:
   - git://9d1cc04e - the commit of ahpd this plan was checked at
-  - "[code://.project/working/maycxc-union-20261101-review.md](../../../working/maycxc-union-20261101-review.md) - Softov's review: `ALLOWED` exempts whole keys for 045-047 and 052"
+  - "git://f48055f0 - the last commit that holds `.project/working/maycxc-union-20261101-review.md`; Softov's review: `ALLOWED` exempts whole keys for 045-047 and 052"
   - "[code://packages/sdk/test/ahp-test-cases.test.ts#L427-L445](../../../../packages/sdk/test/ahp-test-cases.test.ts#L427-L445) - `CONSUMED`, and the four entries that exempt `activeTurn`, `modifiedAt`, `queuedMessages` and `status`"
   - "[code://packages/sdk/test/ahp-test-cases.test.ts#L571-L586](../../../../packages/sdk/test/ahp-test-cases.test.ts#L571-L586) - `Driven`: what a watching client holds, and the reducer's goal"
   - "[code://packages/sdk/test/ahp-test-cases.test.ts#L612-L673](../../../../packages/sdk/test/ahp-test-cases.test.ts#L612-L673) - the driver, which builds the goal from the accepted actions alone"
