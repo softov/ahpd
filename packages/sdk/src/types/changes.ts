@@ -298,6 +298,14 @@ export interface ChangesetOperationResult {
    */
   pullRequest?: { url: string; title: string; branch: string };
   /**
+   * The create asked for Agent Merge, so the host turns it on for the folder.
+   *
+   * Said by the operation rather than done by it: the source has no watch to
+   * turn on, and the branch and page the operation landed on are the target a
+   * watch should start on, which the host takes from `pullRequest` beside this.
+   */
+  agentMerge?: true;
+  /**
    * The agent's changes to files that the operation undid, so the session's
    * agent is told before it edits them again, as VS Code's host reports the
    * changes a discard undid to the agent that made them.
