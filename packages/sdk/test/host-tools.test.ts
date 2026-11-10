@@ -25,6 +25,7 @@ import type { SessionAction, SessionInputRequest, SessionState } from '@microsof
 import type { Grant, Principal, Users } from '../src/types/users.js';
 import { ROOT } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
+import { gitWorktrees } from '../src/repo/worktrees.js';
 import {
   startedBySend,
   resetSdk, actions, builtServer, claude, createHost, defaultChatOf, echo, emit, firstMessage, hello, hostTools,
@@ -54,9 +55,9 @@ describe('tools the host contributes', () => {
     await firstMessage(client, await defaultChatOf(client, uri));
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   };
-  const withTools = async (tools = hostTools()) => {
+  const withTools = async (tools = hostTools(), over: Partial<HostOptions> = {}) => {
     const host = createHost({
-      path: HERE, agents: [claude({ paths: [HERE] })], ...machine(), tools,
+      path: HERE, agents: [claude({ paths: [HERE] })], ...machine(), ...over, tools,
     });
     const p = peer();
     const client = host.accept(p);
@@ -78,6 +79,7 @@ describe('tools the host contributes', () => {
     expect(state.serverTools?.map((one) => one.name)).toEqual([
       'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace',
       'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+      'move_session',
       'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
       'addComment', 'listComments', 'replyToComment', 'deleteComments', 'resolveComments', 'viewUnreviewedComments',
       'setAgentMergeEnabled', 'readAgentMergeCI', 'replyToAgentMergeReviewThread', 'rerunAgentMergeWorkflow',
@@ -168,6 +170,19 @@ describe('tools the host contributes', () => {
       return (await tool.handler(input)).content[0]?.text ?? '';
     };
 
+    /** The folders a case made, removed after it. */
+    const dirs: string[] = [];
+    // Awaited, with retries: on Windows a process the case started can hold the folder a moment longer.
+    afterEach(async () => {
+      for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    });
+    /** A folder that is not a git repository, made fresh for one case. */
+    const plainFolder = (): string => {
+      const plain = mkdtempSync(join(tmpdir(), 'ahpd-plain-'));
+      dirs.push(plain);
+      return plain;
+    };
+
     it('says which session it is running in, with the row and the link', async () => {
       const { held } = await withTools();
       const said = JSON.parse(await call('get_current_session', {})) as Record<string, unknown>;
@@ -186,14 +201,16 @@ describe('tools the host contributes', () => {
       await client.handle({ method: 'subscribe', params: { channel: chatUri } });
       await atRest(client, 'ahp-session:/other');
       // From the first session's tools, at the second, by its link.
-      const said = await call('send_message', { session: 'agent-host-session://claude/other', message: 'check the makefile' }, 0);
-      expect(said).toBe('Message sent (agent-host-session://claude/other).');
+      const said = JSON.parse(await call('send_message', { session: 'agent-host-session://claude/other', message: 'check the makefile' }, 0)) as Record<string, unknown>;
+      expect(said).toMatchObject({
+        action: 'started', revision: 1, status: 'processing', openLink: 'agent-host-session://claude/other',
+      });
       await settle();
       const started = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
       expect(started?.action.message).toMatchObject({
         text: 'check the makefile',
         origin: { kind: 'agent' },
-        _meta: { 'vscode.chat.delegation': { sourceSession: 'ahp-session:/served' } },
+        _meta: { 'vscode.chat.delegation': { sourceSession: 'ahp-session:/served', messageId: said.messageId, revision: 1 } },
       });
     });
 
@@ -209,8 +226,10 @@ describe('tools the host contributes', () => {
         params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'first' } } },
       });
       await settle();
-      const said = await call('send_message', { session: 'ahp-session:/busy', message: 'and then this' }, 0);
-      expect(said).toBe('Message queued (agent-host-session://claude/busy).');
+      const said = JSON.parse(await call('send_message', { session: 'ahp-session:/busy', message: 'and then this' }, 0)) as Record<string, unknown>;
+      expect(said).toMatchObject({
+        action: 'queued', revision: 1, status: 'pending', openLink: 'agent-host-session://claude/busy',
+      });
       await settle();
       const queued = actions(p, chatUri).find((one) => one.action.type === 'chat/pendingMessageSet');
       expect(queued?.action).toMatchObject({ kind: 'queued', message: { text: 'and then this', origin: { kind: 'agent' } } });
@@ -246,6 +265,45 @@ describe('tools the host contributes', () => {
       const rows = JSON.parse(await call('list_sessions', {})) as { sessions: { session: string }[] };
       expect(rows.sessions.map((one) => one.session)).toContain(summary?.resource);
       expect(rows.sessions.map((one) => one.session)).toContain('ahp-session:/served');
+    });
+
+    /*
+     * A folder that is not a git repository is used as it is, as VS Code's
+     * host resolves a session's isolation against the folder's own offer: the
+     * session works in the folder, and a worktree asked for there is refused
+     * rather than quietly turned into a folder session.
+     * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L960-L994
+     */
+    it('makes the session in a folder that is not a git repository, worktree left out', async () => {
+      const { client, peer: p } = await withTools(hostTools(), { worktrees: gitWorktrees() });
+      const plain = plainFolder();
+      await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+      expect(await call('create_session', {
+        relationship: 'independent', workspace: plain, title: 'No repository', prompt: 'work in the folder',
+      })).toMatch(/^New session created \(agent-host-session:\/\/claude\/[0-9a-f-]+\)\.$/);
+      await settle();
+      const added = p.notes.find((one) => one.method === 'root/sessionAdded');
+      const summary = (added?.params as { summary?: { resource: string; workingDirectories: string[] } } | undefined)?.summary;
+      expect(summary?.workingDirectories).toEqual([uriOf(plain)]);
+      // The isolation the folder takes, which a client draws beside the session.
+      const state = (await client.handle({ method: 'subscribe', params: { channel: summary?.resource } }) as {
+        snapshot: { state: { config?: { values: Record<string, unknown> } } };
+      }).snapshot.state;
+      expect(state.config?.values.isolation).toBe('folder');
+      // And the backend started in the folder itself, with no tree cut for it.
+      expect(sessionQueries().at(-1)?.options.cwd).toBe(plain);
+    });
+
+    it('refuses a worktree in a folder that is not a git repository', async () => {
+      const { client, peer: p } = await withTools(hostTools(), { worktrees: gitWorktrees() });
+      const plain = plainFolder();
+      await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+      const said = await call('create_session', {
+        relationship: 'independent', workspace: plain, title: 'No repository', prompt: 'work in a tree', worktree: true,
+      });
+      expect(said).toContain('is not a git repository, so it has no worktrees');
+      await settle();
+      expect(p.notes.filter((one) => one.method === 'root/sessionAdded')).toHaveLength(0);
     });
 
     /*
@@ -396,7 +454,9 @@ describe('tools the host contributes', () => {
     it('moves the session once the turn that asked is over, and continues the task there in VS Code\'s words', async () => {
       const { client, peer: p, uri, chatUri } = await (async () => {
         const host = createHost({
-          path: WORK, agents: [claude({ paths: [WORK, '/tmp'] })], ...machine(), tools: hostTools(),
+          // An agent with one folder for its session, which is the one a
+          // session's move is still for: a folder per chat moves only the chat.
+          path: WORK, agents: [{ ...claude({ paths: [WORK, '/tmp'] }), multipleDirectories: false }], ...machine(), tools: hostTools(),
         });
         const p_ = peer();
         // The window vouches for the folder it is moving into, which is asked
@@ -445,6 +505,130 @@ describe('tools the host contributes', () => {
       // In VS Code's words.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1081-L1092
       expect((notice?.action.message as { text: string }).text).toBe('Continue in the requested workspace.');
+    });
+
+    /*
+     * A session of an agent that keeps a folder per chat moves the chat whose
+     * turn asked, and not the session, as VS Code's host moves the current
+     * chat and leaves its session's other chats where they are.
+     * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L492-L601
+     */
+    it('moves the chat whose turn asked alone, in the words a chat alone is told', async () => {
+      const host = createHost({
+        path: WORK, agents: [claude({ paths: [WORK, '/tmp'] })], ...machine(), tools: hostTools(),
+      });
+      const p = peer();
+      p.request = async () => ({ trusted: true });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0']));
+      const uri = 'ahp-session:/chat-mover';
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work in /tmp' } } },
+      });
+      await settle();
+      expect(await call('set_workspace', { workspaceFolder: 'file:///tmp', isolation: false }))
+        .toContain(`Workspace will be set to ${uriOf('/tmp')} after this turn ends`);
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+      await settle(8);
+
+      // The session kept its own folder and gained the chat's; nothing moved
+      // the session itself.
+      expect(actions(p, uri).some((one) => one.action.type === 'session/workingDirectoryReplaced')).toBe(false);
+      expect(actions(p, uri).find((one) => one.action.type === 'session/workingDirectorySet')?.action)
+        .toMatchObject({ directory: uriOf('/tmp') });
+      // The one chat left the folder it had and entered the new one.
+      expect(actions(p, chatUri).filter((one) => one.action.type === 'chat/workingDirectoryRemoved')
+        .map((one) => (one.action as { directory: string }).directory)).toEqual([WORK_URI]);
+      expect(actions(p, chatUri).find((one) => one.action.type === 'chat/workingDirectorySet')?.action)
+        .toMatchObject({ directory: uriOf('/tmp') });
+      // Restarted in the new folder, and told so in the turn that continues it.
+      expect(sessionQueries().at(-1)?.options.cwd).toBe(resolve('/tmp'));
+      const notice = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
+      expect(notice?.action.message).toMatchObject({
+        origin: { kind: 'systemNotification' },
+        _meta: {
+          'vscode.chat.requestHiddenFromTranscript': true,
+          'vscode.chat.systemInitiatedLabel': 'Workspace Set',
+          'vscode.chat.workspaceContinuation': true,
+        },
+      });
+      // In VS Code's words for a chat alone.
+      // https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1107-L1116
+      expect((notice?.action.message as { text: string }).text).toBe(
+        `Only this chat now uses the workspace at ${resolve('/tmp')}. Other chats and their folders are unchanged. Continue the user's original task here. Do not change this workspace again unless the user explicitly asks.`,
+      );
+    });
+
+    /*
+     * Two chats in one session, one of them moved: the other keeps the folder
+     * it had and the process it runs in, which a session's move would cost it.
+     */
+    it('moves one chat and leaves its session\'s other chat where it is, process and all', async () => {
+      const host = createHost({
+        path: WORK, agents: [claude({ paths: [WORK, '/tmp'] })], ...machine(), tools: hostTools(),
+      });
+      const p = peer();
+      p.request = async () => ({ trusted: true });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0']));
+      const uri = 'ahp-session:/a-pair';
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const lead = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: lead } });
+      const peerChat = 'ahp-chat:/peer';
+      await client.handle({ method: 'createChat', params: { channel: uri, chat: peerChat } });
+      await client.handle({ method: 'subscribe', params: { channel: peerChat } });
+      await settle();
+      // A process for each chat, the peer's the newest, both in the session's
+      // folder.
+      const before = sessionQueries();
+      const peerProcess = before.at(-1);
+      expect(peerProcess?.options.cwd).toBe(resolve(WORK));
+
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: peerChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work in /tmp' } } },
+      });
+      await settle();
+      // The tools of the chat whose turn this is: the newest server built.
+      expect(await call('set_workspace', { workspaceFolder: 'file:///tmp', isolation: false }))
+        .toContain(`Workspace will be set to ${uriOf('/tmp')} after this turn ends`);
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+      await settle(8);
+
+      // The one chat moved: its process stopped, another started in the new
+      // folder.
+      const after = sessionQueries();
+      expect(after).toHaveLength(before.length + 1);
+      expect(after.at(-1)?.options.cwd).toBe(resolve('/tmp'));
+      expect(peerProcess?.closed).toBe(true);
+      // The session kept its own folder and gained the chat's, and no session
+      // move was said.
+      expect(actions(p, uri).some((one) => one.action.type === 'session/workingDirectoryReplaced')).toBe(false);
+      expect(actions(p, uri).find((one) => one.action.type === 'session/workingDirectorySet')?.action)
+        .toMatchObject({ directory: uriOf('/tmp') });
+      // The other chat was not restarted, kept its folder, and was said
+      // nothing about the move.
+      expect(before.slice(0, -1).every((one) => one.closed === false)).toBe(true);
+      expect(actions(p, lead).filter((one) => String(one.action.type).startsWith('chat/workingDirectory'))).toEqual([]);
+      const other = (await client.handle({ method: 'subscribe', params: { channel: lead } }) as {
+        snapshot: { state: { workingDirectories: string[] } };
+      }).snapshot.state;
+      expect(other.workingDirectories).toEqual([WORK_URI]);
+      // And the chat that moved continues its task under its own label.
+      const notice = actions(p, peerChat).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
+      expect(notice?.action.message).toMatchObject({
+        origin: { kind: 'systemNotification' },
+        _meta: { 'vscode.chat.systemInitiatedLabel': 'Workspace Set' },
+      });
     });
 
     /*
@@ -558,6 +742,116 @@ describe('tools the host contributes', () => {
       expect(worktree).toContain(`An isolated worktree will be created from ${uriOf(join(WORK, 'a#b'))} and set as the workspace`);
       const direct = await call('set_workspace', { workspaceFolder: join(WORK, 'a#b'), isolation: false });
       expect(direct).toContain(`Workspace will be set to ${uriOf(join(WORK, 'a#b'))} after this turn ends`);
+    });
+
+    /** Moving chats on, as a VS Code window with its move setting on turns it on. */
+    const movingOn = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<void> => {
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+      });
+      await settle();
+    };
+
+    /**
+     * A peer chat of a session, in a turn it has already ended.
+     *
+     * `own` is the conversation id its backend keeps it under, which a move
+     * reads as the chat's own and starts it again by: the reference starts a
+     * chat that cannot be resumed nowhere.
+     */
+    const nested = async (client: ReturnType<ReturnType<typeof createHost>['accept']>, session: string, chat: string, own: string): Promise<void> => {
+      await client.handle({ method: 'createChat', params: { channel: session, chat } });
+      await client.handle({ method: 'subscribe', params: { channel: chat } });
+      await firstMessage(client, chat);
+      await emit({ type: 'system', subtype: 'init', session_id: own });
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4, session_id: own });
+      await settle();
+    };
+
+    /*
+     * A nested session moved into another one, at its end.
+     *
+     * The schema says an omitted `after` is the end, while the protocol's own
+     * move reads an absent anchor as the beginning, so the tool passes the
+     * host's word for the end and the chat lands behind the destination's
+     * default chat.
+     */
+    it('moves a nested session into another session, at its end', async () => {
+      const { client } = await withTools();
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/target', provider: 'claude' } });
+      await atRest(client, 'ahp-session:/target');
+      const target = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/target' } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state;
+      const id = '2a2a2a2a-0000-4000-8000-000000000001';
+      await nested(client, 'ahp-session:/served', `ahp-chat:/${id}`, 'sdk-moved');
+      await movingOn(client);
+
+      expect(await call('move_session', {
+        session: `agent-host-session://claude/served?chat=${id}`,
+        into: 'agent-host-session://claude/target',
+      })).toBe(`Nested session moved into agent-host-session://claude/target (agent-host-session://claude/target?chat=${id}).`);
+
+      const order = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/target' } }) as {
+        snapshot: { state: { chats?: { resource: string }[] } };
+      }).snapshot.state.chats?.map((one) => one.resource);
+      expect(order).toEqual([target.defaultChat, `ahp-chat:/${id}`]);
+    });
+
+    it('reorders a nested session after another in its own session', async () => {
+      const { client } = await withTools();
+      const one = '3a3a3a3a-0000-4000-8000-000000000001';
+      const two = '3b3b3b3b-0000-4000-8000-000000000002';
+      await nested(client, 'ahp-session:/served', `ahp-chat:/${one}`, 'sdk-one');
+      await nested(client, 'ahp-session:/served', `ahp-chat:/${two}`, 'sdk-two');
+      await movingOn(client);
+
+      expect(await call('move_session', {
+        session: `agent-host-session://claude/served?chat=${one}`,
+        into: 'agent-host-session://claude/served',
+        after: `agent-host-session://claude/served?chat=${two}`,
+      })).toBe(`Nested session reordered in its session (agent-host-session://claude/served?chat=${one}).`);
+
+      const order = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/served' } }) as {
+        snapshot: { state: { defaultChat: string; chats?: { resource: string }[] } };
+      }).snapshot.state;
+      expect(order.chats?.map((each) => each.resource)).toEqual([order.defaultChat, `ahp-chat:/${two}`, `ahp-chat:/${one}`]);
+    });
+
+    it('makes a nested session its own', async () => {
+      const { client } = await withTools();
+      const id = '4a4a4a4a-0000-4000-8000-000000000001';
+      const chat = `ahp-chat:/${id}`;
+      await nested(client, 'ahp-session:/served', chat, 'sdk-own');
+      await movingOn(client);
+
+      // The session the chat is given is named by its own conversation, which
+      // is where a restart resumes it.
+      expect(await call('move_session', { session: `agent-host-session://claude/served?chat=${id}`, relationship: 'independent' }))
+        .toBe('Nested session moved to its own session (agent-host-session://claude/sdk-own).');
+
+      const own = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/sdk-own' } }) as {
+        snapshot: { state: { defaultChat: string; chats?: { resource: string }[] } };
+      }).snapshot.state;
+      expect(own.defaultChat).toBe(chat);
+      expect(own.chats?.map((one) => one.resource)).toEqual([chat]);
+    });
+
+    /*
+     * Moving is `chatMoves.enabled`, off until a window turns it on, and the
+     * tool says the host's refusal in the reference's words for a model.
+     * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/sessionMoveTools.ts#L197-L225
+     */
+    it('refuses a move while moving sessions is off, in VS Code\'s words', async () => {
+      const { client } = await withTools();
+      const id = '5a5a5a5a-0000-4000-8000-000000000001';
+      await nested(client, 'ahp-session:/served', `ahp-chat:/${id}`, 'sdk-off');
+
+      expect(await call('move_session', {
+        session: `agent-host-session://claude/served?chat=${id}`,
+        into: 'agent-host-session://claude/served',
+      })).toBe('Cannot move: Moving sessions is turned off; tell the user it needs the `chat.agentHost.moveChats.enabled` setting.');
     });
   });
 

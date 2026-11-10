@@ -2,7 +2,8 @@ import { isAbsolute, resolve } from 'node:path';
 import { Status, idOf } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { flag, optional, required, when } from '../utils/toolinput.js';
-import type { HostTool, SessionlessToolCall, ToolCall } from '../types/host.js';
+import { chatIdFor } from '../host/channels.js';
+import type { HostTool, SendMessageRequest, SessionlessToolCall, ToolCall } from '../types/host.js';
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Summary } from '../types/catalog.js';
 import type { Bag } from '../types/common.js';
@@ -16,8 +17,9 @@ import type { Grant } from '../types/users.js';
  * input schemas and the answer shapes are copied rather than redesigned, so a
  * prompt or a skill written against that host calls these and gets the same
  * thing back: `list_sessions` answers `{ sessions: [...] }` with the same
- * keys, `send_message` says "Message queued (link)." in the same words, and a
- * link is `agent-host-session://<provider>/<id>`, which its window opens.
+ * keys, `send_message` answers which message it queued or started, under the
+ * same id and revision, and a link is `agent-host-session://<provider>/<id>`,
+ * which its window opens.
  *
  * Every tool acts through `ToolCall`, which is what the host lets a tool see
  * and do; nothing here reaches past it. Confirmation is the backend's: these
@@ -308,7 +310,7 @@ type AnyToolCall = ToolCall | SessionlessToolCall;
  * carries the origin alone: there is nothing a window could open the message
  * from, and a source it never had would be one it could not.
  */
-const delegated = (at: AnyToolCall): Bag => ({
+const delegated = (at: AnyToolCall, messageId?: string, revision?: number): Bag => ({
   origin: { kind: 'agent' },
   ...(at.session === undefined || at.chat === undefined ? {} : {
     _meta: {
@@ -316,10 +318,18 @@ const delegated = (at: AnyToolCall): Bag => ({
         sourceSession: at.session,
         sourceChat: at.chat,
         ...(at.turn() !== undefined ? { sourceTurnId: at.turn() } : {}),
+        ...(messageId === undefined ? {} : { messageId, revision }),
       },
     },
   }),
 });
+
+/** A positive integer, or a refusal naming the tool and the field. */
+const positive = (value: unknown, field: string, tool: string): number => {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1)
+    throw new Error(`Invalid ${tool} input: ${field} must be a positive integer.`);
+  return value;
+};
 
 /** The row of the calling session, from the catalogue; nothing when there is none. */
 const self = async (at: AnyToolCall): Promise<Summary | undefined> =>
@@ -481,6 +491,43 @@ const CREATE_SESSION: ToolDefinition = {
   annotations: { title: 'Create Session', readOnlyHint: false, destructiveHint: true },
 };
 
+/**
+ * The reasons the host refuses a move, in the sentences the reference host
+ * answers a model with.
+ *
+ * `moveChat` refuses in the protocol's words, for a client to explain to a
+ * person; a tool says the same thing to a model in VS Code's words, picked by
+ * the `reason` the refusal carries. A reason not listed here keeps the host's
+ * own sentence, which is the only one there is for it.
+ * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/sessionMoveTools.ts#L197-L225
+ */
+const MOVE_REFUSALS: Record<string, string> = {
+  disabled: 'Moving sessions is turned off; tell the user it needs the `chat.agentHost.moveChats.enabled` setting.',
+  notMovable: 'This can\'t be moved: a main session, a subagent\'s chat or a hidden chat stays in its session; to move a whole session, pass its link without a chat id.',
+  destinationNotFound: 'The destination session wasn\'t found, can\'t be opened, or is the session itself; check it with `list_sessions`.',
+  invalidAnchor: '`after` must name another nested session or the main session of `into`; check it with `list_sessions`, or omit `after` to place it at the end.',
+  differentProvider: 'Sessions only move between sessions of the same agent; pick a destination session that uses the same agent.',
+  sessionArchived: 'One of the sessions is archived; ask the user to unarchive it first.',
+  sessionQuarantined: 'One of the sessions is changing its workspace or can\'t run turns; try again after that finishes.',
+  workspaceless: 'This can\'t be moved: its folder is also used by a nested session that stays behind, or it has no folder; move those nested sessions too, or leave this one.',
+  notStarted: 'This session has no messages yet; it can be moved after its first message.',
+};
+
+/** A whole session this host will not move, said as the reference says it. */
+const SESSION_NOT_MOVABLE = 'This session can\'t be moved: it couldn\'t be opened or is no longer a session of its own; check it with `list_sessions` and try again.';
+
+/**
+ * A refused move said in a model's words, or the refusal itself where its
+ * reason is not one the reference names.
+ */
+const moveRefused = (error: unknown, wholeSession: boolean): unknown => {
+  const data = typeof error === 'object' && error !== null ? (error as { data?: unknown }).data : undefined;
+  const reason = typeof data === 'object' && data !== null ? (data as { reason?: unknown }).reason : undefined;
+  if (typeof reason !== 'string') return error;
+  const sentence = reason === 'notMovable' && wholeSession ? SESSION_NOT_MOVABLE : MOVE_REFUSALS[reason];
+  return sentence === undefined ? error : new Error(`Cannot move: ${sentence}`);
+};
+
 /** VS Code's session tools, in its order. */
 export const sessionTools = (): HostTool[] => [
   {
@@ -617,11 +664,11 @@ export const sessionTools = (): HostTool[] => [
     definition: {
       name: 'set_workspace',
       title: 'Set Workspace',
-      description: 'Attach a real workspace only to modify its files or run commands requiring its project environment. Do not use for self-contained scratch work on attachments, pasted/generated content, or throwaway/exportable artifacts. The session, chat, and history are preserved. Immediately before every call, use the available user-input tool to ask one question confirming both workspace and isolation, even if already specified; tool approval is not confirmation. Set `isolation` to true for a managed Git worktree or false for the folder directly. After this turn, the host attaches the workspace and continues the original task. Make this the turn\'s final tool call.',
+      description: 'Set the current chat\'s workspace while preserving its identity and history. If a workspace is already attached, use this tool only when the user explicitly asks to change this chat\'s workspace. Do not infer a workspace change from a file path, a request to inspect another repository, or ordinary work in the current workspace. If `isolation` is false and the requested folder is already this chat\'s effective working directory, skip this tool and the confirmation question; tell the user the chat already uses that workspace and continue normally. Compare against this chat\'s working directory, not its session\'s project root. Creating a new worktree from the same folder is a real change, not a no-op. For a workspace-less quick chat, attach a workspace only to modify its files or run commands requiring its project environment; not for self-contained scratch work on attachments, pasted/generated content, or throwaway/exportable artifacts. Other chats keep their workspaces. Set `isolation` to true for a new managed Git worktree or false to use the selected folder directly; files are not moved or copied to the selected folder. Immediately before every call, use the available user-input tool to ask one question confirming both workspace and isolation, even if already specified; tool approval is not confirmation. Make this the turn\'s final tool call and end the turn; the host changes the workspace and continues the original task automatically. Do not repeat the request.',
       inputSchema: {
         type: 'object',
         properties: {
-          workspaceFolder: { type: 'string', description: 'Absolute local folder path or file URI to set as the current session\'s workspace. Use an exact path from the user or `list_sessions`; do not guess.' },
+          workspaceFolder: { type: 'string', description: 'Absolute local folder path or file URI to set as the current chat\'s workspace. Use an exact path from the user or `list_sessions`; do not guess.' },
           isolation: { type: 'boolean', description: 'Whether to create an isolated Git worktree and use it as the workspace. Include this choice in the required user confirmation immediately before calling this tool.' },
         },
         required: ['workspaceFolder', 'isolation'],
@@ -720,13 +767,23 @@ export const sessionTools = (): HostTool[] => [
       const workspace = workspaceMeant(required(input.workspace, 'workspace', tool), rows, tool);
       const worktree = flag(input.worktree, 'worktree', tool);
       const model = modelMeant(at, optional(input.model, 'model', tool), tool, agent);
+      /*
+       * What this folder takes, as the host offers it, so a folder with no git
+       * is used as it is and a worktree asked for there is refused rather than
+       * quietly made a folder.
+       * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts
+       */
+      const offers = await at.isolation(workspace);
+      if (worktree === true && offers === 'folder')
+        throw new Error(`Invalid ${tool} input: ${workspace} is not a git repository, so it has no worktrees.`);
       // What was asked; else the caller's own arrangement for its own
-      // directory, which is the folder it is in; else a worktree, which is
-      // what keeps two sessions from editing one checkout.
+      // directory, which is the folder it is in; else what the folder takes,
+      // and a worktree where the host cannot say, which is what keeps two
+      // sessions from editing one checkout.
       const own = mine?.workingDirectories[0] === undefined ? undefined : pathOf(mine.workingDirectories[0]);
       const isolation: 'worktree' | 'folder' = worktree !== undefined
         ? (worktree ? 'worktree' : 'folder')
-        : own === workspace ? 'folder' : 'worktree';
+        : own === workspace ? 'folder' : offers ?? 'worktree';
       const made = await at.create({
         workingDirectory: workspace,
         ...(agent !== undefined ? { provider: agent } : {}),
@@ -840,14 +897,18 @@ export const sessionTools = (): HostTool[] => [
     definition: {
       name: 'send_message',
       title: 'Send Message',
-      description: 'Send a message to an existing session or chat, starting a new turn there. Provide a session URI from `list_sessions` or an `agent-host-session://` link; a link carrying a chat id targets that specific chat. If the target chat is busy, the message is queued and starts after the active turn completes successfully. Delivery is asynchronous: this tool does not wait for or return the reply.',
+      description: 'Send, replace, or cancel your message in an existing session or chat. Use `delivery: "steer"` only to update an active turn; steering is handed to the provider immediately and cannot be replaced or cancelled. Use `delivery: "queue"` for a separate turn. Replace and cancel require the message ID and revision returned by an earlier call and succeed only while that queued message is pending. If it already started, the result reports `processing` or `completed`; decide whether to send a steering correction or a queued follow-up. Delivery is asynchronous; this tool does not wait for or return a reply.',
       inputSchema: {
         type: 'object',
         properties: {
+          operation: { type: 'string', enum: ['send', 'replace', 'cancel'], description: '`send` (default) creates a message, `replace` updates one of your pending queued messages, and `cancel` removes one of your pending queued messages.' },
           session: { type: 'string', description: 'The session or chat to message: a session URI from `list_sessions`, or an `agent-host-session://` link. A link carrying a chat id targets that specific chat.' },
-          message: { type: 'string', description: 'The message to send.' },
+          message: { type: 'string', description: 'The complete message text. Required for `send` and `replace`; omit for `cancel`.' },
+          delivery: { type: 'string', enum: ['queue', 'steer'], description: 'For `send`, use `steer` to update an active turn or `queue` for a separate turn. Defaults to `queue`.' },
+          messageId: { type: 'string', description: 'For `replace` or `cancel`, the ID returned when this chat sent the message.' },
+          expectedRevision: { type: 'number', description: 'For `replace` or `cancel`, the revision returned with a pending queued message. The operation fails if the message changed or started processing.' },
         },
-        required: ['session', 'message'],
+        required: ['session'],
       },
       annotations: { title: 'Send Message', readOnlyHint: false, destructiveHint: true },
     },
@@ -856,14 +917,33 @@ export const sessionTools = (): HostTool[] => [
     run: async (input, at) => {
       const tool = 'send_message';
       allowed(at, 'session:write');
-      const message = required(input.message, 'message', tool);
       const found = await known(at, required(input.session, 'session', tool), tool);
+      const operation = optional(input.operation, 'operation', tool) ?? 'send';
+      if (operation !== 'send' && operation !== 'replace' && operation !== 'cancel')
+        throw new Error(`Invalid ${tool} input: operation must be one of send, replace, cancel.`);
+      let request: SendMessageRequest;
+      if (operation === 'send') {
+        const delivery = optional(input.delivery, 'delivery', tool) ?? 'queue';
+        if (delivery !== 'queue' && delivery !== 'steer')
+          throw new Error(`Invalid ${tool} input: delivery must be one of queue, steer.`);
+        request = { operation, delivery, message: required(input.message, 'message', tool) };
+      } else {
+        const messageId = required(input.messageId, 'messageId', tool);
+        const expectedRevision = positive(input.expectedRevision, 'expectedRevision', tool);
+        request = operation === 'replace'
+          ? { operation, messageId, expectedRevision, message: required(input.message, 'message', tool) }
+          : { operation, messageId, expectedRevision };
+      }
       const chats = at.chats(found.session.resource);
       const target = found.chatId === undefined ? chats[0]?.resource : chats.find((one) => idOf(one.resource) === found.chatId)?.resource;
       if (at.chat !== undefined && target === at.chat)
         throw new Error(`Invalid ${tool} input: refusing to send a message to the current chat.`);
-      const what = await at.send(found.session.resource, found.chatId, message, delegated(at));
-      return `Message ${what} (${openLink(found.session.resource, found.session.provider, found.chatId)}).`;
+      const messageId = request.messageId ?? crypto.randomUUID();
+      // A new message is the first revision of its life; a replacement is the
+      // next one after the revision the earlier answer named.
+      const revision = request.operation === 'send' ? 1 : request.operation === 'replace' ? (request.expectedRevision ?? 0) + 1 : undefined;
+      const answer = await at.send(found.session.resource, found.chatId, { ...request, messageId }, delegated(at, messageId, revision));
+      return JSON.stringify({ ...answer, openLink: openLink(found.session.resource, found.session.provider, found.chatId) });
     },
   },
   {
@@ -931,6 +1011,133 @@ export const sessionTools = (): HostTool[] => [
       return `Deleted session ${found.session.resource}. Reply with one short sentence confirming the session was deleted.`;
     },
   },
+  {
+    definition: {
+      name: 'move_session',
+      title: 'Move Session',
+      description: 'Move a nested session or a whole session when the user asks to reorganize sessions: reorder a nested session within its session, move it into another session, make it its own session (`independent`), or move a session that has no nested sessions into another session as a nested session. Pass `into` for every move except `independent`, which takes neither `into` nor `after`. Use this only when the user asks to move or reorganize sessions; never to tidy up sessions on your own. To start new work, use `create_session` instead. A moved session keeps its history, folders and running work, including a session without a workspace; both sessions must use the same agent. Get links from `list_sessions` or `get_current_session`: a session\'s `openLink`, or for a nested session the `openLink` listed for it in the session\'s `chats`. The user is asked to confirm every move. When it moves the chat this tool runs in, the move happens after this turn ends: make it your final tool call.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          session: { type: 'string', description: 'What to move: an `agent-host-session://` link or a session URI from `list_sessions`. A link carrying a chat id moves that nested session; a session without one moves the whole session, which must have no nested sessions. Omit to move the chat this tool runs in.' },
+          relationship: { type: 'string', enum: ['nested', 'independent'], description: 'Use `independent` to make a nested session its own top-level session; `into` and `after` must then be omitted. Otherwise omit it; defaults to `nested`.' },
+          into: { type: 'string', description: 'Required unless `relationship` is `independent`, which forbids it: the session to move it into, as a session URI from `list_sessions` or an `agent-host-session://` link. Pass its current session to reorder it there.' },
+          after: { type: 'string', description: 'Only with `into`; forbidden with `independent`: an `agent-host-session://` link to a nested session of `into`, or to `into`\'s main session, to place it after. Omit to place it at the end.' },
+        },
+      },
+      annotations: { title: 'Move Session', readOnlyHint: false, destructiveHint: true },
+    },
+    /*
+     * Offered to a person with no session too, as the reference host's group is
+     * read from a window: a move names the chat it moves, and only a call that
+     * leaves that out needs the chat it runs in. Deferred, as the reference's
+     * is: reorganizing is a thing a person asks for, not every turn's work.
+     */
+    sessionless: true,
+    grant: 'session:write',
+    deferLoading: true,
+    run: async (input, at) => {
+      const tool = 'move_session';
+      allowed(at, 'session:write');
+      const relationship = optional(input.relationship, 'relationship', tool) ?? 'nested';
+      if (relationship !== 'nested' && relationship !== 'independent')
+        throw new Error(`Invalid ${tool} input: relationship must be one of nested, independent.`);
+      const sessionInput = optional(input.session, 'session', tool);
+      const intoInput = optional(input.into, 'into', tool);
+      const afterInput = optional(input.after, 'after', tool);
+      if (relationship === 'independent' && (intoInput !== undefined || afterInput !== undefined))
+        throw new Error(`Invalid ${tool} input: omit \`into\` and \`after\` with relationship "independent".`);
+      if (relationship === 'nested' && intoInput === undefined)
+        throw new Error(`Invalid ${tool} input: \`into\` is required unless relationship is "independent".`);
+      const rows = await at.sessions();
+      /*
+       * One chat of a running session, by the id a link carries. The default
+       * chat is the one with no id, which is what a session without one names:
+       * this host keeps the chat a whole session moves by under it.
+       */
+      const chatOf = (session: string, chatId: string | undefined) => {
+        const chats = at.chats(session);
+        return chatId === undefined ? chats[0] : chats.find((one) => idOf(one.resource) === chatId);
+      };
+      /*
+       * What moves: the chat a link names, or the chat this tool runs in. A
+       * session named without a chat id moves its main chat, which is the
+       * whole session.
+       */
+      let session: string;
+      let chat: string;
+      let wholeSession: boolean;
+      let provider: string;
+      if (sessionInput !== undefined) {
+        const found = sessionMeant(sessionInput, rows);
+        if (found === undefined)
+          throw new Error(`Invalid ${tool} input: session must be an \`agent-host-session://\` link or the URI of a known session (see list_sessions).`);
+        const moving = chatOf(found.session.resource, found.chatId);
+        if (moving === undefined)
+          throw new Error(found.chatId === undefined
+            ? `Invalid ${tool} input: the session has no main session.`
+            : `Invalid ${tool} input: session's chat id must name a nested session of that session (see list_sessions).`);
+        session = found.session.resource;
+        chat = moving.resource;
+        wholeSession = found.chatId === undefined;
+        provider = found.session.provider;
+      }
+      else {
+        if (at.session === undefined || at.chat === undefined)
+          throw new Error(`Invalid ${tool} input: session is required when this tool does not run in a chat.`);
+        session = at.session;
+        chat = at.chat;
+        wholeSession = rows.find((one) => one.resource === session)?.defaultChat === chat;
+        provider = rows.find((one) => one.resource === session)?.provider ?? at.provider ?? 'claude';
+      }
+      if (relationship === 'independent') {
+        if (wholeSession)
+          throw new Error(`Invalid ${tool} input: it is already its own session. To make a nested session its own session, pass its link with its chat id.`);
+        let moved: { session: string };
+        try {
+          moved = await at.move(chat, { kind: 'newSession' });
+        } catch (error) {
+          throw moveRefused(error, false);
+        }
+        return `Nested session moved to its own session (${openLink(moved.session, provider)}).`;
+      }
+      const into = sessionMeant(intoInput as string, rows);
+      if (into === undefined)
+        throw new Error(`Invalid ${tool} input: into must be an \`agent-host-session://\` link or the URI of a known session (see list_sessions).`);
+      /*
+       * The chat it goes after, which has to be one of the destination's: a
+       * link to `into` itself names its main chat. An absent `after` is the
+       * end, which is what the schema says and what the host reads `end` as.
+       */
+      let after = 'end';
+      if (afterInput !== undefined) {
+        const anchor = sessionMeant(afterInput, rows);
+        const target = anchor === undefined || anchor.session.resource !== into.session.resource
+          ? undefined
+          : chatOf(into.session.resource, anchor.chatId);
+        if (target === undefined)
+          throw new Error(`Invalid ${tool} input: after must be a link to a nested session of \`into\`, or to its main session. Omit it to place the session at the end.`);
+        if (target.resource === chat)
+          throw new Error(`Invalid ${tool} input: after must name another session than the one that moves.`);
+        after = target.resource;
+      }
+      const reorder = into.session.resource === session;
+      let moved: { session: string };
+      try {
+        moved = await at.move(chat, { kind: 'session', session: into.session.resource, after });
+      } catch (error) {
+        throw moveRefused(error, wholeSession);
+      }
+      // The chat's own link, in the session it landed in: the same id, since a
+      // move keeps the chat's URI, and none for a default chat, as the link
+      // scheme omits it.
+      const chatLink = openLink(moved.session, into.session.provider, chatIdFor(moved.session, chat));
+      if (wholeSession) return `Session moved into ${openLink(moved.session, into.session.provider)} as a nested session (${chatLink}).`;
+      return reorder
+        ? `Nested session reordered in its session (${chatLink}).`
+        : `Nested session moved into ${openLink(moved.session, into.session.provider)} (${chatLink}).`;
+    },
+  },
 ];
 
 /**
@@ -938,7 +1145,7 @@ export const sessionTools = (): HostTool[] => [
  *
  * Read off `sessionTools()` rather than written out a second time, so the list
  * cannot drift from the tools themselves: one added there is one the option
- * switches off, and one taken away leaves the list. Only these eleven are the
+ * switches off, and one taken away leaves the list. Only these twelve are the
  * session tools - the artifact tools, `ahp_resource`, `ahp_terminals` and
  * `schedule_wakeup` are this host's own and are offered whatever the option
  * says.
