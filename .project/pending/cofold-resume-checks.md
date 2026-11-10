@@ -31,7 +31,7 @@ Add the entry the script prints to `chat.remoteAgentHosts` in VS Code's `setting
 
 ## Results so far
 
-- 2026-11-09: Softov set `baseUrl` and `apiKey` on the cofold agent record, as the record allows since host/122. The agent then listed no model. The cause is not checked.
+- 2026-11-09: Softov set `baseUrl` and `apiKey` on the cofold agent record, as the record allows since host/122. The agent then listed no model. A save kept the agent, and the host never asked it again for its models. #269 fixed it; restart the daemon on main first.
 
 ## A bad key
 
