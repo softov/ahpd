@@ -205,7 +205,7 @@ export type SendFailure = typeof SEND_FAILURES[number];
  * the turn before, or a conversation's first turn, which is started over.
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1133-L1146
  */
-const errorPart = (errorType: string, message: string, resumable = false): Bag => ({
+export const errorPart = (errorType: string, message: string, resumable = false): Bag => ({
   kind: 'error',
   error: { errorType, message },
   ...(resumable ? { resumable: true } : {}),

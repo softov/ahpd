@@ -22,7 +22,7 @@ import { textOf } from '@cofold/agents';
 import type { Message, RunEvent, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
 import { bag, endedParts, str, withToolCallDuration } from '@ahpd/sdk';
-import { compactionNotification, imageRefOf } from './mapping.js';
+import { compactionNotification, errorPart, imageRefOf } from './mapping.js';
 import { describe, pastTenseOf, toolInputOf, toolMetaOf } from './tools.js';
 
 /**
@@ -234,6 +234,13 @@ export async function turnsOf(
   /** The turns whose run a restart left paused, by their message's id. */
   const interrupted = new Set<string>();
   /**
+   * The error part each failed run ended its turn with, by its message's id,
+   * from the outcome its `run.finished` event keeps: the failure a client was
+   * shown when the turn ended. It is not resumable: whether the store can be
+   * cut back to the turn before is the live session's to say.
+   */
+  const failure = new Map<string, Bag>();
+  /**
    * What each compaction had folded, by the summary message it wrote.
    *
    * The numbers live on the `context.compacted` event and nowhere in the
@@ -286,6 +293,9 @@ export async function turnsOf(
         compacted.set(event.messageId, { before: event.estimatedTokens, after: event.afterTokens });
       }
       if (event.type === 'tool.completed') durations.set(event.callId, event.durationMs);
+      if (event.type === 'run.finished' && event.outcome.status === 'failed' && run.inputMessageId !== undefined) {
+        failure.set(run.inputMessageId, errorPart(event.outcome.error.code, event.outcome.error.message));
+      }
     }
 
     if (run.status !== 'awaiting' || run.pendingRequestId === undefined) continue;
@@ -325,7 +335,9 @@ export async function turnsOf(
     id: turn.id,
     startedAt: turn.startedAt,
     message: turn.message,
-    responseParts: interrupted.has(turn.id) ? [...turn.parts, { ...INTERRUPTED }] : endedParts(turn.parts),
+    responseParts: interrupted.has(turn.id)
+      ? [...turn.parts, { ...INTERRUPTED }]
+      : [...endedParts(turn.parts), ...(failure.has(turn.id) ? [{ ...failure.get(turn.id) }] : [])],
     usage: turn.usage,
     state: turn.state,
     ...(turn.duration !== undefined ? { duration: turn.duration } : {}),
