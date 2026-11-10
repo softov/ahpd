@@ -18,6 +18,7 @@ import type {
   AgentSession,
   AgentSessionEvent,
   ExtensionAPI,
+  InlineExtension,
   LoadExtensionsResult,
   PromptTemplate,
   ResourceDiagnostic,
@@ -248,21 +249,39 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
    */
   const switchedOff = options.switchedOff ?? new Set<string>();
   const found: PiResources = { skills: [], prompts: [], extensions: [] };
+  const endpoint = endpointOf(options);
+  /*
+   * This host's inline extensions: the tool-call policy, and for an endpoint
+   * with no key, the handler that removes the placeholder key's header. pi
+   * builds the header from the registered key, so `null` here is what keeps a
+   * keyless endpoint's requests keyless.
+   */
+  const inlineExtensions: InlineExtension[] = [];
+  if (onToolCall !== undefined) {
+    inlineExtensions.push({
+      name: 'ahpd',
+      hidden: true,
+      factory: (pi: ExtensionAPI): void => {
+        pi.on('tool_call', (event) => onToolCall(event));
+      },
+    });
+  }
+  if (endpoint !== undefined && endpoint.apiKey === undefined) {
+    inlineExtensions.push({
+      name: 'ahpd-endpoint',
+      hidden: true,
+      factory: (pi: ExtensionAPI): void => {
+        pi.on('before_provider_headers', (event) => {
+          event.headers.authorization = null;
+        });
+      },
+    });
+  }
   const loaderOptions = {
     ...(instructions.length > 0
       ? { appendSystemPromptOverride: (base: string[]) => [...base, ...instructions] }
       : {}),
-    ...(onToolCall !== undefined
-      ? {
-          extensionFactories: [{
-            name: 'ahpd',
-            hidden: true,
-            factory: (pi: ExtensionAPI): void => {
-              pi.on('tool_call', (event) => onToolCall(event));
-            },
-          }],
-        }
-      : {}),
+    ...(inlineExtensions.length > 0 ? { extensionFactories: inlineExtensions } : {}),
     skillsOverride: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
       found.skills = base.skills;
       return { ...base, skills: base.skills.filter((one) => !switchedOff.has(one.filePath)) };
@@ -286,13 +305,23 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
     sessionManager,
     ...(options.tools !== undefined && options.tools.length > 0 ? { customTools: options.tools } : {}),
   });
-  const endpoint = endpointOf(options);
   if (endpoint !== undefined) await registerEndpoint(sdk, session.modelRuntime, endpoint);
   return wrap(sdk, session, found);
 }
 
 /** How long an endpoint's model list may take before it is read as none. */
 const ENDPOINT_TIMEOUT_MS = 10_000;
+
+/**
+ * The key a keyless endpoint's provider is registered with.
+ *
+ * pi counts a provider as configured only when it has a key, and its
+ * OpenAI-compatible adapter sends whatever key it is given as an
+ * `Authorization` header. This placeholder is that key: the provider counts as
+ * configured, and the session's own extension removes the header before the
+ * request leaves, as `before_provider_headers` does with a `null`.
+ */
+const KEYLESS_API_KEY = 'ahpd-keyless';
 
 /**
  * The endpoint a record runs on, as one provider of a runtime.
@@ -379,13 +408,17 @@ export const endpointModels = async (baseUrl: string, apiKey: string | undefined
  * made, and `refreshModels` reads them again when pi asks for a refresh, as an
  * extension's provider does. A listing that fails is an empty list, so a
  * record whose endpoint cannot answer still opens and still probes.
+ *
+ * A record with no key registers the placeholder key, because pi counts a
+ * provider configured only with one; both listings go to the endpoint with no
+ * `Authorization` header, as the record asked.
  */
 const registerEndpoint = async (sdk: Pi, runtime: Runtime, endpoint: EndpointOptions): Promise<void> => {
   const models = await endpointModels(endpoint.baseUrl, endpoint.apiKey);
   new sdk.ModelRegistry(runtime).registerProvider(endpoint.provider, {
     name: endpoint.provider,
     baseUrl: endpoint.baseUrl,
-    ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }),
+    apiKey: endpoint.apiKey ?? KEYLESS_API_KEY,
     api: 'openai-completions',
     models,
     refreshModels: () => endpointModels(endpoint.baseUrl, endpoint.apiKey),

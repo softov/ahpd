@@ -25,7 +25,8 @@ refs:
 ## Goal
 
 A pi agent can run on any OpenAI-compatible endpoint, as a cofold agent can.
-A person sets `baseUrl` and `apiKey` on the plugin or on the agent, and the agent lists that endpoint's models and runs on them.
+A person sets `baseUrl` and, when the endpoint needs one, `apiKey` on the plugin or on the agent.
+The agent lists that endpoint's models and runs on them.
 Softov asked for it on 2026-11-10, after the pi resume check.
 
 ## Reconnaissance
@@ -61,6 +62,7 @@ record { baseUrl, apiKey } -> optionsOfRecord -> backend -> session runtime
 | `apiKey` is `secret: true`, so the vault keeps it | (defaulted: as cofold's record field) | 01 |
 | A record with no `baseUrl` runs on pi's own providers, as now | (defaulted: nothing changes for an existing agent) | 01 |
 | A record named like one of pi's providers, such as `openrouter`, replaces that provider for its own sessions | Softov, 2026-11-10, chose "The agent's provider wins" | 01 |
+| A record with `baseUrl` and no `apiKey` lists the endpoint's models and runs turns on them, sending no `Authorization` header | Softov, 2026-11-10, answered "It works with no key" | 01, 02 |
 
 ## Proposed architecture
 
@@ -84,10 +86,10 @@ record { baseUrl, apiKey } -> optionsOfRecord -> backend -> session runtime
 
 ## Resume state
 
-- **Done so far:** both tasks are implemented: a record with `baseUrl` and `apiKey` registers one OpenAI-compatible provider under its id on each session's runtime, a turn on `<id>/<model>` streams through it, and the probe lists the endpoint's models, reading the record again on each probe. The suite is 273 of 274, with `agent-pi-lazy.test.ts` timing out at its own 4 s import budget under the other builds' load.
+- **Done so far:** both tasks are implemented: a record with `baseUrl` registers one OpenAI-compatible provider under its id on each session's runtime, a turn on `<id>/<model>` streams through it, and the probe lists the endpoint's models, reading the record again on each probe. A record with no `apiKey` registers a placeholder key, because pi counts a provider configured only with a key. Its endpoint's `/models` and its turns carry no `Authorization` header. The suite is 275 of 276, with `agent-pi-lazy.test.ts` timing out at its own 4 s import budget under the other builds' load.
 - **Next action:** Softov reviews both tasks.
-- **Open questions:** a record with `baseUrl` and no `apiKey` registers its provider but lists no models, because pi marks a provider configured only with a credential or a key; the plan's *Answers* do not settle a keyless endpoint.
-- **Watch out for:** pi's `useEnv` already sets per-session keys on the runtime; the new provider is not undone by it, because `keyOf` resolves the record's key through the provider's auth.
+- **Open questions:** none.
+- **Watch out for:** pi's `useEnv` already sets per-session keys on the runtime; the new provider is not undone by it, because `keyOf` resolves the record's key through the provider's auth. The placeholder key never leaves the process. The session's `ahpd-endpoint` extension sets `Authorization` to `null` in `before_provider_headers`; pi and its OpenAI client both read that as a removal.
 
 ## Final verification checklist
 

@@ -146,6 +146,28 @@ it("answers a turn on the record's endpoint with the record's key", async () => 
   }
 });
 
+it('answers a turn on a keyless endpoint without an Authorization header', async () => {
+  const endpoint = await serveEndpoint(['keyless-model']);
+  const { session, types } = opened({}, {
+    provider: 'endpoint',
+    baseUrl: endpoint.baseUrl,
+    model: 'endpoint/keyless-model',
+  }, openPi);
+  try {
+    session.sendMessage('t1', 'hello');
+    await until(() => types().includes('chat/turnComplete'), 20_000);
+    expect(types()).toContain('chat/turnComplete');
+
+    const call = endpoint.requests.find((one) => one.path === '/v1/chat/completions');
+    expect(call).toBeDefined();
+    expect(call?.headers.authorization).toBeUndefined();
+    expect(JSON.parse(call?.body ?? '{}')).toMatchObject({ model: 'keyless-model' });
+  }
+  finally {
+    await session.close();
+  }
+});
+
 it("replaces pi's own provider of the same name for this session", async () => {
   const endpoint = await serveEndpoint();
   const { session, types } = opened({}, {
@@ -191,6 +213,17 @@ it("lists the record's endpoint models in its probe, under the record's id", asy
   // The listing is the endpoint's own, and the record's key is what it carried.
   const listing = endpoint.requests.find((one) => one.path === '/v1/models');
   expect(listing?.headers.authorization).toBe('Bearer probe-key');
+});
+
+it("lists a keyless endpoint's models in its probe, sending no Authorization header", async () => {
+  const endpoint = await serveEndpoint(['keyless-model']);
+  const agent = engineWith().open(recordOf(() => ({ baseUrl: endpoint.baseUrl })));
+
+  const offered = await agent.probe!();
+  expect(offered.models.map((model) => model.id)).toContain('endpoint/keyless-model');
+
+  const listing = endpoint.requests.find((one) => one.path === '/v1/models');
+  expect(listing?.headers.authorization).toBeUndefined();
 });
 
 it("lists the new endpoint's models at the next probe after an edit of baseUrl", async () => {
