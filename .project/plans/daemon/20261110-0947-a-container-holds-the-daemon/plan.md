@@ -91,7 +91,7 @@ ahpd stop, ahpd update -> record names container -> refused with the container's
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A container daemon writes its record and refuses a stop](task-01-a-container-daemon-writes-its-record.md) | todo | - |
+| [01 - A container daemon writes its record and refuses a stop](task-01-a-container-daemon-writes-its-record.md) | implemented | - |
 | [02 - A restart exits for the restart policy](task-02-a-restart-exits-for-the-policy.md) | todo | 01 |
 | [03 - An update names the image](task-03-an-update-names-the-image.md) | todo | 01 |
 
@@ -102,8 +102,8 @@ ahpd stop, ahpd update -> record names container -> refused with the container's
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-10.
-- **Next action:** [task-01-a-container-daemon-writes-its-record.md](task-01-a-container-daemon-writes-its-record.md).
+- **Done so far:** the plan, 2026-11-10; task 01, 2026-11-10.
+- **Next action:** [task-02-a-restart-exits-for-the-policy.md](task-02-a-restart-exits-for-the-policy.md).
 - **Open questions:** none.
 - **Watch out for:**
 `runForeground` removes `AHPD_SERVICE` from the environment at once, so a session shell does not inherit it.

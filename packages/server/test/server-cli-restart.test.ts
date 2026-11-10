@@ -252,6 +252,29 @@ describe('start, stop and status', () => {
     expect(existsSync(join(home, 'ahpd', 'daemon.json'))).toBe(false);
   }, 60000);
 
+  /*
+   * A container daemon is stopped by stopping the container: the restart policy
+   * starts again what leaves, so a stop from inside is a restart.
+   */
+  it('refuses to stop a container daemon, and sends it no signal', async () => {
+    const daemon = await supervised([], { AHPD_SERVICE: 'container' });
+    // It writes its own record, naming the container, and no service name:
+    // that is a name only a manager holds a daemon beside another under.
+    expect(recordOf().service).toBe('container');
+    expect(recordOf().serviceName).toBeUndefined();
+    // `status` reads the same record every daemon writes, and exits 0.
+    const shown = await cli(['status', '--json']);
+    expect(shown.code).toBe(0);
+    expect(JSON.parse(shown.stdout)).toMatchObject({ pid: daemon.pid, service: 'container' });
+    const stopped = await cli(['stop']);
+    expect(stopped.code).toBe(1);
+    expect(stopped.stderr).toContain('This daemon runs in a container; stop the container instead.');
+    // Nothing was sent and nothing was forgotten: it still runs, and its
+    // record still says where.
+    expect(alive(daemon.pid)).toBe(true);
+    expect(existsSync(join(home, 'ahpd', 'daemon.json'))).toBe(true);
+  }, 60000);
+
   // A service manager is systemd or launchd, and Windows has neither.
   it.skipIf(!posix)('hands a restarted supervised daemon to the service manager, and starts nothing itself', async () => {
     put({ httpApi: true, plugins: [BACKEND], connectionToken: 'abc' });

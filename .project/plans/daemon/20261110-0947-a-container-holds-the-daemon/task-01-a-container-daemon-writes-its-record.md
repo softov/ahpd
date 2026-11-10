@@ -1,6 +1,6 @@
 ---
 title: A container daemon writes its record and refuses a stop
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
@@ -49,3 +49,9 @@ A daemon started with `AHPD_SERVICE=container` writes its own record with `servi
 
 ## Resume
 
+- `Held` in `service.ts` is `Service` or `container`; `Service` stays the two installable managers.
+- A record's `service` field and `serviceIn` take `container`; a container record carries no `serviceName`.
+- `stop` refuses a container record before any signal, with `CONTAINER_STOP`.
+- A served shutdown of a container daemon refuses with the same sentence.
+- A terminal restart of a container record refuses with `FOREGROUND` until task 02.
+- Validation passed: `daemon.test.ts` 69 passed and 1 skipped, `server-cli-restart.test.ts` 15 passed, typecheck clean.

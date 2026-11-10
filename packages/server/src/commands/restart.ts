@@ -719,6 +719,10 @@ export async function restartAtTerminal(force: boolean, steps: AtTerminal): Prom
   const record = steps.running();
   if (record === undefined) conflict('None running in the background; a daemon run in the foreground is restarted where it runs.');
   const service = record.service;
+  // A container runtime restarts what leaves, and there is no manager here to
+  // ask: until the signal path below takes it, it is refused as a foreground
+  // daemon is.
+  if (service === 'container') conflict(FOREGROUND);
   if (service !== undefined) return restartedUnderService(record, service, steps);
   if (record.argv === undefined) conflict(OLDER);
   const signal = force ? FORCED_SIGNAL : RESTART_SIGNAL;
