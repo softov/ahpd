@@ -119,6 +119,7 @@ export const serializeSession = (row: Summary): Bag => {
   return {
     session: row.resource,
     openLink: openLink(row.resource, row.provider),
+    agent: row.provider,
     title: row.title,
     status: words.length > 0 ? words.join(',') : 'unknown',
     ...(extra.activity !== undefined ? { activity: extra.activity } : {}),
@@ -135,7 +136,15 @@ export const serializeSession = (row: Summary): Bag => {
   };
 };
 
-/** The rows `list_sessions` keeps, under its filters. */
+/**
+ * The rows `list_sessions` keeps, under its filters, newest first.
+ *
+ * A caller that names `session` gets that row alone and no filters are read,
+ * as it is a lookup by identity rather than a search. Everything else is a
+ * search: `title` and `path` match a part of the text in any case, `agent` is
+ * the provider id exactly, and the two `modified` bounds are inclusive, as the
+ * `created` ones are.
+ */
 export const filterSessions = (rows: Summary[], args: Bag, tool = 'list_sessions'): Summary[] => {
   const direct = optional(args.session, 'session', tool);
   if (direct !== undefined) {
@@ -146,14 +155,19 @@ export const filterSessions = (rows: Summary[], args: Bag, tool = 'list_sessions
     ? new Set(args.status.filter((one): one is string => typeof one === 'string'))
     : undefined;
   const workspace = optional(args.workspace, 'workspace', tool);
+  const agent = optional(args.agent, 'agent', tool);
+  const title = optional(args.title, 'title', tool)?.toLowerCase();
+  const path = optional(args.path, 'path', tool)?.toLowerCase();
   const withChanges = flag(args.withChanges, 'withChanges', tool);
   const unread = flag(args.unread, 'unread', tool);
   const withPullRequest = flag(args.withPullRequest, 'withPullRequest', tool);
   const includeArchived = flag(args.includeArchived, 'includeArchived', tool);
   const after = when(args.createdAfter, 'createdAfter', tool);
   const before = when(args.createdBefore, 'createdBefore', tool);
+  const changedAfter = when(args.modifiedAfter, 'modifiedAfter', tool);
+  const changedBefore = when(args.modifiedBefore, 'modifiedBefore', tool);
   const bare = (value: string): string => localPath(value).replace(/\/+$/, '').toLowerCase();
-  return rows.filter((row) => {
+  const kept = rows.filter((row) => {
     const words = statusWords(row.status);
     if (status !== undefined && !words.some((word) => status.has(word))) return false;
     if (workspace !== undefined) {
@@ -164,6 +178,9 @@ export const filterSessions = (rows: Summary[], args: Bag, tool = 'list_sessions
       ];
       if (!names.includes(workspace.toLowerCase()) && !names.includes(bare(workspace))) return false;
     }
+    if (agent !== undefined && row.provider !== agent) return false;
+    if (title !== undefined && !row.title.toLowerCase().includes(title)) return false;
+    if (path !== undefined && !row.workingDirectories.some((one) => bare(one).includes(bare(path)))) return false;
     if (withChanges === true) {
       const changes = (row as Summary & { changes?: { files?: unknown } }).changes;
       if (typeof changes?.files !== 'number' || changes.files === 0) return false;
@@ -177,8 +194,24 @@ export const filterSessions = (rows: Summary[], args: Bag, tool = 'list_sessions
     const born = Date.parse(row.createdAt);
     if (after !== undefined && born < after) return false;
     if (before !== undefined && born > before) return false;
+    const changed = Date.parse(row.modifiedAt);
+    if (changedAfter !== undefined && changed < changedAfter) return false;
+    if (changedBefore !== undefined && changed > changedBefore) return false;
     return true;
   });
+  /*
+   * Newest first by the time the row changed; two rows changed in the same
+   * millisecond keep the order the catalogue gave them, so one listing is the
+   * same as the next.
+   */
+  const changedAt = (one: Summary): number => {
+    const at = Date.parse(one.modifiedAt);
+    return Number.isNaN(at) ? 0 : at;
+  };
+  return kept
+    .map((row, index) => ({ row, index }))
+    .sort((one, other) => changedAt(other.row) - changedAt(one.row) || one.index - other.index)
+    .map((one) => one.row);
 };
 
 /** The caps `get_session_context` cuts text to, per level of detail. */
@@ -408,19 +441,25 @@ export const sessionTools = (): HostTool[] => [
     definition: {
       name: 'list_sessions',
       title: 'List Sessions',
-      description: 'List sessions and their compact metadata (status, activity, working directory, project, worktree changes, git/GitHub info, timestamps). Each result includes `session` for identity and tool inputs and `openLink` for clickable Markdown links; do not use `session` as a link target. Pass `session` to fetch a single known session by URI. By default archived sessions are omitted. Optionally filter by `status`, `workspace`, `withChanges`, `unread`, `withPullRequest`, `includeArchived`, `createdAfter`, or `createdBefore`.',
+      description: 'List sessions and their compact metadata (status, activity, working directory, project, worktree changes, git/GitHub info, timestamps). Each result includes `session` for identity and tool inputs and `openLink` for clickable Markdown links; do not use `session` as a link target. Pass `session` to fetch a single known session by URI. By default archived sessions are omitted. Optionally filter by `status`, `workspace`, `agent`, `title`, `path`, `withChanges`, `unread`, `withPullRequest`, `includeArchived`, `createdAfter`, `createdBefore`, `modifiedAfter`, or `modifiedBefore`. Rows are answered newest first by `modifiedAt`; pass `limit` for only the newest ones, and the answer says `truncated: true` when the limit cut rows.',
       inputSchema: {
         type: 'object',
         properties: {
           session: { type: 'string', description: 'Return only the session with this URI or `agent-host-session://` link (a direct lookup that ignores the other filters). Use this to fetch one known session\'s metadata.' },
           status: { type: 'array', items: { type: 'string', enum: LIST_STATUS }, description: 'Only return sessions whose status matches one of these (e.g. `inputNeeded` for sessions awaiting a reply, `inProgress` for running ones, `archived` for sessions marked Done/completed, which implies `includeArchived`). Omit to return every status.' },
           workspace: { type: 'string', description: 'Only return sessions for this project name, project URI, or working directory path/URI.' },
+          agent: { type: 'string', description: 'Only return sessions of this agent: the provider id a row answers as `agent`, matched exactly.' },
+          title: { type: 'string', description: 'Only return sessions whose title contains this text, in any case.' },
+          path: { type: 'string', description: 'Only return sessions with a working directory that contains this text, in any case.' },
           withChanges: { type: 'boolean', description: 'When true, only return sessions that have pending worktree changes.' },
           unread: { type: 'boolean', description: 'When true, only return sessions with updates the user has not seen yet.' },
           withPullRequest: { type: 'boolean', description: 'When true, only return sessions that have a linked GitHub pull request.' },
           includeArchived: { type: 'boolean', description: 'Whether to include archived sessions. Defaults to false; set true to also return archived sessions.' },
           createdAfter: { type: 'string', description: 'Only return sessions created at or after this time (ISO-8601 timestamp, e.g. `2025-01-31T00:00:00Z`).' },
           createdBefore: { type: 'string', description: 'Only return sessions created at or before this time (ISO-8601 timestamp).' },
+          modifiedAfter: { type: 'string', description: 'Only return sessions last modified at or after this time (ISO-8601 timestamp).' },
+          modifiedBefore: { type: 'string', description: 'Only return sessions last modified at or before this time (ISO-8601 timestamp).' },
+          limit: { type: 'number', description: 'Maximum number of rows to return, the newest first. All matching rows are returned when omitted, and the answer says `truncated: true` when the limit cut some.' },
         },
       },
       annotations: { title: 'List Sessions', readOnlyHint: true, openWorldHint: false },
@@ -434,7 +473,23 @@ export const sessionTools = (): HostTool[] => [
      */
     sessionless: true,
     grant: 'session:read',
-    run: async (input, at) => JSON.stringify({ sessions: filterSessions(await at.sessions(), input).map(serializeSession) }),
+    run: async (input, at) => {
+      const tool = 'list_sessions';
+      const found = filterSessions(await at.sessions(), input, tool);
+      const asked = input.limit;
+      if (asked !== undefined && (typeof asked !== 'number' || !Number.isFinite(asked) || asked < 1))
+        throw new Error(`Invalid ${tool} input: limit must be a positive number.`);
+      const kept = asked === undefined ? found : found.slice(0, Math.floor(asked));
+      /*
+       * A limited answer says it was cut, as `get_session_context` says a
+       * transcript was, so a model does not read a cut list as the whole of
+       * what matched and stop looking.
+       */
+      return JSON.stringify({
+        sessions: kept.map(serializeSession),
+        ...(kept.length < found.length ? { truncated: true } : {}),
+      });
+    },
   },
   {
     definition: {

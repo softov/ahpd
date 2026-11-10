@@ -44,7 +44,7 @@ The token is the one `ahpd user token <id>` prints, or one minted with `ahpd tok
 
 | Tool | Does |
 | --- | --- |
-| `list_sessions` | The sessions here |
+| `list_sessions` | The sessions here, filtered by status, agent, title, path, workspace, changes, unread, pull request, created or modified time, newest first, up to `limit` |
 | `create_session` | Start a session, owned by the caller |
 | `create_chat` | Open another chat in a session |
 | `rename_chat` | Rename a chat |

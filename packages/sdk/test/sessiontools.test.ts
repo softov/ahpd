@@ -19,7 +19,7 @@ import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
 import { sdkVersion } from '../src/version.js';
 import type { BoundTool } from '../src/types/agent.js';
 import type { HostEvent } from '../src/types/events.js';
-import type { HostOptions, HostTool, ToolCaller } from '../src/types/host.js';
+import type { HostOptions, HostTool, ToolCall, ToolCaller } from '../src/types/host.js';
 import type { Contribution, LoaderContext } from '../src/types/plugin.js';
 import type { Grant, Principal, Users } from '../src/types/users.js';
 
@@ -116,6 +116,7 @@ describe('a row as list_sessions answers it', () => {
     expect(said).toEqual({
       session: 'ahp-session:/s1',
       openLink: 'agent-host-session://claude/s1',
+      agent: 'claude',
       title: 'Fix the kqueue build',
       status: 'idle',
       activity: 'Grep: input.c',
@@ -190,6 +191,63 @@ describe('the filters list_sessions takes', () => {
     expect(names({ withPullRequest: true })).toEqual(['elsewhere']);
     expect(names({ createdAfter: '2026-09-13T12:00:00Z' })).toEqual(['busy']);
     expect(names({ createdBefore: '2026-09-13T12:00:00Z' })).toEqual(['idle', 'asking', 'elsewhere']);
+  });
+
+  it('matches an agent by its provider id, exactly', () => {
+    const mixed = [row({ resource: 'ahp-session:/one' }), row({ resource: 'ahp-session:/two', provider: 'other' })];
+    const found = (args: Record<string, unknown>) => filterSessions(mixed, args).map((one) => one.resource);
+    expect(found({ agent: 'other' })).toEqual(['ahp-session:/two']);
+    expect(found({ agent: 'Other' })).toEqual([]);
+  });
+
+  it('matches a part of the title or of a folder, in any case', () => {
+    const named = [
+      row({ resource: 'ahp-session:/kq', title: 'Fix the KQueue build' }),
+      row({ resource: 'ahp-session:/ahpc', title: 'Other', workingDirectories: ['file:///github/ahpc'] }),
+    ];
+    const found = (args: Record<string, unknown>) => filterSessions(named, args).map((one) => one.resource);
+    expect(found({ title: 'kqueue' })).toEqual(['ahp-session:/kq']);
+    expect(found({ title: 'THE KQueue' })).toEqual(['ahp-session:/kq']);
+    expect(found({ path: 'ahpc' })).toEqual(['ahp-session:/ahpc']);
+    expect(found({ path: '/GitHub/AHP' })).toEqual(['ahp-session:/ahpc']);
+  });
+
+  it('answers newest first, and filters on when a session last changed', () => {
+    const times = [
+      row({ resource: 'ahp-session:/old', modifiedAt: '2026-09-13T09:00:00.000Z' }),
+      row({ resource: 'ahp-session:/new', modifiedAt: '2026-09-13T19:00:00.000Z' }),
+      row({ resource: 'ahp-session:/mid', modifiedAt: '2026-09-13T12:00:00.000Z' }),
+    ];
+    const found = (args: Record<string, unknown>) => filterSessions(times, args).map((one) => one.resource);
+    expect(found({})).toEqual(['ahp-session:/new', 'ahp-session:/mid', 'ahp-session:/old']);
+    expect(found({ modifiedAfter: '2026-09-13T12:00:00Z' })).toEqual(['ahp-session:/new', 'ahp-session:/mid']);
+    expect(found({ modifiedBefore: '2026-09-13T12:00:00Z' })).toEqual(['ahp-session:/mid', 'ahp-session:/old']);
+  });
+
+  /** What `list_sessions` answers for these rows, as the model reads it. */
+  const answering = async (
+    over: Summary[], args: Record<string, unknown>,
+  ): Promise<{ sessions: { session: string }[]; truncated?: boolean }> => {
+    const list = sessionTools().find((one) => one.definition.name === 'list_sessions');
+    if (list?.run === undefined) throw new Error('no list_sessions');
+    const at = { sessions: async () => over } as unknown as ToolCall;
+    return JSON.parse(await list.run(args, at) as string);
+  };
+
+  it('keeps the newest inside a limit, and says when the limit cut rows', async () => {
+    const times = [
+      row({ resource: 'ahp-session:/old', modifiedAt: '2026-09-13T09:00:00.000Z' }),
+      row({ resource: 'ahp-session:/new', modifiedAt: '2026-09-13T19:00:00.000Z' }),
+      row({ resource: 'ahp-session:/mid', modifiedAt: '2026-09-13T12:00:00.000Z' }),
+    ];
+    const cut = await answering(times, { limit: 2 });
+    expect(cut.sessions.map((one) => one.session)).toEqual(['ahp-session:/new', 'ahp-session:/mid']);
+    expect(cut.truncated).toBe(true);
+    // A limit that keeps them all cuts nothing, and neither does no limit.
+    expect((await answering(times, { limit: 3 })).truncated).toBeUndefined();
+    expect((await answering(times, {})).truncated).toBeUndefined();
+    await expect(answering(times, { limit: 0 }))
+      .rejects.toThrow('Invalid list_sessions input: limit must be a positive number.');
   });
 
   it('answers a direct lookup with that row alone, archived or not', () => {
