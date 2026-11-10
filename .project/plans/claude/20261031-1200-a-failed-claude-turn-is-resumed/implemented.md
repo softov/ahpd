@@ -27,7 +27,7 @@ A Claude turn that failed on a model call can be resumed. The client sends `chat
 - `packages/agent-pi/test`: 17 files, 229 tests pass, so a pi resume still passes the host's check.
 - `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
 - The whole suite: 485 files and 7998 tests pass, and 29 are skipped.
-- The hand checks of task 02 are not done: a test ahpd, a bad key, and a resume from VS Code.
+- The checks by hand passed on 2026-11-09, in VS Code. A turn failed on a bad key, and its resume worked once the good key was back. A session on the CLI's own login, with no key, worked. The check was `pending/claude-resume-checks.md`, last held at git://408a4b8a2.
 
 ## Departures from the plan
 

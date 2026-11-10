@@ -21,7 +21,6 @@ Restart the daemon on main first. Do them from the top down.
 - [plugin-view-checks.md](plugin-view-checks.md) - 10 min, VS Code through the system tunnel, and the network off for a minute.
 - [the-pt-catalogs-read-right.md](the-pt-catalogs-read-right.md) - 30 min.
 - [vscode-checks.md](vscode-checks.md) - 40 min.
-- [claude-resume-checks.md](claude-resume-checks.md) - 30 min, VS Code. Step 2 needs a way to give a bad key.
 - [cofold-resume-checks.md](cofold-resume-checks.md) - 30 min, VS Code.
 - [pi-resume-checks.md](pi-resume-checks.md) - 20 min, VS Code. A pi agent record may be needed first.
 - [host-108-token-checks.md](host-108-token-checks.md) - 25 min, a second computer that reaches port 37537.

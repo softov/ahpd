@@ -107,8 +107,8 @@ chat/turnResume -> chatactions.ts: last part is a resumable error? -> Claude ses
 
 ## Final verification checklist
 
-- [ ] A Claude turn that fails on a model call shows a resume in VS Code.
-- [ ] The resume runs the prompt again on a cut conversation.
+- [x] A Claude turn that fails on a model call shows a resume in VS Code.
+- [x] The resume runs the prompt again on a cut conversation.
 - [ ] A resume of a conversation's first turn starts over under its id.
 - [ ] A resume that fails again adds one more error part, and the turn can be resumed again.
 - [ ] A turn refused before the CLI shows no resume, and the host refuses `chat/turnResume` on it.
