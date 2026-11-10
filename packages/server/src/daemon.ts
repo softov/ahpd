@@ -8,7 +8,7 @@ import { basename, dirname, join } from 'node:path';
 import { readJson, writeJsonAtomic } from '@ahpd/sdk';
 import { daemonLog, daemonPath, ensureConfigDir, loadConfig } from './config.js';
 import { realManager } from './service.js';
-import type { Manager, Service } from './service.js';
+import type { Held, Manager, Service } from './service.js';
 
 /**
  * Where a daemon on Windows takes a stop and a restart, and the token that
@@ -95,16 +95,17 @@ export interface Running {
    */
   control?: Control;
   /**
-   * The service manager that started this daemon and keeps it running. Present
-   * only for a daemon a unit or an agent started, which is the one case where
-   * the two verbs reach it through that manager rather than by a signal; absent
-   * from a record a daemon from `ahpd start` wrote, and from an older one.
+   * The kind that started this daemon and keeps it running: a service manager,
+   * or the container runtime that runs it as an image's main process. Present
+   * only for a daemon a unit, an agent or a container started, which is the one
+   * case where a stop and a restart do not reach it as any other; absent from a
+   * record a daemon from `ahpd start` wrote, and from an older one.
    */
-  service?: Service;
+  service?: Held;
   /**
    * The name that service was installed under, which the configuration gives a
-   * daemon that runs beside another. Present only beside `service`, and absent
-   * for the plain service and from an older record.
+   * daemon that runs beside another. Present only beside a manager's `service`,
+   * and absent for the plain service, a container, and from an older record.
    */
   serviceName?: string;
 }
@@ -153,8 +154,9 @@ export const DETACHED_ENV = 'AHPD_DETACHED';
 export const CONTROL_ENV = 'AHPD_CONTROL';
 
 /**
- * Set in the environment of a daemon a service manager starts: which manager
- * that is, `systemd` or `launchd`, as the unit or the agent writes it.
+ * Set in the environment of a daemon that something else starts and holds:
+ * which manager or runtime that is, `systemd`, `launchd` or `container`, as the
+ * unit, the agent or the image writes it.
  *
  * A daemon started that way was not spawned by `start`, so no record of it
  * exists until it writes one itself. The child reads this and deletes it at
@@ -164,16 +166,16 @@ export const CONTROL_ENV = 'AHPD_CONTROL';
 export const SERVICE_ENV = 'AHPD_SERVICE';
 
 /**
- * The manager named in the environment of a supervised daemon, or nothing.
+ * The kind named in the environment of a held daemon, or nothing.
  *
- * A value this code does not know is read as no manager at all: the manager
- * only changes how the two verbs reach the daemon, and a signal reaches one
- * that `ahpd start` spawned just as well - so a name from a newer ahpd leaves a
+ * A value this code does not know is read as no kind at all: the kind only
+ * changes how the two verbs reach the daemon, and a signal reaches one that
+ * `ahpd start` spawned just as well - so a name from a newer ahpd leaves a
  * daemon that stops and statuses as any other rather than one that will not
  * start under its own unit.
  */
 export const serviceIn = (value: string | undefined): Running['service'] =>
-  (value === 'systemd' || value === 'launchd' ? value : undefined);
+  (value === 'systemd' || value === 'launchd' || value === 'container' ? value : undefined);
 
 /** The name every control pipe starts with, before its UUID. */
 const PIPE_PREFIX = '\\\\.\\pipe\\ahpd-';
@@ -887,6 +889,13 @@ const stoppedUnderService = async (found: Running, service: Service, steps: Stop
 };
 
 /**
+ * What a stop of a container daemon is refused with: the container's restart
+ * policy starts it again, so a stop from inside is a restart, and the container
+ * is what stops it.
+ */
+export const CONTAINER_STOP = 'This daemon runs in a container; stop the container instead.';
+
+/**
  * Ask it to stop, wait for it to go, and forget where it was. Answers what was
  * stopped, or nothing.
  *
@@ -899,6 +908,10 @@ const stoppedUnderService = async (found: Running, service: Service, steps: Stop
 export async function stop(steps: StopSteps = realStop()): Promise<StopOutcome | undefined> {
   const found = running();
   if (!found) return undefined;
+  // A container daemon is not this process's to stop: the restart policy starts
+  // it again, so a stop from here is a restart. Refused before any signal, and
+  // before the manager a systemd or launchd record is stopped through.
+  if (found.service === 'container') throw new Error(CONTAINER_STOP);
   // A daemon a service manager holds is stopped through it, and never by a
   // signal: the manager is what keeps it running.
   if (found.service !== undefined) return stoppedUnderService(found, found.service, steps);

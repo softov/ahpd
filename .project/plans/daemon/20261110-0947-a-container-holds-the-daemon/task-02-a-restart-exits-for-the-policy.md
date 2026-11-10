@@ -1,6 +1,6 @@
 ---
 title: A restart exits for the restart policy
-status: todo
+status: implemented
 depends: [task-01-a-container-daemon-writes-its-record.md]
 layer: "server"
 refs:
@@ -43,3 +43,10 @@ The restart works from a client and from `docker exec <container> ahpd restart`.
 
 ## Resume
 
+- `CONTAINER_EXIT` is 75, beside `HANDED`; `restartUnderManager` takes the code it exits with once the hand resolves.
+- `LifecycleSteps.handExit` carries that code, and `run.ts` sets it for a container.
+- A container daemon's `hand` asks nothing and resolves at once, so the served restart closes, drops the record and exits 75.
+- A container daemon listens for `RESTART_SIGNAL` and `FORCED_SIGNAL` even when it is not detached.
+- A terminal restart of a container record sends the signal and answers `{ container: pid }` at once, with no manager and no wait: the container runtime starts the next daemon, and the terminal prints `Asked the container daemon (pid N) to restart; the container starts it again when it exits.`
+- Validation passed: `server-restart.test.ts` 72 passed, `server-cli-restart.test.ts` 17 passed, typecheck clean.
+- The full suite passed except the two environmental `host-permissions` edit-approval cases and one load flake in `server-cli-restart.test.ts`, which passes alone.

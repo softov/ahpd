@@ -70,7 +70,7 @@ import {
   loggerOf,
 } from '@ahpd/sdk';
 import { logLine, written } from '../logline.js';
-import { CONTROL_ENV, DETACHED_ENV, SERVICE_ENV, claim, forget, recordOf, running, serviceIn, start as startDaemon, sweepTemps } from '../daemon.js';
+import { CONTAINER_STOP, CONTROL_ENV, DETACHED_ENV, SERVICE_ENV, claim, forget, recordOf, running, serviceIn, start as startDaemon, sweepTemps } from '../daemon.js';
 import { controlIn, controlServer } from '../control.js';
 import type { ControlServer } from '../control.js';
 import { here } from '../ask.js';
@@ -97,7 +97,7 @@ import { pty } from '../pty.js';
 import { shellIntegrationOf } from '../shellintegration.js';
 import { screen } from '../screen.js';
 import { realManager } from '../service.js';
-import type { Manager, Service } from '../service.js';
+import type { Held, Manager, Service } from '../service.js';
 import { migrateAutomations, scheduledAutomations } from '../scheduled.js';
 import type { ScheduledStore } from '../scheduled.js';
 import { fileEnablement } from '../enablement.js';
@@ -106,7 +106,7 @@ import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npm
 import { manifest, version } from '../version.js';
 import { conflict, namedOptionsFrom, secret, flagFields, stop } from './options.js';
 import {
-  FORCED_SIGNAL, RESTART_DELAY_MS, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, parking, restartMethod, successorTakes,
+  CONTAINER_EXIT, FORCED_SIGNAL, RESTART_DELAY_MS, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, parking, restartMethod, successorTakes,
 } from './restart.js';
 import type { RestartOutcome } from './restart.js';
 import type { Options } from './options.js';
@@ -312,8 +312,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    */
   const service = serviceIn(process.env[SERVICE_ENV]);
   delete process.env[SERVICE_ENV];
-  // The name its configuration gives that service, which only a held daemon has.
-  const serviceName = service === undefined ? undefined : options.serviceName;
+  // The name its configuration gives that service, which only a manager holds
+  // a daemon beside another under: a container has no such name.
+  const serviceName = service === undefined || service === 'container' ? undefined : options.serviceName;
 
   /*
    * Whether a clock is running, decided once and then said out loud.
@@ -2405,8 +2406,15 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * process spawned would be in the same cgroup as this one, where the stop
      * job the restart begins with would end it too. A daemon started by a
      * terminal has no manager to ask.
+     *
+     * A container has no manager either: its runtime starts what leaves with a
+     * non-zero code, so the hand has nothing to ask and the exit is `EX_TEMPFAIL`.
      */
-    ...(service === undefined ? {} : { hand: (): Promise<void> => realManager().restart(service, serviceName) }),
+    ...(service === undefined
+      ? {}
+      : service === 'container'
+        ? { hand: async (): Promise<void> => {}, handExit: CONTAINER_EXIT }
+        : { hand: (): Promise<void> => realManager().restart(service, serviceName) }),
   });
   // From here a `shutdown` request runs the way down, as the control pipe does.
   wayDown = way.shutdown;
@@ -2465,9 +2473,11 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   );
   /*
    * `ahpd restart` at the terminal: a signal to the recorded process, which
-   * answers it here. A daemon run in the foreground never listens for them.
+   * answers it here. A daemon run in the foreground never listens for them, but
+   * a container daemon does: it has no line to start a successor from, and the
+   * signal is the only way a terminal outside the container reaches it.
    */
-  if (detached) {
+  if (detached || service === 'container') {
     const answer = (forced: boolean, piped: boolean) => (): void => {
       void answerRestartSignal(forced, { self: process.pid, recorded: running, log: stamp, restart }, piped);
     };
@@ -2517,8 +2527,11 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
  */
 export const daemonShutdown = (
   way: () => (() => void) | undefined,
-  held?: { service: Service; name?: string | undefined; manager: Pick<Manager, 'stop'> },
+  held?: { service: Held; name?: string | undefined; manager: Pick<Manager, 'stop'> },
 ): (() => Promise<void>) => async () => {
+  // The container's restart policy starts again what leaves, so a served
+  // shutdown of one is refused in the same words `ahpd stop` refuses it.
+  if (held?.service === 'container') throw new Error(CONTAINER_STOP);
   if (held !== undefined) {
     await held.manager.stop(held.service, held.name);
     return;

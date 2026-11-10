@@ -13,6 +13,7 @@ import { createRegistry } from '@cofold/commands';
 import type { Registry } from '@cofold/commands';
 import type { AutomationStore, LiveNodes, Usage, Users, Vault } from '@ahpd/sdk';
 import type { Options } from './options.js';
+import type { Held } from '../service.js';
 import { declareAutomation } from './automation.js';
 import { declareConfig, declareConfigWrite } from './config.js';
 import { declarePaths } from './paths.js';
@@ -45,8 +46,8 @@ export interface ServedRunning {
   startedAt: string;
   /** Where automations are kept and whether their schedules fire. */
   automations?: string;
-  /** The service manager that started this daemon, when one did. */
-  service?: 'systemd' | 'launchd';
+  /** The kind that started this daemon and holds it, when one did. */
+  service?: Held;
 }
 
 /** What a served command reads instead of the request. */

@@ -1,6 +1,6 @@
 ---
 title: An update names the image
-status: todo
+status: implemented
 depends: [task-01-a-container-daemon-writes-its-record.md]
 layer: "server"
 refs:
@@ -35,3 +35,9 @@ The refusal says to pull the new image and start the container again.
 
 ## Resume
 
+- `IN_IMAGE` is the exported sentence, in `selfupdate.ts` beside `refused`.
+- `planUpdate` refuses a record naming `container` after the version check, before `notRestartable` and `installPlace`; the place is never read.
+- A terminal `ahpd update` throws the sentence, `--check` answers `may: false` with it, and the served update carries the same `why`.
+- The `planUpdate` case is in `selfupdate-place.test.ts`, as the task's Files name.
+- Validation passed: `selfupdate-place.test.ts` 7 passed, `host-update-method.test.ts` 6 passed, typecheck clean.
+- The full suite passed except the two environmental `host-permissions` edit-approval cases and one load flake (`computer-spawn.test.ts`), which passes alone with the raised timeout.

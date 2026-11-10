@@ -14,12 +14,12 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  announcementOf, claim, configuredMs, controlFor, deliver, forget, logSince, READY_TIMEOUT_MS, readyUrl, recordOf, rewritePaths, running, start,
-  statusLine, stop, STOP_WAIT_MS,
+  announcementOf, claim, configuredMs, CONTAINER_STOP, controlFor, deliver, forget, logSince, READY_TIMEOUT_MS, readyUrl, recordOf, rewritePaths,
+  running, serviceIn, start, statusLine, stop, STOP_WAIT_MS,
 } from '../src/daemon.js';
 import { automationStatePath, isIdentifier, hostId, namedIssuer, personalUrl, policiesPath, signInIdentifier, vaultPath } from '../src/config.js';
 import type { Control, Running } from '../src/daemon.js';
-import type { Manager } from '../src/service.js';
+import type { Held, Manager } from '../src/service.js';
 import { posix } from '../../../tools/posix.ts';
 
 const REPO = join(import.meta.dirname, '../../..');
@@ -113,6 +113,18 @@ describe('personalUrl', () => {
   });
 });
 
+describe('serviceIn', () => {
+  it('reads the container kind beside the two managers, and nothing for a name it does not know', () => {
+    expect(serviceIn('container')).toBe('container');
+    expect(serviceIn('systemd')).toBe('systemd');
+    expect(serviceIn('launchd')).toBe('launchd');
+    // A name from a newer ahpd leaves a daemon that runs as any other, rather
+    // than one that will not start under its own unit.
+    expect(serviceIn('docker')).toBeUndefined();
+    expect(serviceIn(undefined)).toBeUndefined();
+  });
+});
+
 describe('recordOf', () => {
   it('splits the announcement into the record', () => {
     const record = recordOf(ANNOUNCED, 42, 'abc');
@@ -126,6 +138,12 @@ describe('recordOf', () => {
   it('keeps the arguments the child was given', () => {
     const argv = ['--path', '/x', '--plugin-option', 'a.b=1'];
     expect(recordOf(ANNOUNCED, 42, 'abc', argv).argv).toEqual(argv);
+  });
+
+  it('names a container, and holds no name, which only a manager installed under one gives', () => {
+    const record = recordOf(ANNOUNCED, 42, 'abc', undefined, undefined, 'container');
+    expect(record.service).toBe('container');
+    expect(record.serviceName).toBeUndefined();
   });
 
   it('keeps what the child said it skipped, and no field when it said nothing', () => {
@@ -278,7 +296,7 @@ describe('the record on disk', () => {
   });
 
   /** A record naming `pid`, alive for as long as that process is, held by `service` when one does. */
-  const naming = (pid: number, service?: 'systemd' | 'launchd'): Running => ({
+  const naming = (pid: number, service?: Held): Running => ({
     pid, url: `ws://127.0.0.1:${String(pid % 60000)}`, connectUrl: '', paths: [], startedAt: '',
     ...(service === undefined ? {} : { service }),
   });
@@ -525,6 +543,25 @@ describe('the record on disk', () => {
       now: () => 0,
       manager: { stop: () => Promise.resolve(), restart: () => Promise.reject(new Error('a stop does not restart')) },
     })).rejects.toThrow(`launchd did not stop pid ${String(process.pid)} within 0 seconds.`);
+    // It is still running, so its record is still the one thing saying where.
+    expect(onDisk()).toBe(process.pid);
+  });
+
+  /*
+   * A daemon in a container is not this process's to stop: the restart policy
+   * starts again what leaves, so the container is what stops it.
+   */
+  it('refuses to stop a container daemon, and sends it nothing', async () => {
+    put(naming(process.pid, 'container'));
+    await expect(stop({
+      signal: () => { throw new Error('a container daemon is never signalled'); },
+      kill: () => { throw new Error('a container daemon is never killed'); },
+      alive: () => true,
+      wait: () => { throw new Error('a container daemon is never waited for'); },
+      waitMs: 10_000,
+      now: () => 0,
+      manager: noManager,
+    })).rejects.toThrow(CONTAINER_STOP);
     // It is still running, so its record is still the one thing saying where.
     expect(onDisk()).toBe(process.pid);
   });

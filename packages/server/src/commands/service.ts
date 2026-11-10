@@ -78,7 +78,7 @@ export const declareService = (registry: Registry<object>): Command[] => {
        * that a service of another name already holds would be started twice,
        * so that one is taken out first, which is said rather than done.
        */
-      if (found?.service !== undefined && found.serviceName !== name) {
+      if (found?.service !== undefined && found.service !== 'container' && found.serviceName !== name) {
         conflict(`The daemon in ${configDir()} runs under ${found.service} as ${managedAs(found.service, found.serviceName)}. Take that service out with ahpd service uninstall, then install this one.`);
       }
       const file = installFile(service, name);

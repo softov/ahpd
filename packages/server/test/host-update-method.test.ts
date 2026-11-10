@@ -22,6 +22,7 @@ import type { ServedFacts } from '../src/commands/served.js';
 import { updateMethod } from '../src/commands/update.js';
 import type { UpdateFacts } from '../src/commands/update.js';
 import type { PlaceFacts } from '../src/selfupdate.js';
+import { IN_IMAGE } from '../src/selfupdate.js';
 import type { Fetch } from '../src/update.js';
 import { version } from '../src/version.js';
 
@@ -216,6 +217,16 @@ describe('x-ahpd/update', () => {
     expect(npm.calls[0]).toEqual(['install', '-g', '--prefix', `${posixHome()}/npm-prefix`, `@ahpd/server@${LATEST}`]);
     // The daemon's own line, as its record holds it, and not forced.
     expect(restarted).toEqual([{ argv: ['--port', '9350'], force: false }]);
+    await host.close();
+  });
+
+  it('refuses a container daemon\'s update with the image sentence, and runs no npm', async () => {
+    const { host, npm, restarted } = served({ record: () => ({ ...RECORD, service: 'container' }) });
+    const client = await root(host);
+    const result = await client.handle({ method: 'x-ahpd/update', params: { check: true } });
+    expect(result).toMatchObject({ current: CURRENT, latest: LATEST, may: false, why: IN_IMAGE });
+    expect(npm.calls).toEqual([]);
+    expect(restarted).toEqual([]);
     await host.close();
   });
 

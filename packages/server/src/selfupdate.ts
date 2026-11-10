@@ -69,6 +69,16 @@ const refused = (root: string): never => {
 };
 
 /**
+ * The one sentence an update in a container image is refused with.
+ *
+ * The image owns the files npm would replace, and the next pull replaces them
+ * with the next image's: there is nothing here for this daemon to install, and
+ * a restart from inside is a container the runtime owns. The example is
+ * Compose's, since that is how the image is run.
+ */
+export const IN_IMAGE = 'This ahpd is in a container image; pull the new image and start the container again, for example docker compose pull && docker compose up -d.';
+
+/**
  * Where this daemon is installed, or why an update cannot replace it.
  *
  * A link is refused first, whatever its shape: `npm link` leaves a package
@@ -177,6 +187,9 @@ export async function planUpdate(options: PlanOptions = {}): Promise<Planned> {
     return refused(`${latest} is not newer than the running ${current}; there is nothing to update to.`);
   }
   const record = options.record;
+  // A container's files belong to the image, and its next version arrives as a
+  // pull: the place a terminal would install into is not the one to read.
+  if (record?.service === 'container') return refused(IN_IMAGE);
   const cannot = record === undefined ? FOREGROUND : notRestartable(record, options.self ?? record.pid);
   if (cannot !== undefined) return refused(cannot);
   const turning = options.turning ?? [];
