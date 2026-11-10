@@ -152,7 +152,7 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "maximum": 1,
-          "description": "The share of the model's listed context, or of 32000, a session compacts at when autoCompactTokens names no lower point, papo's 0.8 by default."
+          "description": "The share of the model's listed context, or of 32000, a session compacts at when autoCompactTokens names no lower point, copapo's 0.8 by default."
         },
         "catalogueTimeoutMs": {
           "type": "integer",

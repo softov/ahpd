@@ -61,7 +61,7 @@ export interface CofoldOptions {
   /**
    * The configuration directory the harness reads *inside a machine*.
    *
-   * The configuration is mounted there and `PAPO_CONFIG` is pointed at the
+   * The configuration is mounted there and `COPAPO_CONFIG` is pointed at the
    * file, so a cofold host in the machine finds the providers whatever user the
    * image runs as, and `XDG_CONFIG_HOME` is left as the image has it.
    * `false` says nothing at all and leaves the image's own.
@@ -102,7 +102,7 @@ export interface CofoldOptions {
   autoCompactTokens?: number;
   /**
    * The share of a model's window a session folds its history at, and the
-   * most `autoCompactTokens` may name; 0.8 by default, the share papo keeps.
+   * most `autoCompactTokens` may name; 0.8 by default, the share copapo keeps.
    * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/agent.ts#L11
    */
   autoCompactAt?: number;
@@ -146,14 +146,14 @@ const text = (value: unknown): string | undefined =>
 
 /**
  * The session control that sets how much every turn has the model reason:
- * cofold's own session-wide setting, papo's `reasoning`, under the agent's
+ * cofold's own session-wide setting, copapo's `reasoning`, under the agent's
  * provider id, as VS Code names Codex's `codex.modelReasoningEffort`.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/codexSessionConfigKeys.ts#L15-L25
  */
 export const reasoningKeyOf = (options: CofoldOptions): string => `${options.provider ?? 'cofold'}.reasoning`;
 
 /**
- * The level the person's harness sets, else papo's own default, `off`.
+ * The level the person's harness sets, else copapo's own default, `off`.
  * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/config.ts#L76-L81
  */
 const harnessReasoningOf = (harness: HarnessConfig): string =>
@@ -614,10 +614,10 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
         description: 'The system prompt this agent runs with.',
       },
       /*
-       * cofold's own session-wide reasoning, papo's `reasoning` setting, as VS
+       * cofold's own session-wide reasoning, copapo's `reasoning` setting, as VS
        * Code keeps Codex's `codex.modelReasoningEffort` as a session control
        * beside each model's picker: cofold's levels, the shared helpers' words,
-       * and the person's harness level for its default, else papo's `off`.
+       * and the person's harness level for its default, else copapo's `off`.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L465-L475
        */
       [reasoningKeyOf(options)]: {
@@ -868,8 +868,8 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   function create(start: Start): Session | Promise<Session> {
     const opened = (resumed: Start): Session => {
       /*
-       * The harness configuration as papo reads it in the session's own
-       * workspace, that workspace's `.papo.json` among its layers; a session
+       * The harness configuration as copapo reads it in the session's own
+       * workspace, that workspace's `.copapo.json` among its layers; a session
        * given no folder has no project of its own and reads the backend's.
        * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/config.ts#L92-L94
        */
@@ -935,8 +935,8 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
      * What a machine needs for this harness to find its providers.
      *
      * The harness configuration holds the provider keys, and it is mounted
-     * read-only at a fixed target under `computerConfigDir`, with `PAPO_CONFIG`
-     * naming that file, the layer papo's resolver reads from the variable. It
+     * read-only at a fixed target under `computerConfigDir`, with `COPAPO_CONFIG`
+     * naming that file, the layer copapo's resolver reads from the variable. It
      * is a path to one file rather than a directory, because `XDG_CONFIG_HOME`
      * cannot be moved for one program: it is the nested host's own folder as
      * well, and a machine's mount point is root-owned, so a cofold machine whose
@@ -944,7 +944,7 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
      * folder. Nothing here touches `XDG_CONFIG_HOME`, so every other program in
      * the machine keeps its own.
      *
-     * The target keeps the `papo/config.json` shape the file has on a host, so
+     * The target keeps the `copapo/config.json` shape the file has on a host, so
      * a person reading a mounted machine sees the same relative path they see
      * at `~/.config`.
      *
@@ -977,13 +977,13 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
       return {
         cofoldState: {
           state: configDir,
-          seed: [{ source: read, target: 'papo/config.json' }],
+          seed: [{ source: read, target: 'copapo/config.json' }],
           credential: true,
           description: 'The harness configuration, which holds the provider endpoints and their keys, kept in a volume.',
         },
         cofoldConfig: {
           file: read,
-          target: `${configDir}/papo/config.json`,
+          target: `${configDir}/copapo/config.json`,
           readOnly: true,
           required: true,
           when: 'host',
@@ -991,8 +991,8 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
           description: 'The harness configuration, which holds the provider endpoints and their keys.',
         },
         cofoldConfigPath: {
-          name: 'PAPO_CONFIG',
-          default: `${configDir}/papo/config.json`,
+          name: 'COPAPO_CONFIG',
+          default: `${configDir}/copapo/config.json`,
           description: 'Where the harness looks for its configuration inside the machine.',
         },
         cofoldBaseUrl: {

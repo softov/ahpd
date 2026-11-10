@@ -164,7 +164,7 @@ const usageOf = (usage: Usage, model: string | undefined, cost?: number): Bag =>
 
 /**
  * What a compaction is said as, in a live turn and in a transcript alike, in
- * cofold's own app's words, papo's `compactedNotice`: the tokens before the
+ * cofold's own app's words, copapo's `compactedNotice`: the tokens before the
  * summary and after it where cofold estimated them, and else what the summary
  * is.
  * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/blocks.ts#L50-L55

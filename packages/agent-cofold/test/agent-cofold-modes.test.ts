@@ -230,8 +230,8 @@ afterEach(() => {
 
 /** What the endpoint was sent for a session with these settings, over a harness file with `extra` in it. */
 const sent = async (settings: Record<string, unknown>, extra: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
-  mkdirSync(join(home, 'papo'), { recursive: true });
-  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({
+  mkdirSync(join(home, 'copapo'), { recursive: true });
+  writeFileSync(join(home, 'copapo', 'config.json'), JSON.stringify({
     providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }],
     model: 'open_router/deepseek/deepseek-chat',
     ...extra,
@@ -255,7 +255,7 @@ it('puts the chosen thinking level in the request and nothing for off', async ()
 });
 
 /*
- * cofold's own session-wide reasoning, papo's `reasoning`, as a session
+ * cofold's own session-wide reasoning, copapo's `reasoning`, as a session
  * control under the agent's provider id, as VS Code keeps Codex's
  * `codex.modelReasoningEffort` beside each model's picker, the turn's model
  * selection winning over it.
@@ -263,7 +263,7 @@ it('puts the chosen thinking level in the request and nothing for off', async ()
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1953-L1960
  */
 it('offers the session its own reasoning under the agent\'s provider, the harness level its default', () => {
-  const offered = properties(cofoldAgent({ provider: 'papo' }))['papo.reasoning'];
+  const offered = properties(cofoldAgent({ provider: 'copapo' }))['copapo.reasoning'];
   expect(offered).toEqual({
     type: 'string',
     title: 'Reasoning Effort',
@@ -275,8 +275,8 @@ it('offers the session its own reasoning under the agent\'s provider, the harnes
     sessionMutable: true,
     chatMutable: true,
   });
-  mkdirSync(join(home, 'papo'), { recursive: true });
-  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({ reasoning: 'medium' }));
+  mkdirSync(join(home, 'copapo'), { recursive: true });
+  writeFileSync(join(home, 'copapo', 'config.json'), JSON.stringify({ reasoning: 'medium' }));
   expect(properties(cofoldAgent({}))['cofold.reasoning']?.default).toBe('medium');
 });
 
@@ -294,8 +294,8 @@ it('runs a turn on the session\'s reasoning where its model selection names no l
 
 /** What the provider was asked to build for a session with these settings. */
 const builtFor = (settings: Record<string, unknown>): Record<string, unknown> => {
-  mkdirSync(join(home, 'papo'), { recursive: true });
-  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({
+  mkdirSync(join(home, 'copapo'), { recursive: true });
+  writeFileSync(join(home, 'copapo', 'config.json'), JSON.stringify({
     providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }],
     model: 'open_router/deepseek/deepseek-chat',
   }));

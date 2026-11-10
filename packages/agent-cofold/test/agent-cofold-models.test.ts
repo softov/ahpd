@@ -44,8 +44,8 @@ const CONFIG = {
 };
 
 const put = (value: unknown): void => {
-  mkdirSync(join(home, 'papo'), { recursive: true });
-  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify(value));
+  mkdirSync(join(home, 'copapo'), { recursive: true });
+  writeFileSync(join(home, 'copapo', 'config.json'), JSON.stringify(value));
 };
 
 /** What an OpenAI-compatible endpoint answers for a model list. */
