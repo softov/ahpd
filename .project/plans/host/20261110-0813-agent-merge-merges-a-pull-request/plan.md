@@ -61,7 +61,7 @@ watch: required checks pass, reviews approved, no conflict -> mergePullRequest a
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The watch merges as allowed](task-01-the-watch-merges-as-allowed.md) | todo | - |
+| [01 - The watch merges as allowed](task-01-the-watch-merges-as-allowed.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -69,10 +69,10 @@ watch: required checks pass, reviews approved, no conflict -> mergePullRequest a
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-10.
-- **Next action:** [task-01-the-watch-merges-as-allowed.md](task-01-the-watch-merges-as-allowed.md), once the required plan is built.
+- **Done so far:** task 01. The watch merges a ready pull request when `mergePullRequest` is `always`, or `ifUnchanged` with the local commit unchanged since a repair turn started; `never` stays the default. The method comes from `mergeMethod` among the repository's allowed methods, the head commit is pinned, and a merged pull request ends the folder's watch.
+- **Next action:** none; the plan's only task is implemented and waits for Softov's review.
 - **Open questions:** none.
-- **Watch out for:** ahpd's own repository is merged by Softov by hand; never turn the merge on for it.
+- **Watch out for:** ahpd's own repository is merged by Softov by hand; never turn the merge on for it. A repository that requires a merge queue is not merged, and the watch stays. Four `worktrees.test.ts` cases fail under this session's `TMPDIR`, which is inside this checkout, so a folder meant to be outside a repository resolves to this worktree; the failure is environmental.
 
 ## Final verification checklist
 

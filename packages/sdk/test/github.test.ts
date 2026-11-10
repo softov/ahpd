@@ -143,8 +143,13 @@ describe('one pull request by its page', () => {
 describe('what a repair turn reads of one pull request', () => {
   const page = 'https://github.com/softov/ahpd/pull/9';
 
-  /** The four REST answers and the one query a detail read asks for, keyed by what asks. */
+  /** The REST answers and the one query a detail read asks for, keyed by what asks. */
   const detailAnswers = (): Map<string, unknown> => new Map<string, unknown>([
+    ['repos/softov/ahpd', {
+      allow_merge_commit: true,
+      allow_squash_merge: true,
+      allow_rebase_merge: false,
+    }],
     ['repos/softov/ahpd/pulls/9', {
       html_url: page,
       number: 9,
@@ -211,8 +216,9 @@ describe('what a repair turn reads of one pull request', () => {
         ],
         requirednessComplete: true,
       },
-      // What merging needs is on the base repository, not the head's fork.
-      mergeability: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', viewerCanMerge: true },
+      // What merging needs is on the base repository, not the head's fork, and
+      // so are the methods the repository permits.
+      mergeability: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', viewerCanMerge: true, allowedMergeMethods: ['SQUASH', 'MERGE'] },
       reviewThreads: [{
         id: 'PRRT_1', path: 'src/a.ts', line: 12, isResolved: false,
         comments: [{ author: 'reviewer', body: 'This leaks.', createdAt: '2026-11-01T00:00:00Z' }],
@@ -283,6 +289,49 @@ describe('what a repair turn reads of one pull request', () => {
     expect(await githubPullRequests().detail?.(page, undefined, empty)).toBeUndefined();
     expect(await githubPullRequests().jobs?.(page, '9', undefined, empty)).toBeUndefined();
     expect(await githubPullRequests().jobLog?.(page, '7', undefined, empty)).toBeUndefined();
+  });
+});
+
+describe('merging a pull request', () => {
+  const page = 'https://github.com/softov/ahpd/pull/9';
+
+  it('merges through the token at the head it was given, with the method it chose', async () => {
+    const calls: { url: string; init: { method?: string; body?: string } }[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: { method?: string; body?: string }) => {
+      calls.push({ url, init });
+      return { ok: true, status: 200, json: async () => ({ merged: true, message: 'Pull Request successfully merged' }) };
+    });
+    const result = await githubPullRequests().merge?.(page, 'SQUASH', 'abc123', 'gho_x', '/tmp');
+    expect(result).toEqual({ outcome: 'merged', message: 'Pull Request successfully merged' });
+    expect(calls[0]?.url).toBe('https://api.github.com/repos/softov/ahpd/pulls/9/merge');
+    expect(calls[0]?.init.method).toBe('PUT');
+    // The head is GitHub's own check: a head that moved is refused, not merged.
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ merge_method: 'squash', sha: 'abc123' });
+  });
+
+  it('answers a refusal as GitHub gave it, rather than throwing', async () => {
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 405, json: async () => ({ message: 'Pull Request is not mergeable' }) }));
+    expect(await githubPullRequests().merge?.(page, 'MERGE', 'abc123', 'gho_x', '/tmp'))
+      .toEqual({ outcome: 'refused', message: 'Pull Request is not mergeable' });
+  });
+
+  it('says the outcome is indeterminate when GitHub itself failed', async () => {
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 502, json: async () => ({ message: 'Server Error' }) }));
+    expect((await githubPullRequests().merge?.(page, 'REBASE', 'abc123', 'gho_x', '/tmp'))?.outcome).toBe('indeterminate');
+  });
+
+  it.skipIf(!posix)('merges through gh too, when no token was lent', async () => {
+    const dir = fakeGh(JSON.stringify({ merged: true, message: 'Pull Request successfully merged' }));
+    expect(await githubPullRequests().merge?.(page, 'MERGE', 'abc123', undefined, dir))
+      .toEqual({ outcome: 'merged', message: 'Pull Request successfully merged' });
+    const { readFileSync } = await import('node:fs');
+    expect(readFileSync(join(dir, 'asked'), 'utf8').trim())
+      .toBe('api -X PUT repos/softov/ahpd/pulls/9/merge -f merge_method=merge -f sha=abc123');
+  });
+
+  it('refuses a page that is not a GitHub pull request', async () => {
+    expect(await githubPullRequests().merge?.('https://example.com/pull/9', 'SQUASH', 'abc123', undefined, '/tmp'))
+      .toEqual({ outcome: 'refused', message: 'https://example.com/pull/9 is not a GitHub pull request page' });
   });
 });
 
