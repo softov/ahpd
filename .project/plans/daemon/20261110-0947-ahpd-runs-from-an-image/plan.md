@@ -102,7 +102,7 @@ docker compose up -> tini -> entrypoint.sh run -> missing plugins installed -> v
 | [01 - The image builds from the checkout](task-01-the-image-builds-from-the-checkout.md) | implemented | - |
 | [02 - The entrypoint seeds plugins and runs ahpd](task-02-the-entrypoint-seeds-plugins.md) | implemented | 01 |
 | [03 - Compose runs the image](task-03-compose-runs-the-image.md) | implemented | 02 |
-| [04 - CI runs the image checks](task-04-ci-runs-the-image-checks.md) | todo | 03 |
+| [04 - CI runs the image checks](task-04-ci-runs-the-image-checks.md) | implemented | 03 |
 | [05 - The docs say how to run it in Docker](task-05-the-docs-say-how-to-run-in-docker.md) | todo | 03 |
 
 ## Risks and tradeoffs
@@ -115,8 +115,8 @@ docker compose up -> tini -> entrypoint.sh run -> missing plugins installed -> v
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 03 are implemented: the image builds from the checkout and is run by `docker/entrypoint.sh`, and `docker/compose.yaml` and `docker/compose.dev.yaml` run it on loopback with one volume. Every Docker check is left for review, because Docker is denied in this session.
-- **Next action:** [task-04-ci-runs-the-image-checks.md](task-04-ci-runs-the-image-checks.md).
+- **Done so far:** tasks 01 to 04 are implemented: the image builds from the checkout, `docker/entrypoint.sh` seeds and updates the volume's plugins, the two Compose files run it on loopback, and the `image` CI job builds it and runs `docker/test/smoke.sh`. Every Docker check is left for review, because Docker is denied in this session.
+- **Next action:** [task-05-the-docs-say-how-to-run-in-docker.md](task-05-the-docs-say-how-to-run-in-docker.md).
 - **Open questions:** none.
 - **Watch out for:**
 The pack stage must run pnpm, not npm, or the tarballs carry `workspace:^`.
