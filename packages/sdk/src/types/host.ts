@@ -1458,6 +1458,47 @@ export interface AskedAnswers {
   answers: Record<string, string | string[]>;
 }
 
+/** One option the Agent Merge tool may change for a folder, on top of the root keys. */
+export interface AgentMergeOverridesInput {
+  addressReviews?: boolean;
+  fixCI?: boolean;
+  resolveConflicts?: boolean;
+  mergePullRequest?: 'always' | 'ifUnchanged' | 'never';
+}
+
+/** One readAgentMergeCI call, once the fields its mode allows are the only ones left. */
+export interface AgentMergeCIRequest {
+  mode?: 'summary' | 'tail' | 'range' | 'search';
+  evidenceId?: string;
+  jobId?: string;
+  cursor?: string;
+  startLine?: number;
+  startColumn?: number;
+  endLine?: number;
+  lineCount?: number;
+  query?: string;
+  contextLines?: number;
+}
+
+/**
+ * The four Agent Merge tools, as the host serves them for one chat.
+ *
+ * The shape is VS Code's `IAgentMergeToolAccessor`, with the chat already
+ * bound: the tool group is given one of these by the chat the call came from,
+ * and nothing else can reach a repair turn's authorization. The last three
+ * answer only inside a turn Agent Merge started; `setEnabled` is the one the
+ * model may call at any time, because it is how a folder starts being watched.
+ * https://github.com/microsoft/vscode/blob/171e90619c723a84a3e1c7bcd58d226698f55c72/src/vs/platform/agentHost/node/shared/agentMergeServerTools.ts#L93-L99
+ */
+export interface AgentMergeToolAccessor {
+  /** Whether this host can watch a pull request here at all. */
+  isEnabled(): boolean;
+  setEnabled(enabled: boolean, overrides?: AgentMergeOverridesInput): Promise<string>;
+  readFailedCI(request?: AgentMergeCIRequest): Promise<string>;
+  replyToReviewThread(threadId: string, body: string, resolve: boolean): Promise<string>;
+  rerunFailedWorkflow(runId: string, failedJobsOnly: boolean): Promise<string>;
+}
+
 /**
  * Where a host tool was called from, and what the host knows.
  *
@@ -1679,6 +1720,14 @@ export interface ToolCall {
    * nobody sees.
    */
   shells(): Shells | undefined;
+  /**
+   * Agent Merge for the chat this call came from, when the host runs it.
+   *
+   * The chat is already bound, so the last three tools can answer only inside
+   * the repair turn that chat is running; a call with no such turn is refused
+   * whatever the model asks. Absent on a host with no Agent Merge.
+   */
+  agentMerge?(): AgentMergeToolAccessor | undefined;
   /**
    * The calling chat's background rows, to set one and take it back.
    *

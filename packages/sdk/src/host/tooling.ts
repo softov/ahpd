@@ -2162,6 +2162,12 @@ export function createTooling(ctx: HostContext): Tooling {
     // The person is asked in the chat the call came from, and in the turn it
     // is running in, so the end of that turn is what ends the wait.
     ask: (questions) => ctx.asks.ask(chatUri, activeTurnOf(chatUri), questions),
+    // Agent Merge's four tools, bound to the chat and to the person the turn
+    // making the call was sent by, which is who a write is attributed to.
+    agentMerge: () => {
+      const turn = activeTurnOf(chatUri);
+      return ctx.agentMerge.accessor(chatUri, turn === undefined ? undefined : senderOf(turn));
+    },
   });
 
   /**

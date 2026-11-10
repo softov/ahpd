@@ -23,7 +23,7 @@ export interface PullRequest {
  * resource, so no client is asked to sign in for a thing that will not be
  * asked. `githubPullRequests()` is the one that ships with this package.
  */
-export interface PullRequests {
+export interface PullRequests extends PullRequestWrites {
   /**
    * The protected resource a token for this is pushed under.
    *
@@ -210,4 +210,28 @@ export interface PullRequestJobLog {
   text: string;
   /** Whether the log had more than `text` holds. */
   truncated: boolean;
+}
+
+/** A review thread reply, once GitHub has taken it. */
+export interface PullRequestThreadReply {
+  /** The comment's node id, when GitHub named one. */
+  commentId: string;
+  /** GitHub's word for it: `PUBLISHED`, or `PENDING` when it sits in the person's draft review. */
+  state?: string;
+}
+
+/** What a repair turn writes back: a reply on a review thread, its resolution, and a workflow rerun. */
+export interface PullRequestWrites {
+  /** Whether the person has a draft review on the pull request that nothing may submit or discard. */
+  pendingReview?(url: string, token: string | undefined, cwd: string): Promise<boolean | undefined>;
+  /** Reply on one review thread, answering the comment GitHub made. */
+  replyToReviewThread?(threadId: string, body: string, token: string | undefined, cwd: string): Promise<PullRequestThreadReply | undefined>;
+  /**
+   * Resolve one review thread, answering whether it is resolved now. A reply
+   * is published before its thread is resolved; nothing here resolves one the
+   * person has not answered.
+   */
+  resolveReviewThread?(threadId: string, token: string | undefined, cwd: string): Promise<boolean>;
+  /** Rerun a workflow run of the pull request, failed jobs only or whole. */
+  rerunWorkflow?(url: string, runId: string, failedJobsOnly: boolean, token: string | undefined, cwd: string): Promise<boolean>;
 }

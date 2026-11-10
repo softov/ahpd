@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import type {
   NewPullRequest, PullRequest, PullRequestCheck, PullRequestChecks, PullRequestComment, PullRequestCore, PullRequestDetail,
   PullRequestFeedbackComment, PullRequestJob, PullRequestJobLog, PullRequestJobStep, PullRequestMergeability, PullRequestReview,
-  PullRequestReviewThread, PullRequests,
+  PullRequestReviewThread, PullRequestThreadReply, PullRequests,
 } from '../types/github.js';
 
 /** The reference host's resource for a github.com token, verbatim. */
@@ -545,6 +545,141 @@ export function githubPullRequests(): PullRequests {
     }
   };
 
+  /**
+   * One GraphQL call, by the token a client lent or by `gh`.
+   *
+   * Nothing where `gh` is absent, which is the same answer the reads give;
+   * GitHub's own refusals are thrown, because a reply that was not taken is
+   * not a reply.
+   */
+  const graphql = async (
+    query: string,
+    variables: Record<string, string>,
+    token: string | undefined,
+    cwd: string,
+  ): Promise<Record<string, unknown> | undefined> => {
+    let body: unknown;
+    if (token !== undefined) {
+      const answer = await fetch(`${API}/graphql`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        body: JSON.stringify({ query, variables }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!answer.ok) throw new Error(`GitHub answered ${answer.status} for graphql`);
+      body = await answer.json();
+    }
+    else {
+      const args = ['api', 'graphql', '-f', `query=${query}`];
+      for (const [name, value] of Object.entries(variables)) args.push('-f', `${name}=${value}`);
+      try {
+        body = JSON.parse(await ghApi(args, cwd));
+      }
+      catch (error) {
+        if (ghAbsent(error)) return undefined;
+        throw error;
+      }
+    }
+    if (!isRecord(body)) return undefined;
+    if (Array.isArray(body.errors) && body.errors.length > 0) throw new Error(`GitHub refused the call: ${JSON.stringify(body.errors)}`);
+    return isRecord(body.data) ? body.data : undefined;
+  };
+
+  /** The payload of one named field of a GraphQL answer, or an empty object. */
+  const payloadOf = (data: Record<string, unknown> | undefined, field: string): Record<string, unknown> =>
+    isRecord(data?.[field]) ? data[field] as Record<string, unknown> : {};
+
+  /**
+   * Whether the person has a review drafted and not yet submitted on the
+   * pull request.
+   *
+   * A reply made while one is open lands in that review and stays unpublished,
+   * and nothing here may submit or discard it: the tool says so and stops the
+   * folder's watch instead.
+   */
+  const pendingReviewOf = async (url: string, token: string | undefined, cwd: string): Promise<boolean | undefined> => {
+    const data = await graphql(
+      'query($url:URI!){resource(url:$url){... on PullRequest{viewerLatestReview{state}}}}',
+      { url },
+      token,
+      cwd,
+    );
+    if (data === undefined) return undefined;
+    const review = isRecord(payloadOf(data, 'resource').viewerLatestReview)
+      ? payloadOf(data, 'resource').viewerLatestReview as Record<string, unknown>
+      : {};
+    return String(review.state ?? '').toUpperCase() === 'PENDING';
+  };
+
+  /** Reply on one review thread, answering the comment GitHub made. */
+  const replyToThread = async (
+    threadId: string,
+    body: string,
+    token: string | undefined,
+    cwd: string,
+  ): Promise<PullRequestThreadReply | undefined> => {
+    const data = await graphql(
+      'mutation($thread:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$thread,body:$body}){comment{id state url}}}',
+      { thread: threadId, body },
+      token,
+      cwd,
+    );
+    if (data === undefined) return undefined;
+    const comment = payloadOf(payloadOf(data, 'addPullRequestReviewThreadReply'), 'comment');
+    const state = textOf(comment.state);
+    return { commentId: textOf(comment.id) ?? '', ...(state !== undefined ? { state: state.toUpperCase() } : {}) };
+  };
+
+  /** Resolve one review thread, answering whether GitHub says it is resolved. */
+  const resolveThreadOf = async (threadId: string, token: string | undefined, cwd: string): Promise<boolean> => {
+    const data = await graphql(
+      'mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{id isResolved}}}',
+      { thread: threadId },
+      token,
+      cwd,
+    );
+    return payloadOf(payloadOf(data, 'resolveReviewThread'), 'thread').isResolved === true;
+  };
+
+  /** Rerun a workflow run, failed jobs only or whole. */
+  const rerunOf = async (
+    url: string,
+    runId: string,
+    failedJobsOnly: boolean,
+    token: string | undefined,
+    cwd: string,
+  ): Promise<boolean> => {
+    const page = pageOf(url);
+    if (page === undefined) return false;
+    const path = `repos/${page.owner}/${page.repo}/actions/runs/${runId}/${failedJobsOnly ? 'rerun-failed-jobs' : 'rerun'}`;
+    if (token === undefined) {
+      try {
+        await ghApi(['api', '-X', 'POST', path], cwd);
+        return true;
+      }
+      catch (error) {
+        if (ghAbsent(error)) return false;
+        throw error;
+      }
+    }
+    const answer = await fetch(`${API}/${path}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!answer.ok) throw new Error(`GitHub answered ${answer.status} for ${path}`);
+    return true;
+  };
+
   return {
     resource: RESOURCE,
     forBranch: async ({ owner, repo }, branch, token, cwd) => {
@@ -562,5 +697,9 @@ export function githubPullRequests(): PullRequests {
     detail: (url, token, cwd) => detailOf(url, token, cwd),
     jobs: (url, runId, token, cwd) => jobsOf(url, runId, token, cwd),
     jobLog: (url, jobId, token, cwd) => logOf(url, jobId, token, cwd),
+    pendingReview: (url, token, cwd) => pendingReviewOf(url, token, cwd),
+    replyToReviewThread: (threadId, body, token, cwd) => replyToThread(threadId, body, token, cwd),
+    resolveReviewThread: (threadId, token, cwd) => resolveThreadOf(threadId, token, cwd),
+    rerunWorkflow: (url, runId, failedJobsOnly, token, cwd) => rerunOf(url, runId, failedJobsOnly, token, cwd),
   };
 }

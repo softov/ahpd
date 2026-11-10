@@ -1,6 +1,7 @@
 import type { HostTool } from '../types/host.js';
 import { sessionTools, wakeupTool } from './session.js';
 import { artifactTools } from './artifacts.js';
+import { agentMergeTools } from './agentmerge.js';
 import { askUserTool } from './askuser.js';
 import { shellTools } from './shell.js';
 
@@ -29,6 +30,7 @@ import { shellTools } from './shell.js';
 export const hostTools = (): HostTool[] => [
   ...sessionTools(),
   ...artifactTools(),
+  ...agentMergeTools(),
   {
     definition: {
       name: 'ahp_resource',
