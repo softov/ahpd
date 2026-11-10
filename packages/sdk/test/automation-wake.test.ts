@@ -11,6 +11,7 @@ import type { Bag } from '../src/types/common.js';
 import type { AutomationStore } from '../src/types/automations.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { Grant } from '../src/types/users.js';
+import { WORK, WORK_URI } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -41,7 +42,7 @@ const watching = (): Bag => ({
   title: 'Triage a failed turn',
   enabled: true,
   message: { text: MESSAGE },
-  session: { provider: 'claude', workingDirectories: ['file:///home/softov'] },
+  session: { provider: 'claude', workingDirectories: [WORK_URI] },
   triggers: [{
     id: 't1',
     kind: 'event',
@@ -182,8 +183,8 @@ const signIn = async (client: Client, token: string): Promise<void> => {
  */
 async function gated(tokens: Record<string, Grant[]>, store: AutomationStore, who: string) {
   const host = createHost({
-    path: '/home/softov',
-    agents: [claude({ paths: ['/home/softov'] })],
+    path: WORK,
+    agents: [claude({ paths: [WORK] })],
     ...machine(),
     automations: store,
     users: directory(tokens),
@@ -352,7 +353,7 @@ it('wakes on a session in the folder the rule names, and on one a run made', asy
   const { client, chatUri, cli } = await live({ automations: store });
   // The session these tests drive works in the host's own directory, which is
   // what its events say about it.
-  store.create(MINE, watchingOnly({ folders: [uriOf('/home/softov')] }));
+  store.create(MINE, watchingOnly({ folders: [WORK_URI] }));
   store.create(HERS, watchingOnly({ folders: [uriOf('/work/elsewhere')] }));
 
   await fails(client, chatUri, 't1', cli);

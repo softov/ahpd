@@ -11,9 +11,10 @@ import {
  peer, sdk, sendAnswered, sessionQueries, settle,
 } from './support/host.js';
 import { uriOf } from '../src/resources/fileuri.js';
+import { WORK, WORK_URI } from './support/work.js';
 
-/** The folder the hosts here serve, as its URI on this system: `file:///C:/home/softov` on Windows. */
-const HOME = uriOf('/home/softov');
+/** The folder the hosts here serve, as its URI on this system. */
+const HOME = WORK_URI;
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -76,7 +77,7 @@ describe('what GitHub knows about the branch', () => {
 
   it('advertises the resource on every backend, so a client lends its token', async () => {
     const { port } = lookup(() => []);
-    const served = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), github: port });
+    const served = createHost({ path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), github: port });
     const client = served.accept(peer());
     await client.handle(hello(['0.9.0']));
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
@@ -93,7 +94,7 @@ describe('what GitHub knows about the branch', () => {
     let requests: { url: string; state: 'open' | 'closed' | 'merged' }[] = [{ url: 'https://github.com/softov/ahpd/pull/7', state: 'open' }];
     const { port, asked } = lookup(() => requests);
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(onBranch('fix/kqueue')), github: port,
     });
     const p = peer();
@@ -188,7 +189,7 @@ describe('what GitHub knows about the branch', () => {
     ];
     const { port } = lookup(() => requests);
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(onBranch('fix/kqueue')), github: port,
     });
     const client = served.accept(peer());
@@ -217,7 +218,7 @@ describe('what GitHub knows about the branch', () => {
     let requests: { url: string; state: 'open' | 'closed' | 'merged' }[] = [{ url: 'https://github.com/softov/ahpd/pull/1', state: 'open' }];
     const { port, asked } = lookup(() => requests);
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(git), github: port,
     });
     const client = served.accept(peer());
@@ -248,7 +249,7 @@ describe('what GitHub knows about the branch', () => {
     // The folder is on its branch from the moment the setting is in force.
     const git: Record<string, unknown> = {};
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(git), github: port,
     });
     const client = served.accept(peer());
@@ -268,7 +269,7 @@ describe('what GitHub knows about the branch', () => {
   it('keeps the lists to the session\'s own pull requests once automatic attachment is off', async () => {
     const { port } = lookup(() => [{ url: 'https://github.com/softov/ahpd/pull/4', state: 'open' }]);
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(onBranch('fix/d')), github: port,
     });
     const client = served.accept(peer());
@@ -286,7 +287,7 @@ describe('what GitHub knows about the branch', () => {
     let fail = false;
     const { port } = lookup(() => { if (fail) throw new Error('offline'); return []; });
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(onBranch('main')), github: port,
     });
     const client = served.accept(peer());
@@ -308,7 +309,7 @@ describe('what GitHub knows about the branch', () => {
   it('captures an empty baseline where the branch had no pull request, rather than leaving it absent', async () => {
     const { port } = lookup(() => []);
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(onBranch('main')), github: port,
     });
     const client = served.accept(peer());
@@ -336,10 +337,10 @@ describe('what GitHub knows about the branch', () => {
     // A transcript on disk that this host is not running and that nobody has
     // opened. A baseline written for it would say this is the branch the
     // session began on, which is a branch nobody ever asked about.
-    sdk.sessions.push({ sessionId: 'browsed', summary: 'Browsed', lastModified: 1_700_000_000_000, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'browsed', summary: 'Browsed', lastModified: 1_700_000_000_000, cwd: WORK });
     const store = memorySessions();
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(onBranch('main')), github: port, sessions: store,
     });
     const client = served.accept(peer());
@@ -367,7 +368,7 @@ describe('what GitHub knows about the branch', () => {
       { url: before, state: 'open' as const, createdAt: '2020-01-01T00:00:00Z' },
     ]);
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(onBranch('fix/kqueue')), github: port, sessions: store,
     });
     const client = served.accept(peer());
@@ -381,10 +382,10 @@ describe('what GitHub knows about the branch', () => {
     const store = memorySessions();
     const { port, asked } = lookup(() => [{ url: 'https://github.com/softov/ahpd/pull/7', state: 'open' as const, createdAt: '2020-01-01T00:00:00Z' }]);
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(onBranch('fix/kqueue')), github: port, sessions: store,
       worktrees: {
-        repository: async () => '/home/softov',
+        repository: async () => WORK,
         branches: async () => ['fix/kqueue'],
         create: async () => {},
         dirty: async () => false,
@@ -416,7 +417,7 @@ describe('what GitHub knows about the branch', () => {
 
   it('publishes no GitHub state at all where there is no GitHub port', async () => {
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       // A directory with git facts and no pull request port: `_meta` is not
       // empty, but nothing about GitHub was ever captured.
       directories: facts(onBranch('main')),
@@ -446,7 +447,7 @@ describe('what GitHub knows about the branch', () => {
    */
   it('puts the git state of a second chat under the scope of its folders', async () => {
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(onBranch('main')),
     });
     const client = served.accept(peer());
@@ -469,7 +470,7 @@ describe('what GitHub knows about the branch', () => {
 
   it('has no `_meta` at all for a directory that has answered nothing', async () => {
     const served = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      path: WORK, agents: [claude({ paths: [WORK] })], ...machine(),
       directories: facts(undefined),
     });
     const client = served.accept(peer());
@@ -493,7 +494,7 @@ describe('what a session recorded', () => {
    */
   const KEY = 'agentHost/sessionArtifacts';
   const withTools = async (pushed: Record<string, unknown> = {}) => {
-    const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools() });
+    const host = createHost({ path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), tools: hostTools() });
     const p = peer();
     const client = host.accept(p);
     const said = await client.handle(hello(['0.9.0'])) as { _meta?: Record<string, unknown> };

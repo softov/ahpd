@@ -10,6 +10,7 @@ import type { StateAction } from '@microsoft/agent-host-protocol';
 import type { ChangesetSource } from '../src/types/changes.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
+import { WORK, WORK_URI } from './support/work.js';
 
 /*
  * Everything this host says, read by the client that will read it.
@@ -112,7 +113,7 @@ beforeEach(() => {
 });
 
 async function running(over: Partial<HostOptions> = {}) {
-  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...over });
+  const host = createHost({ path: WORK, agents: [claude({ paths: [WORK] })], ...over });
   const p = peer();
   const client = host.accept(p);
   await client.handle({
@@ -720,8 +721,8 @@ it('takes a key back, and replaces the lot when asked to', async () => {
 it('opens a terminal on the shell a client asked for', async () => {
   const asked: (string | undefined)[] = [];
   const host = createHost({
-    path: '/home/softov',
-    agents: [claude({ paths: ['/home/softov'] })],
+    path: WORK,
+    agents: [claude({ paths: [WORK] })],
     terminals: {
       create: (options) => {
         asked.push(options.shell);
@@ -748,7 +749,7 @@ it('opens a terminal on the shell a client asked for', async () => {
 
   await client.handle({
     method: 'createTerminal',
-    params: { channel: 'ahp-terminal:/a', claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///home/softov' },
+    params: { channel: 'ahp-terminal:/a', claim: { kind: 'client', clientId: 'probe' }, cwd: WORK_URI },
   });
   // A shell this machine can run, which is the one a pushed shell is taken as:
   // the executable this test runs under.
@@ -756,7 +757,7 @@ it('opens a terminal on the shell a client asked for', async () => {
   await settle();
   await client.handle({
     method: 'createTerminal',
-    params: { channel: 'ahp-terminal:/b', claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///home/softov' },
+    params: { channel: 'ahp-terminal:/b', claim: { kind: 'client', clientId: 'probe' }, cwd: WORK_URI },
   });
 
   // The store's own choice before anybody said, and the client's after.
@@ -775,7 +776,7 @@ it('opens a terminal on the shell a client asked for', async () => {
  * a rule.
  */
 it('takes the session URI VS Code chose, and answers on it', async () => {
-  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+  const host = createHost({ path: WORK, agents: [claude({ paths: [WORK] })] });
   const p = peer();
   const client = host.accept(p);
   await client.handle({
@@ -808,8 +809,8 @@ it('takes the session URI VS Code chose, and answers on it', async () => {
 
 it('takes the terminal URI VS Code chose', async () => {
   const host = createHost({
-    path: '/home/softov',
-    agents: [claude({ paths: ['/home/softov'] })],
+    path: WORK,
+    agents: [claude({ paths: [WORK] })],
     terminals: {
       create: (options) => ({
         uri: options.uri,
@@ -834,7 +835,7 @@ it('takes the terminal URI VS Code chose', async () => {
   const uri = 'agenthost-terminal:/2ac915b3-86ef-4bf1-be2d-25b7e4c61838';
   await client.handle({
     method: 'createTerminal',
-    params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///home/softov' },
+    params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: WORK_URI },
   });
   const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
     snapshot: { state: { resource: string } };
@@ -847,7 +848,7 @@ it('takes the terminal URI VS Code chose', async () => {
 });
 
 it('still refuses something that is not a URI at all', async () => {
-  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+  const host = createHost({ path: WORK, agents: [claude({ paths: [WORK] })] });
   const client = host.accept(peer());
   await client.handle({
     method: 'initialize',
@@ -961,7 +962,7 @@ it('takes the approval and mode keys its schema does not declare as they were se
  * asked about, and a catalogue notification is not.
  */
 it("says a session's chats in its row as the session's own state says them", async () => {
-  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+  const host = createHost({ path: WORK, agents: [claude({ paths: [WORK] })] });
   const p = peer();
   const client = host.accept(p);
   await client.handle({
@@ -1016,7 +1017,7 @@ it("says a session's chats in its row as the session's own state says them", asy
 });
 
 it('still starts the harness on what the schema says', async () => {
-  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+  const host = createHost({ path: WORK, agents: [claude({ paths: [WORK] })] });
   const client = host.accept(peer());
   await client.handle({
     method: 'initialize',

@@ -105,8 +105,8 @@ daemon -> launch('npm') -> node npm-cli.js beside process.execPath -> npm instal
 
 ## Final verification checklist
 
-- [ ] On Debian 13 with bash, an install into `~/.npm-global` writes the line into `~/.bashrc` and `~/.profile`, and ahp-desk finds `ahpd` after the next login.
-- [ ] An update of an install from before this plan adds the line to `~/.profile`.
-- [ ] `--uninstall` removes the package from `~/.npm-global` and both lines.
-- [ ] A plugin install from a daemon under nvm runs the npm beside that Node.
+- [x] On Debian 13 with bash, an install into `~/.npm-global` writes the line into `~/.bashrc` and `~/.profile`, and ahp-desk finds `ahpd` after the next login.
+- [x] An update of an install from before this plan adds the line to `~/.profile`.
+- [x] `--uninstall` removes the package from `~/.npm-global` and both lines.
+- [x] A plugin install from a daemon under nvm runs the npm beside that Node.
 - [ ] `pnpm typecheck` and the whole suite pass, and Windows CI is green.

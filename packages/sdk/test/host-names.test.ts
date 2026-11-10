@@ -5,6 +5,7 @@ import {
 } from './support/host.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { getCanonicalOpaqueChatUuid } from '../src/vscode/chatid.js';
+import { WORK, WORK_URI } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -110,7 +111,7 @@ describe('a session a client names', () => {
   it('holds a session created on the protocol\'s URI under that URI, and answers its creator in its own', async () => {
     const id = '39c2a6f0-8c1e-4d7a-9b6e-2f1d3c4b5a69';
     const p = peer();
-    const client = serving('/home/softov').accept(p);
+    const client = serving(WORK).accept(p);
     // An older window, whose session's default chat is the derived one.
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'], ...OLDER_WINDOW }));
     await client.handle({ method: 'createSession', params: { channel: `ahp-session:/${id}`, provider: 'claude' } });
@@ -139,7 +140,7 @@ describe('a session a client names', () => {
 
   it('holds a session created on its provider\'s scheme under that scheme', async () => {
     const id = '2c5b9d1e-7f4a-4c8b-9e3d-6a0f1b2c3d4e';
-    const client = serving('/home/softov').accept(peer());
+    const client = serving(WORK).accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: `claude:/${id}`, provider: 'claude' } });
     await firstMessage(client, await defaultChatOf(client, `claude:/${id}`));
@@ -161,7 +162,7 @@ describe('a session a client names', () => {
    */
   it('holds a session created on another provider\'s scheme under that URI, and answers every spelling of its id', async () => {
     const id = '4e8d2f6a-1b3c-4d5e-8f7a-9b0c1d2e3f4a';
-    const client = serving('/home/softov').accept(peer());
+    const client = serving(WORK).accept(peer());
     // An older window, whose session's default chat is the derived one, and so
     // the chat every spelling of the id derives.
     await client.handle(hello(['0.9.0'], OLDER_WINDOW));
@@ -197,8 +198,8 @@ describe('a session a client names', () => {
   it('keeps the name each new session is held under in its row', async () => {
     const store = memorySessions();
     const host = createHost({
-      path: '/home/softov',
-      agents: [claude({ paths: ['/home/softov'] })],
+      path: WORK,
+      agents: [claude({ paths: [WORK] })],
       ...machine(),
       sessions: store,
     });
@@ -220,8 +221,8 @@ describe('a session a client names', () => {
     const { echo } = await import('../../../examples/echo/agent.js');
     const id = '5d0c9e8b-7a6f-4e3d-8c2b-1a0f9e8d7c6b';
     const host = createHost({
-      path: '/home/softov',
-      agents: [claude({ paths: ['/home/softov'] }), { ...echo({ path: '/home/softov', pace: 0 }), provider: 'codex', displayName: 'Codex' }],
+      path: WORK,
+      agents: [claude({ paths: [WORK] }), { ...echo({ path: WORK, pace: 0 }), provider: 'codex', displayName: 'Codex' }],
       ...machine(),
     });
     const client = host.accept(peer());
@@ -328,7 +329,7 @@ describe('a session a client names', () => {
  */
 describe('a session asked for by the name a client computed', () => {
   // Written an hour ago, inside the window of the mode a client lists it by.
-  const listed = { sessionId: 'row', summary: 'A real title', lastModified: Date.now() - 60 * 60 * 1000, cwd: '/home/softov' };
+  const listed = { sessionId: 'row', summary: 'A real title', lastModified: Date.now() - 60 * 60 * 1000, cwd: WORK };
   const ROW = 'ahp-session:/row';
   const derived = (session: string) =>
     `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
@@ -337,7 +338,7 @@ describe('a session asked for by the name a client computed', () => {
     sdk.sessions.push(listed);
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     wrote(listed.sessionId, listed.cwd);
-    const client = serving('/home/softov').accept(p);
+    const client = serving(WORK).accept(p);
     await client.handle(hello(['0.9.0']));
     // A transcript this host never ran, which a client lists by the root's
     // `showExternalSessions`.
@@ -552,12 +553,12 @@ describe('a session that runs no chat', () => {
     kept.setProvider('one', 'slow');
     kept.setUri?.('one', 'ahp-session:/one');
     const host = createHost({
-      path: '/home/softov',
+      path: WORK,
       agents: [{
-        ...echo({ path: '/home/softov', pace: 0 }),
+        ...echo({ path: WORK, pace: 0 }),
         provider: 'slow',
         displayName: 'Slow',
-        list: async () => [{ id: 'one', title: 'One', createdAt: stamp, modifiedAt: stamp, workingDirectories: ['file:///home/softov'] }],
+        list: async () => [{ id: 'one', title: 'One', createdAt: stamp, modifiedAt: stamp, workingDirectories: [WORK_URI] }],
         transcript: async () => [],
         probe: async () => ({ models: [], commands: [], customizations: [seed] }),
       }],
@@ -614,7 +615,7 @@ describe('a session asked for by the name its creator used', () => {
 
   /** The session, made by an older window, whose default chat is the one derived from the session. */
   const created = async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'], ...OLDER_WINDOW }));
@@ -800,7 +801,7 @@ describe('an older VS Code window', () => {
    * shaped one an older window for chats can see too.
    */
   const both = async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const maker = host.accept(peer());
     await maker.handle(hello(['1.0.0'], {
       clientId: 'maker', initialSubscriptions: ['ahp-root://'], ...older, _meta: { 'vscode.ahpSessionUris': true },
@@ -943,7 +944,7 @@ describe('an older VS Code window', () => {
   });
 
   it('holds a session it creates under the URI it named, for every client', async () => {
-    const host = serving('/home/softov');
+    const host = serving(WORK);
     const window = host.accept(peer());
     await window.handle(hello(['1.0.0'], { clientId: 'window', ...older }));
     const made = 'claude:/9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f';

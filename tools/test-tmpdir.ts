@@ -49,6 +49,16 @@ export default function setup(): () => void {
    * own.
    */
   process.env.XDG_CONFIG_HOME = join(run, 'config');
+  /*
+   * And the folder the host suites serve, inside the run and never made.
+   *
+   * A host lists, reads and runs git in the folder it serves. A fixed path such
+   * as `/home/<name>` is a real home folder on the machine of whoever has that
+   * name, so the suite read their files there and nowhere else. A folder no one
+   * makes is the same absent folder on every machine. `test/support/work.ts`
+   * reads it.
+   */
+  process.env.AHPD_TEST_WORK = join(run, 'work');
   return () => {
     rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     /*

@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import type { Peer } from '../src/types/rpc.js';
+import { WORK } from './support/work.js';
 
 /*
  * The per-tool load policy, as the Claude SDK is handed it.
@@ -72,8 +73,8 @@ it('marks the tool the instruction names eager, defers remove and list, and leav
   // The whole set, so a tool with no policy is in the sample beside the three
   // that carry one.
   const host = createHost({
-    path: '/home/softov',
-    agents: [claude({ paths: ['/home/softov'] })],
+    path: WORK,
+    agents: [claude({ paths: [WORK] })],
     tools: hostTools(),
   });
   const client = host.accept(peer());

@@ -26,6 +26,7 @@ import type { HostOptions } from '../src/types/host.js';
 import {
   claude, createHost, emit, firstMessage, hello, machine, peer, resetSdk, sdk, sessionQueries, settle,
 } from './support/host.js';
+import { WORK, WORK_URI } from './support/work.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -137,7 +138,7 @@ const made = async (
   meta?: Record<string, unknown>,
 ) => {
   const host = createHost({
-    path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), ...over,
+    path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), ...over,
   });
   const p = peer();
   const client = host.accept(p);
@@ -208,7 +209,7 @@ describe('a session a window sent here', () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10672-L10684
    */
   it('keeps the multi-root workspace the window made it from, and none that is not one', async () => {
-    const workspace = { workspaceFile: 'file:///home/softov/work.code-workspace' };
+    const workspace = { workspaceFile: `${WORK_URI}/work.code-workspace` };
     const { meta } = await made({}, {}, undefined, { multiRoot: workspace });
     expect(meta?.multiRoot).toEqual(workspace);
     const bare = await made({}, {}, undefined, { multiRoot: { workspaceFile: 'work.code-workspace' } });
@@ -240,7 +241,7 @@ describe('a session a window sent here', () => {
     try {
       const dir = join(root, 'sessions');
       const first = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
+        path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), sessions: fileSessions({ dir }),
       });
       const a = first.accept(peer());
       await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -256,7 +257,7 @@ describe('a session a window sent here', () => {
        * the first host wrote down rather than one this one was told.
        */
       const second = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
+        path: WORK, agents: [claude({ paths: [WORK] })], ...machine(), sessions: fileSessions({ dir }),
       });
       const b = second.accept(peer());
       await b.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));

@@ -2,6 +2,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { ROOT } from '../src/host.js';
 import { claude, createHost, hello, machine, peer, resetSdk, sdk, sendAnswered, sessionQueries, settle } from './support/host.js';
 import type { Fake } from './support/claude-sdk.js';
+import { WORK } from './support/work.js';
+import { uriOf } from '../src/resources/fileuri.js';
 
 /*
  * A token aimed at one MCP server, with `authenticate`'s `target`.
@@ -38,7 +40,7 @@ vi.mock('../../agent-claude/src/mcp.js', () => ({
 
 beforeEach(resetSdk);
 
-const DIR = '/home/softov';
+const DIR = WORK;
 const DESK = 'https://desk.example/';
 const ANTHROPIC = 'https://api.anthropic.com';
 const ONE = 'ahp-session:/one';
@@ -72,7 +74,7 @@ const twoSessions = async () => {
   const opened = async (uri: string): Promise<Fake> => {
     await client.handle({
       method: 'createSession',
-      params: { channel: uri, provider: 'claude', workingDirectories: [`file://${DIR}`] },
+      params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(DIR)] },
     });
     await client.handle({ method: 'subscribe', params: { channel: uri } });
     // The CLI its first send starts, whose `describe` answers on its own
@@ -170,7 +172,7 @@ it('never starts a session on a token aimed at a server, even one that shares th
 
   await client.handle({
     method: 'createSession',
-    params: { channel: THREE, provider: 'claude', workingDirectories: [`file://${DIR}`] },
+    params: { channel: THREE, provider: 'claude', workingDirectories: [uriOf(DIR)] },
   });
   await settle(8);
   // The token is that server's, and an agent-level resource never gets it.
@@ -195,7 +197,7 @@ it('withdraws a targeted token and keeps the one pushed for the resource', async
 
   await client.handle({
     method: 'createSession',
-    params: { channel: THREE, provider: 'claude', workingDirectories: [`file://${DIR}`] },
+    params: { channel: THREE, provider: 'claude', workingDirectories: [uriOf(DIR)] },
   });
   await sendAnswered(client, THREE);
   await settle(8);
