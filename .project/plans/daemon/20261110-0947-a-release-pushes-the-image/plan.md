@@ -75,7 +75,7 @@ git push main -> edge job -> ghcr.io/<owner>/ahpd:edge, sha-<short>
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The release job pushes the image](task-01-the-release-job-pushes-the-image.md) | todo | - |
+| [01 - The release job pushes the image](task-01-the-release-job-pushes-the-image.md) | implemented | - |
 | [02 - Main pushes an edge image](task-02-main-pushes-an-edge-image.md) | todo | 01 |
 
 ## Risks and tradeoffs
@@ -86,8 +86,8 @@ git push main -> edge job -> ghcr.io/<owner>/ahpd:edge, sha-<short>
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-10.
-- **Next action:** [task-01-the-release-job-pushes-the-image.md](task-01-the-release-job-pushes-the-image.md), once [daemon/20261110-0947-ahpd-runs-from-an-image](../20261110-0947-ahpd-runs-from-an-image/plan.md) is built.
+- **Done so far:** the plan, 2026-11-10. Task 01 is implemented, 2026-11-10: the tag check also holds `docker/compose.yaml`'s default `AHPD_TAG` to the image the tag publishes, and `release.yml` has an `image` job after `parts` that builds both platforms and pushes `ghcr.io/<owner>/ahpd` with the version and npm-channel tags, `provenance: true` and `sbom: true`, and pushes nothing on a `dry_run`.
+- **Next action:** [task-02-main-pushes-an-edge-image.md](task-02-main-pushes-an-edge-image.md).
 - **Open questions:** none.
 - **Watch out for:**
 `latest` must never go on a pre-release, as npm refuses one.

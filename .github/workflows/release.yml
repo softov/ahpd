@@ -65,6 +65,24 @@ jobs:
               exit 1
             fi
           done
+          # docker/compose.yaml is fetched at this tag and runs the image this
+          # tag publishes, so its default has to name that image: `0.16` for a
+          # stable version, which follows the patches, and the full version for
+          # a pre-release, which no `X.Y` tag follows. One left at the last
+          # version starts the image before this one.
+          case "$tagged" in
+            *-*) expected=$tagged ;;
+            *) expected=$(printf '%s' "$tagged" | cut -d. -f1-2) ;;
+          esac
+          found=$(grep -o 'AHPD_TAG:-[^}]*}' docker/compose.yaml | sed 's/AHPD_TAG:-//; s/}$//' || true)
+          if [ -z "$found" ]; then
+            echo "docker/compose.yaml names no default AHPD_TAG."
+            exit 1
+          fi
+          if [ "$expected" != "$found" ]; then
+            echo "The tag says $tagged, so docker/compose.yaml defaults AHPD_TAG to $expected, and it says $found."
+            exit 1
+          fi
           echo "Releasing $tagged."
 
       # The npm dist-tag every package is staged under. A pre-release such as
@@ -260,3 +278,105 @@ jobs:
       - name: Build the parts, and push nothing
         if: ${{ inputs.dry_run == true }}
         run: node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs
+
+  # The daemon's own image, from the Dockerfile this tag writes, for both
+  # platforms a machine runs on. It waits for the checks the release runs and
+  # is pushed before npm is approved: the image is public when it lands, so a
+  # release npm rejects is untagged on GHCR by hand, as
+  # .project/pending/docker-image-first-push.md says.
+  #
+  # The tags follow the version and the npm channel, as the npm dist-tags do,
+  # so a `docker pull` with no tag gets what `npm i` would have. A stable
+  # `0.16.0` is `0.16.0`, `0.16`, `0` and `latest`; a pre-release
+  # `0.16.0-rc.1` is `0.16.0-rc.1` and `next`, and never `0.16` or `0`, which
+  # would move with it. A tag already there is replaced, because this image is
+  # the version, not a part beside it.
+  image:
+    needs: release
+    runs-on: ubuntu-latest
+    # node-pty builds from source for arm64 under emulation, which is slow.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+      # What signs the provenance attestation, through the runner's own OIDC
+      # token rather than a secret.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # Only to read the manifests. The workspace is installed and built inside
+      # the image's own `pack` stage, as a `docker build` from a checkout does.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The owner is read from the server's own `repository` field, lowercased
+      # as the registry's names are, which is how registryOf reads the owner of
+      # the parts' registry. A move to an organisation needs no edit here.
+      - name: Where the image goes
+        run: |
+          set -eu
+          owner=$(node -p "
+            const repository = require('./packages/server/package.json').repository;
+            const url = new URL(typeof repository === 'string' ? repository : repository.url);
+            url.pathname.split('/')[1].toLowerCase()
+          ")
+          version=$(node -p "require('./packages/server/package.json').version")
+          echo "IMAGE=ghcr.io/$owner/ahpd" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # The channel is the npm dist-tag the same version is staged under. A tag
+      # run has one version for every package, checked before this job starts.
+      - name: The channel the version goes to
+        run: |
+          set -eu
+          case "$VERSION" in
+            *-*) channel=next ;;
+            *) channel=latest ;;
+          esac
+          echo "CHANNEL=$channel" >> "$GITHUB_ENV"
+          echo "$VERSION goes to $channel."
+
+      # Both platforms from one runner, the arm64 build under emulation.
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: ${{ inputs.dry_run != true }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The version comes from the tag, and `X.Y` and `X` are left off a
+      # pre-release: they would move with it, and a `0.16` tag is what a patch
+      # follows.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ env.CHANNEL == 'latest' }}
+            type=semver,pattern={{major}},enable=${{ env.CHANNEL == 'latest' }}
+            type=raw,value=${{ env.CHANNEL }}
+          labels: |
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      # A rehearsal builds both platforms and pushes nothing.
+      - name: Build the image, and push it unless this is a dry run
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ inputs.dry_run != true }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # What the image was built from, and what is in it, recorded beside
+          # it in the registry.
+          provenance: true
+          sbom: true
