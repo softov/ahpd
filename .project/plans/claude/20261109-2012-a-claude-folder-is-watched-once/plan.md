@@ -1,7 +1,7 @@
 ---
 title: A Claude folder is watched once
 domain: claude
-status: planned
+status: active
 priority: medium
 created: 2026-11-09
 revalidated: 2026-11-09
@@ -85,8 +85,8 @@ session -> servers.ts -> createClaudeCustomizationWatcher(configDir, cwd)
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - One handle per folder](task-01-one-handle-per-folder.md) | todo | - |
-| [02 - The handles are counted on a running daemon](task-02-the-handles-are-counted-on-a-running-daemon.md) | todo | 01 |
+| [01 - One handle per folder](task-01-one-handle-per-folder.md) | done | - |
+| [02 - The handles are counted on a running daemon](task-02-the-handles-are-counted-on-a-running-daemon.md) | doing | 01 |
 
 ## Risks and tradeoffs
 
@@ -96,10 +96,10 @@ session -> servers.ts -> createClaudeCustomizationWatcher(configDir, cwd)
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-one-handle-per-folder.md](task-01-one-handle-per-folder.md).
+- **Done so far:** task 01 on 2026-11-09; task 02's README sentence and the watcher's own handle counts on 2026-11-09.
+- **Next action:** steps 1 to 4 of [task-02-the-handles-are-counted-on-a-running-daemon.md](task-02-the-handles-are-counted-on-a-running-daemon.md) on a running dev daemon, by hand, then `implemented.md`.
 - **Open questions:** none.
-- **Watch out for:** `scope.folder` closes and opens a folder's handle again when the folder is made again; with sharing, that must be `fresh`, or the holder gets the other holders' dead handle back.
+- **Watch out for:** a folder made again cannot be told by its inode, which Linux reuses; `fresh` from `folder` is what reopens it, and `young` keeps one change from reopening it once per holder.
 
 ## Final verification checklist
 

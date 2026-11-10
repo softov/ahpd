@@ -243,7 +243,7 @@ A file's frontmatter is what lies between the `---` line that opens it and the n
 
 A session in a machine has its CLI read the machine's own config volume. Its entries are listed with no file: its skills and commands in the `builtin` skills directory, its agents in a read-only `builtin` agents directory, `claude-internal:/agents`. No writable directory is sent.
 
-A file written, edited or deleted in these folders shows without a restart. Each session watches its personal and project folders from the moment it is made, reads them again before its first CLI has answered and asks the CLI for its lists again after, and the host does the same for the personal folder before any session exists. A session in a machine is not watched.
+A file written, edited or deleted in these folders shows without a restart. Each session watches its personal and project folders from the moment it is made, reads them again before its first CLI has answered and asks the CLI for its lists again after, and the host does the same for the personal folder before any session exists. A session in a machine is not watched. Sessions and presets that watch the same folder share one watch of it.
 
 ## The agent a message picks
 
