@@ -271,8 +271,10 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
       name: 'ahpd-endpoint',
       hidden: true,
       factory: (pi: ExtensionAPI): void => {
-        pi.on('before_provider_headers', (event) => {
-          event.headers.authorization = null;
+        // Only the endpoint's own requests go keyless: a model of another
+        // provider in the same session keeps the key its provider sends.
+        pi.on('before_provider_headers', (event, ctx) => {
+          if (ctx.model?.provider === endpoint.provider) event.headers.authorization = null;
         });
       },
     });
