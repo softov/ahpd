@@ -31,7 +31,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 - **A working day.** Softov uses the daemon on main for one working day: ahpw, VS Code, ahpc, bots, sessions and the tunnel. A fault is a problem file or a fix before 0.15.0.
 - **The checks by hand.** [triage.md](triage.md) orders them. The ones for features a user meets first:
   - [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md), on Windows and macOS. It passed on Linux.
-  - [cofold-resume-checks.md](cofold-resume-checks.md) and [pi-resume-checks.md](pi-resume-checks.md). The Claude resume passed on 2026-11-09.
+  - [cofold-resume-checks.md](cofold-resume-checks.md). The Claude resume passed on 2026-11-09, and the pi resume on 2026-11-10.
   - [host-1347-mcp-checks.md](host-1347-mcp-checks.md), the tools at `/mcp`.
   - [update-checks.md](update-checks.md).
   - [macos-checks.md](macos-checks.md) and [daemon-41-windows-checks.md](daemon-41-windows-checks.md), for the install on macOS and Windows. The install on Linux passed on 2026-11-09.

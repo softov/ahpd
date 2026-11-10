@@ -105,7 +105,7 @@ chat/turnResume -> chatactions.ts -> pi session resume -> chat/turnResume echoed
 
 ## Final verification checklist
 
-- [ ] A pi turn that fails on a model call shows a resume in VS Code, and the resume continues the turn without a new message.
+- [x] A pi turn that fails on a model call shows a resume in VS Code, and the resume continues the turn without a new message.
 - [ ] A tool call that ran before the failure does not run again.
 - [ ] After a daemon restart, the last failed turn can still be resumed.
 - [ ] A resume that fails again adds one more error part, and the turn can be resumed again.

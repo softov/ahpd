@@ -23,7 +23,7 @@ A pi turn that failed on a model call can be resumed. The client sends `chat/tur
 - `packages/sdk/test/echo-origin.test.ts`: 6 tests pass, with the new case that a resume is echoed with its `clientSeq`.
 - `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
 - The whole suite: 7960 pass and 1 fails. The failure is `computer-git-fetch.test.ts`, which finds a temporary folder of another test. That file passes alone, 26 of 26.
-- A resume against a real model is not done yet. See `.project/pending/pi-resume-checks.md`.
+- Steps 1 to 3 of the check by hand passed on 2026-11-10, in VS Code. With no key, a turn failed with a retry control. With an OpenRouter key added, the retry worked. Steps 4 to 6 were not run: a retry after a restart, and a retry that is stopped. The check was `pending/pi-resume-checks.md`, last held at git://41bd5ca05.
 
 ## Departures from the plan
 
