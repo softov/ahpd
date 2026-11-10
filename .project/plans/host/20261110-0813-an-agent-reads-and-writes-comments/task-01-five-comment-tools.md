@@ -1,6 +1,6 @@
 ---
 title: Five comment tools on the channel
-status: todo
+status: implemented
 depends: []
 layer: "sdk, docs"
 refs:
@@ -37,3 +37,9 @@ ahpd serves `addComment`, `listComments`, `replyToComment`, `deleteComments` and
 
 ## Resume
 
+- **Done so far:** `packages/sdk/src/tools/comments.ts` holds VS Code's five tools, by name, schema, wording and refusal, and `applyCommentTool` is the pure part: it reads `AnnotationsState` and answers the actions and the model's text. A comment is an annotation carrying `_meta['vscode.agentFeedback']`, and only one with that slot is listed, replied to, resolved or deleted. `addComment` writes a `codeReview` comment in the `created` state, with the turn's origin and one `agent` entry, and its range becomes zero-based; `listComments` hides `created` and, by default, resolved comments; `replyToComment` adds an `agent` entry; `resolveComments` writes `resolved` or `submitted` back and carries a client's other meta fields through untouched; `deleteComments` removes the ids it found and names the ones it did not. All five set `deferLoading: true`, and the four writers ask `session:review` with `may` and refuse with the host's own sentence. Every write goes through `markAnnotation`, which a client's `annotations/*` action now takes too, so the channel is one state and one notice whichever produced it. `commentTools()` is registered beside `artifactTools()` in `hostTools()`.
+- **Next action:** [task-02-view-unreviewed-comments.md](task-02-view-unreviewed-comments.md).
+- **Open questions:** none.
+- **Watch out for:** the by-hand check in VS Code was not run. The cases drive the tools through a host and read its annotations channel, so VS Code itself is still to confirm. An annotation that carries the key with the wrong shape is somebody else's, not a comment, and the tools leave it alone.
+
+Files changed by this task: `packages/sdk/src/tools/comments.ts`, `packages/sdk/src/tools/index.ts`, `packages/sdk/src/host.ts`, `packages/sdk/src/host/actions.ts`, `packages/sdk/src/host/context.ts`, `packages/sdk/src/host/snapshots.ts`, `packages/sdk/src/host/tooling.ts`, `packages/sdk/src/types/host.ts`, `packages/sdk/test/commenttools.test.ts`, `packages/sdk/test/host-tools.test.ts`, `packages/sdk/test/host-github.test.ts`, `docs/sdk/TOOLS.md`, `docs/updates/v0_15.md`.

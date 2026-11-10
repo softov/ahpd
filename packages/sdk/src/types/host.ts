@@ -1,6 +1,6 @@
 /** The protocol server: channels, subscriptions and requests. */
 
-import type { ProjectInfo, ToolDefinition, ToolResultContent } from '@microsoft/agent-host-protocol';
+import type { AnnotationsAction, AnnotationsState, ProjectInfo, ToolDefinition, ToolResultContent } from '@microsoft/agent-host-protocol';
 import type { LogLevel } from '../log.js';
 import type { OnWire } from './wire.js';
 import type { Agent, BoundTool, McpServer, ToolEffects } from './agent.js';
@@ -1662,6 +1662,25 @@ export interface ToolCall {
   artifacts(): Bag[];
   /** Replace them, and tell every client watching the session. */
   setArtifacts(list: Bag[]): void;
+  /**
+   * The marks on the calling session, as its annotations channel holds them.
+   *
+   * A mark is what a window draws on a file range: a comment, a suggestion,
+   * anything else a client put there. Read here rather than kept by the tool,
+   * because the channel may also have been written by a client while the turn
+   * runs.
+   */
+  annotations(): AnnotationsState;
+  /**
+   * Make one mark on the calling session, and tell every client watching it.
+   *
+   * The same writer a client's `annotations/*` action goes through, so a
+   * comment a tool adds and one the window adds are one state to everybody.
+   * The action is checked by the channel, not here: `annotations/*` needs
+   * `session:review`, which a writing tool asks for with `may` before it
+   * calls this.
+   */
+  markAnnotation(action: AnnotationsAction): void;
   /**
    * Replace what this call has produced so far, which every client watching
    * the chat is shown as the running call's partial content, the spec's
