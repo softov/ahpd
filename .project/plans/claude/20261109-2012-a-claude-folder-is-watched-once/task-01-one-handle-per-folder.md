@@ -1,6 +1,6 @@
 ---
 title: One handle per folder
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -118,9 +118,18 @@ refs:
 
 ## Validation
 
-- `packages/agent-claude/test/watch.test.ts`: the cases above, and the existing thirteen unchanged.
+- `packages/agent-claude/test/watch.test.ts`: the cases above, and the existing twelve unchanged.
 - `node node_modules/vitest/vitest.mjs run packages/agent-claude/test/` on Windows with Node 22 passes.
 - `pnpm typecheck` is clean.
 
 ## Resume
+
+Done on 2026-11-09.
+`watch.ts` has the registry and `watch.test.ts` the five cases; 17 cases pass on Windows with Node 22, and the 66 files of `packages/agent-claude/test` with `host-snapshots.test.ts` pass (722 cases).
+Against the `watch.ts` of `main`, the first and the last of the new cases fail and the other three pass, as they check what did not change.
+
+Departure from steps 1 and 4: `holdFolder` takes no `fresh` flag.
+It records the folder's inode when it opens the handle, and opens it again only when the folder on disk has another inode.
+The scope folder's handle is shared, so one `rename` reaches every holder's `folder`, and with a flag each holder would have reopened in turn, each closing the handle the one before had opened.
+The defaulted row still holds: a folder made again gets a fresh handle and every listener moves to it, once.
 

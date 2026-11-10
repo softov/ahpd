@@ -1,6 +1,6 @@
 ---
 title: The handles are counted on a running daemon
-status: todo
+status: doing
 depends:
   - task-01-one-handle-per-folder.md
 layer: "agent-claude"
@@ -34,4 +34,19 @@ The daemon's handle count is measured before and after task 01, with several ses
 - Softov checks the counts by hand.
 
 ## Resume
+
+On 2026-11-09 the README sentence was added, and the watcher's own handles were counted, not yet a daemon's.
+The count ran the real `watch.ts` under `scripts/dev.mjs` on Windows with Node 22, with `fs.watch` wrapped to count each handle opened and closed.
+The tree was a personal scope and a project `.claude`, each with `agents`, `skills`, `commands`, `rules` and `plugins` of ten subfolders each.
+Two probes watched the personal folder, and then three sessions the personal folder and one project:
+
+| | `main` | task 01 |
+| --- | --- | --- |
+| 2 probes | 12 | 6 |
+| 2 probes and 1 session | 25 | 13 |
+| 2 probes and 2 sessions | 38 | 13 |
+| 2 probes and 3 sessions | 51 | 13 |
+| all closed | 0 | 0 |
+
+Left: steps 1 to 4 on a running dev daemon, which Softov runs by hand, and `implemented.md` after them.
 

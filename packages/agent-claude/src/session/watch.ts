@@ -1,6 +1,6 @@
 import { existsSync, statSync, watch } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { projectDirOf } from './disk.js';
 
 /** The folders a session's customizations are read from. */
@@ -58,6 +58,87 @@ const FILES = new Set(['CLAUDE.md', 'CLAUDE.local.md', 'settings.json', 'setting
  */
 const MEMORY = new Set(['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json']);
 
+type Listener = (event: string, name: string | null) => void;
+
+/** One folder's handle, the folder it was opened on, and every watcher's listener on it. */
+interface Shared {
+  handle: FSWatcher;
+  /** The folder's inode when the handle was opened: a folder made again has another. */
+  ino: number | undefined;
+  listeners: Set<Listener>;
+}
+
+/**
+ * The open handles, one per folder and recursive flag, whatever watchers hold
+ * them: each preset's probe and each session watch the same personal folder,
+ * and the sessions of one project the same project, and a handle each was the
+ * whole tree again for each of them on Linux, where a recursive watch is an
+ * inotify watch per subfolder.
+ */
+const shared = new Map<string, Shared>();
+
+/** A folder's key: its resolved path, compared case-sensitively only on Linux, and whether its subfolders are watched. */
+const keyOf = (at: string, recursive: boolean): string => {
+  const path = resolve(at);
+  return `${recursive ? 'r' : 'n'}:${process.platform === 'linux' ? path : path.toLowerCase()}`;
+};
+
+/** The folder's inode now, or nothing when it is not there. */
+const inoOf = (at: string): number | undefined => {
+  try { return statSync(at).ino; }
+  catch { return undefined; }
+};
+
+/** Open the folder's one handle for `listeners`, or nothing when it cannot be. */
+const openShared = (key: string, at: string, recursive: boolean, listeners: Set<Listener>): Shared | undefined => {
+  let handle: FSWatcher;
+  try {
+    handle = watch(at, { recursive }, (event, name) => {
+      for (const one of [...listeners]) one(event, name === null ? null : String(name));
+    });
+  }
+  catch { return undefined; }
+  const entry: Shared = { handle, ino: inoOf(at), listeners };
+  // A failed handle takes only itself, for every holder; an `error` with no listener ends the process.
+  handle.on('error', () => {
+    handle.close();
+    if (shared.get(key) === entry) shared.delete(key);
+  });
+  shared.set(key, entry);
+  return entry;
+};
+
+/**
+ * Hold a folder with `listener`, and answer the function that lets go: the
+ * handle closes with its last holder, or nothing when the folder cannot be
+ * watched.
+ *
+ * A folder removed and made again is another folder, which the old handle
+ * hears nothing of on Linux. So a hold that finds the folder on disk is not
+ * the one the handle was opened on opens it again, and every holder moves to
+ * the new handle: once, however many holders ask after the same `rename`.
+ */
+const holdFolder = (at: string, recursive: boolean, listener: Listener): (() => void) | undefined => {
+  const key = keyOf(at, recursive);
+  let entry = shared.get(key);
+  if (entry !== undefined && entry.ino !== inoOf(at)) {
+    entry.handle.close();
+    shared.delete(key);
+    entry = openShared(key, at, recursive, entry.listeners);
+  }
+  else if (entry === undefined) entry = openShared(key, at, recursive, new Set());
+  if (entry === undefined) return undefined;
+  entry.listeners.add(listener);
+  const held = entry;
+  return () => {
+    held.listeners.delete(listener);
+    if (held.listeners.size === 0 && shared.get(key) === held) {
+      held.handle.close();
+      shared.delete(key);
+    }
+  };
+};
+
 /**
  * Watch the Claude folders of a session, and call `onChange` when a
  * customization in them is written, edited or deleted: VS Code's
@@ -73,7 +154,8 @@ const MEMORY = new Set(['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json']);
  *
  * A watcher is an extra rather than the answer: a folder that cannot be
  * watched is left out, and nothing here throws. The function it returns
- * closes every handle, and no call comes after it.
+ * lets go of every folder it holds, and no call comes after it. A folder has
+ * one handle however many watchers hold it, and it closes with the last.
  *
  * `quiet`, where given, says when a change calls for nothing: one told while
  * it holds is dropped as it arrives.
@@ -81,7 +163,8 @@ const MEMORY = new Set(['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json']);
 export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: () => void, quiet?: () => boolean): () => void {
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const handles = new Set<FSWatcher>();
+  /** What lets go of each folder this watcher holds. */
+  const releases = new Set<() => void>();
 
   const fire = (): void => {
     if (closed || quiet?.() === true) return;
@@ -92,19 +175,16 @@ export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: ()
     }, roots.waitMs ?? WAIT_MS);
   };
 
-  /** One folder watched through the shared wait, or nothing when it cannot be. */
-  const opened = (at: string, recursive: boolean, onName: (name: string | null, event: string) => void): FSWatcher | undefined => {
+  /** One folder held through the shared wait, answering what lets go of it, or nothing when it cannot be watched. */
+  const opened = (at: string, recursive: boolean, onName: (name: string | null, event: string) => void): (() => void) | undefined => {
     if (closed) return undefined;
-    let watcher: FSWatcher;
-    try { watcher = watch(at, { recursive }, (event, name) => onName(name === null ? null : String(name), event)); }
-    catch { return undefined; }
-    handles.add(watcher);
-    // A failed handle takes only itself; an `error` with no listener ends the process.
-    watcher.on('error', () => {
-      watcher.close();
-      handles.delete(watcher);
-    });
-    return watcher;
+    const release = holdFolder(at, recursive, (event, name) => onName(name, event));
+    if (release === undefined) return undefined;
+    releases.add(release);
+    return () => {
+      release();
+      releases.delete(release);
+    };
   };
 
   /**
@@ -118,11 +198,10 @@ export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: ()
    * that is not there is watched for from its parent.
    */
   const scope = (dir: string): void => {
-    const held = new Map<string, FSWatcher | undefined>();
+    const held = new Map<string, (() => void) | undefined>();
     /** Watch one folder of the scope again, from what is there now. */
     const folder = (name: string): void => {
-      const was = held.get(name);
-      if (was !== undefined) { was.close(); handles.delete(was); }
+      held.get(name)?.();
       const at = join(dir, name);
       const onName = name === PLUGINS
         ? fire
@@ -151,8 +230,7 @@ export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: ()
     const own = basename(dir);
     const parent = opened(dirname(dir), false, (name) => {
       if (name !== own || !existsSync(dir) || closed) return;
-      parent?.close();
-      if (parent !== undefined) handles.delete(parent);
+      parent?.();
       open();
       // What was written with the folder came before its watch.
       fire();
@@ -181,7 +259,7 @@ export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: ()
     closed = true;
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
-    for (const handle of handles) handle.close();
-    handles.clear();
+    for (const release of [...releases]) release();
+    releases.clear();
   };
 }

@@ -1,9 +1,34 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import type { FSWatcher } from 'node:fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createClaudeCustomizationWatcher } from '../src/session/watch.js';
 import { WAIT_MS } from '../../../tools/wait.ts';
+
+/*
+ * Every `fs.watch` the watcher opens, counted: how many were opened, how many
+ * are open now, and each handle by the folder it is on, so a case can make one
+ * fail. A handle counts as closed once, at its first `close()`.
+ */
+const fsw = vi.hoisted(() => ({ opened: 0, open: 0, handles: [] as { at: string; handle: FSWatcher }[] }));
+vi.mock('node:fs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs')>();
+  const watch = ((...args: Parameters<typeof real.watch>) => {
+    const handle = real.watch(...args);
+    fsw.opened += 1;
+    fsw.open += 1;
+    fsw.handles.push({ at: String(args[0]), handle });
+    const close = handle.close.bind(handle);
+    let shut = false;
+    handle.close = () => {
+      if (!shut) { shut = true; fsw.open -= 1; }
+      close();
+    };
+    return handle;
+  }) as typeof real.watch;
+  return { ...real, watch, default: { ...real, watch } };
+});
 
 /*
  * The watcher of a session's Claude folders, on real folders.
@@ -207,5 +232,93 @@ describe('the watcher of the Claude folders', () => {
     const root = fresh();
     const stop = createClaudeCustomizationWatcher({ configDir: join(root, 'no', 'such'), cwd: join(root, 'missing') }, () => undefined);
     expect(stop).not.toThrow();
+  });
+});
+
+/*
+ * One handle per folder, however many watchers hold it: each preset's probe
+ * and each session watch the same personal folder, and the sessions of one
+ * project the same project.
+ */
+describe('the handles of the Claude folders', () => {
+  /** A personal folder with `agents`, and a working directory with a project `.claude/skills`. */
+  const folders = (): { config: string; work: string } => {
+    const root = fresh();
+    const config = join(root, 'config');
+    const work = join(root, 'work');
+    mkdirSync(join(config, 'agents'), { recursive: true });
+    mkdirSync(join(work, '.claude', 'skills'), { recursive: true });
+    return { config, work };
+  };
+
+  it('opens each folder once for two watchers of the same folders, and calls both for one change', async () => {
+    const { config, work } = folders();
+    const before = fsw.opened;
+    const one = await watched({ configDir: config, cwd: work });
+    const first = fsw.opened - before;
+    expect(first).toBeGreaterThan(0);
+    const two = await watched({ configDir: config, cwd: work });
+    expect(fsw.opened - before).toBe(first);
+    writeFileSync(join(config, 'agents', 'scout.md'), '---\nname: scout\n---\n');
+    await until(one.calls, 1);
+    await until(two.calls, 1);
+    await pause(700);
+    expect([one.calls(), two.calls()]).toEqual([1, 1]);
+  });
+
+  it('keeps calling one watcher when the other closes, and closes the handles with the last', async () => {
+    const { config, work } = folders();
+    const open = fsw.open;
+    const one = await watched({ configDir: config, cwd: work });
+    const two = await watched({ configDir: config, cwd: work });
+    one.stop();
+    expect(fsw.open).toBeGreaterThan(open);
+    writeFileSync(join(work, '.claude', 'skills', 'build.md'), '# Build\n');
+    await until(two.calls, 1);
+    await pause(700);
+    expect([one.calls(), two.calls()]).toEqual([0, 1]);
+    two.stop();
+    expect(fsw.open).toBe(open);
+  });
+
+  it('shares no handle between two personal folders', async () => {
+    const a = folders();
+    const b = folders();
+    const before = fsw.opened;
+    await watched({ configDir: a.config });
+    const first = fsw.opened - before;
+    await watched({ configDir: b.config });
+    expect(fsw.opened - before).toBe(2 * first);
+  });
+
+  it('hears a folder removed and made again, in both watchers', async () => {
+    const { config } = folders();
+    const one = await watched({ configDir: config });
+    const two = await watched({ configDir: config });
+    rmSync(join(config, 'agents'), { recursive: true, force: true });
+    mkdirSync(join(config, 'agents'));
+    // The removal and the making are a change of their own.
+    await until(one.calls, 1);
+    await until(two.calls, 1);
+    await pause(700);
+    const was = [one.calls(), two.calls()];
+    writeFileSync(join(config, 'agents', 'scout.md'), '---\nname: scout\n---\n');
+    await until(one.calls, (was[0] ?? 0) + 1);
+    await until(two.calls, (was[1] ?? 0) + 1);
+    expect([one.calls(), two.calls()]).toEqual([(was[0] ?? 0) + 1, (was[1] ?? 0) + 1]);
+  });
+
+  it('drops a handle that fails for both watchers, and throws nothing', async () => {
+    const { config } = folders();
+    const one = await watched({ configDir: config });
+    const two = await watched({ configDir: config });
+    const open = fsw.open;
+    const agents = fsw.handles.filter((one) => one.at === join(config, 'agents')).at(-1);
+    expect(agents).toBeDefined();
+    expect(() => agents?.handle.emit('error', new Error('gone'))).not.toThrow();
+    expect(fsw.open).toBe(open - 1);
+    writeFileSync(join(config, 'agents', 'scout.md'), '---\nname: scout\n---\n');
+    await pause(700);
+    expect([one.calls(), two.calls()]).toEqual([0, 0]);
   });
 });
