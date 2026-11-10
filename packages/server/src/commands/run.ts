@@ -106,7 +106,7 @@ import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npm
 import { manifest, version } from '../version.js';
 import { conflict, namedOptionsFrom, secret, flagFields, stop } from './options.js';
 import {
-  FORCED_SIGNAL, RESTART_DELAY_MS, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, parking, restartMethod, successorTakes,
+  CONTAINER_EXIT, FORCED_SIGNAL, RESTART_DELAY_MS, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, parking, restartMethod, successorTakes,
 } from './restart.js';
 import type { RestartOutcome } from './restart.js';
 import type { Options } from './options.js';
@@ -2406,8 +2406,15 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * process spawned would be in the same cgroup as this one, where the stop
      * job the restart begins with would end it too. A daemon started by a
      * terminal has no manager to ask.
+     *
+     * A container has no manager either: its runtime starts what leaves with a
+     * non-zero code, so the hand has nothing to ask and the exit is `EX_TEMPFAIL`.
      */
-    ...(service === undefined || service === 'container' ? {} : { hand: (): Promise<void> => realManager().restart(service, serviceName) }),
+    ...(service === undefined
+      ? {}
+      : service === 'container'
+        ? { hand: async (): Promise<void> => {}, handExit: CONTAINER_EXIT }
+        : { hand: (): Promise<void> => realManager().restart(service, serviceName) }),
   });
   // From here a `shutdown` request runs the way down, as the control pipe does.
   wayDown = way.shutdown;
@@ -2466,9 +2473,11 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   );
   /*
    * `ahpd restart` at the terminal: a signal to the recorded process, which
-   * answers it here. A daemon run in the foreground never listens for them.
+   * answers it here. A daemon run in the foreground never listens for them, but
+   * a container daemon does: it has no line to start a successor from, and the
+   * signal is the only way a terminal outside the container reaches it.
    */
-  if (detached) {
+  if (detached || service === 'container') {
     const answer = (forced: boolean, piped: boolean) => (): void => {
       void answerRestartSignal(forced, { self: process.pid, recorded: running, log: stamp, restart }, piped);
     };

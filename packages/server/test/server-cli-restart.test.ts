@@ -275,6 +275,34 @@ describe('start, stop and status', () => {
     expect(existsSync(join(home, 'ahpd', 'daemon.json'))).toBe(true);
   }, 60000);
 
+  /*
+   * A container daemon is restarted by its signal: it closes, drops its record
+   * and exits 75, which is what the container's restart policy starts again.
+   * Nothing starts a successor from here, and the terminal answers at once:
+   * the daemon it asked is on its way down, and the next record is one a daemon
+   * the container starts writes.
+   */
+  it('asks a container daemon to restart, and it exits for the container to start it again', async () => {
+    const daemon = await supervised([], { AHPD_SERVICE: 'container' });
+    const asked = await cli(['restart']);
+    expect({ code: asked.code, stderr: asked.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(asked.stdout).toBe(`Asked the container daemon (pid ${String(daemon.pid)}) to restart; the container starts it again when it exits.\n`);
+    // The signal is what reached it, named in its own line, and the exit is the
+    // one the policy reads.
+    expect(await daemon.ended).toBe(75);
+    expect(daemon.said()).toContain(`restart: stopping (${posix ? 'SIGHUP' : 'control pipe'})`);
+    expect(existsSync(join(home, 'ahpd', 'daemon.json'))).toBe(false);
+    expect(announced().filter(alive)).toEqual([]);
+  }, 60000);
+
+  it('asks a container daemon to restart at once with --force', async () => {
+    const daemon = await supervised([], { AHPD_SERVICE: 'container' });
+    const asked = await cli(['restart', '--force']);
+    expect({ code: asked.code, stderr: asked.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(await daemon.ended).toBe(75);
+    expect(daemon.said()).toContain(`restart: stopping (${posix ? 'SIGUSR2' : 'control pipe, forced'})`);
+  }, 60000);
+
   // A service manager is systemd or launchd, and Windows has neither.
   it.skipIf(!posix)('hands a restarted supervised daemon to the service manager, and starts nothing itself', async () => {
     put({ httpApi: true, plugins: [BACKEND], connectionToken: 'abc' });

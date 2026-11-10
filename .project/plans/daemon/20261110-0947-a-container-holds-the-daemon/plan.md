@@ -92,7 +92,7 @@ ahpd stop, ahpd update -> record names container -> refused with the container's
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A container daemon writes its record and refuses a stop](task-01-a-container-daemon-writes-its-record.md) | implemented | - |
-| [02 - A restart exits for the restart policy](task-02-a-restart-exits-for-the-policy.md) | todo | 01 |
+| [02 - A restart exits for the restart policy](task-02-a-restart-exits-for-the-policy.md) | implemented | 01 |
 | [03 - An update names the image](task-03-an-update-names-the-image.md) | todo | 01 |
 
 ## Risks and tradeoffs
@@ -102,13 +102,14 @@ ahpd stop, ahpd update -> record names container -> refused with the container's
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-10; task 01, 2026-11-10.
-- **Next action:** [task-02-a-restart-exits-for-the-policy.md](task-02-a-restart-exits-for-the-policy.md).
+- **Done so far:** the plan, 2026-11-10; task 01, 2026-11-10; task 02, 2026-11-10.
+- **Next action:** [task-03-an-update-names-the-image.md](task-03-an-update-names-the-image.md).
 - **Open questions:** none.
 - **Watch out for:**
 `runForeground` removes `AHPD_SERVICE` from the environment at once, so a session shell does not inherit it.
 `restartUnderManager` drops the record before it hands over, because the next daemon reads the same configuration folder.
 `notRestartable` returns nothing for any record with a `service`, so the container kind passes it with no change there.
+A terminal restart of a container record answers at once and does not wait for a record: the container runtime starts the next daemon, and the record the next daemon writes is read by `ahpd status`.
 A refusal is thrown in one place and answered by the terminal and the served method, so both say the same sentence.
 
 ## Final verification checklist
