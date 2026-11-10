@@ -9,7 +9,7 @@ import { createFileStore } from '@cofold/store-file';
 import type { Message, MessageSource, ModelAdapter, ModelReply, ModelStreamEvent, Policy, RunEvent, Store } from '@cofold/agents';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
-import { uriOf } from '@ahpd/sdk';
+import { bag, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, BoundTool, Listed, MessageAttachment, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { startedNow } from '../../sdk/test/support/started.js';
@@ -1230,6 +1230,31 @@ it('rebuilds a turn with the model it ran on, after a restart', async () => {
   const turn = (await second.transcript?.('one'))?.at(-1);
   expect((turn?.message as { model?: { id?: string } } | undefined)?.model?.id).toBe('open_router/x');
   expect(turn?.usage?.model).toBe('open_router/x');
+});
+
+it('rebuilds a failed turn with the error it ended with, after a restart', async () => {
+  const { root, sweep } = place();
+  const answers = createFakeModel({ script: [{ text: 'unused' }], stream: true });
+  const failing: ModelAdapter = {
+    ...answers,
+    stream: async function* (): AsyncIterable<ModelStreamEvent> {
+      yield* [];
+      throw new Error('403 from the endpoint: this model is not available');
+    },
+  };
+  const before = open(backend(root, failing, allowAll()), 'one', sweep);
+  before.session.sendMessage('t1', 'hi');
+  await until(() => before.view.types('chat').includes('chat/error'));
+  const live = bag(before.view.said('chat', 'chat/error')?.part);
+  before.session.close();
+
+  // The restart: a fresh backend over the same directory reads the store alone.
+  const second = backend(root, createFakeModel({ script: [{ text: 'unused' }], stream: true }), allowAll());
+  const turn = (await second.transcript?.('one'))?.at(-1);
+  expect(turn?.state).toBe('error');
+  const last = turn?.responseParts.at(-1) as Bag | undefined;
+  expect(last).toEqual({ kind: 'error', error: bag(live.error) });
+  expect(String(bag(last?.error).message)).toContain('this model is not available');
 });
 
 /*
