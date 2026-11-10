@@ -7,9 +7,11 @@
  * the chat that turned Agent Merge on, with the tools a repair turn is allowed
  * to use. That turn pushes its own work, and the watch asks again when it ends.
  *
- * The merge is not here. VS Code's controller merges when the pull request is
- * ready; this plan holds every merge at `never`, and the merge is
- * host/20261110-0813-agent-merge-merges-a-pull-request.
+ * When the pull request is ready, the watch merges it if the folder's merge
+ * choice allows it: `always`, or `ifUnchanged` while no repair turn has
+ * committed. A repair turn that commits demotes `ifUnchanged` to `never`, so
+ * the choice always says what will happen. `never` is the default and merges
+ * nothing.
  *
  * The state is VS Code's `AgentMergeFolderState`, kept in this host beside the
  * session and forgotten with it. VS Code keeps it in the session's config so a
@@ -24,13 +26,14 @@ import type { Owner } from '../types/usage.js';
 import type { AgentMergeCIRequest, AgentMergeOverridesInput, AgentMergeToolAccessor } from '../types/host.js';
 import type {
   PullRequestCheck, PullRequestChecks, PullRequestComment, PullRequestCore, PullRequestDetail, PullRequestFeedbackComment,
-  PullRequestJob, PullRequestReview, PullRequestReviewThread, PullRequests,
+  PullRequestJob, PullRequestMergeMethod, PullRequestReview, PullRequestReviewThread, PullRequests,
 } from '../types/github.js';
+import { runGit } from '../repo/hardened.js';
 import type { HostContext } from './context.js';
 
 export type AgentMergeRepairAction = 'addressReviews' | 'fixCI' | 'resolveConflicts';
 
-/** When Agent Merge would merge. Held at `never` in this plan, whatever the key says. */
+/** When Agent Merge would merge: never, whenever ready, or while the folder's worktree is unchanged. */
 export type AgentMergeMergePullRequest = 'never' | 'always' | 'ifUnchanged';
 
 export interface AgentMergeTarget {
@@ -74,6 +77,13 @@ export interface AgentMergeFolderState {
   lastPromptHeadSha?: string;
   lastPromptBlockers?: string[];
   lifetimePromptCount?: number;
+  /**
+   * The folder's local commit when the most recent repair turn started. A
+   * different commit afterwards means that turn produced work, which is what
+   * demotes `ifUnchanged` to `never`. Local rather than the pull request's
+   * published head, which GitHub reports only after a replication delay.
+   */
+  repairBaseCommit?: string;
 }
 
 /** One job's log, kept for the repair turn that asked for it. */
@@ -172,9 +182,16 @@ const MAXIMUM_FEEDBACK_BUDGET = 20_000;
 
 const SUCCESSFUL_CONCLUSIONS = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
 
+/** GitHub's mergeable states that still allow a merge, as VS Code's gate reads them. */
+const MERGEABLE_STATES = new Set(['CLEAN', 'HAS_HOOKS', 'UNSTABLE']);
+
+/** Recorded as the repair baseline when the folder's commit cannot be read. No commit can equal it. */
+const AGENT_MERGE_UNKNOWN_COMMIT = 'unknown';
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string') : [];
+const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 /** Whether a comment's author is a person whose feedback a repair turn acts on. */
 const isFeedbackAuthor = (author: string | undefined): boolean =>
@@ -250,6 +267,7 @@ interface PromptContext {
 type Evaluation =
   | { kind: 'terminal'; why: 'closed' | 'merged' }
   | { kind: 'waiting'; why: string }
+  | { kind: 'merge'; fingerprint: string }
   | {
     kind: 'prompt';
     actions: AgentMergeRepairAction[];
@@ -287,7 +305,6 @@ const evaluate = (detail: PullRequestDetail, configuration: AgentMergeConfigurat
   if (configuration.addressReviews && (feedback.reviewThreads.length > 0 || feedback.changesRequested.length > 0 || feedback.newComments.length > 0)) actions.push('addressReviews');
   if (configuration.fixCI && checks.failed.length > 0) actions.push('fixCI');
   if (configuration.resolveConflicts && (behind || conflicting)) actions.push('resolveConflicts');
-  if (actions.length === 0) return { kind: 'noWork' };
   const budget = new FeedbackBudget();
   const context: PromptContext = {
     pullRequestUrl: core.url,
@@ -315,16 +332,35 @@ const evaluate = (detail: PullRequestDetail, configuration: AgentMergeConfigurat
     conflicting,
   };
   const blockers = blockersOf(actions, context);
-  return {
-    kind: 'prompt',
-    actions,
-    fingerprint: JSON.stringify({ actions, context, blockers }),
-    context,
-    blockers,
-    threadIds: feedback.reviewThreads.map((thread) => thread.id),
-    runIds: [...new Set(checks.failed.map((check) => runOf(check.detailsUrl)).filter((id): id is string => id !== undefined))],
-    checkNames: checks.failed.map((check) => check.name),
-  };
+  const fingerprint = JSON.stringify({ actions, context, blockers });
+  if (actions.length > 0) {
+    return {
+      kind: 'prompt',
+      actions,
+      fingerprint,
+      context,
+      blockers,
+      threadIds: feedback.reviewThreads.map((thread) => thread.id),
+      runIds: [...new Set(checks.failed.map((check) => runOf(check.detailsUrl)).filter((id): id is string => id !== undefined))],
+      checkNames: checks.failed.map((check) => check.name),
+    };
+  }
+  // VS Code's readiness gate, condition for condition. `checks` is already the
+  // required checks, so a pending one keeps the merge waiting even when no
+  // action key would have asked a turn to fix it.
+  const reviewsReady = !configuration.addressReviews
+    || (feedback.reviewThreads.length === 0 && feedback.changesRequested.length === 0 && feedback.newComments.length === 0);
+  const mergeReady = !core.draft
+    && reviewsReady
+    && checks.failed.length === 0
+    && !checks.pending
+    && !behind
+    && !conflicting
+    && detail.mergeability.mergeable === 'MERGEABLE'
+    && detail.mergeability.viewerCanMerge
+    && MERGEABLE_STATES.has(detail.mergeability.mergeStateStatus?.toUpperCase() ?? 'CLEAN');
+  if (configuration.mergePullRequest !== 'never' && mergeReady) return { kind: 'merge', fingerprint };
+  return { kind: 'noWork' };
 };
 
 /** The workflow run one check's details page belongs to, when it names one. */
@@ -432,8 +468,7 @@ export function createAgentMerge(ctx: HostContext): AgentMerge {
     addressReviews: state.overrides?.addressReviews ?? (rootConfig['agentMerge.addressReviews'] !== false),
     fixCI: state.overrides?.fixCI ?? (rootConfig['agentMerge.fixCI'] !== false),
     resolveConflicts: state.overrides?.resolveConflicts ?? (rootConfig['agentMerge.resolveConflicts'] !== false),
-    // The plan's one fixed answer: this host never merges.
-    mergePullRequest: 'never',
+    mergePullRequest: state.overrides?.mergePullRequest ?? mergePullRequestOf(rootConfig['agentMerge.mergePullRequest']),
     mergeMethod: mergeMethodOf(rootConfig['agentMerge.mergeMethod']),
     replyAttribution: rootConfig['agentMerge.replyAttribution'] !== false,
   });
@@ -484,22 +519,99 @@ export function createAgentMerge(ctx: HostContext): AgentMerge {
    * Agent Merge is off until a person turns it on again; the reason is the
    * host log's, as this host has no transcript notice of its own yet.
    */
-  const stop = (watch: Watch, why: string): void => {
-    log.warn(`Agent Merge of ${watch.folder} stopped: ${why}`);
+  const stop = (watch: Watch, why: string, level: 'info' | 'warn' = 'warn'): void => {
+    log[level](`Agent Merge of ${watch.folder} stopped: ${why}`);
     forget(watch.chat);
+  };
+
+  /** The folder's local commit, or nothing when the folder cannot be read. */
+  const localCommitOf = (folder: string): Promise<string | undefined> => new Promise((settle) => {
+    runGit(folder, ['rev-parse', 'HEAD'], { timeout: 10_000, windowsHide: true }, (error, out) => {
+      const commit = out.trim();
+      settle(error === null && commit !== '' ? commit : undefined);
+    });
+  });
+
+  /**
+   * Demote `ifUnchanged` to `never` once a repair turn has committed.
+   *
+   * Compared against the local worktree, and failing closed: an unreadable
+   * commit after a repair turn counts as a change. The value is rewritten
+   * rather than merely gated, so it always says what will happen.
+   */
+  const demoteIfChanged = async (watch: Watch): Promise<boolean> => {
+    const configuration = configurationOf(watch.state);
+    const base = watch.state.repairBaseCommit;
+    if (configuration.mergePullRequest !== 'ifUnchanged' || base === undefined) return false;
+    if (base === await localCommitOf(watch.folder)) return false;
+    log.warn(`Agent Merge of ${watch.folder} is monitoring only: a repair turn changed the worktree`);
+    const { repairBaseCommit: _base, ...rest } = watch.state;
+    watch.state = { ...rest, overrides: { ...watch.state.overrides, mergePullRequest: 'never' } };
+    watches.set(watch.chat, watch);
+    return true;
+  };
+
+  /**
+   * Merge a pull request the gate says is ready.
+   *
+   * It is read once more immediately before the merge, because the gate's read
+   * is already some milliseconds old by then, and the merge is pinned to the
+   * head that read named: GitHub refuses a head that moved. A refusal is not
+   * retried here; the next read of the pull request decides again.
+   */
+  const mergeNow = async (watch: Watch, url: string, token: string | undefined): Promise<void> => {
+    const github = options.github;
+    if (github?.detail === undefined || github.merge === undefined) {
+      log.warn(`Agent Merge of ${watch.folder} cannot merge ${url}: this host's GitHub port cannot merge`);
+      return;
+    }
+    const configuration = configurationOf(watch.state);
+    const watermark = watch.state.target?.commentWatermark ?? watch.state.target?.enabledAt ?? now().toISOString();
+    const fresh = await github.detail(url, token, watch.folder).catch((error: unknown) => {
+      log.warn(`Agent Merge of ${watch.folder} could not read ${url} before merging: ${messageOf(error)}`);
+      return undefined;
+    });
+    if (fresh === undefined) return;
+    if (evaluate(fresh, configuration, watermark).kind !== 'merge') {
+      log.warn(`Agent Merge of ${watch.folder} did not merge ${url}: it is no longer ready`);
+      return;
+    }
+    // A repair turn may have committed between the evaluation's demotion check
+    // and this read; the local comparison is made once more before merging.
+    if (await demoteIfChanged(watch)) return;
+    const allowed = fresh.mergeability.allowedMergeMethods ?? [];
+    const method = resolveMergeMethod(configuration.mergeMethod, allowed);
+    if (method === undefined) {
+      log.warn(`Agent Merge of ${watch.folder} did not merge ${url}: the repository allows no method it was told to use`);
+      return;
+    }
+    const result = await github.merge(url, method, fresh.core.headSha, token, watch.folder).catch((error: unknown) => {
+      log.warn(`Agent Merge of ${watch.folder} could not merge ${url}: ${messageOf(error)}`);
+      return undefined;
+    });
+    if (result === undefined) return;
+    if (result.outcome === 'merged') {
+      stop(watch, `the pull request was merged with ${method.toLowerCase()}`, 'info');
+      return;
+    }
+    log.warn(`Agent Merge of ${watch.folder} did not merge ${url} (${result.outcome})${result.message !== undefined ? `: ${result.message}` : ''}`);
   };
 
   /**
    * Read the folder's pull request and act on what it says.
    *
-   * No merge is ever started. A repair turn is asked for only when an action
-   * key allows one, and the same prompt is not asked again within the cooldown.
+   * A repair turn is asked for only when an action key allows one, and the
+   * same prompt is not asked again within the cooldown. A ready pull request
+   * is merged when the folder's merge choice allows it.
    */
   const evaluateNow = async (watch: Watch): Promise<void> => {
     if (watch.reading || !watch.state.enabled) return;
     if (busy(watch.chat)) return;
     watch.reading = true;
     try {
+      // Before anything is acted on: work a repair turn committed demotes
+      // `ifUnchanged`, so this read cannot merge it.
+      await demoteIfChanged(watch);
       await ctx.refreshPullRequests(watch.folder).catch(() => false);
       const facts = await targetOf(watch);
       if (facts.branchName !== watch.state.target?.branchName) {
@@ -528,6 +640,18 @@ export function createAgentMerge(ctx: HostContext): AgentMerge {
         stop(watch, `the pull request was ${evaluation.why}`);
         return;
       }
+      const held = watch.state;
+      const at = now().getTime();
+      const since = held.lastPromptAt === undefined ? Number.POSITIVE_INFINITY : at - Date.parse(held.lastPromptAt);
+      if (evaluation.kind === 'merge') {
+        // A merge attempt is not repeated within the backstop, as VS Code's
+        // controller holds an unchanged merge fingerprint to the same interval.
+        if (held.lastPromptFingerprint === evaluation.fingerprint && since < BACKSTOP) return;
+        watch.state = { ...held, lastPromptFingerprint: evaluation.fingerprint, lastPromptAt: now().toISOString() };
+        watches.set(watch.chat, watch);
+        await mergeNow(watch, url, token);
+        return;
+      }
       if (evaluation.kind !== 'prompt') {
         // Nothing asked for: a repair turn that was running has made all the
         // progress it can be measured by, so the next blocker starts fresh.
@@ -535,9 +659,6 @@ export function createAgentMerge(ctx: HostContext): AgentMerge {
         watches.set(watch.chat, watch);
         return;
       }
-      const held = watch.state;
-      const at = now().getTime();
-      const since = held.lastPromptAt === undefined ? Number.POSITIVE_INFINITY : at - Date.parse(held.lastPromptAt);
       const repeated = held.lastPromptFingerprint === evaluation.fingerprint;
       const repeatedCount = repeated ? (held.repeatedPromptCount ?? 0) + 1 : 0;
       const totalCount = (held.totalPromptCount ?? 0) + 1;
@@ -555,6 +676,10 @@ export function createAgentMerge(ctx: HostContext): AgentMerge {
         stop(watch, `the limit of ${String(MAXIMUM_LIFETIME_PROMPT)} repair attempts was reached`);
         return;
       }
+      // Captured before the turn starts, so the baseline is the worktree the
+      // turn is about to act on. Unreadable records the sentinel, which no
+      // commit can equal, so the session fails closed rather than merging.
+      const repairBaseCommit = await localCommitOf(watch.folder) ?? AGENT_MERGE_UNKNOWN_COMMIT;
       watch.state = {
         ...held,
         lastPromptFingerprint: evaluation.fingerprint,
@@ -564,6 +689,7 @@ export function createAgentMerge(ctx: HostContext): AgentMerge {
         repeatedPromptCount: repeatedCount,
         totalPromptCount: totalCount,
         lifetimePromptCount: lifetime,
+        repairBaseCommit,
       };
       watches.set(watch.chat, watch);
       turns.set(watch.chat, {
@@ -628,6 +754,14 @@ export function createAgentMerge(ctx: HostContext): AgentMerge {
       ...(before?.totalPromptCount !== undefined ? { totalPromptCount: before.totalPromptCount } : {}),
       ...(before?.lifetimePromptCount !== undefined ? { lifetimePromptCount: before.lifetimePromptCount } : {}),
     };
+    // Re-selecting `ifUnchanged` starts a fresh baseline, as VS Code does, so
+    // work an earlier repair turn made does not demote the new choice at once.
+    // Keeping it while the choice stays `ifUnchanged` is what lets a later
+    // turn's commit demote it.
+    const reselected = configurationOf(state).mergePullRequest === 'ifUnchanged'
+      && before !== undefined
+      && configurationOf(before).mergePullRequest !== 'ifUnchanged';
+    if (before?.repairBaseCommit !== undefined && !reselected) state.repairBaseCommit = before.repairBaseCommit;
     const watch: Watch = { chat, session: where.session, folder: where.folder, sender: sender ?? watches.get(chat)?.sender, state, reading: false, timer: undefined };
     watches.set(chat, watch);
     // The tool call that turned it on is inside a turn, so the first read is
@@ -961,5 +1095,26 @@ export function createAgentMerge(ctx: HostContext): AgentMerge {
   };
 }
 
+const mergePullRequestOf = (value: unknown): AgentMergeMergePullRequest =>
+  value === 'always' || value === 'ifUnchanged' || value === 'never' ? value : 'never';
+
 const mergeMethodOf = (value: unknown): AgentMergeConfiguration['mergeMethod'] | 'auto' =>
   value === 'squash' || value === 'merge' || value === 'rebase' ? value : 'auto';
+
+/**
+ * The configured method mapped onto one the repository allows.
+ *
+ * `auto` prefers squash, then a merge commit, then rebase; an explicitly
+ * configured method is used only when the repository permits it. VS Code's
+ * `resolveMergeMethod`, word for word.
+ */
+const resolveMergeMethod = (
+  configured: AgentMergeConfiguration['mergeMethod'],
+  allowed: readonly PullRequestMergeMethod[],
+): PullRequestMergeMethod | undefined => {
+  if (configured !== 'auto') {
+    const method = configured.toUpperCase() as PullRequestMergeMethod;
+    return allowed.includes(method) ? method : undefined;
+  }
+  return (['SQUASH', 'MERGE', 'REBASE'] as const).find((method) => allowed.includes(method));
+};

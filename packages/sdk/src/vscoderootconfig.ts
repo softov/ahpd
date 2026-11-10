@@ -387,9 +387,10 @@ export const vscodeRootProperties: Record<string, ConfigPropertySchema> = {
    *
    * Read by `host/agentmerge.ts` each time a folder's pull request is looked
    * at, so a key a client moves takes effect at the next read. The three
-   * action keys may be overridden for one folder by `setAgentMergeEnabled`;
-   * `agentMerge.enabled` is the client's own switch and gates nothing here,
-   * because the tool that turns Agent Merge on for a folder is what starts it.
+   * action keys and the merge choice may be overridden for one folder by
+   * `setAgentMergeEnabled`; `agentMerge.enabled` is the client's own switch
+   * and gates nothing here, because the tool that turns Agent Merge on for a
+   * folder is what starts it.
    */
   // `agentMergeRootConfigSchema.Enabled`, `agentMerge.ts:160`.
   'agentMerge.enabled': {

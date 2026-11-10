@@ -130,6 +130,9 @@ export interface PullRequestChecks {
   requirednessComplete: boolean;
 }
 
+/** One of the ways GitHub will merge a pull request, as it spells them. */
+export type PullRequestMergeMethod = 'MERGE' | 'SQUASH' | 'REBASE';
+
 /** What GitHub says about merging it, at one moment. */
 export interface PullRequestMergeability {
   mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
@@ -137,6 +140,20 @@ export interface PullRequestMergeability {
   mergeStateStatus?: string;
   /** Whether the person reading holds write access to the repository. */
   viewerCanMerge: boolean;
+  /**
+   * The methods the repository permits, as GitHub spells them. Absent when
+   * the repository's settings could not be read, which is not the same as a
+   * repository that permits none.
+   */
+  allowedMergeMethods?: PullRequestMergeMethod[];
+}
+
+/** What GitHub answered to a merge. */
+export interface PullRequestMergeResult {
+  /** `merged` once GitHub took it, `refused` when GitHub said no, and `indeterminate` when it could not be told. */
+  outcome: 'merged' | 'refused' | 'indeterminate';
+  /** GitHub's own words, when it gave any. */
+  message?: string;
 }
 
 /** One comment on a review thread. */
@@ -220,8 +237,14 @@ export interface PullRequestThreadReply {
   state?: string;
 }
 
-/** What a repair turn writes back: a reply on a review thread, its resolution, and a workflow rerun. */
+/** What a repair turn writes back: a reply on a review thread, its resolution, a workflow rerun, and the merge. */
 export interface PullRequestWrites {
+  /**
+   * Merge the pull request with one method, at the head the decision was made
+   * on. `headSha` is GitHub's own check: a head that moved is refused rather
+   * than merged, so a decision made of a stale read cannot merge new work.
+   */
+  merge?(url: string, method: PullRequestMergeMethod, headSha: string, token: string | undefined, cwd: string): Promise<PullRequestMergeResult>;
   /** Whether the person has a draft review on the pull request that nothing may submit or discard. */
   pendingReview?(url: string, token: string | undefined, cwd: string): Promise<boolean | undefined>;
   /** Reply on one review thread, answering the comment GitHub made. */

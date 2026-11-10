@@ -3,8 +3,8 @@
 import { execFile } from 'node:child_process';
 import type {
   NewPullRequest, PullRequest, PullRequestCheck, PullRequestChecks, PullRequestComment, PullRequestCore, PullRequestDetail,
-  PullRequestFeedbackComment, PullRequestJob, PullRequestJobLog, PullRequestJobStep, PullRequestMergeability, PullRequestReview,
-  PullRequestReviewThread, PullRequestThreadReply, PullRequests,
+  PullRequestFeedbackComment, PullRequestJob, PullRequestJobLog, PullRequestJobStep, PullRequestMergeability, PullRequestMergeMethod,
+  PullRequestMergeResult, PullRequestReview, PullRequestReviewThread, PullRequestThreadReply, PullRequests,
 } from '../types/github.js';
 
 /** The reference host's resource for a github.com token, verbatim. */
@@ -305,6 +305,21 @@ export function githubPullRequests(): PullRequests {
     return isRecord(permissions) && (permissions.push === true || permissions.maintain === true || permissions.admin === true);
   };
 
+  /**
+   * The merge methods a repository permits, or nothing when its settings say
+   * nothing either way. A repository with all three off answers an empty list,
+   * which is an answer.
+   */
+  const mergeMethodsIn = (raw: unknown): PullRequestMergeMethod[] | undefined => {
+    if (!isRecord(raw)) return undefined;
+    if (raw.allow_merge_commit === undefined && raw.allow_squash_merge === undefined && raw.allow_rebase_merge === undefined) return undefined;
+    const methods: PullRequestMergeMethod[] = [];
+    if (raw.allow_squash_merge === true) methods.push('SQUASH');
+    if (raw.allow_merge_commit === true) methods.push('MERGE');
+    if (raw.allow_rebase_merge === true) methods.push('REBASE');
+    return methods;
+  };
+
   /** The classes of failure a review thread can be answered through, as one list. */
   const commentsIn = (raw: unknown): PullRequestFeedbackComment[] => arrayOf(raw).flatMap((one) => {
     if (!isRecord(one)) return [];
@@ -493,16 +508,21 @@ export function githubPullRequests(): PullRequests {
     if (!isRecord(raw)) return undefined;
     const core = coreIn(raw, page);
     if (core === undefined) return undefined;
-    const [checks, feedback] = await Promise.all([
+    const [checks, feedback, settings] = await Promise.all([
       checksIn(page, core, token, cwd),
       feedbackOf(page, token, cwd),
+      // The repository's settings say which merge methods it permits. A read
+      // that fails says nothing, which is not "none are permitted".
+      read(`repos/${page.owner}/${page.repo}`, token, cwd).catch(() => undefined),
     ]);
     if (feedback === undefined) return undefined;
     const mergeStateStatus = textOf(raw.mergeable_state);
+    const allowedMergeMethods = mergeMethodsIn(settings);
     const mergeability: PullRequestMergeability = {
       mergeable: raw.mergeable === true ? 'MERGEABLE' : raw.mergeable === false ? 'CONFLICTING' : 'UNKNOWN',
       ...(mergeStateStatus !== undefined ? { mergeStateStatus: mergeStateStatus.toUpperCase() } : {}),
       viewerCanMerge: mayMerge(raw),
+      ...(allowedMergeMethods !== undefined ? { allowedMergeMethods } : {}),
     };
     return {
       core,
@@ -680,6 +700,63 @@ export function githubPullRequests(): PullRequests {
     return true;
   };
 
+  /** What `gh` or the REST route said about a merge, as the one answer the host reads. */
+  const mergedFrom = (said: unknown): PullRequestMergeResult => {
+    const message = isRecord(said) ? textOf(said.message) : undefined;
+    const merged = isRecord(said) && said.merged === true;
+    return { outcome: merged ? 'merged' : 'refused', ...(message !== undefined ? { message } : {}) };
+  };
+
+  /**
+   * Merge the pull request at one head, with one method.
+   *
+   * GitHub refuses a head that has moved, so the `headSha` a decision was made
+   * on is sent with it: a merge can never take work nobody read. A refusal is
+   * GitHub's answer and is not thrown; a transport failure is, because whether
+   * the merge happened is then unknown.
+   */
+  const mergeOf = async (
+    url: string,
+    method: PullRequestMergeMethod,
+    headSha: string,
+    token: string | undefined,
+    cwd: string,
+  ): Promise<PullRequestMergeResult> => {
+    const page = pageOf(url);
+    if (page === undefined) return { outcome: 'refused', message: `${url} is not a GitHub pull request page` };
+    const path = `repos/${page.owner}/${page.repo}/pulls/${page.number}/merge`;
+    if (token === undefined) {
+      try {
+        return mergedFrom(JSON.parse(await ghApi([
+          'api', '-X', 'PUT', path,
+          '-f', `merge_method=${method.toLowerCase()}`,
+          '-f', `sha=${headSha}`,
+        ], cwd)));
+      }
+      catch (error) {
+        if (ghAbsent(error)) return { outcome: 'indeterminate', message: 'gh is not available to merge' };
+        const message = (error as Error).message;
+        // `gh` hands GitHub's refusal back as a failure; only the API's own
+        // fault says nothing about whether the merge happened.
+        return { outcome: /HTTP 5\d\d/.test(message) ? 'indeterminate' : 'refused', message };
+      }
+    }
+    const answer = await fetch(`${API}/${path}`, {
+      method: 'PUT',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      body: JSON.stringify({ merge_method: method.toLowerCase(), sha: headSha }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const said = await answer.json().catch(() => ({}));
+    const result = mergedFrom(said);
+    return answer.status >= 500 ? { ...result, outcome: 'indeterminate' } : result;
+  };
+
   return {
     resource: RESOURCE,
     forBranch: async ({ owner, repo }, branch, token, cwd) => {
@@ -701,5 +778,6 @@ export function githubPullRequests(): PullRequests {
     replyToReviewThread: (threadId, body, token, cwd) => replyToThread(threadId, body, token, cwd),
     resolveReviewThread: (threadId, token, cwd) => resolveThreadOf(threadId, token, cwd),
     rerunWorkflow: (url, runId, failedJobsOnly, token, cwd) => rerunOf(url, runId, failedJobsOnly, token, cwd),
+    merge: (url, method, headSha, token, cwd) => mergeOf(url, method, headSha, token, cwd),
   };
 }
