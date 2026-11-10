@@ -71,7 +71,7 @@ setAgentMergeEnabled -> folder state -> watch: checks, review threads, mergeable
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - GitHub reads checks and review threads](task-01-github-reads-checks-and-threads.md) | todo | - |
+| [01 - GitHub reads checks and review threads](task-01-github-reads-checks-and-threads.md) | implemented | - |
 | [02 - The watch starts a repair turn](task-02-the-watch-starts-a-repair-turn.md) | todo | 01 |
 | [03 - The four Agent Merge tools](task-03-the-four-agent-merge-tools.md) | todo | 02 |
 | [04 - prepare-pull-request offers Agent Merge](task-04-prepare-pull-request-offers-it.md) | todo | 03 |
@@ -83,8 +83,8 @@ setAgentMergeEnabled -> folder state -> watch: checks, review threads, mergeable
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-10.
-- **Next action:** [task-01-github-reads-checks-and-threads.md](task-01-github-reads-checks-and-threads.md).
+- **Done so far:** task 01. `githubPullRequests()` answers `detail`, `jobs` and `jobLog` through a lent token or `gh`, with the CI evidence capped at 48,000 characters.
+- **Next action:** [task-02-the-watch-starts-a-repair-turn.md](task-02-the-watch-starts-a-repair-turn.md).
 - **Open questions:** none.
 - **Watch out for:** a pending review reply stops the folder's monitoring when the turn ends, as VS Code does; the person turns it on again.
 
