@@ -122,7 +122,13 @@ it('registers the pi engine, its form, its template, its host-only field and its
   // refuses any other to a team's or a person's record by the same list.
   const env = (engine.schema.properties as Bag)['env'] as Bag;
   expect(env.properties).toBeUndefined();
-  expect(env.additionalProperties).toEqual({ type: 'string' });
+  // Each value is text, { fromEnv } or { "$secret" }, the shapes a Claude
+  // record's env takes, which the channel reads back before pi sees them.
+  expect((env.additionalProperties as Bag).oneOf).toEqual([
+    { type: 'string' },
+    { type: 'object', properties: { fromEnv: { type: 'string' } }, required: ['fromEnv'], additionalProperties: false },
+    { type: 'object', properties: { $secret: { type: 'string' } }, required: ['$secret'], additionalProperties: false },
+  ]);
   expect(engine.keyVariables).toEqual([...PI_KEY_VARIABLES]);
 
   // One template, and it sets nothing: a record made from it runs on pi's own
