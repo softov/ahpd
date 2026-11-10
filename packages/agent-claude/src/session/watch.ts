@@ -60,11 +60,15 @@ const MEMORY = new Set(['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json']);
 
 type Listener = (event: string, name: string | null) => void;
 
-/** One folder's handle, the folder it was opened on, and every watcher's listener on it. */
+/** One folder's handle and every watcher's listener on it. */
 interface Shared {
   handle: FSWatcher;
-  /** The folder's inode when the handle was opened: a folder made again has another. */
-  ino: number | undefined;
+  /**
+   * Whether the handle was opened in this turn of the event loop: one change
+   * reaches every holder in one turn, and the first to open the folder again
+   * opens it for all of them.
+   */
+  young: boolean;
   listeners: Set<Listener>;
 }
 
@@ -83,12 +87,6 @@ const keyOf = (at: string, recursive: boolean): string => {
   return `${recursive ? 'r' : 'n'}:${process.platform === 'linux' ? path : path.toLowerCase()}`;
 };
 
-/** The folder's inode now, or nothing when it is not there. */
-const inoOf = (at: string): number | undefined => {
-  try { return statSync(at).ino; }
-  catch { return undefined; }
-};
-
 /** Open the folder's one handle for `listeners`, or nothing when it cannot be. */
 const openShared = (key: string, at: string, recursive: boolean, listeners: Set<Listener>): Shared | undefined => {
   let handle: FSWatcher;
@@ -98,7 +96,8 @@ const openShared = (key: string, at: string, recursive: boolean, listeners: Set<
     });
   }
   catch { return undefined; }
-  const entry: Shared = { handle, ino: inoOf(at), listeners };
+  const entry: Shared = { handle, young: true, listeners };
+  setImmediate(() => { entry.young = false; });
   // A failed handle takes only itself, for every holder; an `error` with no listener ends the process.
   handle.on('error', () => {
     handle.close();
@@ -114,26 +113,30 @@ const openShared = (key: string, at: string, recursive: boolean, listeners: Set<
  * watched.
  *
  * A folder removed and made again is another folder, which the old handle
- * hears nothing of on Linux. So a hold that finds the folder on disk is not
- * the one the handle was opened on opens it again, and every holder moves to
- * the new handle: once, however many holders ask after the same `rename`.
+ * hears nothing of on Linux, and Linux often gives it the same inode, so the
+ * folder on disk cannot tell. `fresh` says the folder was made again: the
+ * handle is opened again and every holder moves to it, once for one change
+ * however many holders it reaches.
  */
-const holdFolder = (at: string, recursive: boolean, listener: Listener): (() => void) | undefined => {
+const holdFolder = (at: string, recursive: boolean, listener: Listener, fresh: boolean): (() => void) | undefined => {
   const key = keyOf(at, recursive);
   let entry = shared.get(key);
-  if (entry !== undefined && entry.ino !== inoOf(at)) {
+  if (entry !== undefined && fresh && !entry.young) {
     entry.handle.close();
     shared.delete(key);
     entry = openShared(key, at, recursive, entry.listeners);
   }
   else if (entry === undefined) entry = openShared(key, at, recursive, new Set());
   if (entry === undefined) return undefined;
-  entry.listeners.add(listener);
-  const held = entry;
+  const { listeners } = entry;
+  listeners.add(listener);
   return () => {
-    held.listeners.delete(listener);
-    if (held.listeners.size === 0 && shared.get(key) === held) {
-      held.handle.close();
+    listeners.delete(listener);
+    // The entry the listeners belong to now: a handle opened again keeps them,
+    // so a holder that let go after it was opened again closes the new one.
+    const now = shared.get(key);
+    if (listeners.size === 0 && now?.listeners === listeners) {
+      now.handle.close();
       shared.delete(key);
     }
   };
@@ -176,9 +179,9 @@ export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: ()
   };
 
   /** One folder held through the shared wait, answering what lets go of it, or nothing when it cannot be watched. */
-  const opened = (at: string, recursive: boolean, onName: (name: string | null, event: string) => void): (() => void) | undefined => {
+  const opened = (at: string, recursive: boolean, onName: (name: string | null, event: string) => void, fresh = false): (() => void) | undefined => {
     if (closed) return undefined;
-    const release = holdFolder(at, recursive, (event, name) => onName(name, event));
+    const release = holdFolder(at, recursive, (event, name) => onName(name, event), fresh);
     if (release === undefined) return undefined;
     releases.add(release);
     return () => {
@@ -199,8 +202,12 @@ export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: ()
    */
   const scope = (dir: string): void => {
     const held = new Map<string, (() => void) | undefined>();
-    /** Watch one folder of the scope again, from what is there now. */
+    /**
+     * Watch one folder of the scope again, from what is there now. Asked again
+     * after it, the folder was made or removed, so its handle is opened fresh.
+     */
     const folder = (name: string): void => {
+      const again = held.has(name);
       held.get(name)?.();
       const at = join(dir, name);
       const onName = name === PLUGINS
@@ -209,7 +216,7 @@ export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: ()
           if (file === null) fire();
           else if (!isBookkeeping(file) && !(event === 'change' && isFolder(join(at, file)))) fire();
         };
-      held.set(name, existsSync(at) ? opened(at, true, onName) : undefined);
+      held.set(name, existsSync(at) ? opened(at, true, onName, again) : undefined);
     };
     const open = (): void => {
       opened(dir, false, (name, event) => {

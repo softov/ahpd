@@ -291,8 +291,9 @@ describe('the handles of the Claude folders', () => {
     expect(fsw.opened - before).toBe(2 * first);
   });
 
-  it('hears a folder removed and made again, in both watchers', async () => {
+  it('hears a folder removed and made again, in both watchers, and closes its new handle with the last', async () => {
     const { config } = folders();
+    const open = fsw.open;
     const one = await watched({ configDir: config });
     const two = await watched({ configDir: config });
     rmSync(join(config, 'agents'), { recursive: true, force: true });
@@ -306,6 +307,10 @@ describe('the handles of the Claude folders', () => {
     await until(one.calls, (was[0] ?? 0) + 1);
     await until(two.calls, (was[1] ?? 0) + 1);
     expect([one.calls(), two.calls()]).toEqual([(was[0] ?? 0) + 1, (was[1] ?? 0) + 1]);
+    // The handle opened again closes with its last holder.
+    one.stop();
+    two.stop();
+    expect(fsw.open).toBe(open);
   });
 
   it('drops a handle that fails for both watchers, and throws nothing', async () => {

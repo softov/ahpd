@@ -99,7 +99,7 @@ session -> servers.ts -> createClaudeCustomizationWatcher(configDir, cwd)
 - **Done so far:** task 01 on 2026-11-09; task 02's README sentence and the watcher's own handle counts on 2026-11-09.
 - **Next action:** steps 1 to 4 of [task-02-the-handles-are-counted-on-a-running-daemon.md](task-02-the-handles-are-counted-on-a-running-daemon.md) on a running dev daemon, by hand, then `implemented.md`.
 - **Open questions:** none.
-- **Watch out for:** `holdFolder` opens a folder again only when its inode changed, so a test that replaces a folder must remove it and make it again, not only write into it.
+- **Watch out for:** a folder made again cannot be told by its inode, which Linux reuses; `fresh` from `folder` is what reopens it, and `young` keeps one change from reopening it once per holder.
 
 ## Final verification checklist
 

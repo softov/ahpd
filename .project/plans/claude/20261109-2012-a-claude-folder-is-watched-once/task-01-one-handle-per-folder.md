@@ -128,8 +128,11 @@ Done on 2026-11-09.
 `watch.ts` has the registry and `watch.test.ts` the five cases; 17 cases pass on Windows with Node 22, and the 66 files of `packages/agent-claude/test` with `host-snapshots.test.ts` pass (722 cases).
 Against the `watch.ts` of `main`, the first and the last of the new cases fail and the other three pass, as they check what did not change.
 
-Departure from steps 1 and 4: `holdFolder` takes no `fresh` flag.
-It records the folder's inode when it opens the handle, and opens it again only when the folder on disk has another inode.
-The scope folder's handle is shared, so one `rename` reaches every holder's `folder`, and with a flag each holder would have reopened in turn, each closing the handle the one before had opened.
-The defaulted row still holds: a folder made again gets a fresh handle and every listener moves to it, once.
+Departures from steps 1 and 4:
+
+- `Shared` has a `young` flag, true until the next turn of the event loop, and `holdFolder` opens a folder again for `fresh` only when its handle is not young.
+  The scope folder's handle is shared, so one `rename` reaches every holder's `folder` in one turn, and without it each holder would reopen in turn, each closing the handle the one before had opened.
+- `folder` passes `fresh` whenever it is asked again for a name it already held, not only when it held a handle, so a holder that found the folder missing still moves a stale handle another holder kept.
+- A release closes the entry its listeners belong to now, not the entry it was given, because an entry opened again keeps the same listener set.
+- A first build compared the folder's inode instead of a flag. It failed on Linux CI: Linux gave the folder made again the same inode, so the dead handle was kept and the case "hears a folder removed and made again" timed out.
 
