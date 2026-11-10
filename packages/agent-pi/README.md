@@ -48,6 +48,8 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | Option | Default | What it does |
 | --- | --- | --- |
 | `model` | pi's own default | The model a record that names none runs on, as `provider/modelId`; a turn may choose another, and a resumed or forked session keeps its own |
+| `baseUrl` | pi's own providers | The OpenAI-compatible endpoint a record that names none runs on, such as `https://api.example.com/v1` |
+| `apiKey` | none | The key that endpoint's requests carry. A read answers `<set>`: the value stays in the configuration file |
 | `projectTrust` | `trust` | Whether a record that names none loads a project's own pi extensions, skills and prompts |
 | `sessionDir` | pi's own | Where a record that names none keeps its pi sessions |
 | `hostTools` | `true` | Whether the host's own tools reach each session. A record can turn them off for one agent |
@@ -67,6 +69,8 @@ A record of the engine holds what one pi agent runs on, and the channel owns its
 | Field | What it does |
 | --- | --- |
 | `model` | The model this agent runs on, as `provider/modelId` |
+| `baseUrl` | The OpenAI-compatible endpoint this agent runs on. Its models are listed as `<record id>/<model id>` |
+| `apiKey` | The key that endpoint's requests carry. Kept in the vault, as a `secret` field |
 | `projectTrust` | `trust` or `deny`, as above |
 | `sessionDir` | Where this agent's pi sessions live. Host records only |
 | `hostTools` | Whether the host's own tools reach this agent's sessions. Off drops them and keeps each client's tools |
@@ -93,7 +97,7 @@ A client puts the key's value, and the channel moves it to the vault under `host
 
 A client makes one with `x-ahpd/agents/put`, and the daemon keeps it at `agents/<id>.json` in its configuration folder. A record whose `config` no longer fits, or whose `$secret` the vault cannot answer, is written and shown as `invalid` with one line naming it, and no value; a record whose engine no plugin registers any more is kept and shown as `unavailable`.
 
-No option of this plugin holds a credential, so it needs no `ahpd vault`. A key for a record belongs in the record's `env`, which the channel vaults; a key for a machine is the `@ahpd/computer` profile's, as below.
+`apiKey` is a `writeOnly` option: it is checked as any other is, stays in the configuration file, and a read answers `<set>`. A record's own `apiKey` is a `secret` field, so the channel keeps it in the vault under the record and no client is shown the value again. A key for a machine is the `@ahpd/computer` profile's, as below.
 
 ## In your own host
 

@@ -177,6 +177,15 @@ export interface BackendOptions {
   id?: string;
   /** Where pi keeps its sessions; its own default when left out. */
   sessionDir?: string;
+  /** The id the endpoint's provider is registered under; `pi` when left out. */
+  provider?: string;
+  /**
+   * The OpenAI-compatible endpoint this session runs on, or nothing to run on
+   * pi's own providers. Its models are read from `<baseUrl>/models`.
+   */
+  baseUrl?: string;
+  /** The key the endpoint's requests carry, or nothing to send none. */
+  apiKey?: string;
   /** Whether the project's own pi extensions, skills and prompts are loaded. */
   trustProject?: boolean;
   /** The custom tools pi offers the model, on top of its own. */
@@ -277,8 +286,88 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
     sessionManager,
     ...(options.tools !== undefined && options.tools.length > 0 ? { customTools: options.tools } : {}),
   });
+  await registerEndpoint(sdk, session, options);
   return wrap(sdk, session, found);
 }
+
+/** How long an endpoint's model list may take before it is read as none. */
+const ENDPOINT_TIMEOUT_MS = 10_000;
+
+/**
+ * One model an OpenAI-compatible endpoint lists, as pi's provider takes it.
+ *
+ * The endpoint may know more than its `/models` answers, so the defaults are
+ * pi's own for a model defined from a name alone: text in, no cost, pi's
+ * context window and token ceiling.
+ */
+interface EndpointModel {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  input: ('text' | 'image')[];
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  contextWindow: number;
+  maxTokens: number;
+}
+
+/** One model the endpoint listed, by its id. */
+const endpointModel = (id: string): EndpointModel => ({
+  id,
+  name: id,
+  reasoning: false,
+  input: ['text'],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 128_000,
+  maxTokens: 16_384,
+});
+
+/**
+ * The models an OpenAI-compatible endpoint lists, at `<baseUrl>/models`.
+ *
+ * Anything that goes wrong - a refused connection, a wrong shape, a timeout -
+ * is an empty list: a record whose endpoint cannot answer still opens, and the
+ * probe answers none of that endpoint's models rather than failing.
+ */
+export const endpointModels = async (baseUrl: string, apiKey: string | undefined): Promise<EndpointModel[]> => {
+  try {
+    const at = `${baseUrl.replace(/\/+$/u, '')}/models`;
+    const answer = await fetch(at, {
+      ...(apiKey === undefined ? {} : { headers: { authorization: `Bearer ${apiKey}` } }),
+      signal: AbortSignal.timeout(ENDPOINT_TIMEOUT_MS),
+    });
+    if (!answer.ok) return [];
+    const said = await answer.json() as { data?: unknown };
+    if (!Array.isArray(said.data)) return [];
+    return said.data.flatMap((one) => {
+      const id = (one as { id?: unknown } | null)?.id;
+      return typeof id === 'string' && id !== '' ? [endpointModel(id)] : [];
+    });
+  }
+  catch {
+    return [];
+  }
+};
+
+/**
+ * Give this session's runtime the record's OpenAI-compatible endpoint.
+ *
+ * `ModelRegistry` is a facade over the runtime pi made for this session, so the
+ * provider lives only here: registered after pi is built, it replaces a
+ * provider of the same id for this session's turns and for no other session's.
+ * A record with no `baseUrl` is pi's own providers, untouched.
+ */
+const registerEndpoint = async (sdk: Pi, session: AgentSession, options: BackendOptions): Promise<void> => {
+  if (options.baseUrl === undefined) return;
+  const id = options.provider ?? 'pi';
+  const models = await endpointModels(options.baseUrl, options.apiKey);
+  new sdk.ModelRegistry(session.modelRuntime).registerProvider(id, {
+    name: id,
+    baseUrl: options.baseUrl,
+    ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+    api: 'openai-completions',
+    models,
+  });
+};
 
 /**
  * The first user message on a branch after an entry, from its root when there

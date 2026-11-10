@@ -1,6 +1,6 @@
 ---
 title: A pi turn runs on the record's endpoint
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -41,4 +41,11 @@ A turn on `<id>/<model>` runs through it.
 - `pnpm typecheck`, then `pnpm exec vitest run packages/agent-pi`.
 
 ## Resume
+
+- **Done so far:** `PiOptions` has `baseUrl` and `apiKey`, and `BackendOptions` has `provider`, `baseUrl` and `apiKey`; `provider` is added to the object `piSession` hands the backend, and `RECORD_FIELDS` and `kindSchema` carry the record's two, `apiKey` as `secret: true`. `openPi` calls `registerEndpoint` after the session is made and before `wrap`: it reads `<baseUrl>/models` with the key, and registers one provider under `options.provider ?? 'pi'` on `session.modelRuntime` through `new sdk.ModelRegistry(...).registerProvider(id, { name, baseUrl, apiKey, api: 'openai-completions', models })`. `Pi` takes `ModelRegistry` from the SDK. A record with no `baseUrl` registers nothing and makes no request. `useEnv` leaves the provider's key in place, because `keyOf` resolves it through the provider's auth. The plugin's `apiKey` option is `writeOnly`, and the README names both fields.
+- **Next action:** [task-02-the-probe-lists-the-endpoint.md](task-02-the-probe-lists-the-endpoint.md).
+- **Open questions:** none.
+- **Watch out for:** the suite is 270 of 271 on this box; `agent-pi-lazy.test.ts` fails only at its own 4000 ms import budget, with a cold import of the plugin entry measured at 7.985 s and 8.389 s under the other builds' load and at about 4.0 s on an idle retry, and the same case passes with a 30 s budget (8.038 s). The endpoint case's stub binds an ephemeral port on 127.0.0.1.
+
+Files changed by this task: `packages/agent-pi/package.json`, `packages/agent-pi/src/backend.ts`, `packages/agent-pi/src/pi.ts`, `packages/agent-pi/src/plugin.ts`, `packages/agent-pi/src/session.ts`, `packages/agent-pi/src/types.ts`, `packages/agent-pi/test/agent-pi-delete.test.ts`, `packages/agent-pi/test/agent-pi-lazy.test.ts`, `packages/agent-pi/test/engine.test.ts`, `packages/agent-pi/test/agent-pi-endpoint.test.ts`, `packages/agent-pi/README.md`.
 

@@ -74,7 +74,7 @@ record { baseUrl, apiKey } -> optionsOfRecord -> backend -> session runtime
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A pi turn runs on the record's endpoint](task-01-a-pi-turn-runs-on-the-endpoint.md) | todo | - |
+| [01 - A pi turn runs on the record's endpoint](task-01-a-pi-turn-runs-on-the-endpoint.md) | implemented | - |
 | [02 - The probe lists the endpoint's models](task-02-the-probe-lists-the-endpoint.md) | todo | 01 |
 
 ## Risks and tradeoffs
@@ -84,10 +84,10 @@ record { baseUrl, apiKey } -> optionsOfRecord -> backend -> session runtime
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-10.
-- **Next action:** [task-01-a-pi-turn-runs-on-the-endpoint.md](task-01-a-pi-turn-runs-on-the-endpoint.md).
+- **Done so far:** task 01 is implemented: a record with `baseUrl` and `apiKey` registers one OpenAI-compatible provider under its id on the session's runtime, and a turn on `<id>/<model>` streams through it. The endpoint test saw the key on the request. The suite is 270 of 271, with `agent-pi-lazy.test.ts` timing out at its own 4 s import budget under the other builds' load.
+- **Next action:** [task-02-the-probe-lists-the-endpoint.md](task-02-the-probe-lists-the-endpoint.md).
 - **Open questions:** none.
-- **Watch out for:** pi's `useEnv` already sets per-session keys on the runtime; the new provider must not be undone by it.
+- **Watch out for:** pi's `useEnv` already sets per-session keys on the runtime; the new provider is not undone by it, because `keyOf` resolves the record's key through the provider's auth. The probe still reads pi's own files only, which task 02 changes.
 
 ## Final verification checklist
 
