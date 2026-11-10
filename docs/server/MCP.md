@@ -58,7 +58,7 @@ The token is the one `ahpd user token <id>` prints, or one minted with `ahpd tok
 
 Each tool checks its own grants, so the list is only what the caller may run. A `member` sees all nine. A role with `mcp:call` and `session:read` only sees `list_sessions`, `list_agents`, `list_models` and `get_session_context`, and a call to `create_session` gets `No tool named create_session`.
 
-`create_session` takes an `agent`, a provider id such as `claude-deepseek-build`, and a `config`, the new session's settings checked against that agent's schema. Both are optional. See [Tools](../sdk/TOOLS.md#tools-that-need-no-session).
+`create_session` takes an `agent`, a provider id such as `claude-deepseek-build`, and a `config`, the new session's settings checked against that agent's schema. Both are optional. Its `agent` input is an enum of the agents the caller may start, each named in its description. See [Tools](../sdk/TOOLS.md#tools-that-need-no-session).
 
 `list_agents` and `list_models` are the readers beside it: both are cut to the agents the caller may start, and `list_models` answers the `id` and `name` that `create_session` and `create_chat` take as `model`. Use them to choose an agent, its model and its settings before a start.
 

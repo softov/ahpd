@@ -1290,6 +1290,37 @@ describe('a tool a person calls with no session', () => {
       await expect(run(hosts.host, { principal: member }, 'list_models', { agent: 'one' }))
         .rejects.toThrow('Invalid list_models input: agent "one" is not one this host offers.');
     });
+
+    it('names each caller its own agents in create_session\'s agent input', async () => {
+      // One agent each for two people who may both start a session, so the two
+      // lists differ without either being refused the tool.
+      const users = directory({ member: MEMBER, writer: MEMBER });
+      const { host } = hosting([], undefined, [backend('one', 6), backend('two', 2)], {
+        agentOwners: () => new Map<string, AgentOwner>([['one', 'user:member'], ['two', 'user:writer']]),
+        users,
+      });
+      const member = await principal(users, 'member');
+      const input = (caller: ToolCaller): { enum?: string[]; description?: string } =>
+        (offered(host, caller)['create_session']?.definition.inputSchema?.properties?.agent ?? {}) as {
+          enum?: string[]; description?: string;
+        };
+      const mine = input({ principal: member });
+      const theirs = input({ principal: await principal(users, 'writer') });
+      const every = input({ root: true });
+      expect(mine.enum).toEqual(['one']);
+      expect(theirs.enum).toEqual(['two']);
+      // The daemon keeps every agent, whoever a record holds it for.
+      expect(every.enum).toEqual(['one', 'two']);
+      // Each id is named the way a person reads it, one per line, and the models are `list_models`' to name.
+      expect(every.description).toContain('one: One\ntwo: Two');
+      expect(every.description).toContain('`list_models` names the models each agent offers.');
+      expect(mine.description).not.toContain('two: Two');
+
+      // The run refuses the same ids the enum leaves out.
+      await expect(run(host, { principal: member }, 'create_session', {
+        relationship: 'independent', prompt: 'say hi', title: 'Theirs', agent: 'two',
+      })).rejects.toThrow('Invalid create_session input: agent "two" is not one this host offers; it offers one.');
+    });
   });
 
   it('refuses a tool the operator\'s rule names, before the tool runs', async () => {

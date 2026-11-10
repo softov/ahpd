@@ -1262,6 +1262,15 @@ export interface ToolSession {
    * it, a workspace it took since included.
    */
   startedWorkspaceless?: boolean | undefined;
+  /**
+   * The agents the caller of this tool may start, with the name a person
+   * reads, for a tool that names them.
+   *
+   * It is the list `mayUseAgent` allows and `list_agents` answers, so what a
+   * tool offers and what it refuses are one reading: absent leaves a tool as
+   * it is, and an empty list is a caller that may start none.
+   */
+  agents?: { provider: string; name: string }[] | undefined;
 }
 
 /**

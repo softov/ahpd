@@ -613,6 +613,7 @@ export function createTooling(ctx: HostContext): Tooling {
     config: kept.config(idOf(uri)),
     bindings: sessionBindings(uri),
     startedWorkspaceless: ctx.startedWorkspaceless.has(uri),
+    agents: agentNamesOf(uri),
   });
   /**
    * One tool's definition for a session, shaped for it, or nothing where the
@@ -1892,6 +1893,29 @@ export function createTooling(ctx: HostContext): Tooling {
       .map((agent) => ({ provider: agent.provider, name: agent.displayName, schema: ctx.sessionSchema(agent) }));
   };
 
+  /** The agents one call may start, by id and the name a person reads. */
+  const agentNames = (
+    person: Principal | 'nobody' | undefined,
+    root: boolean,
+  ): { provider: string; name: string }[] =>
+    usableAgents(person, root).map((one) => ({ provider: one.provider, name: one.name }));
+
+  /**
+   * The agents a session's owner may start, for a tool that names them in a
+   * session's definition.
+   *
+   * The owner the session was started for, which is who a session it starts is
+   * owned by: a `root:` owner, or a session with no owner at all, is the daemon
+   * rather than nobody, and keeps every agent. A person this process has not
+   * met since it started is a caller nobody is behind, and is told the host's
+   * own agents alone.
+   */
+  const agentNamesOf = (uri: string): { provider: string; name: string }[] => {
+    const owner = kept.owner(idOf(uri));
+    if (owner === undefined || owner.startsWith('root:')) return agentNames(undefined, true);
+    return agentNames(principalFor(owner) ?? 'nobody', false);
+  };
+
   /** A chat's conversation, as its channel snapshot carries it. */
   const contextOf = async (
     session: string, chatId?: string,
@@ -2352,7 +2376,7 @@ export function createTooling(ctx: HostContext): Tooling {
       if (one.grant !== undefined && !callerMay(caller, one.grant)) return [];
       // No session means no strategy of its own: the deferred one this host
       // gives every session is the one a person is offered.
-      const session: ToolSession = { titleStrategy: strategyOf('') };
+      const session: ToolSession = { titleStrategy: strategyOf(''), agents: agentNames(caller.principal, caller.root === true) };
       if (one.isEnabledForSession?.(session) === false) return [];
       const asked = one.forSession?.(session);
       const definition = asked?.definition === undefined ? one.definition : { ...one.definition, ...asked.definition };

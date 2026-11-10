@@ -3,6 +3,7 @@ import { Status, idOf } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { flag, optional, required, when } from '../utils/toolinput.js';
 import type { HostTool, SessionlessToolCall, ToolCall } from '../types/host.js';
+import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Summary } from '../types/catalog.js';
 import type { Bag } from '../types/common.js';
 import type { Grant } from '../types/users.js';
@@ -444,6 +445,42 @@ const RENAME_CHAT_PROPERTIES: Record<string, object> = {
   automatic: { type: 'boolean', description: 'Set to true only when this call is fulfilling the host\'s automatic title reminder. Omit for user-requested renames.' },
 };
 
+/**
+ * `create_session`'s `agent` input, as one caller's agents name it.
+ *
+ * The enum is that caller's list itself, so an agent it may not start cannot
+ * be named, and the description gives each id the name a person reads, one per
+ * line, as Claude Code's Agent tool names its agent types. The last sentence
+ * points at `list_models` for the models behind each id.
+ */
+const agentInput = (agents: { provider: string; name: string }[]): object => ({
+  type: 'string',
+  enum: agents.map((one) => one.provider),
+  description: `Optional provider id of the agent to run. Defaults to the model's provider, then the current chat's. \`list_models\` names the models each agent offers.${agents.length === 0 ? '' : `\n${agents.map((one) => `${one.provider}: ${one.name}`).join('\n')}`}`,
+});
+
+/** `create_session`'s definition, before one caller's agents are named in its `agent` input. */
+const CREATE_SESSION: ToolDefinition = {
+  name: 'create_session',
+  title: 'Create Session',
+  description: 'Create delegated work and start it with an initial prompt, either in a new chat sharing the current session\'s workspace, lifecycle, and aggregate diff, or in an independent session. Only supply `worktree` when the user explicitly requests working with or without a new worktree; never combine it with `currentSession`.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      relationship: { type: 'string', enum: ['currentSession', 'independent'], description: 'Whether this work belongs to the current session or is independently managed. Use `currentSession` for tasks from the current plan or deliverable, including parallel or delegated tasks, unless the user explicitly requests a worktree. Use `independent` for a separate deliverable that needs its own workspace, provider, or top-level lifecycle, or for an explicitly requested worktree.' },
+      prompt: { type: 'string', description: 'Initial prompt to send to the new session.' },
+      workspace: { type: 'string', description: 'For `independent` work: unique project name, project/workspace URI, absolute folder path, or working directory from an existing session. Required for `independent` and invalid for `currentSession`.' },
+      worktree: { type: 'boolean', description: 'Override isolation for the new independent session. Set true only when the user explicitly asks to create a worktree, or false only when the user explicitly asks to work without one. Omit to preserve the existing isolation behavior: inherit the creating session\'s isolation for the same project, otherwise use worktree isolation. Only valid with relationship `independent`; omit for `currentSession`.' },
+      title: { type: 'string', maxLength: 200, description: 'Short title for the new chat or independent session.' },
+      model: { type: 'string', description: 'Optional model ID or display name. Defaults to the current chat\'s model. For `currentSession`, the model must belong to the current session\'s provider; for `independent`, the model selects the new session\'s provider.' },
+      agent: { type: 'string', description: 'Optional provider id of the agent to run, such as one `list_sessions` shows. Defaults to the model\'s provider, then the current chat\'s.' },
+      config: { type: 'object', description: 'Optional settings for the new session, as the agent\'s config schema names them. Defaults to what the current chat\'s agent says a new chat inherits.' },
+    },
+    required: ['relationship', 'prompt', 'title'],
+  },
+  annotations: { title: 'Create Session', readOnlyHint: false, destructiveHint: true },
+};
+
 /** VS Code's session tools, in its order. */
 export const sessionTools = (): HostTool[] => [
   {
@@ -624,25 +661,25 @@ export const sessionTools = (): HostTool[] => [
     },
   },
   {
-    definition: {
-      name: 'create_session',
-      title: 'Create Session',
-      description: 'Create delegated work and start it with an initial prompt, either in a new chat sharing the current session\'s workspace, lifecycle, and aggregate diff, or in an independent session. Only supply `worktree` when the user explicitly requests working with or without a new worktree; never combine it with `currentSession`.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          relationship: { type: 'string', enum: ['currentSession', 'independent'], description: 'Whether this work belongs to the current session or is independently managed. Use `currentSession` for tasks from the current plan or deliverable, including parallel or delegated tasks, unless the user explicitly requests a worktree. Use `independent` for a separate deliverable that needs its own workspace, provider, or top-level lifecycle, or for an explicitly requested worktree.' },
-          prompt: { type: 'string', description: 'Initial prompt to send to the new session.' },
-          workspace: { type: 'string', description: 'For `independent` work: unique project name, project/workspace URI, absolute folder path, or working directory from an existing session. Required for `independent` and invalid for `currentSession`.' },
-          worktree: { type: 'boolean', description: 'Override isolation for the new independent session. Set true only when the user explicitly asks to create a worktree, or false only when the user explicitly asks to work without one. Omit to preserve the existing isolation behavior: inherit the creating session\'s isolation for the same project, otherwise use worktree isolation. Only valid with relationship `independent`; omit for `currentSession`.' },
-          title: { type: 'string', maxLength: 200, description: 'Short title for the new chat or independent session.' },
-          model: { type: 'string', description: 'Optional model ID or display name. Defaults to the current chat\'s model. For `currentSession`, the model must belong to the current session\'s provider; for `independent`, the model selects the new session\'s provider.' },
-          agent: { type: 'string', description: 'Optional provider id of the agent to run, such as one `list_sessions` shows. Defaults to the model\'s provider, then the current chat\'s.' },
-          config: { type: 'object', description: 'Optional settings for the new session, as the agent\'s config schema names them. Defaults to what the current chat\'s agent says a new chat inherits.' },
+    definition: CREATE_SESSION,
+    /*
+     * The `agent` input is one caller's list, so the definition is shaped for
+     * the caller each time it is offered: an agent held by somebody else is
+     * neither in the enum nor named in the description, and the run refuses
+     * the same ids the enum holds.
+     */
+    forSession: (session) => {
+      if (session.agents === undefined) return undefined;
+      const schema = CREATE_SESSION.inputSchema ?? { type: 'object' as const, properties: {} };
+      return {
+        definition: {
+          inputSchema: {
+            ...schema,
+            type: 'object' as const,
+            properties: { ...schema.properties, agent: agentInput(session.agents) },
+          },
         },
-        required: ['relationship', 'prompt', 'title'],
-      },
-      annotations: { title: 'Create Session', readOnlyHint: false, destructiveHint: true },
+      };
     },
     sessionless: true,
     grant: 'session:write',
@@ -656,7 +693,7 @@ export const sessionTools = (): HostTool[] => [
       const title = titled(input.title, tool);
       const agent = optional(input.agent, 'agent', tool);
       if (agent !== undefined) {
-        const offers = at.providers();
+        const offers = at.agents().map((one) => one.provider);
         if (!offers.includes(agent))
           throw new Error(`Invalid ${tool} input: agent "${agent}" is not one this host offers${offers.length > 0 ? `; it offers ${offers.join(', ')}` : ''}.`);
       }
