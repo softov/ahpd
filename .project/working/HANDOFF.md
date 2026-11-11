@@ -10,9 +10,9 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 ## Main
 
 - The last release is 0.14.0 (`v0.14.0`). `0.15.0-rc.1` is on npm `next` (`v0.15.0-rc.1`, #231). What the release needs is in [pending/release.md](../pending/release.md).
-- Main is at `ca131f13d`. Its last code merge is #289 (`080dc4799`), and CI passed every job on it, in run 42960368834.
+- Main's last code merge is #288 (`5a9167c36`): a stored ACP session opens after a restart. It is beorn's fix for #287, with two of our commits, and #287 is closed.
 - #277 to #286 merged on 2026-11-10, and #289 on 2026-11-11. `git log` and each plan's Resume state hold the detail.
-- One PR is open: #288, beorn's fix for #287, a stored ACP session opens after a restart. Two of our commits are on his branch: the load uses the session's recorded folder, and the test types its row. CI is green on `75b24c2fb`, attempt 3. It waits for Softov's word to merge, and for beorn to say which ACP server he used.
+- No PR is open on `softov/ahpd`. beorn has not said which ACP server he hit #287 with.
 - MayCXC said on 2026-11-09 not to wait for him. His branches 0210, 1647, 2330 and 0340 are all on main, and he has pushed nothing since 0340.
 - CI shards: `linux (1/2)`, `linux (2/2)`, `processes (1/2)`, `processes (2/2)` and `windows (1/4)` to `windows (4/4)`. `check` and `check-windows` are the checks the `main` ruleset requires; each is green only when every shard of its job is.
 - A slow runner can still fail a job with nothing wrong in the code. Rerun the failed jobs once with `gh run rerun <id> -R softov/ahpd --failed`; a second failure needs a look.
@@ -30,7 +30,6 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
   - `build-agents-057f374c`, `build-agents-3795760c`, `build-agents-ae3197fe`, `build-agents-e6611632`, `build-agents-ed43acf5`, `devtunnel-key-values` and `usage-task-03`: build sessions' worktrees.
   - `wait-ms` (#260) and `win-command` (#261): merged.
   - `build-agents-8d842840`: the turn-off build, not pushed and not reviewed.
-  - `pr-288`: PR 288's branch with our commits, pushed to beorn's fork. `pr-288-orig`: detached at beorn's own commit `ee78af201`, for the restore test.
   - `release-prerelease`: merged in #163.
   - Merged branches: `build-agents-6c0a50f2` (#199), `build-agents-74d376da` (#196), `build-agents-9b7dd5b5` (#197), `build-agents-b6d26e50` (#187), `build-agents-cba21cdc` (#198), `canvas-example` (#194), `grants-follow-the-answers` (#192), `maycxc-union` and `union-ad15488a`.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334` (merged), `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`. Delete them only on his word.
@@ -42,7 +41,7 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - [plugin/20261111-0032-agents-and-connectors-list-their-alerts](../plans/plugin/20261111-0032-agents-and-connectors-list-their-alerts/plan.md) merged in #289. It stays `implemented` until Softov says `built`.
 - [plugin/20261111-0032-an-agent-or-connector-turns-off](../plans/plugin/20261111-0032-an-agent-or-connector-turns-off/plan.md) is being built in `build-agents-8d842840`, in session `8d842840`. On 2026-11-11 Softov added a paused state, stored in one `mode` field, and tasks 01 and 02 are being rebuilt for it. The build preset denies `git add`, so new files are committed by hand in review.
 - Two plans from [briefs/mcp-client.md](../briefs/mcp-client.md) are written and not committed. They wait for Softov's check: host/20261111-0609-a-row-lists-chats-and-one-chat-archives and host/20261111-0609-the-session-context-tells-each-call. Their four items leave the brief once he approves them.
-- ahpw needs its own plan for the alert list and the on/off switch on the agent and connector pages, with a mockup first. Until then its pages read `health`, which ahpd no longer sends.
+- ahpw's brief for the alert list and the switch is `ahpw/.project/briefs/an-agent-or-connector-lists-its-alerts-and-turns-off.md`, not committed. Its plan needs a mockup first. Until then ahpw's pages read `health`, which ahpd no longer sends.
 - A restored ACP session shows the host's added first-prompt text as the person's own words. Codex and Gemini both do it. No brief yet.
 - `/mcp` keeps no session, so an MCP client is not a row in `x-ahpd-clients`. Softov likes an MCP session (`Mcp-Session-Id`) for it. No brief yet.
 - A `get_session_context` reply over MCP is cut at the level's cap with no way to read the rest. host/20261111-0609-the-session-context-tells-each-call adds `responseTurnId`.
