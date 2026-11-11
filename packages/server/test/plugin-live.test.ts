@@ -632,7 +632,7 @@ it('alerts the row of a plugin whose listening handler throws, and keeps the lin
   await raise(events, LISTENED, eventFailed(running.set, (line) => { lines.push(line); }, 'listening'));
   expect(lines).toEqual(['broken failed at listening: no tunnel 1']);
   expect(running.set.alerts().broken).toEqual([
-    { level: 'error', ref: 'event:listening', text: 'This plugin failed when ahpd started, and the ahpd log has the details.', at: expect.any(String) },
+    { level: 'error', ref: 'event:listening', text: 'This plugin failed to start, and the ahpd log has the details.', at: expect.any(String) },
   ]);
   await raise(events, LISTENED, eventFailed(running.set, (line) => { lines.push(line); }, 'listening'));
   expect(lines).toHaveLength(2);

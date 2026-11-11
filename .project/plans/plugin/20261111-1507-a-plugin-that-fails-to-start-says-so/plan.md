@@ -54,7 +54,7 @@ listening raised at start or at an enable -> handler throws -> eventFailed -> se
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The alert says the plugin failed to start](task-01-the-alert-says-the-plugin-failed-to-start.md) | todo | - |
+| [01 - The alert says the plugin failed to start](task-01-the-alert-says-the-plugin-failed-to-start.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -62,12 +62,12 @@ listening raised at start or at an enable -> handler throws -> eventFailed -> se
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-alert-says-the-plugin-failed-to-start.md](task-01-the-alert-says-the-plugin-failed-to-start.md).
+- **Done so far:** task 01 implemented, 2026-11-11; see [implemented.md](implemented.md).
+- **Next action:** Softov reviews the PR. The plan closes as `built` on his word.
 - **Open questions:** none.
-- **Watch out for:** the problem also asks whether a `stopping` alert stays on an unloaded plugin. That stays open, and goes in the plan's deferred record once built.
+- **Watch out for:** the problem also asks whether a `stopping` alert stays on an unloaded plugin. That stays open, in [deferred.md](deferred.md).
 
 ## Final verification checklist
 
-- [ ] The `listening` alert reads "This plugin failed to start, and the ahpd log has the details."
-- [ ] `pnpm typecheck` and the server suite pass.
+- [x] The `listening` alert reads "This plugin failed to start, and the ahpd log has the details."
+- [x] `pnpm typecheck` and the server suite pass.
