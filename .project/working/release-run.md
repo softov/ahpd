@@ -92,7 +92,7 @@ Seen and not a fault of ahpd:
 
 ## Report
 
-The run stopped on 2026-11-11 after five PRs. Nothing was merged.
+The run stopped on 2026-11-11 after five PRs. Softov said to merge them, and all five merged the same day: #296 `6e464c982`, #297 `6c946f17a`, #299 `660744df0`, #300 `6e8438419` and #298 `d269b3abf`. #298 had main merged in first, at `c7f2dda28`, and its CI was green again before the merge.
 
 ### PRs and CI
 
@@ -115,7 +115,6 @@ The run stopped on 2026-11-11 after five PRs. Nothing was merged.
 
 ### What needs Softov's word
 
-- Merges: #296, then #297, then #298, in that order. #299 and #300 stand alone.
 - Closing plans as `built`: the five of this run after review, and the 13 that HANDOFF lists with every task `implemented`.
 - The problem on plugin option keys: which of its two fixes.
 - Checks by hand: unchanged, as [pending/triage.md](../pending/triage.md) orders them. No check by hand was run in this run.
@@ -123,7 +122,7 @@ The run stopped on 2026-11-11 after five PRs. Nothing was merged.
 
 ### Softov's daemon
 
-It was not touched: ports 5180 and 37537 stayed as they were. It needs no restart for this run, because nothing merged. A restart after #296, #297, #299 and #300 merge wires in all four.
+It was not touched: ports 5180 and 37537 stayed as they were. A restart after #296, #297, #299 and #300 merge wires in all four.
 That is the pi provider rule, the cofold model ids, the parts file errors and the plugin alert text.
 It also wires in #292 to #295, which HANDOFF already lists. #298 changes only `install.sh`.
 

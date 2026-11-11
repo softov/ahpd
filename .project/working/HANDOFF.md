@@ -10,15 +10,15 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 ## Main
 
 - The last release is 0.14.0 (`v0.14.0`). `0.15.0-rc.1` is on npm `next` (`v0.15.0-rc.1`, #231). What the release needs is in [pending/release.md](../pending/release.md).
-- Main's last code merge is #295 (`cc4002706`): a stopped session's row lists its chats, and a link finds its session by its id.
+- Main's last code merge is #298 (`d269b3abf`): a second install finds the first one off the PATH.
 - #277 to #286 merged on 2026-11-10, and #288 to #295 on 2026-11-11. `git log` and each plan's Resume state hold the detail.
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). beorn has not said which ACP server he hit #287 with.
-- PRs #296 to #300 are open from the release run of 2026-11-11, none merged. [release-run.md](release-run.md) lists them with their CI. #297 has #296 merged in, and #298 has #297, because all three edit `docs/updates/v0_15.md`: they merge in that order.
+- PRs #296 to #300, from the release run of 2026-11-11, merged on Softov's word the same day. No PR is open. #298 needed main merged in first: GitHub saw a conflict after #297 that a local merge did not.
 - MayCXC said on 2026-11-09 not to wait for him. His branches 0210, 1647, 2330 and 0340 are all on main, and he has pushed nothing since 0340.
 - CI shards: `linux (1/2)`, `linux (2/2)`, `processes (1/2)`, `processes (2/2)` and `windows (1/4)` to `windows (4/4)`. `check` and `check-windows` are green only when every shard of their job is.
 - The only ruleset on `main` is `Protect Main`. It requires a PR and lets org admins and Softov bypass it, so a plan-only push goes straight to main. It requires no check: the old `main checks` ruleset, which required `check` and `check-windows`, was deleted on 2026-11-11. Wait for both before a merge until Softov adds them back.
 - A slow runner can still fail a job with nothing wrong in the code. Rerun the failed jobs once with `gh run rerun <id> -R ahpio/ahpd --failed`; a second failure needs a look.
-- Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`. He restarted it after #291; a restart wires in #292 to #295. It has `policies.check` on, with one policy, `neach`. It needs `DEEPSEEK_API_KEY` in its environment, or the DeepSeek agents do not open. Never restart it or use the ports 5180 and 37537 yourself.
+- Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`. He restarted it after #291; a restart wires in #292 to #297, #299 and #300. It has `policies.check` on, with one policy, `neach`. It needs `DEEPSEEK_API_KEY` in its environment, or the DeepSeek agents do not open. Never restart it or use the ports 5180 and 37537 yourself.
 - Code goes through a PR on `ahpio/ahpd`. Plan-only commits go to main. A PR merges with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word. Show a PR's text in chat before opening it.
 - `gh pr checks` has no `--json` here, and `gh pr edit` fails on the Projects classic deprecation. Read a job's log with `gh api repos/ahpio/ahpd/actions/jobs/<id>/logs`, and set a PR body with `gh api repos/ahpio/ahpd/pulls/<n> -X PATCH -F body=@<file>`.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it. Run one vitest suite at a time, with `TMPDIR` on a folder outside the home's dot-folders.
