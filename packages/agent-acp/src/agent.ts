@@ -198,8 +198,8 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
      * conversation, so a row no server can reopen is the contract's way of
      * saying the host has no such session rather than an empty one.
      */
-    transcript: async (id) => {
-      const found = await loadedSession(options, provider, id);
+    transcript: async (id, at) => {
+      const found = await loadedSession(options, provider, id, at?.workingDirectory);
       return found === undefined ? undefined : turnsOf(found);
     },
 

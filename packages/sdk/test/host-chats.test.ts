@@ -1425,7 +1425,14 @@ describe('more than one chat in a session', () => {
       await send(first.client, LIVE, 't1', 'first');
       await new Promise((tick) => { setTimeout(tick, 5); });
 
-      const second = await hostAt(dir, { ...agent, list: async () => [], find: async () => undefined });
+      // Gone means gone: the catalogue forgets it AND its backend can no longer replay it. A host that
+      // only lost the listing is recoverable now, so stubbing the listing alone describes a live session.
+      const second = await hostAt(dir, {
+        ...agent,
+        list: async () => [],
+        find: async () => undefined,
+        transcript: async () => undefined,
+      });
       const rows = await second.client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
         items: { resource: string }[];
       };
