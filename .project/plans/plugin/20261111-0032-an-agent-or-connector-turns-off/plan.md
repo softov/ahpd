@@ -1,7 +1,7 @@
 ---
 title: An agent or connector turns off
 domain: plugin
-status: active
+status: implemented
 priority: medium
 created: 2026-11-11
 revalidated: 2026-11-11
