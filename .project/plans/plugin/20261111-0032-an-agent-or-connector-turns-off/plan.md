@@ -102,7 +102,7 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-11; task 01, 2026-11-11; task 02, 2026-11-11; task 03, 2026-11-11. Both records carry `enabled` and the four toggle commands answer their row. The host refuses a disabled agent a new session, a chat and a turn, and a connector that is off is closed by its toggle and skipped at start and by a put.
+- **Done so far:** the plan, 2026-11-11; task 01, 2026-11-11; task 02, 2026-11-11; task 03, 2026-11-11. Both records carry `enabled` and the four toggle commands answer their row. The host refuses a disabled agent a new session, a chat and a turn. A connector that is off is closed by its toggle, and skipped at start and by a put.
 - **Next action:** none; the plan is implemented. [implemented.md](implemented.md) says what was built and verified.
 - **Open questions:** none.
 - **Watch out for:**
