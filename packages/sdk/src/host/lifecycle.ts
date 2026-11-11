@@ -13,11 +13,11 @@ import { ROOT, chatIdFor, named } from './channels.js';
 import { mintDefaultChatUri } from '../vscode/chatminting.js';
 import { filterChatConfigValues } from '../vscode/chatconfig.js';
 import type { ConfigSchema } from '../vscode/chatconfig.js';
-import { isDisabled, mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
+import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
 import { readCreatedBy, readMultiRoot, readOrigin } from '../sessions/remotesession.js';
-import { HOSTS_OWN, bangCommand, noProvider, turnedOff } from './common.js';
+import { agentRefusal, HOSTS_OWN, bangCommand, noProvider } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
 import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
@@ -1953,13 +1953,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const offered = session.models();
     const provider = held?.backends.get(session.chatUri)?.agent.provider ?? held?.agent.provider ?? 'This agent';
     /*
-     * A turn for an agent its record turned off ends where it starts: the
-     * session keeps its history, and the person is told the agent is off
-     * rather than given a turn nothing will answer. `sendFailed` is the
-     * reason the chat's own error carries, since no message was sent.
+     * A turn for an agent its record turned off or paused ends where it starts:
+     * the session keeps its history, and the person is told the agent's state
+     * rather than given a turn nothing will answer. `sendFailed` is the reason
+     * the chat's own error carries, since no message was sent.
      */
-    if (isDisabled(ctx.options.disabledAgents?.(), provider)) {
-      ended('sendFailed', new Error(turnedOff(provider)));
+    const unavailable = agentRefusal(ctx.options.disabledAgents?.(), ctx.options.pausedAgents?.(), provider);
+    if (unavailable !== undefined) {
+      ended('sendFailed', new Error(unavailable));
       return undefined;
     }
     const unoffered = model !== undefined && offered.length > 0 && !offered.some((one) => one.id === model.id);
@@ -2569,11 +2570,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (sessions.has(uri))
       throw new RpcError(-32003, `${uri} already exists`);
     ctx.unheld(uri);
-    // An agent whose record is off starts nothing, whatever its record still
-    // says it is: the sentence names it rather than answering as a provider
-    // this host has never heard of.
-    if (isDisabled(ctx.options.disabledAgents?.(), provider))
-      throw new RpcError(-32002, turnedOff(provider));
+    // An agent whose record is off or paused starts nothing: the sentence
+    // names the state rather than answering as a provider this host has never
+    // heard of.
+    const unavailable = agentRefusal(ctx.options.disabledAgents?.(), ctx.options.pausedAgents?.(), provider);
+    if (unavailable !== undefined)
+      throw new RpcError(-32002, unavailable);
     const agent = ctx.agents.get(provider);
     if (!agent)
       throw new RpcError(-32002, noProvider(provider));

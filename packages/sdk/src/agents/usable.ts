@@ -53,6 +53,16 @@ export const isDisabled = (disabled: ReadonlySet<string> | undefined, provider: 
   disabled?.has(provider) === true;
 
 /**
+ * Whether an agent's record says it is paused.
+ *
+ * A paused agent is opened and served, so its sessions keep their history and
+ * take a message again once it is enabled. The host starts nothing new on it:
+ * no session, no chat, no chat move and no turn, as for one that is off.
+ */
+export const isPaused = (paused: ReadonlySet<string> | undefined, provider: string): boolean =>
+  paused?.has(provider) === true;
+
+/**
  * Whether this caller may see and start a session on an agent.
  *
  * A host agent - the daemon's own, or one a plugin registered, which has no

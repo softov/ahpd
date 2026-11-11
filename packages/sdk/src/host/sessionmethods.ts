@@ -6,8 +6,8 @@ import { namesOf } from '../usage/scopes.js';
 import { localPath } from '../resources/fileuri.js';
 import { bag, ownerFilter } from '../utils/values.js';
 import { configOf } from '../sessions/remotesession.js';
-import { CLOSING, noProvider, turnedOff } from './common.js';
-import { isDisabled, mayUseAgent, ownershipOf } from '../agents/usable.js';
+import { agentRefusal, CLOSING, noProvider } from './common.js';
+import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
 import { getAgentHostChatId } from '../vscode/chatid.js';
 import { chatUriFormatOf, isShapedChatUri } from '../vscode/chatminting.js';
@@ -367,13 +367,14 @@ export function createChatMover(ctx: HostContext): (
         + ' Turn on chats with their own agents to move it to a session of another agent.');
     }
     /*
-     * A chat whose agent is off stays where it is. The session it moves into
-     * is of that same agent, which the check below requires, so one answer
-     * covers both ends.
+     * A chat whose agent is off or paused stays where it is. The session it
+     * moves into is of that same agent, which the check below requires, so one
+     * answer covers both ends.
      * https://github.com/microsoft/vscode/blob/1564f100807a/src/vs/platform/agentHost/node/agentService.ts#L9736-L9738
      */
-    if (isDisabled(options.disabledAgents?.(), held.agent.provider)) {
-      throw refused('agentUnavailable', turnedOff(held.agent.provider));
+    const unavailable = agentRefusal(options.disabledAgents?.(), options.pausedAgents?.(), held.agent.provider);
+    if (unavailable !== undefined) {
+      throw refused('agentUnavailable', unavailable);
     }
     /*
      * A chat a move is made of, checked now rather than read from `movable`,
@@ -1254,9 +1255,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const uri = named(String(params.channel ?? ''), 'session');
       const provider = params.provider === undefined ? ctx.first?.provider : String(params.provider);
       if (provider === undefined) throw new RpcError(-32002, noProvider(provider));
-      // An agent whose record is off starts no session, said with the one
-      // sentence every refusal of it uses.
-      if (isDisabled(options.disabledAgents?.(), provider)) throw new RpcError(-32002, turnedOff(provider));
+      // An agent whose record is off or paused starts no session, said with
+      // the sentence that state uses.
+      const unavailable = agentRefusal(options.disabledAgents?.(), options.pausedAgents?.(), provider);
+      if (unavailable !== undefined) throw new RpcError(-32002, unavailable);
       /*
        * An agent this caller may not use answers as one this host does not
        * serve, before anything is claimed or made: an id it is refused is an
@@ -1448,10 +1450,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2272-L2282
        */
       if (chatUri === held.defaultChat && params.initialMessage === undefined) return null;
-      // A chat whose agent its record turned off starts nothing, said with the
-      // sentence every refusal of it uses.
-      if (isDisabled(ctx.options.disabledAgents?.(), held.agent.provider))
-        throw new RpcError(-32002, turnedOff(held.agent.provider));
+      // A chat whose agent its record turned off or paused starts nothing,
+      // said with the sentence that state uses.
+      const unavailable = agentRefusal(ctx.options.disabledAgents?.(), ctx.options.pausedAgents?.(), held.agent.provider);
+      if (unavailable !== undefined) throw new RpcError(-32002, unavailable);
       if (idOf(chatUri) === '' || chatUri.indexOf(':') <= 0)
         throw new RpcError(INVALID_PARAMS, `${chatUri} is not a chat URI`);
       /*

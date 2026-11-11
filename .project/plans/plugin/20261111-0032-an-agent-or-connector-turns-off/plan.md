@@ -96,7 +96,7 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - An agent record turns off](task-01-an-agent-record-turns-off.md) | done | - |
-| [02 - The host refuses a disabled agent](task-02-the-host-refuses-a-disabled-agent.md) | todo | 01 |
+| [02 - The host refuses a disabled agent](task-02-the-host-refuses-a-disabled-agent.md) | done | 01 |
 | [03 - A connector record turns off](task-03-a-connector-record-turns-off.md) | done | - |
 
 ## Risks and tradeoffs
@@ -107,13 +107,14 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 
 ## Resume state
 
-- **Done so far:** task 01 built 2026-11-11 for the three agent states: `mode` with `enabled`, `paused` and `disabled`, the older `enabled: false` reading as disabled, the `pause` command, and the channel's `disabled()` and `paused()` sets. Task 03 stays `done` from the boolean-`enabled` build.
-- **Next action:** task 02: the host's refusals for a paused agent, the root list, and the restart cases.
+- **Done so far:** tasks 01 and 02 built 2026-11-11 for the three agent states: `mode` with `enabled`, `paused` and `disabled`, the older `enabled: false` reading as disabled, the `pause` command, the channel's `disabled()` and `paused()` sets, and the host's refusals and listing for both off states through `disabledAgents` and `pausedAgents`. Task 03 stays `done` from the boolean-`enabled` build.
+- **Next action:** close the plan as `implemented`, with `implemented.md` written from the do-spec template.
 - **Open questions:** none.
 - **Watch out for:**
 `sync` ends the sessions of each id in `before` that is no longer open. A paused or disabled id is skipped there, and a paused record is opened as an enabled one is.
-A paused record is opened at start, so the host's refusal is the only gate on it. `disabledAgents` names the disabled ids, and the host needs the paused ids too because the sentence differs; task 02 adds a `pausedAgents` option beside it.
-The restart test needs a second host with its own backend instance, or it does not test a restart. The disabled case checks the stored session leaves the list and comes back after `enable`.
+A paused record is opened at start, so the host's refusal is the only gate on it. The host reads the paused ids through `pausedAgents` beside `disabledAgents`, because the sentence differs.
+A wake is refused only for a disabled agent, so a paused session wakes and reads its turns; a message to it is answered with the paused sentence in `sendTurn`.
+The restart tests start a second host with its own backend instance. The paused case lists the stored session and refuses its message; the disabled case checks the stored session leaves the list and comes back, with its turns, once the record is on.
 
 ## Final verification checklist
 

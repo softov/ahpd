@@ -364,6 +364,17 @@ export interface HostOptions {
    */
   disabledAgents?: () => ReadonlySet<string>;
   /**
+   * The ids of the agents whose record says they are paused, as of the last
+   * read.
+   *
+   * A paused agent is opened and served, so its sessions keep their history
+   * and its alerts show. It is left out of the root's agent list, and the host
+   * refuses it a new session, a new chat, a chat move and a new turn with
+   * `<id> is paused.`, which is what a caller is told rather than the sentence
+   * a disabled agent hears. Left out, no agent is paused.
+   */
+  pausedAgents?: () => ReadonlySet<string>;
+  /**
    * The connectors this host serves, as a session's bindings are checked.
    *
    * `refs` answers every stored connector's id, adapter and owner as of the
