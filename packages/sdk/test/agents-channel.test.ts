@@ -947,16 +947,14 @@ it('raises no alert for a disabled record whose environment variable is missing'
   const { host, users, collection, lists, opened, close } = await served();
   delete process.env['AHPD_TEST_OFF_KEY'];
   await collection.put({
-    id: 'theirs', engine: 'checker', owner: 'host', name: 'Theirs', enabled: false,
+    id: 'theirs', engine: 'checker', owner: 'host', name: 'Theirs', mode: 'disabled',
     config: { target: 'a', secret: { fromEnv: 'AHPD_TEST_OFF_KEY' } },
   });
   await lists.openAll();
 
   const fa = await as(host, users, 'fa');
   const row = (await fa.rows())['theirs'];
-  // The older field still reads as the state it named.
   expect(row).toMatchObject({ state: 'disabled' });
-  expect(row).not.toHaveProperty('mode');
   expect(row).not.toHaveProperty('alerts');
   // Nothing was opened, so no key was read.
   expect(opened).toHaveLength(0);
@@ -997,16 +995,10 @@ it('keeps an agent off when its record is put again', async () => {
 
   // An edit is not a toggle.
   expect(await cy.call('x-ahpd/agents/put', {
-    id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', enabled: true, config: { target: 'b' },
-  })).toMatchObject({
-    code: -32602,
-    message: 'x-ahpd/agents/put does not take mode or enabled; use x-ahpd/agents/enable, x-ahpd/agents/pause or x-ahpd/agents/disable',
-  });
-  expect(await cy.call('x-ahpd/agents/put', {
     id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', mode: 'enabled', config: { target: 'b' },
   })).toMatchObject({
     code: -32602,
-    message: 'x-ahpd/agents/put does not take mode or enabled; use x-ahpd/agents/enable, x-ahpd/agents/pause or x-ahpd/agents/disable',
+    message: 'x-ahpd/agents/put does not take mode; use x-ahpd/agents/enable, x-ahpd/agents/pause or x-ahpd/agents/disable',
   });
   await close();
 });

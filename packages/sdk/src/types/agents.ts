@@ -69,13 +69,6 @@ export interface AgentRecord {
   config: Record<string, unknown>;
   /** Whether the agent is on, paused or off. A record that names none is enabled. */
   mode?: AgentMode;
-  /**
-   * Whether the agent is on, in the records written before `mode`.
-   *
-   * A record that holds `enabled: false` reads as `disabled`, and one that
-   * holds no `mode` and no `enabled` reads as `enabled`.
-   */
-  enabled?: boolean;
 }
 
 /**

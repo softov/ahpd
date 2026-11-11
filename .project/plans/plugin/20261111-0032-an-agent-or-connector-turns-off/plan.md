@@ -52,7 +52,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 ### Runtime path
 
 ```
-x-ahpd/agents/disable -> record enabled: false -> sync skips the record and does not end its sessions -> refold -> host keeps the backend while a session runs on it -> disabledAgents() -> refused new sessions, chats, moves and turns
+x-ahpd/agents/disable -> record mode: disabled -> sync skips the record and does not end its sessions -> refold -> host keeps the backend while a session runs on it -> disabledAgents() -> refused new sessions, chats, moves and turns
 x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no models -> row state disabled
 ```
 

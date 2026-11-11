@@ -1948,16 +1948,14 @@ One row for each agent, keyed by its id. A row is the record - `id`, `engine`,
 | `disabled` | Its record says `mode: disabled`, so it is not opened, asked or served |
 
 A record's `mode` is `enabled`, `paused` or `disabled`. A record that names no
-`mode` is enabled, and a record written before the field that holds
-`enabled: false` reads as disabled. A record that is paused is opened and served
+`mode` is enabled. A record that is paused is opened and served
 as one that is on: its keys are read, its probe runs, its alerts show, and a
 session that already runs on it keeps its history. The host starts no new
 session or chat on it, moves no chat to it and sends it no message until it is
 enabled again. A record that is off is not opened, so no key is read for it and
 no probe runs, and it shows no alerts. Its sessions are kept: a session that
 already runs on it keeps its history, and the host holds the backend it runs on
-until the last one ends. A put keeps the `mode`, or the older `enabled`, a
-record had.
+until the last one ends. A put keeps the `mode` a record had.
 
 A row also carries `icons`: the icons a client draws for the agent. It is the
 record's own `icon` as a one-item list when the record names one, and otherwise
@@ -2024,7 +2022,7 @@ picked up at the next start.
 
 An edit keeps the agent and its sessions: the view `open` was handed is updated
 in place, so a running session reads the new record at its next turn. A put
-keeps the record's `mode`, or the older `enabled`, as it was and refuses either
+keeps the record's `mode` as it was and refuses a `mode`
 parameter, so an edit is not a toggle. A record whose engine no plugin registers
 any more stays on disk and shows as `unavailable`, because a plugin turned off
 keeps its agents.

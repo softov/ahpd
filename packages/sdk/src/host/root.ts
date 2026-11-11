@@ -8,8 +8,8 @@ import { accepts } from '../utils/configvalues.js';
 import { clientOwnedApprovalRootConfigKeys, vscodeRootProperties } from '../vscoderootconfig.js';
 import { CLIENT_QUEUE_BYTES, MINIMUM_LIMIT_BYTES, REPLAY_BYTES } from './limits.js';
 import { ROOT } from './channels.js';
-import { isDisabled, isPaused } from '../agents/usable.js';
 import type { Connection, HostOptions } from '../types/host.js';
+import { agentRefusal } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
 import type { ResourceProvider } from '../types/resources.js';
@@ -297,8 +297,7 @@ export function createRoot(ctx: HostContext): Root {
    * signed into.
    */
   const descriptors = (): Bag[] => [...agents.values()]
-    .filter((agent) => !isDisabled(options.disabledAgents?.(), agent.provider)
-      && !isPaused(options.pausedAgents?.(), agent.provider))
+    .filter((agent) => agentRefusal(options.disabledAgents?.(), options.pausedAgents?.(), agent.provider) === undefined)
     .map((agent) => ({
     provider: agent.provider,
     displayName: agent.displayName,

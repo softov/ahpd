@@ -390,17 +390,9 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     }
   };
 
-  /**
-   * The mode a stored record names.
-   *
-   * A record with no `mode` is enabled, unless it is one written before the
-   * field and holds `enabled: false`, which reads as disabled. A `mode` that
-   * names one of the three states wins over the older field.
-   */
-  const modeOf = (record: StoredRecord): AgentMode => {
-    if (record.mode === 'enabled' || record.mode === 'paused' || record.mode === 'disabled') return record.mode;
-    return record.enabled === false ? 'disabled' : 'enabled';
-  };
+  /** The mode a stored record names; a record that names none is enabled. */
+  const modeOf = (record: StoredRecord): AgentMode =>
+    record.mode === 'paused' || record.mode === 'disabled' ? record.mode : 'enabled';
 
   /** The state a stored record is in now. */
   const stateOf = (record: StoredRecord): AgentState => {
@@ -873,17 +865,9 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     handle: (params, reader) => inTurn(() => putOne(params, reader)),
   };
 
-  /**
-   * The mode fields a stored record keeps through a put.
-   *
-   * A record written before `mode` keeps its `enabled`, and one that names a
-   * mode keeps it, so an edit never turns the agent on, off or paused.
-   */
-  const keptMode = (before: StoredRecord | undefined): Partial<StoredRecord> => {
-    if (before === undefined) return {};
-    if (before.mode !== undefined) return { mode: before.mode };
-    return typeof before.enabled === 'boolean' ? { enabled: before.enabled } : {};
-  };
+  /** The mode a stored record keeps through a put, so an edit never turns the agent on, off or paused. */
+  const keptMode = (before: StoredRecord | undefined): Partial<StoredRecord> =>
+    before?.mode === undefined ? {} : { mode: before.mode };
 
   /**
    * Make or change one record, once its turn comes.
@@ -898,8 +882,8 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     const id = idParam(PUT, params);
     // An edit is not a toggle: the record keeps the mode it has, and a client
     // turns it off, on or paused through the commands that say so.
-    if (params.mode !== undefined || params.enabled !== undefined) {
-      throw new RpcError(INVALID_PARAMS, `${PUT} does not take mode or enabled; use ${ENABLE}, ${PAUSE} or ${DISABLE}`);
+    if (params.mode !== undefined) {
+      throw new RpcError(INVALID_PARAMS, `${PUT} does not take mode; use ${ENABLE}, ${PAUSE} or ${DISABLE}`);
     }
     const engineName = params.engine;
     if (typeof engineName !== 'string' || engineName === '') {
@@ -1151,8 +1135,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
    *
    * A record that is off is not opened, so turning one off leaves the backend a
    * running session holds alone and ends nothing; turning it on or paused opens
-   * it again, or keeps it open. The record keeps every other field it held, and
-   * the older `enabled` field goes out with the mode that replaced it. The
+   * it again, or keeps it open. The record keeps every other field it held. The
    * answer is the record's row.
    */
   const toggleOne = async (
@@ -1170,7 +1153,6 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       throw new RpcError(INVALID_PARAMS, `${id} names no owner, so it cannot be served`);
     }
     const record: StoredRecord = { ...before, mode };
-    delete record.enabled;
     await options.collection.put(record);
     try {
       await take(await sync());

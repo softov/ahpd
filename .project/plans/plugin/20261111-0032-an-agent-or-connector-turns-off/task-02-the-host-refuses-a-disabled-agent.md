@@ -43,7 +43,7 @@ A session on it keeps its history, and takes messages again once the agent is on
 
 1. Add the option to `HostOptions`, with a comment that names VS Code's `_isAgentDisabledOnHost`.
 2. Add `turnedOff` beside `noProvider`.
-3. Write one helper `isDisabled(provider)`, and call it from every check.
+3. Write one helper, `agentRefusal`, and call it from every check.
 4. Leave a disabled agent out of `descriptors`, and publish the list again when the set changes.
 5. Refuse a new session, a new chat, `create_session` and a chat move for a disabled agent.
 6. Refuse a turn in `sendTurn` for a disabled agent, so the client gets the refusal and no turn starts.

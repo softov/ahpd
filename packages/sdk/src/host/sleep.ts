@@ -4,7 +4,6 @@ import { localPath } from '../resources/fileuri.js';
 import { RpcError } from '../rpc.js';
 import { ANNOTATIONS_PATH_SEGMENT, chatIdFor, chatOfCanvas, chatUriFor, ownerUriOf, spaceOf } from './channels.js';
 import { CLOSING, ENDINGS, turnedOff } from './common.js';
-import { isDisabled } from '../agents/usable.js';
 import type { Bag } from '../types/common.js';
 import type { Agent } from '../types/agent.js';
 import type { Connection } from '../types/host.js';
@@ -357,7 +356,7 @@ export function createSleep(ctx: HostContext): Sleep {
      * sentence a refusal of that agent uses, as a live session's turn is.
      */
     const recordedAgent = kept.provider(id);
-    if (recordedAgent !== undefined && isDisabled(options.disabledAgents?.(), recordedAgent)) {
+    if (recordedAgent !== undefined && options.disabledAgents?.().has(recordedAgent) === true) {
       throw new RpcError(AhpErrorCodes.SessionNotFound, turnedOff(recordedAgent));
     }
     /*

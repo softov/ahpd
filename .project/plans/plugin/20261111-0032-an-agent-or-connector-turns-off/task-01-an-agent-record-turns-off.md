@@ -37,14 +37,14 @@ The channel answers which ids are paused and which are disabled, for the host.
 
 1. Add `paused` and `disabled` to `AgentState`, and `AgentMode`.
 2. Add the three method names beside `PUT`, `REMOVE` and `CHECK`.
-3. Read a record's mode: `mode` when it names one, else `enabled: false` gives `disabled`, else `enabled`.
+3. Read a record's mode: `mode` when it names one, else `enabled`.
 4. Make `stateOf` answer `disabled`, then `paused`, before it reads the engine.
 5. In `sync`, skip a disabled record before you read its engine, and remove it from `open`.
 6. Drop the views and the alerts of a disabled record; open and keep a paused one as you do an enabled one.
 7. In `sync`, end no sessions for the id of a disabled or paused record.
-8. Carry the stored `mode`, or the older `enabled`, in `put`, and refuse either parameter.
+8. Carry the stored `mode` in `put`, and refuse a `mode` parameter.
 9. Write `enable`, `pause` and `disable`, each authorized as `check` is.
-10. Write the record, drop the older `enabled` field, run `take(await sync())` in the channel's turn, refresh, and answer the row.
+10. Write the record, run `take(await sync())` in the channel's turn, refresh, and answer the row.
 11. Answer `disabled()` and `paused()` from the stored records.
 12. Update the docs and the release notes.
 13. Write the tests.
@@ -53,7 +53,6 @@ The channel answers which ids are paused and which are disabled, for the host.
 
 - A paused record opens, its row is `paused`, and its alerts show as usual.
 - `x-ahpd/agents/pause` moves an enabled or disabled record to `paused`, and `enable` and `disable` move it out.
-- A record that still holds `enabled: false` reads as `disabled`.
 - `packages/sdk/test/agents-channel.test.ts`: `disable` makes the row `disabled`, and the agent leaves the list `refold` gets.
 - `disable` on an agent with a running session does not call `endSessionsOf` for it.
 - A disabled record with a missing `fromEnv` variable raises no alert and reads no variable.
@@ -66,7 +65,7 @@ The channel answers which ids are paused and which are disabled, for the host.
 
 2026-11-11. `AgentRecord` carries `mode?: AgentMode`, where `AgentMode` is `enabled`, `paused` or `disabled`, and keeps `enabled?: boolean` as the field older records hold. `AgentState` names six states, `paused` and `disabled` among them. The channel names `ENABLE`, `PAUSE` and `DISABLE` beside `PUT`, `REMOVE` and `CHECK`.
 
-`modeOf` reads a stored record: a `mode` that names one of the three wins, else `enabled: false` gives `disabled`, else the record is `enabled`. `stateOf` answers `disabled` first, then `paused`, and only then reads the engine, so a paused record keeps its alerts whatever its open says.
+`modeOf` reads a stored record: a `mode` that names `paused` or `disabled` wins, else the record is `enabled`. `stateOf` answers `disabled` first, then `paused`, and only then reads the engine, so a paused record keeps its alerts whatever its open says.
 
 `sync` skips a disabled record before it reads the engine, drops its `open` entry, its views, its alerts and its open failures, and leaves its id out of the `endSessionsOf` loop; a paused record is opened, filled and served as an enabled one is, and its id is left out of that loop too. `put` refuses a `mode` or an `enabled` parameter and carries the stored `mode`, or the older `enabled`, into the record. `enable`, `pause` and `disable` take `agent:put` and the owner's rule, write `mode`, drop the older `enabled` field, run `take(await sync())`, refresh and answer the row. `check` refuses a disabled record, which shows no alerts, and checks a paused one as it checks an enabled one. The channel answers `disabled()` and `paused()` from the last read of the collection.
 
