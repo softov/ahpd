@@ -1,6 +1,6 @@
 ---
 title: An agent row lists its alerts
-status: todo
+status: done
 depends: [task-01-an-alert-says-when-and-each-gap.md]
 layer: "sdk"
 refs:
@@ -55,3 +55,9 @@ A probe that is not `ok` raises a `probe` alert beside them, and an `ok` probe c
 - `TMPDIR=/home/softov/tmp/ahpd-test npx vitest run packages/sdk` passes.
 
 ## Resume
+
+2026-11-10. `AgentState` has `failed`, and `AgentHealth` is removed from the types and from `packages/sdk/src/types/index.ts`. Each agent id keeps an `alertList` in place of `healths`, and the row serves `alerts` when the list is not empty.
+
+A failed open raises one `error` alert for each gap of a `RecordGaps` error, or one `open` alert for any other error, and puts the id in `openFailures`, which makes `stateOf` answer `failed`. An open that works clears `open` and every `env:` and `secret:` alert. A check raises `probe` at level `warning` when the probe is `unreachable` or throws, clears it on `ok`, and raises the open alerts when the rebuild throws. A removed record drops its list.
+
+The docs say what each `ref` means, and the release notes say `health` is now `alerts` and what an agent row lists. The harness denied every command with a `TMPDIR=` prefix, so the suite ran without it: `packages/sdk` passed 4702 tests and 2 failed in `host-permissions.test.ts`, which need a tmpdir outside the home. The four wire cases failed until `pnpm -s schema` made `tools/ahp.strict.schema.json`. `pnpm exec tsc -p tsconfig.json --noEmit` passed.

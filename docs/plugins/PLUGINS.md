@@ -1920,7 +1920,8 @@ One row for each agent, keyed by its id. A row is the record - `id`, `engine`,
 | `state` | What it says |
 | --- | --- |
 | `ready` | The engine opened it and the host serves it |
-| `invalid` | Its config no longer fits the engine's schema, the engine refused to open it, or a `$secret` in it was not in the vault |
+| `failed` | The engine could not open it, as when an `env` variable it reads is missing or a `$secret` it names was not in the vault |
+| `invalid` | Its config does not fit the engine's schema |
 | `unavailable` | No loaded plugin registers its engine, so it cannot be opened |
 
 A row also carries `icons`: the icons a client draws for the agent. It is the
@@ -1930,10 +1931,16 @@ whose `config.command` equals the record's when the engine has no `templateOf`.
 A record that matches no template carries no `icons` key, and the client draws a
 blank square. `icon` stays on the row, so a client that reads it is not changed.
 
-A row also carries a `health` when a check was run and none when it was not:
-`health.result` is `ok`, `unreachable` or `failed`, with `message` where the
-agent gave one and `at` as an ISO time. Health is kept in memory only, so a
-restart clears it.
+A row also carries `alerts` when the agent has a problem: a list of `Alert`, each with a `level`, a `text`, a `ref` and the `at` time it was raised.
+
+| `ref` | `level` | What it says |
+| --- | --- | --- |
+| `env:<VARIABLE>` | `error` | The environment holds no `<VARIABLE>`, which a host record reads with `fromEnv` |
+| `secret:<name>` | `error` | The vault holds no `<name>` |
+| `open` | `error` | The engine failed to open the record for another reason |
+| `probe` | `warning` | The last check was `unreachable`, or the probe threw |
+
+An alert is kept by its `ref`, so a second problem of the same kind replaces the first. A check that answers `ok` clears the `probe` alert, and an open that works clears `open` and every `env:` and `secret:` alert. The list is in memory only, so a restart clears it, and the opens and the checks raise the alerts again. A row with no problem carries no `alerts` key.
 
 A row also carries `views` when the agent shows one: its views by surface, `{ main: { root, components, dataModel? } }`, in memory only. When one value of a view's data changes, a reader of the row gets `x-ahpd-agents/viewData` `{ id, surface, path, value }`. The row is not sent again - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 
@@ -1950,7 +1957,7 @@ Three commands serve an agent:
 | --- | --- | --- |
 | `x-ahpd/agents/put` | `agent:put`, and the owner's | Makes or changes `{ id, engine, owner, name, description?, icon?, model?, config }`, checks `config` against the engine's schema, moves each secret to the vault, writes the record, calls the engine's `open` and folds the new agent list into the running host. Answers the row |
 | `x-ahpd/agents/remove` | `agent:remove`, and the owner's | Ends the sessions that run on `{ id }`, takes its secrets out of the vault and takes the record out |
-| `x-ahpd/agents/check` | `agent:put`, and the owner's | Builds `{ id }` again, asks its probe and answers the row with its health. A probe that has not answered in 10 seconds is `unreachable` |
+| `x-ahpd/agents/check` | `agent:put`, and the owner's | Builds `{ id }` again, asks its probe and answers the row with its alerts. A probe that has not answered in 10 seconds is `unreachable` |
 
 The owner narrows the grant, as it does for a connector. A `host` agent needs
 `agent:put` or `agent:remove` and `agent:host` beside either. A `team:<team>`
@@ -1974,7 +1981,7 @@ A put moves a `secret` field and each `env` variable the engine names in
 A host record's field may hold `{ "fromEnv": "<NAME>" }` instead, which the host
 reads from its own environment when it opens the record; a team's or a person's
 record that names one is refused. A record with a `$secret` the vault cannot
-answer stays written and shows as `invalid`, so a key a person adds later is
+answer stays written and shows as `failed`, so a key a person adds later is
 picked up at the next start.
 
 An edit keeps the agent and its sessions: the view `open` was handed is updated

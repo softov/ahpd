@@ -172,15 +172,5 @@ export interface ServedEngine extends Engine {
   spec?: string;
 }
 
-/** The three states an agent row can be in. */
-export type AgentState = 'ready' | 'invalid' | 'unavailable';
-
-/** What the host knows about one agent's health, kept in memory only. */
-export interface AgentHealth {
-  /** What the last check found: `ok`, or why it did not answer in time or threw. */
-  result: 'ok' | 'unreachable' | 'failed';
-  /** One line the agent answered, when it gave one. */
-  message?: string;
-  /** When it was checked, as an ISO time. */
-  at: string;
-}
+/** The four states an agent row can be in. */
+export type AgentState = 'ready' | 'failed' | 'invalid' | 'unavailable';

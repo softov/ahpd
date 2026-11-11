@@ -2,17 +2,20 @@
  * `x-ahpd-agents`: the agents made from the engines a host serves.
  *
  * One row for each stored record, keyed by the agent's id, holding the record
- * as it is kept and a `state`: `ready`, `invalid` when its config no longer
- * fits the engine's schema or its engine refused to open it, or `unavailable` when
- * no plugin registers its engine any more. The engines themselves are listed on
- * `x-ahpd-engines`, built in `agents/engines.ts`.
+ * as it is kept, a `state` and its `alerts`. The state is `ready`, `failed` when
+ * the engine could not open it, `invalid` when its config does not fit the
+ * engine's schema, or `unavailable` when no plugin registers its engine any
+ * more. Each alert names one problem a person has to fix: an `env:` or a
+ * `secret:` a record is missing, an `open` that failed, or a `probe` that did
+ * not answer. The engines themselves are listed on `x-ahpd-engines`, built in
+ * `agents/engines.ts`.
  *
  * A row carries `views`, by surface, when the plugin that opened the agent
  * showed one: each a view with its data model, as a plugin's own row carries
- * its page. The views are in memory only, as health is, and a close, a removal
- * or an unloaded plugin takes them away. A change to one value of a view's
- * data is sent as `x-ahpd-agents/viewData` `{ id, surface, path, value }` to
- * each reader of the agent, and the row is not sent again.
+ * its page. The views are in memory only, as the alerts are, and a close, a
+ * removal or an unloaded plugin takes them away. A change to one value of a
+ * view's data is sent as `x-ahpd-agents/viewData` `{ id, surface, path, value }`
+ * to each reader of the agent, and the row is not sent again.
  *
  * Where an engine's schema marks a field `secret`, or names an `env` variable
  * in `keyVariables`, the value is a secret. A put moves it to the vault under
@@ -37,7 +40,7 @@
  * running host. `x-ahpd/agents/remove` takes `{ id }`, ends the sessions that
  * run on it, takes its secrets out of the vault and takes the record out. Both
  * answer the row a client now holds. `x-ahpd/agents/check` takes `{ id }`,
- * builds the backend again, asks its probe and answers the row with its health.
+ * builds the backend again, asks its probe and answers the row with its alerts.
  *
  * An edit keeps the agent and its sessions: the view `open` was handed is
  * updated in place, so a running session reads the new record at its next
@@ -64,18 +67,21 @@ import {
   withoutSecrets,
   resolved as resolvedRecord,
   secretPaths,
+  RecordGaps,
   DENIED,
 } from '../channels/owners.js';
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
 import { recordViews } from '../plugins/views.js';
+import { alertList } from '../plugins/alerts.js';
 import { bag, isRecord, reason } from '../utils/values.js';
 import type { Icon } from '@microsoft/agent-host-protocol';
 import type { Agent } from '../types/agent.js';
-import type { AgentHealth, AgentOwner, AgentState, AgentTemplate, ServedEngine } from '../types/agents.js';
+import type { AgentOwner, AgentState, AgentTemplate, ServedEngine } from '../types/agents.js';
 import type { HandedAgent } from '../types/computers.js';
 import type { ConnectorRef } from '../types/connectors.js';
 import type { PluginMethod, ViewHandle } from '../types/plugin.js';
+import type { AlertList } from '../plugins/alerts.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { Vault } from '../types/vault.js';
@@ -89,6 +95,9 @@ const CHECK = `${DOMAIN}/check`;
 
 /** How long a probe may take before its agent is called `unreachable`. */
 const CHECK_LIMIT_MS = 10_000;
+
+/** The most alerts one agent's row holds, as a plugin's row holds. */
+const MAX_ALERTS = 50;
 
 /** How a agents channel reads its store, and what it asks the host to take. */
 export interface AgentsChannelOptions {
@@ -242,9 +251,9 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
   };
   /** The open agents, by id. An id in the map has a backend a session can hold. */
   const open = new Map<string, Opened>();
-  /** What the host knows of each agent's health, by id, in memory only. */
-  const healths = new Map<string, AgentHealth>();
-  /** The ids whose health is the reason their record did not open. */
+  /** What the host knows of each agent's alerts, by id, in memory only. */
+  const alerts = new Map<string, AlertList>();
+  /** The ids whose open failed, which a record reads `failed` for. */
   const openFailures = new Set<string>();
   /**
    * The ids the host serves, as of the last fold.
@@ -255,6 +264,59 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
   let served: ReadonlySet<string> | undefined;
 
   const problem = (message: string): void => { options.onProblem?.(`${SCHEME}: ${message}`); };
+
+  /** The alert list of one record, made on the first alert it raises. */
+  const alertsOf = (id: string): AlertList => {
+    let list = alerts.get(id);
+    if (list === undefined) {
+      list = alertList(MAX_ALERTS);
+      alerts.set(id, list);
+    }
+    return list;
+  };
+
+  /** Drop a record's list once it holds nothing. */
+  const settle = (id: string): void => {
+    if (alerts.get(id)?.list().length === 0) alerts.delete(id);
+  };
+
+  /** Raise a record's open alerts: one per gap it is missing, or one `open`. */
+  const raiseOpen = (id: string, error: unknown): void => {
+    const list = alertsOf(id);
+    if (error instanceof RecordGaps) {
+      for (const gap of error.gaps) list.add({ level: 'error', text: gap.text, ref: gap.ref });
+      return;
+    }
+    const message = reason(error);
+    list.add({ level: 'error', text: message === '' ? 'the record could not be opened' : message, ref: 'open' });
+  };
+
+  /** Clear what an open that worked leaves: the `open` alert and every gap alert. */
+  const clearOpen = (id: string): void => {
+    openFailures.delete(id);
+    const list = alerts.get(id);
+    if (list === undefined) return;
+    list.drop('open');
+    for (const alert of list.list()) {
+      if (alert.ref?.startsWith('env:') === true || alert.ref?.startsWith('secret:') === true) list.drop(alert.ref);
+    }
+    settle(id);
+  };
+
+  /** Raise or clear the `probe` alert of one agent. */
+  const noteProbe = (id: string, result: 'ok' | 'unreachable' | 'failed', message?: string): void => {
+    const list = alerts.get(id);
+    if (result === 'ok') {
+      list?.drop('probe');
+      settle(id);
+      return;
+    }
+    alertsOf(id).add({
+      level: 'warning',
+      text: message ?? (result === 'unreachable' ? 'the probe did not answer in time' : 'the probe failed'),
+      ref: 'probe',
+    });
+  };
 
   /**
    * What each open agent shows, by id and surface.
@@ -301,6 +363,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     const engine = engineOf(record);
     if (engine === undefined) return 'unavailable';
     if (!fits(configOf(record), engine.schema)) return 'invalid';
+    if (openFailures.has(record.id)) return 'failed';
     if (served !== undefined && !served.has(record.id)) return 'invalid';
     return 'ready';
   };
@@ -323,9 +386,9 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     return templateOf(record, engine)?.icons ?? [];
   };
 
-  /** One stored record as a client is shown it: its record, its state, and its health where known. */
+  /** One stored record as a client is shown it: its record, its state, and its alerts where it has some. */
   const row = (record: StoredRecord): Record<string, unknown> => {
-    const health = healths.get(record.id);
+    const held = alerts.get(record.id)?.list() ?? [];
     const icons = iconsOf(record);
     const shows = views.of(record.id);
     return {
@@ -333,7 +396,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       state: stateOf(record),
       ...(icons.length === 0 ? {} : { icons }),
       ...(shows === undefined ? {} : { views: shows }),
-      ...(health === undefined ? {} : { health }),
+      ...(held.length === 0 ? {} : { alerts: held }),
     };
   };
 
@@ -529,14 +592,14 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
         open.set(record.id, one);
         agents.push(one.agent);
         live.add(record.id);
-        if (openFailures.delete(record.id)) healths.delete(record.id);
+        clearOpen(record.id);
       } catch (error) {
         const message = reason(error);
         problem(`${record.id} could not be opened: ${message}`);
         open.delete(record.id);
         views.drop(record.id);
-        // The row says why, as a failed check does, so a client shows it.
-        healths.set(record.id, { result: 'failed', at: new Date().toISOString(), ...(message === '' ? {} : { message }) });
+        // The row lists why, as a failed check does, so a client shows it.
+        raiseOpen(record.id, error);
         openFailures.add(record.id);
       }
     }
@@ -901,7 +964,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
         throw error;
       }
       open.delete(id);
-      healths.delete(id);
+      alerts.delete(id);
       openFailures.delete(id);
       views.drop(id);
       try {
@@ -963,18 +1026,26 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       if (owner === undefined) {
         throw new RpcError(INVALID_PARAMS, `${id} names no owner, so it cannot be opened`);
       }
-      let health: AgentHealth;
+      let built: Opened;
       try {
-        const one = await opened(before, owner, engine);
-        const probe = one.agent.probe;
-        const result = typeof probe === 'function' ? await within(probe.call(one.agent)) : 'ok';
-        health = { result, at: new Date().toISOString() };
+        built = await opened(before, owner, engine);
       } catch (error) {
-        const message = reason(error);
-        health = { result: 'failed', at: new Date().toISOString(), ...(message === '' ? {} : { message }) };
+        raiseOpen(id, error);
+        openFailures.add(id);
+        await channel.refresh();
+        return row(before);
       }
-      healths.set(id, health);
-      openFailures.delete(id);
+      clearOpen(id);
+      const probe = built.agent.probe;
+      if (typeof probe !== 'function') noteProbe(id, 'ok');
+      else {
+        try {
+          noteProbe(id, await within(probe.call(built.agent)));
+        } catch (error) {
+          const message = reason(error);
+          noteProbe(id, 'failed', message === '' ? undefined : message);
+        }
+      }
       await channel.refresh();
       return row(before);
     }),
