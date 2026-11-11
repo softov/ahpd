@@ -8,7 +8,7 @@ Softov is away. This run reviews, tests the agents, writes problems, plans, buil
 
 ## Now
 
-- Step 5, second round: build container/20261111-1507, then plugin/20261111-1507. Neither edits the release notes, so they stay apart from #296 to #298.
+- Step 6: wait for CI on #299 and #300, then the report.
 
 ## Queue
 
@@ -85,7 +85,9 @@ Seen and not a fault of ahpd:
 | PR | Branch | Worktree | CI |
 | --- | --- | --- | --- |
 | [#296](https://github.com/ahpio/ahpd/pull/296) | `pi/20261111-1444-a-qualified-pi-model-keeps-its-provider` | `pi-qualified-model` | green, run 43043230880 |
-| [#297](https://github.com/ahpio/ahpd/pull/297) | `cofold/20261111-1445-a-cofold-model-keeps-its-slashes`, with #296 merged in | `cofold-model-slashes` | running |
-| [#298](https://github.com/ahpio/ahpd/pull/298) | `daemon/20261111-1447-a-second-install-finds-the-first`, with #297 merged in | `install-second-run` | running |
+| [#297](https://github.com/ahpio/ahpd/pull/297) | `cofold/20261111-1445-a-cofold-model-keeps-its-slashes`, with #296 merged in | `cofold-model-slashes` | green, run 43044470675 on `4a19a7a39` |
+| [#298](https://github.com/ahpio/ahpd/pull/298) | `daemon/20261111-1447-a-second-install-finds-the-first`, with #297 merged in | `install-second-run` | green, run 43045027771 on `292cfff1d` |
+| [#299](https://github.com/ahpio/ahpd/pull/299) | `container/20261111-1507-a-parts-file-names-itself` | `parts-file-names-itself` | running |
+| [#300](https://github.com/ahpio/ahpd/pull/300) | `plugin/20261111-1507-a-plugin-that-fails-to-start-says-so` | `plugin-fails-to-start` | running |
 
 ## Report
