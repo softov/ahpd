@@ -1,6 +1,6 @@
 ---
 title: The version check reads the chosen folder
-status: todo
+status: implemented
 depends: []
 layer: "scripts/install"
 refs:
@@ -33,4 +33,6 @@ refs:
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Implemented 2026-11-11 in `deded4031`. `check_installed_version` needed the same fallback, as [implemented.md](implemented.md) says.
 
