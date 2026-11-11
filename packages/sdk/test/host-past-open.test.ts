@@ -90,7 +90,7 @@ const opened = async (client: { handle(request: unknown): Promise<unknown> }, ch
 
 const list = async (client: { handle(request: unknown): Promise<unknown> }) =>
   await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
-    items: { resource: string }[];
+    items: { resource: string; createdAt?: string; modifiedAt?: string }[];
   };
 
 describe('opening a past session', () => {
