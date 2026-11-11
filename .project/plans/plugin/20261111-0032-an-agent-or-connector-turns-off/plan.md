@@ -1,7 +1,7 @@
 ---
 title: An agent or connector turns off
 domain: plugin
-status: planned
+status: implemented
 priority: medium
 created: 2026-11-11
 revalidated: 2026-11-11
@@ -92,7 +92,7 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 | --- | --- | --- |
 | [01 - An agent record turns off](task-01-an-agent-record-turns-off.md) | done | - |
 | [02 - The host refuses a disabled agent](task-02-the-host-refuses-a-disabled-agent.md) | done | 01 |
-| [03 - A connector record turns off](task-03-a-connector-record-turns-off.md) | todo | - |
+| [03 - A connector record turns off](task-03-a-connector-record-turns-off.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -102,8 +102,8 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-11; task 01, 2026-11-11; task 02, 2026-11-11.
-- **Next action:** [task-03-a-connector-record-turns-off.md](task-03-a-connector-record-turns-off.md).
+- **Done so far:** the plan, 2026-11-11; task 01, 2026-11-11; task 02, 2026-11-11; task 03, 2026-11-11. Both records carry `enabled` and the four toggle commands answer their row. The host refuses a disabled agent a new session, a chat and a turn, and a connector that is off is closed by its toggle and skipped at start and by a put.
+- **Next action:** none; the plan is implemented. [implemented.md](implemented.md) says what was built and verified.
 - **Open questions:** none.
 - **Watch out for:**
 `sync` ends the sessions of each id in `before` that is no longer open. Skip a disabled id there, or a toggle deletes the sessions.
@@ -112,8 +112,8 @@ A connector `put` builds a new record from its fields at L879-L885, and an agent
 
 ## Final verification checklist
 
-- [ ] A disabled agent leaves the root list, refuses a new session, and its open session refuses a message with `<id> is turned off.`
-- [ ] Enabling the agent again lets the same session send a message.
-- [ ] A disabled agent with a missing key raises no alert, and its row is `disabled`.
-- [ ] A disabled connector lists no models, and an action through it fails.
-- [ ] `pnpm typecheck` passes, and the sdk and server suites pass, one at a time.
+- [x] A disabled agent leaves the root list, refuses a new session, and its open session refuses a message with `<id> is turned off.`
+- [x] Enabling the agent again lets the same session send a message.
+- [x] A disabled agent with a missing key raises no alert, and its row is `disabled`.
+- [x] A disabled connector lists no models, and an action through it fails.
+- [x] `pnpm typecheck` passes, and the sdk and server suites pass, one at a time.

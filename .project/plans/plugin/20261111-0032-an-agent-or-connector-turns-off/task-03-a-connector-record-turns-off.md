@@ -1,6 +1,6 @@
 ---
 title: A connector record turns off
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -53,3 +53,9 @@ Its row shows the state `disabled` and no alerts, and it answers no call and lis
 - `TMPDIR=/home/softov/tmp/ahpd-test npx vitest run packages/sdk` passes.
 
 ## Resume
+
+2026-11-11. `x-ahpd/connectors/disable` closes the connector and writes `enabled: false`, and `x-ahpd/connectors/enable` writes `enabled: true` and opens and checks it as a put does; the two commands are `toggle` with the grant `connector:put` and `check`'s owner rule, and each answers the row. `stateOf` answers `disabled` before any other state, and `close` drops the alerts with the open. `put` refuses an `enabled` parameter, carries the stored `enabled` over, and skips the open and the check for a record that is off; `openAll` skips one too, before it reads an adapter or a secret. A record that is off stays in `refs`.
+
+`connectors-channel.test.ts` gains five cases: off closes and the row has no alerts, the adapter is stopped and `run` refuses it, and `refs` keeps the record; on opens and checks it again with the secret read back; a put keeps it off and closed and refuses `enabled`; `openAll` opens nothing and reads no secret; and the owner rule refuses a toggle across owners or to a caller without `connector:put`. `connectors-models.test.ts` gains nothing; the provider case is in `connectors-channel.test.ts`, whose providers harness now passes a `models` reader, and it leaves a turned-off provider out of `providers()` and has `models` refuse it.
+
+`pnpm exec tsc -p tsconfig.json --noEmit` passes. The full `packages/sdk` suite: 236 of 237 files passed, 4725 tests passed, 5 skipped, and the same 2 failed in `host-permissions.test.ts`, which are the edit-approval cases that need a tmpdir outside the home. `packages/server` passed all 94 files, 1871 tests, 3 skipped. The harness denied every command with a `TMPDIR=` prefix and every `npx`, so the suites ran as `pnpm exec vitest run` without it, one at a time. The wire fixture did not change.

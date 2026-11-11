@@ -1750,6 +1750,13 @@ of, with `config` holding a reference where a secret was moved, and a `state`:
 | `failed` | The adapter could not open it, as when an `env` variable it reads is missing or a `$secret` it names was not in the vault |
 | `invalid` | Its config does not fit the adapter's schema |
 | `unavailable` | No loaded plugin registers its adapter, so it cannot be opened |
+| `disabled` | Its record says `enabled: false`, so it is closed and not opened, asked or served |
+
+A record that names no `enabled` is on. A record that is off is closed, so it
+answers no call and lists no model, and it shows no alerts. A start and a `put`
+do not open it, and it reads none of its secrets. It is still a connector, so a
+reference to it stays valid and no record that names it is made `invalid` by the
+switch.
 
 A row also carries `alerts` when the connector has a problem: a list of `Alert`, each with a `level`, a `text`, a `ref` and the `at` time it was raised.
 
@@ -1767,13 +1774,15 @@ A row also carries `views` when the connector shows one: its views by surface, `
 
 `connector:list` opens the channel, and reads the caller's own connectors, their teams' and the host's, and no other person's. `connector:all` reads every row, and is admitted without `connector:list`. A caller with neither grant reads no connector, its own included, and is refused the subscription. A subscribe also takes `?owner=me`, which narrows the listing to the caller's own connectors.
 
-Six commands serve a connector:
+Eight commands serve a connector:
 
 | Method | Grant | What it does |
 | --- | --- | --- |
-| `x-ahpd/connectors/put` | `connector:put`, and the owner's | Makes or changes `{ id, adapter, owner, title?, config }`, moves each `secret` value to the vault, writes the record and opens it. Answers the row, with the check it waited for |
+| `x-ahpd/connectors/put` | `connector:put`, and the owner's | Makes or changes `{ id, adapter, owner, title?, config }`, moves each `secret` value to the vault, writes the record and opens it. Answers the row, with the check it waited for. A record that is off keeps its `enabled`, and is not opened or checked |
 | `x-ahpd/connectors/remove` | `connector:remove`, and the owner's | Closes `{ id }`, takes its secrets out of the vault and takes the record out |
 | `x-ahpd/connectors/check` | `connector:put`, and the owner's, or none for the plugin of the connector's adapter | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not ready, or one whose adapter has no `check` |
+| `x-ahpd/connectors/disable` | `connector:put`, and the owner's, or none for the plugin of the connector's adapter | Closes the connector and writes `enabled: false` on `{ id }`, so it answers no call and lists no model, and answers the row |
+| `x-ahpd/connectors/enable` | `connector:put`, and the owner's, or none for the plugin of the connector's adapter | Writes `enabled: true` on `{ id }`, opens and checks it again, and answers the row |
 | `x-ahpd/connectors/note` | None: only the plugin of the connector's adapter may send it | Raises or clears the `call` alert for one call `{ id, ok, status?, error? }` the open connector made, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
 | `x-ahpd/connectors/secret` | None: only the plugin of the connector's adapter may send it | Writes a refreshed secret `{ id, values }` to the vault of an open connector, under `connector/<id>/<field>` in its owner's scope, and answers the row. Only the plugin that registered the connector's adapter may send it, and each field is one the schema marks secret. The connector is not reopened. No answer, error or log carries a value |
 | `x-ahpd/connectors/signin` | `connector:put`, and the owner's | Starts a sign-in for `{ id, adapter, owner, title?, config }`, checks what a put checks except the fields the adapter's `signIn` fills, and answers `{ url, state }` for a pasted code or `{ state, code, url, expires }` for a device code. It refuses an adapter with no `signIn` |
