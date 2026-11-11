@@ -10,7 +10,32 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 ## Left
 
-1. *Before 0.15.0*: a working day on the daemon, and the checks by hand.
+1. *Before the next release*: npm trusts `ahpio/ahpd` to publish each package, as *Trust the new repository* says.
+2. *Before the next release*: #290 merges, so each package's `repository` names `ahpio/ahpd`.
+3. *Before 0.15.0*: a working day on the daemon, and the checks by hand.
+
+## Trust the new repository
+
+The repository moved from `softov/ahpd` to `ahpio/ahpd` on 2026-11-11. npm publishes a package only from the repository it trusts for it, so each of the 13 packages in `PUBLISHED` of `release.yml` needs the new one.
+Softov runs these, signed in to npm as the owner of `@ahpd`:
+
+```sh
+npm trust github @ahpd/sdk --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/activepieces --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/agent-claude --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/agent-cofold --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/agent-acp --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/agent-pi --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/bot --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/tasks --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/computer --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/push --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/webhook --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/tunnel-devtunnel --file release.yml --repo ahpio/ahpd --allow-stage-publish
+npm trust github @ahpd/server --file release.yml --repo ahpio/ahpd --allow-stage-publish
+```
+
+After that, the first release from `ahpio/ahpd` is `0.15.0-rc.2`. It also pushes the image and the machine parts to `ghcr.io/ahpio`, where a host looks for them once #290 merges.
 
 ## Done
 
