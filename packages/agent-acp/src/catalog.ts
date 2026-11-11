@@ -427,9 +427,9 @@ const server = (options: AcpOptions, handlers: AcpHandlers): AcpConnection => co
  *
  * The load asks for the folder the server last said this conversation lives in,
  * because a server that keeps a conversation by its folder finds nothing when
- * asked with the daemon's. What the list said is the only answer to that this
- * bridge has, so the configuration's own folder is the fallback and the
- * daemon's is the last one.
+ * asked with the daemon's. After a restart no list has said one, so the folder
+ * the host recorded for the session comes next, then the configuration's own
+ * folder, and the daemon's is the last one.
  *
  * Undefined where the handshake did not advertise `loadSession` or the server
  * answers that it holds no such conversation, ACP's resource not found, the
@@ -442,6 +442,7 @@ export async function loadedSession(
   options: AcpOptions,
   provider: string,
   id: string,
+  recorded?: string,
 ): Promise<WatchedSession | undefined> {
   const held = watchedSession(provider, id);
   if (held !== undefined) return held;
@@ -451,7 +452,7 @@ export async function loadedSession(
     connection = server(options, { update: (_sessionId, update) => { replay.push(update); } });
     const handshake = await connection.initialize();
     if (handshake.agentCapabilities?.loadSession !== true) return undefined;
-    const cwd = placeOf.get(keyOf(provider, id)) ?? options.cwd ?? process.cwd();
+    const cwd = placeOf.get(keyOf(provider, id)) ?? recorded ?? options.cwd ?? process.cwd();
     const loaded = await connection.loadSession({ sessionId: id, cwd, mcpServers: [] }).then(
       () => true,
       (why: unknown) => {

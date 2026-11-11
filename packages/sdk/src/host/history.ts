@@ -392,8 +392,12 @@ export function createHistory(ctx: HostContext): History {
     const own = (ctx.kept.nested?.(id) === undefined
       ? ctx.heldChats(id).find((one) => ctx.ownChat(nameOf(id), one.uri))?.uri
       : undefined) ?? chatUriFor(nameOf(id));
-    // #287: a stored session the catalogue does not offer is read back from its own backend, and its row
-    // is registered only once that read answers with turns. A listing it does not make complete.
+    /*
+     * A stored session the catalogue does not offer, read back from its own
+     * backend: an ACP server lists by folder and page only, so after a restart
+     * its listing may not name a session it can still load. The row is
+     * registered only once the read answers with turns.
+     */
     const loadUnlisted = async (): Promise<{ row: Summary; turns: WireTurn<Turn>[] } | undefined> => {
       // The gate a durable unlist extends, before any load.
       if (!ctx.kept.sessions().includes(id)) return undefined;
