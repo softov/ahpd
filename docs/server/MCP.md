@@ -44,12 +44,13 @@ The token is the one `ahpd user token <id>` prints, or one minted with `ahpd tok
 
 | Tool | Does |
 | --- | --- |
-| `list_sessions` | The sessions here, filtered by status, agent, title, path, workspace, changes, unread, pull request, created or modified time, newest first, up to `limit` |
+| `list_sessions` | The sessions here, filtered by status, agent, title, path, workspace, changes, unread, pull request, created or modified time, newest first, up to `limit`; a session with a nested chat also lists its `chats`, each with a `title` and an `openLink` |
 | `list_agents` | The agents a new session may be started on, each with its id, its name, its settings and its first five models |
 | `list_models` | The models the agents offer, one agent's or every agent's |
 | `create_session` | Start a session, owned by the caller |
 | `create_chat` | Open another chat in a session |
 | `rename_chat` | Rename a chat |
+| `archive_chat` | Archive a chat, or a whole session, so it no longer appears among active sessions |
 | `send_message` | Send, replace, cancel or steer a message in a session |
 | `get_session_context` | Read a session's recent context |
 | `delete_session` | Delete a session |
@@ -57,7 +58,7 @@ The token is the one `ahpd user token <id>` prints, or one minted with `ahpd tok
 
 `get_current_session`, `set_workspace`, `isolate_session` and the artifact tools act on the calling session, so there is no sessionless form of them and `/mcp` does not offer them. Connector actions and a schedule are not served here either.
 
-Each tool checks its own grants, so the list is only what the caller may run. A `member` sees all ten. A role with `mcp:call` and `session:read` only sees `list_sessions`, `list_agents`, `list_models` and `get_session_context`, and a call to `create_session` gets `No tool named create_session`.
+Each tool checks its own grants, so the list is only what the caller may run. A `member` sees all eleven. A role with `mcp:call` and `session:read` only sees `list_sessions`, `list_agents`, `list_models` and `get_session_context`, and a call to `create_session` gets `No tool named create_session`.
 
 `move_session` names what to move and where: `into` is the destination session, `after` is the chat of it to sit behind (the end when left out), and `relationship: "independent"` makes a nested session its own instead. It is refused while `chatMoves.enabled` is off.
 

@@ -1,6 +1,6 @@
 import { isAbsolute, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { idOf, uriFor } from '../sessions/catalog.js';
+import { idOf, Status, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { frozenCopy } from '../utils/frozen.js';
 import { accepts } from '../utils/configvalues.js';
@@ -25,7 +25,7 @@ import { AGENT_CLIENT_SCHEME } from './clienturi.js';
 import { agentRefusal, need, noProvider } from './common.js';
 import { asksForTool } from './permissions.js';
 import { preambleOf } from './preamble.js';
-import { readAggregate, startsRead } from './chatactions.js';
+import { chatFlag, readAggregate, sessionFlag, startsRead } from './chatactions.js';
 import { refusalReason } from './gate.js';
 import { tokensForConnection } from './auth.js';
 import { createChatMover } from './sessionmethods.js';
@@ -2134,6 +2134,18 @@ export function createTooling(ctx: HostContext): Tooling {
     return Array.isArray(isolation.enum) && isolation.enum.includes('worktree') ? 'worktree' : 'folder';
   };
 
+  /**
+   * Archive a chat, or the whole session for its default chat or a session link.
+   *
+   * The host's own bit, through the same function a client's archive action
+   * reaches, so the archive is one state to every client of the session and
+   * the catalogue follows it. Answers whether the bit moved, which is how a
+   * tool tells a person the chat was already archived.
+   */
+  const archiveOf = (session: string, chat: string | undefined): boolean => chat === undefined
+    ? sessionFlag(ctx, session, Status.IsArchived, true, { type: 'session/isArchivedChanged', isArchived: true })
+    : chatFlag(ctx, session, chat, Status.IsArchived, true, { type: 'chat/isArchivedChanged', isArchived: true });
+
   const toolContext = (uri: string, chatUri: string, provider?: string, call?: ToolCallFacts): ToolCall => ({
     session: uri,
     chat: chatUri,
@@ -2332,6 +2344,7 @@ export function createTooling(ctx: HostContext): Tooling {
       const by = asking === undefined ? forWhom(kept.owner(idOf(uri))) : forWhom(asking);
       await removeSession(session, by?.principal ?? by?.owner);
     },
+    archive: async (session, chat) => archiveOf(session, chat),
     setWorkspace: (directory, isolation) => {
       /*
        * The connection that asked, kept beside the move.
@@ -2554,6 +2567,7 @@ export function createTooling(ctx: HostContext): Tooling {
         // they signed in as, or the `root:` owner this host's own connection is.
         await removeSession(session, caller.root === true ? sender : caller.principal ?? sender);
       },
+      archive: async (session, chat) => archiveOf(session, chat),
       setWorkspace: needsSession,
       // A call with no chat works in no folder, so there is none of it to name.
       workingDirectories: () => [],
