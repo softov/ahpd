@@ -831,7 +831,7 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
       const tried = left.map((one) => `${one.connector} ${one.why}`).join(', ');
       say(`proxy: ${who} ${name}: ${tried === '' ? '' : `${tried}; `}${end}`);
     };
-    /** Keep one attempt in the connector's health, as the connectors channel keeps it. */
+    /** Note one attempt on the connector, which raises or clears its `call` alert. */
     const noted = (connector: string, outcome: { ok: boolean; status?: number; error?: string }): void => {
       options.note?.(connector, outcome);
     };

@@ -1678,7 +1678,7 @@ with it:
 | --- | --- |
 | `version` | The version the plugin's package.json declares, when it has one |
 | `loaded` | Whether this daemon loaded it at its start |
-| `alerts` | What the plugin or its loader said about it, each an `{ level, text, ref? }` alert: `error` for the line that says it did not load and `warning` for the rest. Every text has each `writeOnly` or `secret` option value an error quoted answered `<set>`, and is cleared as VS Code's agent host clears a text: an absolute URL's query and any URL's userinfo answered `<redacted>`, a signed-URL parameter `<redacted>`, and a connection token `?tkn=***`. Empty when the plugin has none |
+| `alerts` | What the plugin or its loader said about it, each an `{ level, text, ref?, at? }` alert, with the time it was raised: `error` for the line that says it did not load and `warning` for the rest. Every text has each `writeOnly` or `secret` option value an error quoted answered `<set>`, and is cleared as VS Code's agent host clears a text: an absolute URL's query and any URL's userinfo answered `<redacted>`, a signed-URL parameter `<redacted>`, and a connection token `?tkn=***`. Empty when the plugin has none |
 | `views` | The view the plugin draws on its own page, by surface: `{ main: { root, components, dataModel? } }`. A literal Text `text` and Link `label` come in a reader's locale when the plugin's catalog has them; a bound one and the data are served as the plugin wrote them. Absent when the plugin shows no view, after a clear, and on a reload or an unload |
 | `optionsSchema` | The form a client draws and the values `x-ahpd/plugins/options` is checked against, read from the manifest with no import, so a plugin switched off carries it too |
 
@@ -1761,7 +1761,7 @@ A row also carries `alerts` when the connector has a problem: a list of `Alert`,
 | `check` | `error` for `denied`, `warning` for `unreachable` or `failed` | The last check did not pass |
 | `call` | `warning` | The last call failed |
 
-An alert is kept by its `ref`, so a second problem of the same kind replaces the first. A check that answers `ok` clears the `check` alert, a call that works clears the `call` alert, and an open that works clears `open` and every `env:` and `secret:` alert. The list is in memory only, so a restart clears it, and the opens and the checks raise the alerts again. A row with no problem carries no `alerts` key. A call's error is kept as the thrower gave it, at most 500 characters.
+An alert is kept by its `ref`, so a second problem of the same kind replaces the first. A check that answers `ok` clears the `check` alert, a call that works clears the `call` alert, and an open that works clears `open` and every `env:` and `secret:` alert. An open that fails again puts its alerts in place of the last open's, so a gap that was fixed leaves the row. The list is in memory only, so a restart clears it, and the opens and the checks raise the alerts again. A row with no problem carries no `alerts` key. A call's error is kept as the thrower gave it, at most 500 characters.
 
 A row also carries `views` when the connector shows one: its views by surface, `{ main: { root, components, dataModel? } }`, in memory only. When one value of a view's data changes, a reader of the row gets `x-ahpd-connectors/viewData` `{ id, surface, path, value }`. The row is not sent again - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 

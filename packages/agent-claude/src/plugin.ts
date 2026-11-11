@@ -162,11 +162,11 @@ const engineOf = (paths: string[], shared: Shared, hostTools: boolean | undefine
 const CLIENT = 'agent-claude';
 
 /**
- * Log each failure of a login, and have the host keep each call of a login in
- * the connector's health, so its row shows it.
+ * Log each failure of a login, and have the host raise or clear the
+ * connector's `call` alert for each call of a login, so its row shows it.
  *
  * The model proxy logs each failed attempt and notes its outcome on the
- * connector's health, in `packages/server/src/proxy/listener.ts`, and runs no
+ * connector, in `packages/server/src/proxy/listener.ts`, and runs no
  * check. A plugin notes through the connectors channel's own command, as a
  * client does: the host keeps a call `x-ahpd/connectors/note` names, and sends
  * every reader the row. The connection is opened by the first note, as the

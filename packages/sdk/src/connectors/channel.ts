@@ -102,12 +102,11 @@ import {
   secretFields,
   secretNameOf,
   writeOnlyHeld,
-  RecordGaps,
 } from '../channels/owners.js';
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
 import { recordViews } from '../plugins/views.js';
-import { alertList } from '../plugins/alerts.js';
+import { alertList, dropOpenAlerts, raiseOpenAlerts } from '../plugins/alerts.js';
 import { bag, isRecord, reason } from '../utils/values.js';
 import type { ActionCall, CheckResult, Connector, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, ServedAdapter } from '../types/connectors.js';
 import type { AlertList } from '../plugins/alerts.js';
@@ -297,8 +296,8 @@ export interface ConnectorsChannel {
    * Record the outcome of one call for one connector, as `run` and a host part
    * do.
    *
-   * With `ok` it sets `lastCall`, and `lastFailure` too when the call failed.
-   * An error is cut to 500 characters. A note with no `ok` records no call. The
+   * With `ok: false` it raises the connector's `call` alert, and with `ok: true`
+   * it clears it. An error is cut to 500 characters. A note with no `ok` records no call. The
    * rows that carry it go out at most once a second.
    */
   note(id: string, outcome: { ok?: boolean; status?: number; error?: string }): void;
@@ -373,15 +372,9 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     if (alerts.get(id)?.list().length === 0) alerts.delete(id);
   };
 
-  /** Raise a record's open alerts: one per gap it is missing, or one `open`. */
+  /** Raise a record's open alerts in place of the last open's: one per gap it is missing, or one `open`. */
   const raiseOpen = (id: string, error: unknown): void => {
-    const list = alertsOf(id);
-    if (error instanceof RecordGaps) {
-      for (const gap of error.gaps) list.add({ level: 'error', text: gap.text, ref: gap.ref });
-      return;
-    }
-    const message = reason(error).slice(0, ALERT_MESSAGE_LIMIT);
-    list.add({ level: 'error', text: message === '' ? 'the connector could not be opened' : message, ref: 'open' });
+    raiseOpenAlerts(alertsOf(id), error, 'the connector could not be opened', ALERT_MESSAGE_LIMIT);
   };
 
   /** Clear what an open that worked leaves: the `open` alert and every gap alert. */
@@ -389,10 +382,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     openFailures.delete(id);
     const list = alerts.get(id);
     if (list === undefined) return;
-    list.drop('open');
-    for (const alert of list.list()) {
-      if (alert.ref?.startsWith('env:') === true || alert.ref?.startsWith('secret:') === true) list.drop(alert.ref);
-    }
+    dropOpenAlerts(list);
     settle(id);
   };
 

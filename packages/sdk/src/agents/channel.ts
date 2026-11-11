@@ -67,13 +67,12 @@ import {
   withoutSecrets,
   resolved as resolvedRecord,
   secretPaths,
-  RecordGaps,
   DENIED,
 } from '../channels/owners.js';
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
 import { recordViews } from '../plugins/views.js';
-import { alertList } from '../plugins/alerts.js';
+import { alertList, dropOpenAlerts, raiseOpenAlerts } from '../plugins/alerts.js';
 import { bag, isRecord, reason } from '../utils/values.js';
 import type { Icon } from '@microsoft/agent-host-protocol';
 import type { Agent } from '../types/agent.js';
@@ -280,15 +279,9 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     if (alerts.get(id)?.list().length === 0) alerts.delete(id);
   };
 
-  /** Raise a record's open alerts: one per gap it is missing, or one `open`. */
+  /** Raise a record's open alerts in place of the last open's: one per gap it is missing, or one `open`. */
   const raiseOpen = (id: string, error: unknown): void => {
-    const list = alertsOf(id);
-    if (error instanceof RecordGaps) {
-      for (const gap of error.gaps) list.add({ level: 'error', text: gap.text, ref: gap.ref });
-      return;
-    }
-    const message = reason(error);
-    list.add({ level: 'error', text: message === '' ? 'the record could not be opened' : message, ref: 'open' });
+    raiseOpenAlerts(alertsOf(id), error, 'the record could not be opened');
   };
 
   /** Clear what an open that worked leaves: the `open` alert and every gap alert. */
@@ -296,10 +289,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     openFailures.delete(id);
     const list = alerts.get(id);
     if (list === undefined) return;
-    list.drop('open');
-    for (const alert of list.list()) {
-      if (alert.ref?.startsWith('env:') === true || alert.ref?.startsWith('secret:') === true) list.drop(alert.ref);
-    }
+    dropOpenAlerts(list);
     settle(id);
   };
 

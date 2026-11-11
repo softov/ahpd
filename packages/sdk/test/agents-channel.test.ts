@@ -976,8 +976,15 @@ it('lists each missing variable on the row, and clears them once the record open
   expect(failed).not.toHaveProperty('health');
 
   process.env['AHPD_TEST_AGENT_KEY'] = 'sk-from-env';
-  process.env['AHPD_TEST_AGENT_OTHER'] = 'sk-other';
   try {
+    // A gap that is fixed leaves the row, and the one still missing stays.
+    await lists.openAll();
+    expect((await fa.rows())['theirs']).toMatchObject({
+      state: 'failed',
+      alerts: [{ level: 'error', ref: 'env:AHPD_TEST_AGENT_OTHER' }],
+    });
+    expect(((await fa.rows())['theirs'] as { alerts: unknown[] }).alerts).toHaveLength(1);
+    process.env['AHPD_TEST_AGENT_OTHER'] = 'sk-other';
     await lists.openAll();
     const row = (await fa.rows())['theirs'];
     expect(row).toMatchObject({ state: 'ready' });
