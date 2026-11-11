@@ -1,7 +1,7 @@
 ---
 title: An agent or connector turns off
 domain: plugin
-status: implemented
+status: active
 priority: medium
 created: 2026-11-11
 revalidated: 2026-11-11
@@ -67,15 +67,20 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 
 | What | Source | Task |
 | --- | --- | --- |
-| Agent and connector records store `enabled`; a record with none is on | Softov, 2026-11-10 | 01, 03 |
+| An agent record stores `mode`: `enabled`, `paused` or `disabled`; a record with none is enabled | Softov, 2026-11-11, chose "One `mode` field" over `enabled` | 01, 02 |
+| A paused agent opens at start, lists its sessions with their history, and refuses a new session, chat, move or message | Softov, 2026-11-11, proposed a paused state between on and off | 01, 02 |
+| A disabled agent is not opened; after a restart its stored sessions are not listed, and they come back when it is enabled | Softov, 2026-11-11 | 01, 02 |
+| A connector record stores `enabled`; a record with none is on | Softov, 2026-11-10 | 03 |
+| Connectors have no paused state | (defaulted: a connector has no sessions to keep listed) | 03 |
+| Disabling an agent with running sessions keeps its backend until the last one ends | (defaulted: `replace` keeps a dropped agent while a session runs on it) | 01, 02 |
 | `enable` and `disable` take the grants `agent:put` and `connector:put`, with the owner's rule | Softov, 2026-11-10 | 01, 03 |
-| A session on a disabled agent keeps its history and refuses a new message | Softov, 2026-11-10 | 01, 02 |
-| The methods are `x-ahpd/agents/enable`, `x-ahpd/agents/disable`, `x-ahpd/connectors/enable` and `x-ahpd/connectors/disable`, each with `{ id }`, and each answers the row | (defaulted: the two channels' own methods are `put`, `remove` and `check` on the same domain) | 01, 03 |
-| A disabled record's state is `disabled`, and it shows no alerts | (defaulted: a plugin row is `disabled` with nothing to fix) | 01, 03 |
-| The root's agent list omits a disabled agent | (defaulted: ahpd clients offer what the root lists; VS Code's window reads its own setting instead) | 02 |
-| One sentence says it: `<id> is turned off.` | (defaulted: one plain sentence for every refusal) | 02 |
+| A session on a paused or disabled agent keeps its history and refuses a new message | Softov, 2026-11-10 | 01, 02 |
+| The methods are `x-ahpd/agents/enable`, `x-ahpd/agents/pause`, `x-ahpd/agents/disable`, `x-ahpd/connectors/enable` and `x-ahpd/connectors/disable`, each with `{ id }`, and each answers the row | (defaulted: the two channels' own methods are `put`, `remove` and `check` on the same domain) | 01, 03 |
+| A disabled record's state is `disabled` and shows no alerts; a paused agent's state is `paused` and shows its alerts | (defaulted: a plugin row is `disabled` with nothing to fix) | 01, 03 |
+| The root's agent list omits a paused agent and a disabled agent | (defaulted: ahpd clients offer what the root lists; VS Code's window reads its own setting instead) | 02 |
+| One sentence for each: `<id> is paused.` and `<id> is turned off.` | (defaulted: one plain sentence for every refusal) | 02 |
 | A disabled connector stays in `refs`, so an agent record that names it stays valid; a call to it fails as one to a closed connector does | (defaulted: a toggle does not make other records `invalid`) | 03 |
-| `put` keeps a record's `enabled` as it was | (defaulted: an edit is not a toggle) | 01, 03 |
+| `put` keeps a record's `mode` or `enabled` as it was | (defaulted: an edit is not a toggle) | 01, 03 |
 
 ## Proposed architecture
 
@@ -90,8 +95,8 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An agent record turns off](task-01-an-agent-record-turns-off.md) | done | - |
-| [02 - The host refuses a disabled agent](task-02-the-host-refuses-a-disabled-agent.md) | done | 01 |
+| [01 - An agent record turns off](task-01-an-agent-record-turns-off.md) | todo | - |
+| [02 - The host refuses a disabled agent](task-02-the-host-refuses-a-disabled-agent.md) | todo | 01 |
 | [03 - A connector record turns off](task-03-a-connector-record-turns-off.md) | done | - |
 
 ## Risks and tradeoffs
@@ -102,13 +107,13 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-11; task 01, 2026-11-11; task 02, 2026-11-11; task 03, 2026-11-11. Both records carry `enabled` and the four toggle commands answer their row. The host refuses a disabled agent a new session, a chat and a turn. A connector that is off is closed by its toggle, and skipped at start and by a put.
-- **Next action:** none; the plan is implemented. [implemented.md](implemented.md) says what was built and verified.
+- **Done so far:** tasks 01 to 03 built 2026-11-11 with a boolean `enabled`. Task 03 stays `done`.
+- **Next action:** tasks 01 and 02 again, for the three agent states in *Answers*: `mode` replaces the agent's `enabled`, and `paused` is new.
 - **Open questions:** none.
 - **Watch out for:**
-`sync` ends the sessions of each id in `before` that is no longer open. Skip a disabled id there, or a toggle deletes the sessions.
-`runningOn` counts the sessions in memory only, so a backend kept for its sessions goes with the last of them.
-A connector `put` builds a new record from its fields at L879-L885, and an agent `put` at L815-L824; both lose `enabled` unless it is copied.
+`sync` ends the sessions of each id in `before` that is no longer open. Skip a paused or disabled id there, or a toggle deletes the sessions.
+A paused record is opened at start, so the host's refusal is the only gate on it; `disabledAgents` names both states, and the sentence differs.
+The restart test needs a second host with its own backend instance, or it does not test a restart.
 
 ## Final verification checklist
 

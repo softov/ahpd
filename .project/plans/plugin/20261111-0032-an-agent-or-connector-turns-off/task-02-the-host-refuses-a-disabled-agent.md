@@ -1,6 +1,6 @@
 ---
 title: The host refuses a disabled agent
-status: done
+status: todo
 depends: [task-01-an-agent-record-turns-off.md]
 layer: "sdk, server"
 refs:
@@ -47,20 +47,21 @@ A session on it keeps its history, and takes messages again once the agent is on
 4. Leave a disabled agent out of `descriptors`, and publish the list again when the set changes.
 5. Refuse a new session, a new chat, `create_session` and a chat move for a disabled agent.
 6. Refuse a turn in `sendTurn` for a disabled agent, so the client gets the refusal and no turn starts.
-7. After a restart, send a message to a stored session of a disabled agent, and make it answer `turnedOff`.
+7. After a restart, list a paused agent's stored session with its turns, and make a message answer `<id> is paused.`
 8. Pass the option from `run.ts`.
 9. Update the docs.
 10. Write the tests.
 
 ## Validation
 
+- A paused agent is not on the root list, and the host refuses it a new session, chat, move and message with `<id> is paused.`
+- After a restart with a separate backend instance, a paused agent's stored session is listed with its turns and refuses a message.
+- After a restart, a disabled agent's stored session is not listed, and it is listed again once the agent is enabled.
 - `packages/sdk/test/host-disabled-agent.test.ts`: a disabled agent is not on the root list.
 - The host refuses a new session and `create_session` on it with `<id> is turned off.`
 - A session from before the toggle keeps its turns, and refuses a new message with the sentence.
 - The same session runs a message once the agent is on.
 - The host refuses a chat move into a session of the disabled agent.
-- After a restart, a message to a stored session of the disabled record answers the sentence.
-- That session is still listed.
 - `TMPDIR=/home/softov/tmp/ahpd-test npx vitest run packages/sdk` passes, then `packages/server`.
 
 ## Resume

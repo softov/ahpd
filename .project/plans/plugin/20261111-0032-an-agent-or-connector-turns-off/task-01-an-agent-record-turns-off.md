@@ -1,6 +1,6 @@
 ---
 title: An agent record turns off
-status: done
+status: todo
 depends: []
 layer: "sdk"
 refs:
@@ -47,6 +47,9 @@ The channel answers which ids are disabled, for the host.
 
 ## Validation
 
+- A paused record opens, its row is `paused`, and its alerts show as usual.
+- `x-ahpd/agents/pause` moves an enabled or disabled record to `paused`, and `enable` and `disable` move it out.
+- A record that still holds `enabled: false` reads as `disabled`.
 - `packages/sdk/test/agents-channel.test.ts`: `disable` makes the row `disabled`, and the agent leaves the list `refold` gets.
 - `disable` on an agent with a running session does not call `endSessionsOf` for it.
 - A disabled record with a missing `fromEnv` variable raises no alert and reads no variable.
