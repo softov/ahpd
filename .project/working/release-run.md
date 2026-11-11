@@ -8,7 +8,7 @@ Softov is away. This run reviews, tests the agents, writes problems, plans, buil
 
 ## Now
 
-- Step 1 again: pick the next small problems while #297 and #298 run CI.
+- Step 5, second round: build container/20261111-1507, then plugin/20261111-1507. Neither edits the release notes, so they stay apart from #296 to #298.
 
 ## Queue
 
@@ -76,6 +76,9 @@ Seen and not a fault of ahpd:
   - [pi/20261111-1444-a-qualified-pi-model-keeps-its-provider](../plans/pi/20261111-1444-a-qualified-pi-model-keeps-its-provider/plan.md)
   - [cofold/20261111-1445-a-cofold-model-keeps-its-slashes](../plans/cofold/20261111-1445-a-cofold-model-keeps-its-slashes/plan.md)
   - [daemon/20261111-1447-a-second-install-finds-the-first](../plans/daemon/20261111-1447-a-second-install-finds-the-first/plan.md)
+- Plans, second round, small and clear: report rows 43 and 22.
+  - [container/20261111-1507-a-parts-file-names-itself](../plans/container/20261111-1507-a-parts-file-names-itself/plan.md)
+  - [plugin/20261111-1507-a-plugin-that-fails-to-start-says-so](../plans/plugin/20261111-1507-a-plugin-that-fails-to-start-says-so/plan.md)
 
 ## PRs
 
