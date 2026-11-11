@@ -8,7 +8,7 @@ Softov is away. This run reviews, tests the agents, writes problems, plans, buil
 
 ## Now
 
-- Step 5: build daemon/20261111-1447-a-second-install-finds-the-first in `/github/ahpd.worktrees/install-second-run`.
+- Step 1 again: pick the next small problems while #297 and #298 run CI.
 
 ## Queue
 
@@ -65,11 +65,13 @@ Seen and not a fault of ahpd:
 - Three problems are planned now. The two from the tests hurt any user of pi or cofold on a common setup.
 - The install problem is small, and on the first path a new user runs. The rest wait, as the report ranks them.
 - PR bodies are written here and opened without showing them first, as the run's brief says to work without asking.
+- #296, #297 and #298 all add a line to `docs/updates/v0_15.md`. Each later branch has the earlier ones merged in, and CI ran on it, so they merge in that order.
 - No key goes in the test vault. The cofold plugin option test names a model only, and the harness variables give the endpoint and key.
 
 ## Written
 
 - Problems, new: [a-plugin-option-key-cannot-come-from-the-environment.md](../problems/a-plugin-option-key-cannot-come-from-the-environment.md). The pi and cofold problems were planned and deleted; they are in `git://af15608ab`.
+- Ideas: [a-quiet-turn-says-it-is-waiting.md](../ideas/a-quiet-turn-says-it-is-waiting.md), [a-pi-fallback-model-shows-on-the-agent.md](../ideas/a-pi-fallback-model-shows-on-the-agent.md), [a-cofold-picker-lists-the-configured-model-once.md](../ideas/a-cofold-picker-lists-the-configured-model-once.md), [dsh-names-its-models-as-json.md](../ideas/dsh-names-its-models-as-json.md), [the-test-daemon-script-stops-by-pid.md](../ideas/the-test-daemon-script-stops-by-pid.md).
 - Plans, ranked 1 to 3 in the report:
   - [pi/20261111-1444-a-qualified-pi-model-keeps-its-provider](../plans/pi/20261111-1444-a-qualified-pi-model-keeps-its-provider/plan.md)
   - [cofold/20261111-1445-a-cofold-model-keeps-its-slashes](../plans/cofold/20261111-1445-a-cofold-model-keeps-its-slashes/plan.md)
@@ -81,5 +83,6 @@ Seen and not a fault of ahpd:
 | --- | --- | --- | --- |
 | [#296](https://github.com/ahpio/ahpd/pull/296) | `pi/20261111-1444-a-qualified-pi-model-keeps-its-provider` | `pi-qualified-model` | green, run 43043230880 |
 | [#297](https://github.com/ahpio/ahpd/pull/297) | `cofold/20261111-1445-a-cofold-model-keeps-its-slashes`, with #296 merged in | `cofold-model-slashes` | running |
+| [#298](https://github.com/ahpio/ahpd/pull/298) | `daemon/20261111-1447-a-second-install-finds-the-first`, with #297 merged in | `install-second-run` | running |
 
 ## Report
