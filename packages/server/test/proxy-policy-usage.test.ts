@@ -295,6 +295,43 @@ describe('a call at a limit', () => {
       pools: ['user:ana', 'team:backend', 'project:backend:billing', 'policy:budget/usd'],
     });
   });
+
+  // A name the table does not hold goes to the connector its prefix names, as
+  // `openrouter/openai/gpt-4o` does on a host with no `models`.
+  it('writes the check\'s key on the record of a fetched name', async () => {
+    const usage = keeping({ 'policy:budget/usd': { usd: 1 } });
+    const { served } = await limited(usage);
+    expect((await send(served.port, CHAT, { headers: { 'x-api-key': who.ana }, body: { model: 'openrouter/meta/llama-4' } })).status).toBe(200);
+    const [entry] = await settled(usage, 1);
+    expect(entry?.model.name).toBe('openrouter/meta/llama-4');
+    expect(entry?.pools).toEqual(['user:ana', 'team:backend', 'project:backend:billing', 'policy:budget/usd']);
+  });
+
+  it('writes a pooled row\'s key under its pool on the record of a fetched name', async () => {
+    const usage = keeping();
+    const remote = await fakeProvider(answerJson(200, COMPLETION));
+    const local = await fakeProvider(answerJson(200, COMPLETION));
+    fakes.push(remote, local);
+    const served = await serveProxy({
+      users: who.users, ...softov(remote.endpoint, local.endpoint),
+      usage: () => usage, policies: await rows({ ...LIMITED, pool: 'xxx' }), policiesCheck: true,
+    });
+    open.push(served);
+    expect((await send(served.port, CHAT, { headers: { 'x-api-key': who.ana }, body: { model: 'openrouter/meta/llama-4' } })).status).toBe(200);
+    const [entry] = await settled(usage, 1);
+    expect(entry?.pools).toContain('pool:xxx/usd');
+  });
+
+  it('counts a fetched name\'s calls, and refuses the third in the same minute', async () => {
+    const { served } = await setup({ policies: await rows(MINUTE_CALLS), policiesCheck: true, meter: pinned() });
+    const headers = { 'x-api-key': who.ana };
+    const body = { model: 'openrouter/meta/llama-4' };
+    expect((await send(served.port, CHAT, { headers, body })).status).toBe(200);
+    expect((await send(served.port, CHAT, { headers, body })).status).toBe(200);
+    const third = await send(served.port, CHAT, { headers, body });
+    expect(third.status).toBe(403);
+    expect(third.json).toMatchObject({ error: { type: 'permission_error', message: 'burst has no room: 2 / 2 calls this minute' } });
+  });
 });
 
 describe('a key\'s own limit', () => {
