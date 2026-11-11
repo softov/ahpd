@@ -1,6 +1,6 @@
 ---
 title: An endpoint gets the id it was given
-status: todo
+status: implemented
 depends: []
 layer: "agent-cofold"
 refs:
@@ -34,4 +34,6 @@ On an explicit `baseUrl`, a model id keeps its first segment unless that segment
 - `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run packages/agent-cofold` passes.
 
 ## Resume
+
+Implemented 2026-11-11 in `999d8dfe8`. The new case stubs `fetch` before `modelOf`, because the adapter takes the fetch it is given when it is built. See [implemented.md](implemented.md).
 
