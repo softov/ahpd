@@ -4,15 +4,14 @@ title: What a release needs before its tag
 
 # What a release needs before its tag
 
-`v0.15.0-rc.1` is out on npm under `next`, from `a7b0cfd7`, on 2026-11-04. `latest` stays on `0.14.0`. Status at 2026-11-09.
+`v0.15.0-rc.1` is out on npm under `next`, from `a7b0cfd7`, on 2026-11-04. `latest` stays on `0.14.0`. Status at 2026-11-11.
 
 A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and stages every package. The tag comes last, and only on Softov's word.
 
 ## Left
 
 1. *Before the next release*: npm trusts `ahpio/ahpd` to publish each package, as *Trust the new repository* says.
-2. *Before the next release*: #290 merges, so each package's `repository` names `ahpio/ahpd`.
-3. *Before 0.15.0*: a working day on the daemon, and the checks by hand.
+2. *Before 0.15.0*: a working day on the daemon, and the checks by hand.
 
 ## Trust the new repository
 
@@ -35,10 +34,11 @@ npm trust github @ahpd/tunnel-devtunnel --file release.yml --repo ahpio/ahpd --a
 npm trust github @ahpd/server --file release.yml --repo ahpio/ahpd --allow-stage-publish
 ```
 
-After that, the first release from `ahpio/ahpd` is `0.15.0-rc.2`. It also pushes the image and the machine parts to `ghcr.io/ahpio`, where a host looks for them once #290 merges.
+After that, the first release from `ahpio/ahpd` is `0.15.0-rc.2`. It also pushes the image and the machine parts to `ghcr.io/ahpio`, where a host looks for them since #290.
 
 ## Done
 
+- **The move to `ahpio/ahpd`.** #290 merged on 2026-11-11: each package's `repository` names `ahpio/ahpd`, and the machine parts come from `ghcr.io/ahpio`.
 - **ahpw on the release candidate.** ahpw `aec9fd3` sets `@ahpd/sdk` to `^0.15.0-rc.1`, and `@ahpd/web 0.9.0-rc.1` is on npm.
 
 - **The daemon on main.** Softov restarted the dev daemon on `4b5e1290` with `httpApi` and `modelApi` set, on 2026-11-04, and it works.
@@ -65,6 +65,5 @@ After that, the first release from `ahpio/ahpd` is `0.15.0-rc.2`. It also pushes
 
 ## Not in this release
 
-- The move of the repository to `ahpio/ahpd`, proposed for after the release and not decided. It needs each package's `repository.url`, the 13 npm trusted publishers, and the docs links, then an rc from the new place.
 - MayCXC's `host/124-an-agents-shell-is-a-terminal-the-person-sees` is not merged. Main has its features from the four host/20261103-1620 plans.
 - `plans.mjs` lists the `active` and `draft` plans. None is needed for the release.

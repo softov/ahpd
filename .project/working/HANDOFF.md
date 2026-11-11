@@ -37,6 +37,8 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 
 ## In progress on 2026-11-11
 
+- The release run of 2026-11-11 keeps its notepad in [release-run.md](release-run.md), and its ranked problems in [problems-report-20261111.md](problems-report-20261111.md).
+
 - Builders are dispatched over the ahpd MCP tools from now on, so the dispatch itself is tested. The MCP token is uclau's `claude-code-mcp`, in `~/.claude.json`.
 - The alerts plan (#289) and the turn-off plan (#291), plugin/20261111-0032, are `built`. The build preset denies `git add`, so a builder's new files are committed by hand in review.
 - host/20261111-0609-the-session-context-tells-each-call (#293), host/20261111-0609-a-row-lists-chats-and-one-chat-archives (#294) and host/20261111-1203-a-stopped-sessions-row-lists-its-chats (#295) are merged. Their tasks are `implemented`; they close as `built` on Softov's word after his review.
@@ -83,7 +85,7 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
   - plugin/20261106-1058, CI fails only for a real fault, `planned`: five tasks `todo`.
 - Briefs and an idea that wait for a plan on his word: [the-change-counters-agree.md](../briefs/the-change-counters-agree.md), [the-text-a-person-reads-is-plain.md](../briefs/the-text-a-person-reads-is-plain.md), [a-tunnel-token-that-lasts.md](../briefs/a-tunnel-token-that-lasts.md) and [ideas/acp-resumable-doubt.md](../ideas/acp-resumable-doubt.md).
 - A Copy button beside a view's link waits for a brief: it needs a client-side copy action across ahpd's view checker, ahpw and ahpc.
-- Two comments in `packages/sdk/src/host/tooling.ts`, at lines 445 and 735, still name `heldAs`, which #191 removed.
+- Two comments in `packages/sdk/src/host/tooling.ts`, at lines 448 and 746, still name `heldAs`, which #191 removed.
 - `restartNeeded` stays a read-only root config value (Softov, 2026-11-01). ahpw and ahpapp read it there next, in their own repositories.
 
 ## Next builds

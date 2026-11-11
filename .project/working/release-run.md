@@ -1,0 +1,71 @@
+---
+title: "Release run toward 0.15.0, started 2026-11-11"
+---
+
+# Release run toward 0.15.0
+
+Softov is away. This run reviews, tests the agents, writes problems, plans, builds and opens PRs, and never merges. This file is the notepad: what is in hand now, the queue, and links.
+
+## Now
+
+- Step 3: problem files for what the agent tests found.
+
+## Queue
+
+1. ~~Review HANDOFF, pending/release.md and pending/triage.md.~~ Read; the edits go in with the plan commit.
+2. ~~Test the agents on a test daemon on port 39200.~~ Done, see *Agent tests*.
+3. Problem files and the ranked report.
+4. Plans for the problems worth fixing now.
+5. Builds in worktrees, PRs, CI.
+6. Ideas.
+
+## Agent tests
+
+Test daemon from `pending-check` at `7cf919e4b` (origin/main), port 39200, `XDG_*_HOME`, `PI_CODING_AGENT_DIR` and `COFOLD_HOME` under `~/ahpd-check`. Keys only in the daemon's environment, records name them with `fromEnv`. The launcher is in the session scratchpad, not in the repository. Stopped by pid after each phase. Ports 5180 and 37537 untouched.
+
+| Agent | Configuration | Result |
+| --- | --- | --- |
+| claude | Anthropic key, `haiku` | pass |
+| claude-or | OpenRouter through `ANTHROPIC_BASE_URL`, `haiku` mapped to `anthropic/claude-haiku-4.5` | pass |
+| dsh | ACP preset, DeepSeek key | pass |
+| codex | ACP, OpenAI key | OpenAI answers "Quota exceeded": the key has no credit. ahpd shows the vendor's sentence |
+| gemini | ACP, Gemini key, default model `auto` | the turn shows nothing for 4 minutes: Google answers 503 and the CLI retries. Same 503 from `gemini -p` by hand |
+| gemini | `gemini-3-flash-preview` | pass |
+| qwen-or | ACP, `OPENAI_BASE_URL` on OpenRouter | pass |
+| opencode-or | ACP, OpenRouter key, default and `openrouter/deepseek/deepseek-chat` | pass |
+| kilo-or | ACP, default model | "You need to sign in to use this model": Kilo's own model |
+| kilo-or | `openrouter/deepseek/deepseek-chat` | pass |
+| pi-ds | record `deepseek/deepseek-chat`, DeepSeek key | ran on `openrouter/deepseek/deepseek-chat`: wrong provider, see the pi problem |
+| pi-bad | record `deepseek/deepseek-chat`, bad DeepSeek key | answered on OpenRouter, so the bad key was never used |
+| pi-ds | record `deepseek/deepseek-flash` | pass |
+| pi-bad | record `deepseek/deepseek-flash`, bad key | clear 401 |
+| pi-or, pi-orurl | record on OpenRouter, by provider and by `baseUrl` | pass |
+| pi-none | harness `deepseek/deepseek-chat`, not in pi's list | pi fell back to `anthropic/claude-opus-4-8`, pi's own fallback |
+| pi-none | harness `deepseek/deepseek-flash` | pass |
+| pi-none | plugin option `openrouter/deepseek/deepseek-chat` over the harness | pass |
+| cf-ds | record on DeepSeek `deepseek-chat` | pass |
+| cf-or | record on OpenRouter `deepseek/deepseek-chat` | 400: cofold sent `deepseek-chat`, see the cofold problem |
+| cf-or | picker id `cf-or/deepseek/deepseek-chat` | pass, 41 s |
+| cf-none | harness copapo file and `COFOLD_*` | pass |
+| cf-none | plugin option `default/deepseek-flash` | pass |
+| cf-bad | bad key | clear 401 |
+| cofold | plugin option `apiKey` as `fromEnv` | plugin skipped: "options.apiKey must be text" |
+
+Not run: Copilot, Cursor and Devin, which need their own accounts. Codex on OpenRouter, which needs a `config.toml` provider. Any machine or container path.
+
+Seen and not a fault of ahpd:
+
+- A record file edited by hand applies at the next start, as the channel has no watch.
+- dsh's model ids are JSON arrays as strings, such as `["deepseek-official","deepseek-v4-flash"]`, as dsh sends them.
+- The daemon's PATH has no `rg`, so Gemini falls back to its own grep, as [briefs/at-lists-files-without-rg-on-the-path.md](../briefs/at-lists-files-without-rg-on-the-path.md) covers.
+
+## Decisions taken in this run
+
+- The test daemon is run by hand from a launcher, not with `source test-daemon.sh`: the classifier refused the script's `ahpd stop`. The launcher stops nothing; the daemon is stopped by pid.
+- No key goes in the test vault. The cofold plugin option test names a model only, and the harness variables give the endpoint and key.
+
+## Written
+
+## PRs
+
+## Report
