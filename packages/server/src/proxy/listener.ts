@@ -518,6 +518,14 @@ interface EntryCheck {
 }
 
 /**
+ * One entry as the keys a walk chose are kept under: its provider and its id.
+ *
+ * A route may hand the request a copy of the entry it asked about, as a fetched
+ * name does when it adds the connector's price, so the object is not the key.
+ */
+const entryKey = (entry: ModelEntry): string => `${entry.provider}\u0000${entry.id}`;
+
+/**
  * The policy a route is held to for one caller and one name, or nothing.
  *
  * With the checks on, a store and a person behind the call. A store that cannot
@@ -548,7 +556,7 @@ const policyFor = (options: ProxyOptions, charged: Charged, name: string, zone: 
   // are on, so it is walked alone only when the store is not read at all.
   const alone = checking ? undefined : keyRowOf(principal);
   if (!checking && alone === undefined) return undefined;
-  const kept = new Map<ModelEntry, string[]>();
+  const kept = new Map<string, string[]>();
   const allowed = async (entry: ModelEntry): Promise<string | undefined> => {
     try {
       let decision: Awaited<ReturnType<typeof decide>>;
@@ -570,14 +578,14 @@ const policyFor = (options: ProxyOptions, charged: Charged, name: string, zone: 
         ...(options.meter === undefined ? {} : { meter: options.meter }),
       });
       if (!walked.allowed) return walked.refusal.message;
-      kept.set(entry, walked.pools);
+      kept.set(entryKey(entry), walked.pools);
       return undefined;
     }
     catch (error) {
       return `no policy could be read, so model is refused: ${error instanceof Error ? error.message : String(error)}`;
     }
   };
-  return { allowed, keysOf: (entry) => kept.get(entry) };
+  return { allowed, keysOf: (entry) => kept.get(entryKey(entry)) };
 };
 
 /** Why one candidate was left, for the log. */
