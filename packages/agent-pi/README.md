@@ -88,7 +88,7 @@ A record that names its own provider key, with the model the channel owns:
   "engine": "pi",
   "owner": "host",
   "name": "pi on DeepSeek",
-  "model": "deepseek/deepseek-chat",
+  "model": "deepseek/deepseek-flash",
   "config": { "env": { "DEEPSEEK_API_KEY": { "$secret": "host:deepseek" } } }
 }
 ```

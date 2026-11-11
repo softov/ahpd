@@ -160,6 +160,27 @@ it('resolves a qualified id, and a bare one only when it is unambiguous', () => 
   expect(modelFor(models, 'gpt-5', { provider: 'azure', id: 'gpt-5' })?.provider).toBe('azure');
 });
 
+it('never reads an id that names one of its providers as another provider\'s bare id', () => {
+  /*
+   * pi 1.3.0 lists no `deepseek-chat` for `deepseek`, and OpenRouter has a
+   * model whose own id is `deepseek/deepseek-chat`. A record naming the first
+   * names DeepSeek's key and account, not OpenRouter's.
+   */
+  const models = [
+    { provider: 'deepseek', id: 'deepseek-flash' },
+    { provider: 'openrouter', id: 'deepseek/deepseek-chat' },
+  ];
+  expect(modelFor(models, 'deepseek/deepseek-chat')).toBeUndefined();
+  expect(modelFor(models, 'openrouter/deepseek/deepseek-chat')?.provider).toBe('openrouter');
+  expect(modelFor(models, 'deepseek/deepseek-flash')?.provider).toBe('deepseek');
+  // A provider with no key is not among the models pi has available, and its
+  // name still makes the id qualified.
+  const keyless = [{ provider: 'openrouter', id: 'deepseek/deepseek-chat' }];
+  expect(modelFor(keyless, 'deepseek/deepseek-chat', undefined, new Set(['deepseek', 'openrouter']))).toBeUndefined();
+  // With no provider of that name, the id is OpenRouter's bare one, as before.
+  expect(modelFor(keyless, 'deepseek/deepseek-chat')?.provider).toBe('openrouter');
+});
+
 /*
  * A model's levels in the property VS Code's agent host draws, over pi's own
  * levels in pi's words: each level's label and description from VS Code's
@@ -500,13 +521,15 @@ it('runs a turn that names a model pi does not offer on the model pi is on, and 
   expect(types('chat')).toContain('chat/turnComplete');
 });
 
-it('opens a session on a configured model pi does not have', async () => {
-  const { session, pi, types } = opened({}, { model: 'openrouter/nobody' });
+it('opens a session on a configured model pi does not have, and logs it', async () => {
+  const lines: string[] = [];
+  const { session, pi, types } = opened({}, { model: 'openrouter/nobody', log: (line) => { lines.push(line); } });
   session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.asked.find((one) => one.kind === 'setModel')).toEqual({ kind: 'setModel', id: 'openrouter/nobody' });
   expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
   expect(types('chat')).not.toContain('chat/error');
+  expect(lines.filter((line) => line.includes("starts on pi's default") && line.includes('openrouter/nobody'))).toHaveLength(1);
 });
 
 it('runs a new session on the model the options name', async () => {
