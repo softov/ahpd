@@ -1,7 +1,7 @@
 ---
 title: Agents and connectors list their alerts
 domain: plugin
-status: planned
+status: implemented
 priority: medium
 created: 2026-11-11
 revalidated: 2026-11-11
@@ -89,7 +89,7 @@ resolved -> every gap of the record -> one alert per gap -> row.alerts
 | --- | --- | --- |
 | [01 - An alert says when, and a record says each gap](task-01-an-alert-says-when-and-each-gap.md) | done | - |
 | [02 - An agent row lists its alerts](task-02-an-agent-row-lists-its-alerts.md) | done | 01 |
-| [03 - A connector row lists its alerts](task-03-a-connector-row-lists-its-alerts.md) | todo | 01 |
+| [03 - A connector row lists its alerts](task-03-a-connector-row-lists-its-alerts.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -99,8 +99,8 @@ resolved -> every gap of the record -> one alert per gap -> row.alerts
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02, 2026-11-10. `Alert.at`, `alertList` and `RecordGaps` are in, the plugins channel keeps its alerts in the shared list, and an agent row carries `alerts` in place of `health`, with the state `failed`.
-- **Next action:** [task-03-a-connector-row-lists-its-alerts.md](task-03-a-connector-row-lists-its-alerts.md).
+- **Done so far:** tasks 01, 02 and 03, 2026-11-10. `Alert.at`, `alertList` and `RecordGaps` are in, the plugins channel keeps its alerts in the shared list, and both agent and connector rows carry `alerts` in place of `health`, with the state `failed`.
+- **Next action:** none; the plan is implemented.
 - **Open questions:** none.
 - **Watch out for:**
 The tunnels channel also calls `resolved`. The gap error's `message` stays the first gap's sentence, so a tunnel says what it says today.
@@ -109,8 +109,8 @@ When the vault fails, the agents channel keeps the last good view of an open rec
 
 ## Final verification checklist
 
-- [ ] An agent record with two missing variables shows two `env:` alerts and the state `failed`.
-- [ ] A probe that fails beside a missing key shows both alerts.
-- [ ] A connector call that fails shows a `call` alert, and the next call that works clears it.
-- [ ] No row carries `health`.
-- [ ] `pnpm typecheck` passes, and the sdk and server suites pass, one at a time.
+- [x] An agent record with two missing variables shows two `env:` alerts and the state `failed`.
+- [x] A probe that fails beside a missing key shows both alerts.
+- [x] A connector call that fails shows a `call` alert, and the next call that works clears it.
+- [x] No row carries `health`.
+- [x] `pnpm typecheck` passes, and the sdk and server suites pass, one at a time.

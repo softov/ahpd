@@ -1,6 +1,6 @@
 ---
 title: A connector row lists its alerts
-status: todo
+status: done
 depends: [task-01-an-alert-says-when-and-each-gap.md]
 layer: "sdk"
 refs:
@@ -57,3 +57,11 @@ A check that is not `ok` raises `check`, and a failed call raises `call` until a
 - `TMPDIR=/home/softov/tmp/ahpd-test npx vitest run packages/sdk` passes, then `packages/server`.
 
 ## Resume
+
+2026-11-10. `ConnectorState` has `failed`, and `ConnectorHealth` is removed from the types and from `packages/sdk/src/types/index.ts`. Each connector id keeps an `alertList` in place of `healths`, and a separate map holds that id's last check result, which `stateOf` reads for `unauthorized`. The row serves `alerts` when the list is not empty, and no `health` key.
+
+`openOne` raises one `error` alert for each gap of a `RecordGaps` error, or one `open` alert for any other error, and puts the id in `openFailures`, which makes `stateOf` answer `failed`. A good open clears those alerts. `checkOne` keeps the result apart from the list and raises `check` at level `error` for `denied` and `warning` for `unreachable` or `failed`; an `ok` check clears it. `note` raises `call` at level `warning` for a failed call, with the error or the status, and a call that worked clears it. `close` drops the list, the check result and the open failure.
+
+The docs say what each `ref` means, that a `failed` connector answers 404, and the release notes say `health` is now `alerts` on a connector row. This suite's refresh-coalescing test now uses failing notes, because a call that works no longer changes the row.
+
+The harness denied every command with a `TMPDIR=` prefix, so the suites ran without it: `packages/sdk` passed 4705 tests and 2 failed in `host-permissions.test.ts`, which need a tmpdir outside the home, and `packages/server` passed 1871 with 3 skipped. Three plugin alert tests in the server suite compare `alerts()` exactly and now need `at: expect.any(String)`, because task 01 stamps every alert. `pnpm exec tsc -p tsconfig.json --noEmit` passed.

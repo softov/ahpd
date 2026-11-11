@@ -1747,10 +1747,21 @@ of, with `config` holding a reference where a secret was moved, and a `state`:
 | --- | --- |
 | `ready` | The adapter opened it, and its last check was not denied |
 | `unauthorized` | The adapter opened it, and its last check was denied: the service refused its credential. A check that passes, or a sign-in, makes it `ready` again |
-| `invalid` | Its config no longer fits its adapter's schema, or the adapter refused to open it |
+| `failed` | The adapter could not open it, as when an `env` variable it reads is missing or a `$secret` it names was not in the vault |
+| `invalid` | Its config does not fit the adapter's schema |
 | `unavailable` | No loaded plugin registers its adapter, so it cannot be opened |
 
-A row also carries a `health` when the host knows one, and no `health` key when it knows nothing. `health.check` is the last check, `{ result, message?, at }`. `health.lastCall` is the last call the connector made or answered, `{ at, ok, status?, error? }`, and `health.lastFailure` is the last such call that failed. A call is one an `action` made through `run`, one a host part reported for the connector, as the model proxy does, or one the plugin of the connector's adapter noted with `x-ahpd/connectors/note`, as the Claude plugin notes each turn a login ran. Health is kept in memory only: a restart clears it, and the checks a start runs fill the check part again. An error message is kept as the thrower gave it, at most 500 characters.
+A row also carries `alerts` when the connector has a problem: a list of `Alert`, each with a `level`, a `text`, a `ref` and the `at` time it was raised.
+
+| `ref` | `level` | What it says |
+| --- | --- | --- |
+| `env:<VARIABLE>` | `error` | The environment holds no `<VARIABLE>`, which a host connector reads with `fromEnv` |
+| `secret:<name>` | `error` | The vault holds no `<name>` |
+| `open` | `error` | The adapter failed to open the record for another reason |
+| `check` | `error` for `denied`, `warning` for `unreachable` or `failed` | The last check did not pass |
+| `call` | `warning` | The last call failed |
+
+An alert is kept by its `ref`, so a second problem of the same kind replaces the first. A check that answers `ok` clears the `check` alert, a call that works clears the `call` alert, and an open that works clears `open` and every `env:` and `secret:` alert. The list is in memory only, so a restart clears it, and the opens and the checks raise the alerts again. A row with no problem carries no `alerts` key. A call's error is kept as the thrower gave it, at most 500 characters.
 
 A row also carries `views` when the connector shows one: its views by surface, `{ main: { root, components, dataModel? } }`, in memory only. When one value of a view's data changes, a reader of the row gets `x-ahpd-connectors/viewData` `{ id, surface, path, value }`. The row is not sent again - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 
@@ -1763,7 +1774,7 @@ Six commands serve a connector:
 | `x-ahpd/connectors/put` | `connector:put`, and the owner's | Makes or changes `{ id, adapter, owner, title?, config }`, moves each `secret` value to the vault, writes the record and opens it. Answers the row, with the check it waited for |
 | `x-ahpd/connectors/remove` | `connector:remove`, and the owner's | Closes `{ id }`, takes its secrets out of the vault and takes the record out |
 | `x-ahpd/connectors/check` | `connector:put`, and the owner's, or none for the plugin of the connector's adapter | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not ready, or one whose adapter has no `check` |
-| `x-ahpd/connectors/note` | None: only the plugin of the connector's adapter may send it | Keeps one call `{ id, ok, status?, error? }` the open connector made in its `health`, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
+| `x-ahpd/connectors/note` | None: only the plugin of the connector's adapter may send it | Raises or clears the `call` alert for one call `{ id, ok, status?, error? }` the open connector made, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
 | `x-ahpd/connectors/secret` | None: only the plugin of the connector's adapter may send it | Writes a refreshed secret `{ id, values }` to the vault of an open connector, under `connector/<id>/<field>` in its owner's scope, and answers the row. Only the plugin that registered the connector's adapter may send it, and each field is one the schema marks secret. The connector is not reopened. No answer, error or log carries a value |
 | `x-ahpd/connectors/signin` | `connector:put`, and the owner's | Starts a sign-in for `{ id, adapter, owner, title?, config }`, checks what a put checks except the fields the adapter's `signIn` fills, and answers `{ url, state }` for a pasted code or `{ state, code, url, expires }` for a device code. It refuses an adapter with no `signIn` |
 | `x-ahpd/connectors/signin-finish` | `connector:put`, and the owner's | Takes `{ state, code }` for a pasted code and `{ state }` alone for a device code, asks the put's owner checks again, and answers the row. A pasted code is exchanged through the adapter and runs the put with the key; a device code waits for the approval the host has been polling, then answers the row or the error |
