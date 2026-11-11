@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { AGENT_SECRETS, HELD, heldAgainst, isSecret, moveSecrets, resolved, secretPaths } from '../src/channels/owners.js';
+import { AGENT_SECRETS, HELD, heldAgainst, isSecret, moveSecrets, RecordGaps, resolved, secretPaths } from '../src/channels/owners.js';
 import type { Vault } from '../src/types/vault.js';
 
 /*
@@ -132,4 +132,31 @@ it('keeps a host secret a host agent names, and refuses one anyone else names', 
     .toEqual({ env: { TOKEN: { $secret: 'host:shared' } } });
   await expect(put(vault, { env: { TOKEN: { $secret: 'host:shared' } } })).rejects.toThrow(/send its value, not a reference/u);
   await expect(put(vault, { env: { TOKEN: { $secret: 'user:bo/x' } } }, {}, 'host')).rejects.toThrow(/send its value, not a reference/u);
+});
+
+it('reports every missing variable and secret in one error, naming each as an alert does', async () => {
+  const vault = made();
+  const config = {
+    sources: [{ fetch: 'https://a', key: { $secret: 'host:missing-key' } }],
+    env: { ONE: { fromEnv: 'AHPD_TEST_GAP_ONE' }, TWO: { fromEnv: 'AHPD_TEST_GAP_TWO' } },
+  };
+  expect(process.env['AHPD_TEST_GAP_ONE']).toBeUndefined();
+  expect(process.env['AHPD_TEST_GAP_TWO']).toBeUndefined();
+
+  const failed = resolved(config, 'host', vault, AGENT_SECRETS);
+  await expect(failed).rejects.toBeInstanceOf(RecordGaps);
+  await expect(failed).rejects.toMatchObject({
+    gaps: [
+      { ref: 'secret:host:missing-key', text: 'the vault holds no host:missing-key' },
+      { ref: 'env:AHPD_TEST_GAP_ONE', text: 'the environment holds no AHPD_TEST_GAP_ONE' },
+      { ref: 'env:AHPD_TEST_GAP_TWO', text: 'the environment holds no AHPD_TEST_GAP_TWO' },
+    ],
+  });
+});
+
+it('says the first gap as the error message, as a single gap did', async () => {
+  const vault = made();
+  const failed = resolved({ key: { $secret: 'host:missing-key' } }, 'host', vault, AGENT_SECRETS);
+  await expect(failed).rejects.toThrow('the vault holds no host:missing-key');
+  await expect(failed).rejects.toMatchObject({ message: 'the vault holds no host:missing-key' });
 });

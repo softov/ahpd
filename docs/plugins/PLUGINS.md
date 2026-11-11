@@ -1073,7 +1073,7 @@ nothing behaves exactly as it did before the field existed.
 | `log(line)` | One line to the daemon's log |
 | `say(line)` | One line in what the daemon announces about itself |
 | `problem(line)` | One item of your own you dropped, said before the daemon says it started, and a `warning` alert on the plugin's row |
-| `alert(alert)` | One alert to show on the plugin's row: a `level`, a `text` and an optional `ref` |
+| `alert(alert)` | One alert to show on the plugin's row: a `level`, a `text`, an optional `ref` and an optional `at` |
 | `clearAlert(ref)` | Takes the alert with that `ref` off the plugin's row |
 | `parseYaml(text)` | A YAML text as data, read with the host's own YAML subset |
 | `stringifyYaml(value)` | A value as YAML text that `parseYaml` reads back the same |
@@ -1084,7 +1084,7 @@ nothing behaves exactly as it did before the field existed.
 
 `problem(line)` is how a plugin that handles many items says which one it could not register: `ahpd start` and `ahpd restart` print each line as `skipped: <line>` before the line that says the daemon is up, beside the problems the loader found itself. Saying one costs the item and not the plugin, which keeps the rest of your contribution and does not fail the load. Unlike the two above it is on `PluginHost` and not on the event context, because an item is dropped while `apply` runs. The same line is a `warning` alert on the plugin's row.
 
-`alert(alert)` puts one alert on the plugin's row in the plugins channel: `{ level, text, ref? }`, where `level` is one of `notice`, `info`, `warning` and `error`. `ref` names what the alert is about, as `<kind>:<id>` such as `adapter:ap-postgres`. A client shows it beside that item, and an alert with the same `ref` replaces the one before it. `clearAlert(ref)` takes it out again. An alert raised after `apply` returned is on the row at once. The channel sends the row again, which is what a plugin holding a watch uses. A plugin holds at most 50 alerts, and the oldest goes first. A reload or an unload clears them.
+`alert(alert)` puts one alert on the plugin's row in the plugins channel: `{ level, text, ref?, at? }`, where `level` is one of `notice`, `info`, `warning` and `error`, and `at` is the ISO time it was raised. The host sets `at` when the plugin did not. `ref` names what the alert is about, as `<kind>:<id>` such as `adapter:ap-postgres`. A client shows it beside that item, and an alert with the same `ref` replaces the one before it. `clearAlert(ref)` takes it out again. An alert raised after `apply` returned is on the row at once. The channel sends the row again, which is what a plugin holding a watch uses. A plugin holds at most 50 alerts, and the oldest goes first. A reload or an unload clears them.
 
 `showView(view, surface?)` draws what a plugin is doing on its own page, when one sentence is not enough. It is the same road an alert takes: the daemon keeps the view on the plugin's row, a client draws it, and a new view sends the row again. `setViewData(path, value, surface?)` sets one value of the view's data model, and `clearView(surface?)` takes the view away. A reload or an unload clears it too. A connector and an agent show views with the same calls - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 

@@ -87,7 +87,7 @@ resolved -> every gap of the record -> one alert per gap -> row.alerts
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An alert says when, and a record says each gap](task-01-an-alert-says-when-and-each-gap.md) | todo | - |
+| [01 - An alert says when, and a record says each gap](task-01-an-alert-says-when-and-each-gap.md) | done | - |
 | [02 - An agent row lists its alerts](task-02-an-agent-row-lists-its-alerts.md) | todo | 01 |
 | [03 - A connector row lists its alerts](task-03-a-connector-row-lists-its-alerts.md) | todo | 01 |
 
@@ -99,8 +99,8 @@ resolved -> every gap of the record -> one alert per gap -> row.alerts
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-11.
-- **Next action:** [task-01-an-alert-says-when-and-each-gap.md](task-01-an-alert-says-when-and-each-gap.md).
+- **Done so far:** task 01, 2026-11-10. `Alert.at`, `alertList` and `RecordGaps` are in, and the plugins channel keeps its alerts in the shared list.
+- **Next action:** [task-02-an-agent-row-lists-its-alerts.md](task-02-an-agent-row-lists-its-alerts.md).
 - **Open questions:** none.
 - **Watch out for:**
 The tunnels channel also calls `resolved`. The gap error's `message` stays the first gap's sentence, so a tunnel says what it says today.

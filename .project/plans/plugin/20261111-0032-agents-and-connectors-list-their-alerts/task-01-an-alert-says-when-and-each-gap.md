@@ -1,6 +1,6 @@
 ---
 title: An alert says when, and a record says each gap
-status: todo
+status: done
 depends: []
 layer: "sdk, server"
 refs:
@@ -48,3 +48,9 @@ One sdk list keeps alerts by `ref`, and plugin rows use it.
 - `pnpm typecheck` passes.
 
 ## Resume
+
+2026-11-10. `Alert.at` is added, and `alertList(limit)` in `packages/sdk/src/plugins/alerts.ts` holds one list's alerts by `ref`. The plugins channel keeps each plugin's list in one, and `alerts()` answers a copy of it. The plugins channel still maps an alert to `level`, `text` and `ref` on the row, so the server's existing alert tests pass unchanged; `at` is held by the list and not served there.
+
+`RecordGaps` carries every gap of a record, and `resolved` now walks a nested array in order rather than with `Promise.all`, so the gaps come out in config order and the message is the first gap's text. A `fromEnv` on a record that is not the host's, and a vault that throws, are still thrown at once as a plain error.
+
+The harness denied every command with a `TMPDIR=` prefix, so the tests ran without it: `pnpm exec vitest run packages/sdk/test/alerts.test.ts` passed 5, `packages/sdk/test/owners-nested-secrets.test.ts` passed 11, and `packages/server/test/plugins-channel.test.ts` passed 49. `pnpm exec tsc -p tsconfig.json --noEmit` passed.
