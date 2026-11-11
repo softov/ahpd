@@ -1072,7 +1072,11 @@ export function piSession(
        * choice arrives in `begin` after this and still wins.
        */
       if (options.model !== undefined && start.resume === undefined && start.forkAt === undefined) {
-        await backend.setModel(options.model);
+        // A configured model pi cannot resolve leaves the session on pi's own
+        // default, and the log names the model pi did not offer.
+        if (!await backend.setModel(options.model)) {
+          options.log?.(`${provider}: chat ${start.chatUri} starts on pi's default: pi does not offer ${options.model}`, 'warn');
+        }
       }
       // `rewindAt` is the host asking for a truncation on a resumed session.
       if (start.rewindAt !== undefined) {
