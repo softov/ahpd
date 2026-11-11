@@ -560,6 +560,28 @@ it('offers an endpoint no harness entry owns under this backend own provider id'
   expect(resolved.modelId).toBe('qwen/qwen3-8b');
 });
 
+/*
+ * On an explicit endpoint, an id whose first segment names neither a provider
+ * of the file nor this backend is the endpoint's own, as OpenRouter's ids are,
+ * and goes out whole: cutting `qwen/` would ask for a model the endpoint does
+ * not have, or for another one.
+ */
+it('sends an endpoint its own id with a slash whole', async () => {
+  put({ providers: [] });
+  // Before the adapter is built, which takes the fetch it is given then.
+  const bodies: { model?: unknown }[] = [];
+  globalThis.fetch = (async (_input: unknown, init?: { body?: string }) => {
+    bodies.push(JSON.parse(init?.body ?? '{}') as { model?: unknown });
+    return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: {} }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const resolved = modelOf({ baseUrl: 'https://local.example/v1', provider: 'cf-or' }, { model: 'qwen/qwen3-8b' });
+  expect(resolved.modelId).toBe('qwen/qwen3-8b');
+  // The backend's own prefix is still cut.
+  expect(modelOf({ baseUrl: 'https://local.example/v1', provider: 'cf-or' }, { model: 'cf-or/qwen/qwen3-8b' }).modelId).toBe('qwen/qwen3-8b');
+  await resolved.complete({ instructions: 'x', messages: [], tools: [], signal: new AbortController().signal } as never);
+  expect(bodies.at(-1)?.model).toBe('qwen/qwen3-8b');
+});
+
 it('refuses this backend own prefix for a provider the file carries', () => {
   put(CONFIG);
   /*
