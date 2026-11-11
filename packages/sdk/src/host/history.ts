@@ -1,5 +1,7 @@
+import { JsonRpcErrorCodes } from '@microsoft/agent-host-protocol';
+import { RpcError } from '../rpc.js';
 import { idFor } from '../sessions/catalog.js';
-import { localPath } from '../resources/fileuri.js';
+import { localPath, uriOf } from '../resources/fileuri.js';
 import { scopeName } from '../usage/scopes.js';
 import { chatUriFor } from './channels.js';
 import type { Agent, Listed, SessionAt } from '../types/agent.js';
@@ -387,8 +389,54 @@ export function createHistory(ctx: HostContext): History {
      */
     const already = reading.get(id);
     if (already) return await already;
+    const own = (ctx.kept.nested?.(id) === undefined
+      ? ctx.heldChats(id).find((one) => ctx.ownChat(nameOf(id), one.uri))?.uri
+      : undefined) ?? chatUriFor(nameOf(id));
+    // #287: a stored session the catalogue does not offer is read back from its own backend, and its row
+    // is registered only once that read answers with turns. A listing it does not make complete.
+    const loadUnlisted = async (): Promise<{ row: Summary; turns: WireTurn<Turn>[] } | undefined> => {
+      // The gate a durable unlist extends, before any load.
+      if (!ctx.kept.sessions().includes(id)) return undefined;
+      const provider = ctx.kept.provider(id);
+      if (provider === undefined) return undefined;
+      const agent = ctx.agents.get(provider);
+      if (agent?.transcript === undefined) return undefined;
+      // No such conversation and a failing backend are answers a client acts on differently.
+      const turns = await ctx.transcriptOf(agent, ctx.sessionBackendId(id), launchWorkingDirectory(id), nameOf(id), own).catch(
+        (error: unknown) => {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new RpcError(JsonRpcErrorCodes.InternalError, `The ${provider} backend could not load session ${id}: ${reason}`);
+        },
+      );
+      if (turns === undefined || turns.length === 0) return undefined;
+      // Times come from the conversation, so a session from last week does not list as created today.
+      const now = new Date().toISOString();
+      const endOf = (turn: WireTurn<Turn>): string | undefined => {
+        if (turn.startedAt === undefined) return undefined;
+        if (turn.duration === undefined) return turn.startedAt;
+        const startedMs = Date.parse(turn.startedAt);
+        return Number.isNaN(startedMs) ? turn.startedAt : new Date(startedMs + turn.duration).toISOString();
+      };
+      const createdAt = turns[0]?.startedAt ?? now;
+      const lastTurn = turns[turns.length - 1];
+      const modifiedAt = (lastTurn === undefined ? undefined : endOf(lastTurn)) ?? createdAt;
+      const folder = launchWorkingDirectory(id)?.workingDirectory;
+      const row = ctx.registerListedSession(agent, {
+        id,
+        title: titles.get(id) ?? 'Session',
+        createdAt,
+        modifiedAt,
+        workingDirectories: folder === undefined ? [] : [uriOf(folder)],
+      }, undefined, true);
+      ctx.announceSurfacedSession(row);
+      if (!listedSummaries.some((heldRow) => idFor(heldRow.resource) === id)) listedSummaries.push(row);
+      return { row, turns };
+    };
     const asked = (async (): Promise<Bag[] | undefined> => {
-      const row = await catalogueRow(id, askedEpoch);
+      const found = await catalogueRow(id, askedEpoch);
+      // No row is not the same answer as no session: a stored one is read back before saying none.
+      const replayed = found === undefined ? await loadUnlisted() : undefined;
+      const row = found ?? replayed?.row;
       /*
        * Its config resolved as a created session's, against the folder its
        * choice was made in, as VS Code's host resolves a restored session's
@@ -432,12 +480,7 @@ export function createHistory(ctx: HostContext): History {
       if (!row || !owner?.transcript)
         return undefined;
       titles.set(id, row.title);
-      // The session's own transcript is its first chat's, the chat its record
-      // keeps under the session's id, and the outputs handed with it and the
-      // local turns put back in it are that chat's.
-      const own = (ctx.kept.nested?.(id) === undefined ? ctx.heldChats(id).find((one) => ctx.ownChat(nameOf(id), one.uri))?.uri : undefined)
-        ?? chatUriFor(nameOf(id));
-      const built = await ctx.transcriptOf(owner, ctx.sessionBackendId(id), launchWorkingDirectory(id), nameOf(id), own);
+      const built = replayed?.turns ?? await ctx.transcriptOf(owner, ctx.sessionBackendId(id), launchWorkingDirectory(id), nameOf(id), own);
       if (!built)
         return undefined;
       /*

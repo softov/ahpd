@@ -2,11 +2,13 @@ import { WAIT_MS } from '../../../tools/wait.ts';
 import { describe, expect, it, vi } from 'vitest';
 import { createHost, hello, machine, peer, settle } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import type { Agent, Listed, SessionAt } from '@ahpd/sdk';
+import type { Turn } from '@microsoft/agent-host-protocol';
+import type { WireTurn } from '../src/types/wire.js';
 import type { SessionStore } from '../src/types/sessions.js';
 import { WORK } from './support/work.js';
 import { uriOf } from '../src/resources/fileuri.js';
@@ -302,5 +304,82 @@ describe('opening a past session', () => {
     const saved = JSON.parse(readFileSync(record, 'utf8')) as { workingDirectory?: string };
     expect(saved.workingDirectory).toBe(root);
     await host.close();
+  });
+});
+
+describe('a stored session no listing names', () => {
+  /** One turn, as a backend replays a conversation it still holds. */
+  const replayed: WireTurn<Turn>[] = [{
+    id: 'turn-one',
+    startedAt: '2026-11-10T00:00:00.000Z',
+    message: { text: 'what changed?', origin: { kind: 'user' as const } },
+    responseParts: [],
+    usage: undefined,
+    state: 'complete' as const,
+  }];
+
+  /** A backend with nothing listed and nothing findable, as ACP is after a restart. */
+  const unlisted = (transcript: NonNullable<Agent['transcript']>): Agent => ({
+    ...backend('claude', { listed: [] }, counting()),
+    transcript,
+  });
+
+  /** The store a restart reads: recorded where it ran, then reopened. */
+  const stored = (dir: string): SessionStore => {
+    const written = fileSessions({ dir });
+    written.setProvider('ember', 'claude');
+    written.setWorkingDirectory?.('ember', DIR);
+    written.close?.();
+    return fileSessions({ dir });
+  };
+
+  it('opens by id from its backend, and is listed once it has', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-unlisted-'));
+    try {
+      const { client } = await watching(
+        [unlisted(async (id) => (id === 'ember' ? replayed : undefined))],
+        stored(dir),
+      );
+      expect((await list(client)).items.map((one) => one.resource)).not.toContain('claude:/ember');
+
+      const state = (await client.handle({ method: 'subscribe', params: { channel: 'claude:/ember' } }) as {
+        snapshot: { state: { lifecycle: string; defaultChat: string } };
+      }).snapshot.state;
+      expect(state.lifecycle).toBe('ready');
+      const chat = (await client.handle({ method: 'subscribe', params: { channel: state.defaultChat } }) as {
+        snapshot: { state: { turns: { message: { text: string } }[] } };
+      }).snapshot.state;
+      expect(chat.turns.map((one) => one.message.text)).toEqual(['what changed?']);
+
+      // Listed from the moment it has opened; nothing enumerates stored sessions.
+      const opened = (await list(client)).items.find((one) => one.resource === 'claude:/ember');
+      expect(opened).toBeDefined();
+      // The row carries the conversation's clock, so a session from last week is not created today.
+      expect(opened?.createdAt).toBe('2026-11-10T00:00:00.000Z');
+      expect(opened?.modifiedAt).toBe('2026-11-10T00:00:00.000Z');
+    }
+    finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('refuses one its backend does not hold, and registers nothing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-unlisted-'));
+    try {
+      const { client } = await watching([unlisted(async () => undefined)], stored(dir));
+      await expect(client.handle({ method: 'subscribe', params: { channel: 'claude:/ember' } }))
+        .rejects.toMatchObject({ code: -32001 });
+      expect((await list(client)).items.map((one) => one.resource)).not.toContain('claude:/ember');
+    }
+    finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('says a backend that failed to load apart from a conversation nobody has', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-unlisted-'));
+    try {
+      const { client } = await watching([unlisted(async () => { throw new Error('the ACP server exited'); })], stored(dir));
+      await expect(client.handle({ method: 'subscribe', params: { channel: 'claude:/ember' } }))
+        .rejects.toMatchObject({ code: -32603, message: expect.stringContaining('could not load session ember') });
+      expect((await list(client)).items.map((one) => one.resource)).not.toContain('claude:/ember');
+    }
+    finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
