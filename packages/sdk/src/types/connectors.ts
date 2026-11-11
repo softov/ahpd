@@ -255,16 +255,6 @@ export interface CallOutcome {
   error?: string;
 }
 
-/** What the host knows about one connector's health, kept in memory only. */
-export interface ConnectorHealth {
-  /** The last check, and when it ran. */
-  check?: CheckResult & { at: string };
-  /** The last call the connector made or answered. */
-  lastCall?: CallOutcome;
-  /** The last call that failed. */
-  lastFailure?: CallOutcome;
-}
-
 /** The plan an account is on, as its provider names it. */
 export interface ConnectorAccount {
   /** The plan type the provider names. Absent for an account with no plan. */
@@ -496,7 +486,7 @@ export interface Adapter {
    * The host calls it after each open: a put waits for the answer, so its
    * result says whether the key is right, and a start does not. It is handed
    * the connector as `open` was, with each secret read back. An adapter with
-   * no check leaves its connectors with no `health.check`.
+   * no check leaves its connectors with no `check` alert.
    */
   check?(connector: Connector): Promise<CheckResult>;
   /**

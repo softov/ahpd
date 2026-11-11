@@ -526,7 +526,7 @@ describe('a problem line a plugin says', () => {
     expect(problems).toEqual(['late-problem: said while applying']);
     // The same line is on the plugin's row, once: the loader tells it for the
     // log and the host raises it as an alert, and the set keeps one of them.
-    expect(alerts['late-problem']).toEqual([{ level: 'warning', text: 'late-problem: said while applying' }]);
+    expect(alerts['late-problem']).toEqual([{ level: 'warning', text: 'late-problem: said while applying', at: expect.any(String) }]);
     // The daemon writes the problems of a load itself, so the loader writing
     // this one too would put the same line in the log twice.
     expect(lines).not.toContain('late-problem: said while applying');

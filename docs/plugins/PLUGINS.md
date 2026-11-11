@@ -1073,7 +1073,7 @@ nothing behaves exactly as it did before the field existed.
 | `log(line)` | One line to the daemon's log |
 | `say(line)` | One line in what the daemon announces about itself |
 | `problem(line)` | One item of your own you dropped, said before the daemon says it started, and a `warning` alert on the plugin's row |
-| `alert(alert)` | One alert to show on the plugin's row: a `level`, a `text` and an optional `ref` |
+| `alert(alert)` | One alert to show on the plugin's row: a `level`, a `text`, an optional `ref` and an optional `at` |
 | `clearAlert(ref)` | Takes the alert with that `ref` off the plugin's row |
 | `parseYaml(text)` | A YAML text as data, read with the host's own YAML subset |
 | `stringifyYaml(value)` | A value as YAML text that `parseYaml` reads back the same |
@@ -1084,7 +1084,7 @@ nothing behaves exactly as it did before the field existed.
 
 `problem(line)` is how a plugin that handles many items says which one it could not register: `ahpd start` and `ahpd restart` print each line as `skipped: <line>` before the line that says the daemon is up, beside the problems the loader found itself. Saying one costs the item and not the plugin, which keeps the rest of your contribution and does not fail the load. Unlike the two above it is on `PluginHost` and not on the event context, because an item is dropped while `apply` runs. The same line is a `warning` alert on the plugin's row.
 
-`alert(alert)` puts one alert on the plugin's row in the plugins channel: `{ level, text, ref? }`, where `level` is one of `notice`, `info`, `warning` and `error`. `ref` names what the alert is about, as `<kind>:<id>` such as `adapter:ap-postgres`. A client shows it beside that item, and an alert with the same `ref` replaces the one before it. `clearAlert(ref)` takes it out again. An alert raised after `apply` returned is on the row at once. The channel sends the row again, which is what a plugin holding a watch uses. A plugin holds at most 50 alerts, and the oldest goes first. A reload or an unload clears them.
+`alert(alert)` puts one alert on the plugin's row in the plugins channel: `{ level, text, ref?, at? }`, where `level` is one of `notice`, `info`, `warning` and `error`, and `at` is the ISO time it was raised. The host sets `at` when the plugin did not. `ref` names what the alert is about, as `<kind>:<id>` such as `adapter:ap-postgres`. A client shows it beside that item, and an alert with the same `ref` replaces the one before it. `clearAlert(ref)` takes it out again. An alert raised after `apply` returned is on the row at once. The channel sends the row again, which is what a plugin holding a watch uses. A plugin holds at most 50 alerts, and the oldest goes first. A reload or an unload clears them.
 
 `showView(view, surface?)` draws what a plugin is doing on its own page, when one sentence is not enough. It is the same road an alert takes: the daemon keeps the view on the plugin's row, a client draws it, and a new view sends the row again. `setViewData(path, value, surface?)` sets one value of the view's data model, and `clearView(surface?)` takes the view away. A reload or an unload clears it too. A connector and an agent show views with the same calls - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 
@@ -1678,7 +1678,7 @@ with it:
 | --- | --- |
 | `version` | The version the plugin's package.json declares, when it has one |
 | `loaded` | Whether this daemon loaded it at its start |
-| `alerts` | What the plugin or its loader said about it, each an `{ level, text, ref? }` alert: `error` for the line that says it did not load and `warning` for the rest. Every text has each `writeOnly` or `secret` option value an error quoted answered `<set>`, and is cleared as VS Code's agent host clears a text: an absolute URL's query and any URL's userinfo answered `<redacted>`, a signed-URL parameter `<redacted>`, and a connection token `?tkn=***`. Empty when the plugin has none |
+| `alerts` | What the plugin or its loader said about it, each an `{ level, text, ref?, at? }` alert, with the time it was raised: `error` for the line that says it did not load and `warning` for the rest. Every text has each `writeOnly` or `secret` option value an error quoted answered `<set>`, and is cleared as VS Code's agent host clears a text: an absolute URL's query and any URL's userinfo answered `<redacted>`, a signed-URL parameter `<redacted>`, and a connection token `?tkn=***`. Empty when the plugin has none |
 | `views` | The view the plugin draws on its own page, by surface: `{ main: { root, components, dataModel? } }`. A literal Text `text` and Link `label` come in a reader's locale when the plugin's catalog has them; a bound one and the data are served as the plugin wrote them. Absent when the plugin shows no view, after a clear, and on a reload or an unload |
 | `optionsSchema` | The form a client draws and the values `x-ahpd/plugins/options` is checked against, read from the manifest with no import, so a plugin switched off carries it too |
 
@@ -1747,10 +1747,21 @@ of, with `config` holding a reference where a secret was moved, and a `state`:
 | --- | --- |
 | `ready` | The adapter opened it, and its last check was not denied |
 | `unauthorized` | The adapter opened it, and its last check was denied: the service refused its credential. A check that passes, or a sign-in, makes it `ready` again |
-| `invalid` | Its config no longer fits its adapter's schema, or the adapter refused to open it |
+| `failed` | The adapter could not open it, as when an `env` variable it reads is missing or a `$secret` it names was not in the vault |
+| `invalid` | Its config does not fit the adapter's schema |
 | `unavailable` | No loaded plugin registers its adapter, so it cannot be opened |
 
-A row also carries a `health` when the host knows one, and no `health` key when it knows nothing. `health.check` is the last check, `{ result, message?, at }`. `health.lastCall` is the last call the connector made or answered, `{ at, ok, status?, error? }`, and `health.lastFailure` is the last such call that failed. A call is one an `action` made through `run`, one a host part reported for the connector, as the model proxy does, or one the plugin of the connector's adapter noted with `x-ahpd/connectors/note`, as the Claude plugin notes each turn a login ran. Health is kept in memory only: a restart clears it, and the checks a start runs fill the check part again. An error message is kept as the thrower gave it, at most 500 characters.
+A row also carries `alerts` when the connector has a problem: a list of `Alert`, each with a `level`, a `text`, a `ref` and the `at` time it was raised.
+
+| `ref` | `level` | What it says |
+| --- | --- | --- |
+| `env:<VARIABLE>` | `error` | The environment holds no `<VARIABLE>`, which a host connector reads with `fromEnv` |
+| `secret:<name>` | `error` | The vault holds no `<name>` |
+| `open` | `error` | The adapter failed to open the record for another reason |
+| `check` | `error` for `denied`, `warning` for `unreachable` or `failed` | The last check did not pass |
+| `call` | `warning` | The last call failed |
+
+An alert is kept by its `ref`, so a second problem of the same kind replaces the first. A check that answers `ok` clears the `check` alert, a call that works clears the `call` alert, and an open that works clears `open` and every `env:` and `secret:` alert. An open that fails again puts its alerts in place of the last open's, so a gap that was fixed leaves the row. The list is in memory only, so a restart clears it, and the opens and the checks raise the alerts again. A row with no problem carries no `alerts` key. A call's error is kept as the thrower gave it, at most 500 characters.
 
 A row also carries `views` when the connector shows one: its views by surface, `{ main: { root, components, dataModel? } }`, in memory only. When one value of a view's data changes, a reader of the row gets `x-ahpd-connectors/viewData` `{ id, surface, path, value }`. The row is not sent again - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 
@@ -1763,7 +1774,7 @@ Six commands serve a connector:
 | `x-ahpd/connectors/put` | `connector:put`, and the owner's | Makes or changes `{ id, adapter, owner, title?, config }`, moves each `secret` value to the vault, writes the record and opens it. Answers the row, with the check it waited for |
 | `x-ahpd/connectors/remove` | `connector:remove`, and the owner's | Closes `{ id }`, takes its secrets out of the vault and takes the record out |
 | `x-ahpd/connectors/check` | `connector:put`, and the owner's, or none for the plugin of the connector's adapter | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not ready, or one whose adapter has no `check` |
-| `x-ahpd/connectors/note` | None: only the plugin of the connector's adapter may send it | Keeps one call `{ id, ok, status?, error? }` the open connector made in its `health`, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
+| `x-ahpd/connectors/note` | None: only the plugin of the connector's adapter may send it | Raises or clears the `call` alert for one call `{ id, ok, status?, error? }` the open connector made, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
 | `x-ahpd/connectors/secret` | None: only the plugin of the connector's adapter may send it | Writes a refreshed secret `{ id, values }` to the vault of an open connector, under `connector/<id>/<field>` in its owner's scope, and answers the row. Only the plugin that registered the connector's adapter may send it, and each field is one the schema marks secret. The connector is not reopened. No answer, error or log carries a value |
 | `x-ahpd/connectors/signin` | `connector:put`, and the owner's | Starts a sign-in for `{ id, adapter, owner, title?, config }`, checks what a put checks except the fields the adapter's `signIn` fills, and answers `{ url, state }` for a pasted code or `{ state, code, url, expires }` for a device code. It refuses an adapter with no `signIn` |
 | `x-ahpd/connectors/signin-finish` | `connector:put`, and the owner's | Takes `{ state, code }` for a pasted code and `{ state }` alone for a device code, asks the put's owner checks again, and answers the row. A pasted code is exchanged through the adapter and runs the put with the key; a device code waits for the approval the host has been polling, then answers the row or the error |
@@ -1920,7 +1931,8 @@ One row for each agent, keyed by its id. A row is the record - `id`, `engine`,
 | `state` | What it says |
 | --- | --- |
 | `ready` | The engine opened it and the host serves it |
-| `invalid` | Its config no longer fits the engine's schema, the engine refused to open it, or a `$secret` in it was not in the vault |
+| `failed` | The engine could not open it, as when an `env` variable it reads is missing or a `$secret` it names was not in the vault |
+| `invalid` | Its config does not fit the engine's schema |
 | `unavailable` | No loaded plugin registers its engine, so it cannot be opened |
 
 A row also carries `icons`: the icons a client draws for the agent. It is the
@@ -1930,10 +1942,16 @@ whose `config.command` equals the record's when the engine has no `templateOf`.
 A record that matches no template carries no `icons` key, and the client draws a
 blank square. `icon` stays on the row, so a client that reads it is not changed.
 
-A row also carries a `health` when a check was run and none when it was not:
-`health.result` is `ok`, `unreachable` or `failed`, with `message` where the
-agent gave one and `at` as an ISO time. Health is kept in memory only, so a
-restart clears it.
+A row also carries `alerts` when the agent has a problem: a list of `Alert`, each with a `level`, a `text`, a `ref` and the `at` time it was raised.
+
+| `ref` | `level` | What it says |
+| --- | --- | --- |
+| `env:<VARIABLE>` | `error` | The environment holds no `<VARIABLE>`, which a host record reads with `fromEnv` |
+| `secret:<name>` | `error` | The vault holds no `<name>` |
+| `open` | `error` | The engine failed to open the record for another reason |
+| `probe` | `warning` | The last check was `unreachable`, or the probe threw |
+
+An alert is kept by its `ref`, so a second problem of the same kind replaces the first. A check that answers `ok` clears the `probe` alert, and an open that works clears `open` and every `env:` and `secret:` alert. The list is in memory only, so a restart clears it, and the opens and the checks raise the alerts again. A row with no problem carries no `alerts` key.
 
 A row also carries `views` when the agent shows one: its views by surface, `{ main: { root, components, dataModel? } }`, in memory only. When one value of a view's data changes, a reader of the row gets `x-ahpd-agents/viewData` `{ id, surface, path, value }`. The row is not sent again - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 
@@ -1950,7 +1968,7 @@ Three commands serve an agent:
 | --- | --- | --- |
 | `x-ahpd/agents/put` | `agent:put`, and the owner's | Makes or changes `{ id, engine, owner, name, description?, icon?, model?, config }`, checks `config` against the engine's schema, moves each secret to the vault, writes the record, calls the engine's `open` and folds the new agent list into the running host. Answers the row |
 | `x-ahpd/agents/remove` | `agent:remove`, and the owner's | Ends the sessions that run on `{ id }`, takes its secrets out of the vault and takes the record out |
-| `x-ahpd/agents/check` | `agent:put`, and the owner's | Builds `{ id }` again, asks its probe and answers the row with its health. A probe that has not answered in 10 seconds is `unreachable` |
+| `x-ahpd/agents/check` | `agent:put`, and the owner's | Builds `{ id }` again, asks its probe and answers the row with its alerts. A probe that has not answered in 10 seconds is `unreachable` |
 
 The owner narrows the grant, as it does for a connector. A `host` agent needs
 `agent:put` or `agent:remove` and `agent:host` beside either. A `team:<team>`
@@ -1974,7 +1992,7 @@ A put moves a `secret` field and each `env` variable the engine names in
 A host record's field may hold `{ "fromEnv": "<NAME>" }` instead, which the host
 reads from its own environment when it opens the record; a team's or a person's
 record that names one is refused. A record with a `$secret` the vault cannot
-answer stays written and shows as `invalid`, so a key a person adds later is
+answer stays written and shows as `failed`, so a key a person adds later is
 picked up at the next start.
 
 An edit keeps the agent and its sessions: the view `open` was handed is updated

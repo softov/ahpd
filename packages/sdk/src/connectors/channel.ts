@@ -2,22 +2,20 @@
  * `x-ahpd-connectors`: the connectors made from the adapters a host serves.
  *
  * One row for each stored connector, keyed by the connector's id, holding the
- * record as it is kept and a `state`: `ready`, `unauthorized` when it is open
- * and its last check was denied, `invalid` when its config no longer fits the
- * adapter's schema or its adapter refused to open it, or `unavailable` when no
- * plugin registers its adapter any more. The adapters
- * themselves are listed on `x-ahpd-adapters`.
- *
- * A row also carries a `health`, when the host knows one: the last check the
- * adapter gave, the last call the connector made or answered, and the last
- * call that failed. Health is in memory only, so a restart clears it and the
- * checks at start fill the first part again.
+ * record as it is kept, a `state` and its `alerts`. The state is `ready`,
+ * `unauthorized` when it is open and its last check was denied, `failed` when
+ * its adapter could not open it, `invalid` when its config does not fit the
+ * adapter's schema, or `unavailable` when no plugin registers its adapter any
+ * more. Each alert names one problem a person has to fix: an `env:` or a
+ * `secret:` a record is missing, an `open` that failed, a `check` that did not
+ * pass, or a `call` that failed. The adapters themselves are listed on
+ * `x-ahpd-adapters`.
  *
  * A row carries `views`, by surface, when the plugin that opened the connector
  * showed one: each a view with its data model, as a plugin's own row carries
- * its page. The views are in memory only, as health is, and a close, a removal
- * or an unloaded plugin takes them away. A change to one value of a view's
- * data is sent as `x-ahpd-connectors/viewData` `{ id, surface, path, value }`
+ * its page. The views are in memory only, as the alerts are, and a close, a
+ * removal or an unloaded plugin takes them away. A change to one value of a
+ * view's data is sent as `x-ahpd-connectors/viewData` `{ id, surface, path, value }`
  * to each reader of the connector, and the row is not sent again.
  *
  * Where an adapter's schema marks a field `secret`, the value is a secret. A
@@ -58,7 +56,7 @@
  * key.
  *
  * `x-ahpd/connectors/note` takes `{ id, ok?, status?, error? }`, one call an
- * open connector made, and keeps it in the connector's health as a host part's
+ * open connector made, and raises or clears its `call` alert as a host part's
  * outcome is kept. A note with no `ok` records no call. Only the plugin that
  * registered the connector's adapter notes, since it makes the connector's
  * calls outside `run`. It needs no grant and no owner's rule for a connector of
@@ -108,8 +106,10 @@ import {
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
 import { recordViews } from '../plugins/views.js';
+import { alertList, dropOpenAlerts, raiseOpenAlerts } from '../plugins/alerts.js';
 import { bag, isRecord, reason } from '../utils/values.js';
-import type { ActionCall, CallOutcome, CheckResult, Connector, ConnectorHealth, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, ServedAdapter } from '../types/connectors.js';
+import type { ActionCall, CheckResult, Connector, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, ServedAdapter } from '../types/connectors.js';
+import type { AlertList } from '../plugins/alerts.js';
 import type { PluginMethod, ViewHandle } from '../types/plugin.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
 import type { Grant, Principal } from '../types/users.js';
@@ -140,14 +140,17 @@ const EXCHANGE_LIMIT_MS = 10_000;
 /** How long a check may take before its connector is called `unreachable`. */
 const CHECK_LIMIT_MS = 10_000;
 
-/** The most of an error message a health entry keeps. */
-const HEALTH_MESSAGE_LIMIT = 500;
+/** The most of an error message an alert keeps. */
+const ALERT_MESSAGE_LIMIT = 500;
+
+/** The most alerts one connector's row holds, as a plugin's row holds. */
+const MAX_ALERTS = 50;
 
 /** The least time between two refreshes that a call outcome sends. */
 const NOTE_REFRESH_MS = 1000;
 
-/** The three states a connector row can be in. */
-export type ConnectorState = 'ready' | 'unauthorized' | 'invalid' | 'unavailable';
+/** The four states a connector row can be in. */
+export type ConnectorState = 'ready' | 'unauthorized' | 'failed' | 'invalid' | 'unavailable';
 
 /** How a connectors channel reads its store, and who it writes a secret for. */
 export interface ConnectorsChannelOptions {
@@ -293,8 +296,8 @@ export interface ConnectorsChannel {
    * Record the outcome of one call for one connector, as `run` and a host part
    * do.
    *
-   * With `ok` it sets `lastCall`, and `lastFailure` too when the call failed.
-   * An error is cut to 500 characters. A note with no `ok` records no call. The
+   * With `ok: false` it raises the connector's `call` alert, and with `ok: true`
+   * it clears it. An error is cut to 500 characters. A note with no `ok` records no call. The
    * rows that carry it go out at most once a second.
    */
   note(id: string, outcome: { ok?: boolean; status?: number; error?: string }): void;
@@ -341,9 +344,11 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   const refsKey = (): string => JSON.stringify([...known.values()].sort((left, right) => left.id.localeCompare(right.id)));
   /** What stops each open connector, by id; an id in the map was opened. */
   const open = new Map<string, Opened>();
-  /** What the host knows of each open connector's health, by id, in memory only. */
-  const healths = new Map<string, ConnectorHealth>();
-  /** The ids whose last check is the reason their record did not open. */
+  /** What the host knows of each connector's alerts, by id, in memory only. */
+  const alerts = new Map<string, AlertList>();
+  /** The last check result of each connector, by id, which `unauthorized` reads. */
+  const checks = new Map<string, CheckResult>();
+  /** The ids whose open failed, which a record reads `failed` for. */
   const openFailures = new Set<string>();
   /** The provider problems already said, so a route on every call says each one once. */
   const providerProblems = new Set<string>();
@@ -351,6 +356,68 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   const started = new Map<string, StartedSignIn>();
 
   const problem = (message: string): void => { options.onProblem?.(`${SCHEME}: ${message}`); };
+
+  /** The alert list of one record, made on the first alert it raises. */
+  const alertsOf = (id: string): AlertList => {
+    let list = alerts.get(id);
+    if (list === undefined) {
+      list = alertList(MAX_ALERTS);
+      alerts.set(id, list);
+    }
+    return list;
+  };
+
+  /** Drop a record's list once it holds nothing. */
+  const settle = (id: string): void => {
+    if (alerts.get(id)?.list().length === 0) alerts.delete(id);
+  };
+
+  /** Raise a record's open alerts in place of the last open's: one per gap it is missing, or one `open`. */
+  const raiseOpen = (id: string, error: unknown): void => {
+    raiseOpenAlerts(alertsOf(id), error, 'the connector could not be opened', ALERT_MESSAGE_LIMIT);
+  };
+
+  /** Clear what an open that worked leaves: the `open` alert and every gap alert. */
+  const clearOpen = (id: string): void => {
+    openFailures.delete(id);
+    const list = alerts.get(id);
+    if (list === undefined) return;
+    dropOpenAlerts(list);
+    settle(id);
+  };
+
+  /** Raise or clear the `check` alert of one connector. */
+  const noteCheck = (id: string, result: CheckResult): void => {
+    const list = alerts.get(id);
+    if (result.result === 'ok') {
+      list?.drop('check');
+      settle(id);
+      return;
+    }
+    const fallback = result.result === 'denied'
+      ? 'the check was denied'
+      : result.result === 'unreachable' ? 'the check did not answer in time' : 'the check failed';
+    alertsOf(id).add({
+      level: result.result === 'denied' ? 'error' : 'warning',
+      text: result.message === undefined ? fallback : result.message.slice(0, ALERT_MESSAGE_LIMIT),
+      ref: 'check',
+    });
+  };
+
+  /** Raise or clear the `call` alert of one connector. */
+  const raiseCall = (id: string, outcome: { ok?: boolean; status?: number; error?: string }): void => {
+    if (outcome.ok === undefined) return;
+    const list = alerts.get(id);
+    if (outcome.ok) {
+      list?.drop('call');
+      settle(id);
+      return;
+    }
+    const text = outcome.error !== undefined
+      ? outcome.error.slice(0, ALERT_MESSAGE_LIMIT)
+      : outcome.status === undefined ? 'the call failed' : `the call answered ${outcome.status}`;
+    alertsOf(id).add({ level: 'warning', text, ref: 'call' });
+  };
 
   /**
    * What each open connector shows, by id and surface.
@@ -394,9 +461,10 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     const adapter = options.adapters()[String(record.adapter)];
     if (adapter === undefined) return 'unavailable';
     if (!fits(configOf(record), adapter.schema)) return 'invalid';
+    if (openFailures.has(record.id)) return 'failed';
     if (!open.has(record.id)) return 'invalid';
     // An open connector whose provider refused its credential is not one that answers.
-    return healths.get(record.id)?.check?.result === 'denied' ? 'unauthorized' : 'ready';
+    return checks.get(record.id)?.result === 'denied' ? 'unauthorized' : 'ready';
   };
 
   /**
@@ -411,10 +479,10 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
 
   /**
    * One stored connector as a client is shown it: its record, its state, and
-   * its health where the host knows any.
+   * its alerts where it has some.
    */
   const connectorRow = (record: StoredRecord): Record<string, unknown> => {
-    const health = healths.get(record.id);
+    const held = alerts.get(record.id)?.list() ?? [];
     const shows = views.of(record.id);
     // A value its adapter marks `writeOnly` is never answered, a vault field's
     // reference aside.
@@ -426,7 +494,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       ...shown,
       state: stateOf(record),
       ...(shows === undefined ? {} : { views: shows }),
-      ...(health === undefined ? {} : { health }),
+      ...(held.length === 0 ? {} : { alerts: held }),
     };
   };
 
@@ -556,17 +624,13 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     const adapter = options.adapters()[entry.connector.adapter];
     if (adapter === undefined || typeof adapter.check !== 'function') return undefined;
     const check = adapter.check.bind(adapter);
-    let result: CheckResult;
-    try {
-      result = await within(check(entry.connector));
-    } catch (error) {
+    const result = await within(check(entry.connector)).catch((error: unknown): CheckResult => {
       const message = reason(error);
-      result = { result: 'failed', ...(message === '' ? {} : { message }) };
-    }
-    const health = healths.get(id) ?? {};
-    health.check = { ...result, at: new Date().toISOString() };
-    healths.set(id, health);
+      return { result: 'failed', ...(message === '' ? {} : { message }) };
+    });
+    checks.set(id, result);
     openFailures.delete(id);
+    noteCheck(id, result);
     return result;
   };
 
@@ -587,28 +651,14 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   };
 
   /**
-   * Keep one call's outcome, and queue the rows that carry it.
+   * Keep one call's outcome as the connector's `call` alert.
    *
    * `run` records each action with it, and a host part records each call it
-   * makes for a connector. The last call is kept, and the last one that failed
-   * is kept beside it. The time is the host's, and an error is cut to 500
-   * characters so a row stays small.
+   * makes for a connector. A failed call raises a `warning` alert, and a call
+   * that worked clears it. An error is cut to 500 characters so a row stays small.
    */
   const note = (id: string, outcome: { ok?: boolean; status?: number; error?: string }): void => {
-    const health = healths.get(id) ?? {};
-    // A note with no outcome records no call, and leaves the calls as they were.
-    if (outcome.ok !== undefined) {
-      const error = outcome.error === undefined ? undefined : outcome.error.slice(0, HEALTH_MESSAGE_LIMIT);
-      const call: CallOutcome = {
-        at: new Date().toISOString(),
-        ok: outcome.ok,
-        ...(outcome.status === undefined ? {} : { status: outcome.status }),
-        ...(error === undefined ? {} : { error }),
-      };
-      health.lastCall = call;
-      if (!outcome.ok) health.lastFailure = call;
-    }
-    healths.set(id, health);
+    raiseCall(id, outcome);
     scheduleNoteRefresh();
   };
 
@@ -616,7 +666,8 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   const close = async (id: string): Promise<void> => {
     const entry = open.get(id);
     open.delete(id);
-    healths.delete(id);
+    alerts.delete(id);
+    checks.delete(id);
     openFailures.delete(id);
     views.drop(id);
     const stop = entry?.stop;
@@ -633,15 +684,12 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     try {
       await openRecord(adapter, record, owner);
     } catch (error) {
-      // The row says why, as a failed check does, so a client shows it.
-      const message = reason(error).slice(0, HEALTH_MESSAGE_LIMIT);
-      healths.set(record.id, { ...healths.get(record.id), check: { result: 'failed', ...(message === '' ? {} : { message }), at: new Date().toISOString() } });
+      // The row lists why, as a failed check does, so a client shows it.
+      raiseOpen(record.id, error);
       openFailures.add(record.id);
       throw error;
     }
-    if (!openFailures.delete(record.id)) return;
-    const health = healths.get(record.id);
-    if (health !== undefined) delete health.check;
+    clearOpen(record.id);
   };
 
   /** Open one stored record with its adapter, in place of whatever was open under its id. */
@@ -1390,7 +1438,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
    */
   const noteCall: PluginMethod = {
     grant: 'connector:put' as Grant,
-    describe: () => ({ title: 'Note a call', description: 'Keeps one call\'s outcome in an open connector\'s health, for the plugin whose adapter it is.' }),
+    describe: () => ({ title: 'Note a call', description: 'Keeps one call\'s outcome as an open connector\'s call alert, for the plugin whose adapter it is.' }),
     authorize: async (params, reader) => {
       const id = params.id;
       if (typeof id !== 'string') return false;

@@ -797,7 +797,8 @@ export type LoaderContext = Omit<PluginContext, 'parseYaml' | 'stringifyYaml'> &
  * what the alert is about as `<kind>:<id>`, such as `adapter:ap-postgres`: an
  * alert with the same `ref` replaces the one before it, and clearing a `ref`
  * takes it away. An alert with no `ref` is a line of its own and is never
- * replaced.
+ * replaced. `at` is the time it was raised, which the host sets when the
+ * alert arrives without one.
  */
 export interface Alert {
   /** How bad it is: `notice` and `info` are news, `warning` and `error` are trouble. */
@@ -806,6 +807,13 @@ export interface Alert {
   text: string;
   /** What it is about, as `<kind>:<id>`, which two alerts share to replace one another. */
   ref?: string;
+  /**
+   * When it was raised, as an ISO time.
+   *
+   * The host sets it when an alert arrives without one, so a person can see
+   * when a problem was raised.
+   */
+  at?: string;
 }
 
 /**

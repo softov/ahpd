@@ -29,8 +29,8 @@ import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
-import { checkIcons, loggerOf, foldHostOptions, frozenCopy, gapLine, grantProblem, isRecord, isRecordSlug, pluginHost, readSecret, reason, RECORD_SLUG, runtime, schemaGaps, sdkVersion, secretRef, viewDataAt, withViewData } from '@ahpd/sdk';
-import type { Agent, AgentOwner, Alert, Catalogs, InstallAnswer, Contribution, FoldedOptions, Grant, HostOptions, Icon, Loaded, LogLevel, NodeRegistry, Plugin, PluginContext, PluginContracts, PluginHost, PluginLink, PluginManifest, PluginSpec, PluginView, RecordStore, Route, SessionStore, Usage, Vault, ViewSurface } from '@ahpd/sdk';
+import { alertList, checkIcons, loggerOf, foldHostOptions, frozenCopy, gapLine, grantProblem, isRecord, isRecordSlug, pluginHost, readSecret, reason, RECORD_SLUG, runtime, schemaGaps, sdkVersion, secretRef, viewDataAt, withViewData } from '@ahpd/sdk';
+import type { Agent, AgentOwner, Alert, AlertList, Catalogs, InstallAnswer, Contribution, FoldedOptions, Grant, HostOptions, Icon, Loaded, LogLevel, NodeRegistry, Plugin, PluginContext, PluginContracts, PluginHost, PluginLink, PluginManifest, PluginSpec, PluginView, RecordStore, Route, SessionStore, Usage, Vault, ViewSurface } from '@ahpd/sdk';
 import { fetchIcons, ICON_LIMIT, resolveIcons } from './icons.js';
 import type { IconBounds } from './icons.js';
 import { readCatalogs } from './i18n.js';
@@ -1928,7 +1928,7 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
    * The oldest goes first once a plugin holds `MAX_ALERTS`, so a plugin that
    * alerts in a loop cannot grow its row.
    */
-  const alerted = new Map<string, Alert[]>();
+  const alerted = new Map<string, AlertList>();
   /**
    * The views each plugin's row carries, by id and then by surface.
    *
@@ -1961,22 +1961,19 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
    * at the end: the replacement is the current thing rather than the old one.
    */
   const addAlert = (id: string, alert: Alert): void => {
-    const list = alerted.get(id) ?? [];
-    const at = alert.ref === undefined ? -1 : list.findIndex((one) => one.ref === alert.ref);
-    if (at !== -1) list.splice(at, 1);
-    list.push(alert);
-    if (list.length > MAX_ALERTS) list.splice(0, list.length - MAX_ALERTS);
-    alerted.set(id, list);
+    let list = alerted.get(id);
+    if (list === undefined) {
+      list = alertList(MAX_ALERTS);
+      alerted.set(id, list);
+    }
+    list.add(alert);
     if (answered.has(id)) options.alertsChanged?.();
   };
   /** Take one alert away by its `ref`, and say so when the load has answered. */
   const dropAlert = (id: string, ref: string): void => {
     const list = alerted.get(id);
-    if (list === undefined) return;
-    const at = list.findIndex((one) => one.ref === ref);
-    if (at === -1) return;
-    list.splice(at, 1);
-    if (list.length === 0) alerted.delete(id);
+    if (list === undefined || !list.drop(ref)) return;
+    if (list.list().length === 0) alerted.delete(id);
     if (answered.has(id)) options.alertsChanged?.();
   };
   /** Show one view on a plugin's row, replacing what the surface had. */
@@ -2267,7 +2264,7 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
     contributions,
     // A copy of each list: a row a client reads is not the one the next alert
     // would push into while it is being served.
-    alerts: () => Object.fromEntries([...alerted].map(([id, list]) => [id, [...list]])),
+    alerts: () => Object.fromEntries([...alerted].map(([id, list]) => [id, list.list()])),
     alert: (id, alert) => { if (kept.has(id)) addAlert(id, alert); },
     // A copy of each plugin's surfaces and of each view on it: what a client
     // reads is not the object the next view of that surface would replace.

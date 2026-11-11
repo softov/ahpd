@@ -2,7 +2,7 @@
  * The check an adapter makes with one call that needs the credential.
  *
  * Shared by every adapter that proves a key this way, the host's own and a
- * plugin's, so a connector's `health.check` means the same thing whichever
+ * plugin's, so a connector's `check` alert means the same thing whichever
  * adapter answered it.
  */
 

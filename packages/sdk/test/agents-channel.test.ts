@@ -845,23 +845,69 @@ it('refuses a start on an agent while it is being removed', async () => {
   await close();
 });
 
-it('checks an agent and answers its health, and says when the probe throws', async () => {
+it('raises a probe alert when the probe throws, and clears it when one answers', async () => {
   const { host, users, close } = await served();
   const cy = await as(host, users, 'cy');
   await cy.call('x-ahpd/agents/put', {
     id: 'mine', engine: 'prober', owner: 'user:cy', name: 'Mine', config: { target: 'a' },
   });
-  expect(await cy.call('x-ahpd/agents/check', { id: 'mine' })).toMatchObject({
-    result: { id: 'mine', health: { result: 'ok' } },
-  });
+  const answered = await cy.call('x-ahpd/agents/check', { id: 'mine' }) as Bag;
+  expect(answered['result']).toMatchObject({ id: 'mine', state: 'ready' });
+  expect(answered['result']).not.toHaveProperty('alerts');
+  expect(answered['result']).not.toHaveProperty('health');
+
   await cy.call('x-ahpd/agents/put', {
     id: 'broken', engine: 'prober', owner: 'user:cy', name: 'Broken', config: { target: 'broken' },
   });
   expect(await cy.call('x-ahpd/agents/check', { id: 'broken' })).toMatchObject({
-    result: { id: 'broken', health: { result: 'failed', message: 'no answer from the target' } },
+    result: {
+      id: 'broken',
+      alerts: [{ level: 'warning', ref: 'probe', text: 'no answer from the target', at: expect.any(String) }],
+    },
   });
+
+  // A record the probe answers asks for the alert to be cleared.
+  await cy.call('x-ahpd/agents/put', {
+    id: 'broken', engine: 'prober', owner: 'user:cy', name: 'Broken', config: { target: 'a' },
+  });
+  expect(await cy.call('x-ahpd/agents/check', { id: 'broken' })).toMatchObject({ result: { id: 'broken' } });
+  expect((await cy.rows())['broken']).not.toHaveProperty('alerts');
   // And a record of an engine nobody serves says so, rather than answering `ok`.
   expect(await cy.call('x-ahpd/agents/check', { id: 'gone' })).toMatchObject({ code: -32602 });
+  await close();
+});
+
+it('shows a probe alert beside a gap of the same record', async () => {
+  const { host, users, collection, lists, close } = await served();
+  process.env['AHPD_TEST_AGENT_COMBO'] = 'sk-combo';
+  try {
+    await collection.put({
+      id: 'theirs',
+      engine: 'prober',
+      owner: 'host',
+      name: 'Theirs',
+      config: { target: 'broken', env: { KEY: { fromEnv: 'AHPD_TEST_AGENT_COMBO' } } },
+    });
+    await lists.openAll();
+    const fa = await as(host, users, 'fa');
+    expect(await fa.call('x-ahpd/agents/check', { id: 'theirs' })).toMatchObject({
+      result: { alerts: [{ level: 'warning', ref: 'probe' }] },
+    });
+    // A variable that goes away leaves the probe's alert in place, and a check
+    // that cannot build the record again adds the gap beside it.
+    delete process.env['AHPD_TEST_AGENT_COMBO'];
+    expect(await fa.call('x-ahpd/agents/check', { id: 'theirs' })).toMatchObject({
+      result: {
+        state: 'failed',
+        alerts: [
+          { level: 'warning', ref: 'probe' },
+          { level: 'error', ref: 'env:AHPD_TEST_AGENT_COMBO' },
+        ],
+      },
+    });
+  } finally {
+    delete process.env['AHPD_TEST_AGENT_COMBO'];
+  }
   await close();
 });
 
@@ -906,28 +952,63 @@ it('lets agent:all read every agent and remove one however it is owned', async (
   await close();
 });
 
-it('says on the row why a record did not open at start, and clears it once it opens', async () => {
+it('lists each missing variable on the row, and clears them once the record opens', async () => {
   const { host, users, collection, lists, close } = await served();
   await collection.put({
-    id: 'theirs', engine: 'checker', owner: 'host', name: 'Theirs', config: { target: 'a', secret: { fromEnv: 'AHPD_TEST_AGENT_KEY' } },
+    id: 'theirs',
+    engine: 'checker',
+    owner: 'host',
+    name: 'Theirs',
+    config: { target: 'a', secret: { fromEnv: 'AHPD_TEST_AGENT_KEY' }, env: { KEY: { fromEnv: 'AHPD_TEST_AGENT_OTHER' } } },
   });
   expect(process.env['AHPD_TEST_AGENT_KEY']).toBeUndefined();
+  expect(process.env['AHPD_TEST_AGENT_OTHER']).toBeUndefined();
   await lists.openAll();
   const fa = await as(host, users, 'fa');
-  expect((await fa.rows())['theirs']).toMatchObject({
-    state: 'invalid',
-    health: { result: 'failed', message: 'the environment holds no AHPD_TEST_AGENT_KEY' },
+  const failed = (await fa.rows())['theirs'];
+  expect(failed).toMatchObject({
+    state: 'failed',
+    alerts: [
+      { level: 'error', ref: 'env:AHPD_TEST_AGENT_KEY', text: 'the environment holds no AHPD_TEST_AGENT_KEY' },
+      { level: 'error', ref: 'env:AHPD_TEST_AGENT_OTHER', text: 'the environment holds no AHPD_TEST_AGENT_OTHER' },
+    ],
   });
+  expect(failed).not.toHaveProperty('health');
 
   process.env['AHPD_TEST_AGENT_KEY'] = 'sk-from-env';
   try {
+    // A gap that is fixed leaves the row, and the one still missing stays.
+    await lists.openAll();
+    expect((await fa.rows())['theirs']).toMatchObject({
+      state: 'failed',
+      alerts: [{ level: 'error', ref: 'env:AHPD_TEST_AGENT_OTHER' }],
+    });
+    expect(((await fa.rows())['theirs'] as { alerts: unknown[] }).alerts).toHaveLength(1);
+    process.env['AHPD_TEST_AGENT_OTHER'] = 'sk-other';
     await lists.openAll();
     const row = (await fa.rows())['theirs'];
     expect(row).toMatchObject({ state: 'ready' });
-    expect(row).not.toHaveProperty('health');
+    expect(row).not.toHaveProperty('alerts');
   } finally {
     delete process.env['AHPD_TEST_AGENT_KEY'];
+    delete process.env['AHPD_TEST_AGENT_OTHER'];
   }
+  // A check that cannot build the record again raises the same gaps.
+  expect(await fa.call('x-ahpd/agents/check', { id: 'theirs' })).toMatchObject({
+    result: { state: 'failed', alerts: [{ ref: 'env:AHPD_TEST_AGENT_KEY' }, { ref: 'env:AHPD_TEST_AGENT_OTHER' }] },
+  });
+  await close();
+});
+
+it('reads a config that does not fit its engine as invalid, with no alert', async () => {
+  const { host, users, collection, lists, close } = await served();
+  await collection.put({ id: 'odd', engine: 'checker', owner: 'host', name: 'Odd', config: { target: 'a', extra: 'x' } });
+  await lists.openAll();
+  const fa = await as(host, users, 'fa');
+  const row = (await fa.rows())['odd'];
+  expect(row).toMatchObject({ state: 'invalid' });
+  expect(row).not.toHaveProperty('alerts');
+  expect(row).not.toHaveProperty('health');
   await close();
 });
 
@@ -948,7 +1029,10 @@ it('refuses an agent whose backend serves another id, and does not serve it', as
   await lists.openAll();
   expect(problems.some((line) => line.includes('odd') && line.includes('not-the-id'))).toBe(true);
   expect(await cy.agents()).not.toContain('odd');
-  expect((await cy.rows())['odd']).toMatchObject({ state: 'invalid' });
+  expect((await cy.rows())['odd']).toMatchObject({
+    state: 'failed',
+    alerts: [{ level: 'error', ref: 'open', text: expect.stringContaining('not-the-id'), at: expect.any(String) }],
+  });
   await close();
 });
 

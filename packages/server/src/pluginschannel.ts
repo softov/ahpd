@@ -339,6 +339,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
           level: alert.level,
           text: loadProblemOf(alert.text, row.spec, schema),
           ...(alert.ref === undefined ? {} : { ref: withoutUserinfoIn(alert.ref) }),
+          ...(alert.at === undefined ? {} : { at: alert.at }),
         })),
         // The view a client draws on the plugin's page, by surface. It is the
         // plugin's own object as it sent it, which the sdk checked first.

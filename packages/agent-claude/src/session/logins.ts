@@ -240,7 +240,7 @@ export function createLogins(ctx: SessionContext): Logins {
     // The proxy's log takes the provider's words with the key cut out.
     const why = `${error}: ${said.split(login.token).join('<token>')}`;
     agent.open.failed(login.id, why);
-    // And the connector's health keeps the call, with when the login is back
+    // And the connector's `call` alert says it, with when the login is back
     // where the failure named it, so its row says why and until when.
     agent.open.called(login.id, login.token, {
       ok: false,

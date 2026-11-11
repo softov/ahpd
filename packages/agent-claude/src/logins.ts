@@ -18,7 +18,7 @@ import { isRecord, sameOwnerOrHost, str } from '@ahpd/sdk';
 import { maskedEmail } from './session/limits.js';
 import { AGENT_VIEW, agentDataOf, LOGIN_VIEW, loginDataOf } from './views.js';
 
-/** One call of a login as its connector's health keeps it; the host stamps the time. */
+/** One call of a login as its connector notes it; the host stamps the time. */
 export type CallNote = Omit<CallOutcome, 'at'>;
 
 /** What a login's account said of its plan, as its connector's view shows it. */
@@ -333,7 +333,7 @@ export class OpenLogins {
 
   /**
    * Say how one call of an open login went, which the plugin has the host keep
-   * in the connector's health, as the model proxy keeps each call of an entry.
+   * as the connector's `call` alert, as the model proxy notes each call of an entry.
    *
    * A call of a token the login no longer holds was the old token's, as a rest
    * for it is, and says nothing of the login.

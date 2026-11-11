@@ -374,14 +374,43 @@ export const checkedConfig = (
   return out;
 };
 
+/** One thing a record is missing, as an alert names it. */
+export interface RecordGap {
+  /** What the gap is about, as `env:<VARIABLE>` or `secret:<name>`. */
+  ref: string;
+  /** What it says, in one sentence. */
+  text: string;
+}
+
+/**
+ * Every gap one record has: each variable the environment does not hold and
+ * each secret the vault does not hold.
+ *
+ * `message` is the first gap's text, so a caller that shows the error alone
+ * says what one gap would.
+ */
+export class RecordGaps extends Error {
+  /** The gaps, in the order the record was walked. */
+  readonly gaps: RecordGap[];
+
+  constructor(gaps: RecordGap[]) {
+    super(gaps[0]?.text ?? 'the record is missing a value');
+    this.name = 'RecordGaps';
+    this.gaps = gaps;
+  }
+}
+
 /**
  * The config a record is opened with: each reference read back.
  *
  * A `$secret` is read from the vault, and a `fromEnv` from the daemon's own
- * environment. A variable that is not set, or is set empty, is refused the way
- * a vault that holds no name is. A `fromEnv` in a record that is not the host's
+ * environment. A variable that is not set, or is set empty, is a gap the way a
+ * vault that holds no name is. A `fromEnv` in a record that is not the host's
  * is refused before the variable is read, as a put refuses it: a record written
  * straight into the collection never reaches the check.
+ *
+ * Every gap is collected rather than thrown as it is found, and one
+ * `RecordGaps` error carries them all.
  */
 export const resolved = async (
   config: Record<string, unknown>,
@@ -389,13 +418,17 @@ export const resolved = async (
   vault: Vault | undefined,
   rules: SecretRules,
 ): Promise<Record<string, unknown>> => {
+  const gaps: RecordGap[] = [];
   if (!rules.nested) {
     const out: Record<string, unknown> = {};
     for (const [field, value] of Object.entries(config)) {
       const name = secretRef(value);
       if (name !== undefined) {
         const held = await vault?.get(name);
-        if (held === undefined) throw new Error(`the vault holds no ${name}`);
+        if (held === undefined) {
+          gaps.push({ ref: `secret:${name}`, text: `the vault holds no ${name}` });
+          continue;
+        }
         out[field] = held;
         continue;
       }
@@ -405,19 +438,26 @@ export const resolved = async (
           throw new Error(`${rules.words.possessive} ${field} may read the daemon's environment only for a ${rules.words.host}`);
         }
         const held = process.env[variable];
-        if (held === undefined || held === '') throw new Error(`the environment holds no ${variable}`);
+        if (held === undefined || held === '') {
+          gaps.push({ ref: `env:${variable}`, text: `the environment holds no ${variable}` });
+          continue;
+        }
         out[field] = held;
         continue;
       }
       out[field] = value;
     }
+    if (gaps.length > 0) throw new RecordGaps(gaps);
     return out;
   }
   const walk = async (value: unknown, path: string): Promise<unknown> => {
     const name = secretRef(value);
     if (name !== undefined) {
       const held = await vault?.get(name);
-      if (held === undefined) throw new Error(`the vault holds no ${name}`);
+      if (held === undefined) {
+        gaps.push({ ref: `secret:${name}`, text: `the vault holds no ${name}` });
+        return undefined;
+      }
       return held;
     }
     const variable = fromEnvRef(value);
@@ -426,10 +466,17 @@ export const resolved = async (
         throw new Error(`${rules.words.possessive} ${path} may read the daemon's environment only for a ${rules.words.host}`);
       }
       const held = process.env[variable];
-      if (held === undefined || held === '') throw new Error(`the environment holds no ${variable}`);
+      if (held === undefined || held === '') {
+        gaps.push({ ref: `env:${variable}`, text: `the environment holds no ${variable}` });
+        return undefined;
+      }
       return held;
     }
-    if (Array.isArray(value)) return Promise.all(value.map((one, position) => walk(one, `${path}.${position}`)));
+    if (Array.isArray(value)) {
+      const out: unknown[] = [];
+      for (const [position, one] of value.entries()) out.push(await walk(one, `${path}.${position}`));
+      return out;
+    }
     if (isRecord(value)) {
       const out: Record<string, unknown> = {};
       for (const [key, one] of Object.entries(value)) out[key] = await walk(one, path === '' ? key : `${path}.${key}`);
@@ -437,7 +484,9 @@ export const resolved = async (
     }
     return value;
   };
-  return await walk(config, '') as Record<string, unknown>;
+  const out = await walk(config, '') as Record<string, unknown>;
+  if (gaps.length > 0) throw new RecordGaps(gaps);
+  return out;
 };
 
 /** Take one secret out of the vault, saying so and going on when the store refuses. */

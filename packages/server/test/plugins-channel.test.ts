@@ -996,6 +996,7 @@ it('serves an alert with an absolute URL\'s query, a signed-URL parameter and a 
   expect(row['alerts']).toEqual([{
     level: 'warning',
     text: 'GET https://store.example/blob?<redacted> failed; the copy at /blob2?<redacted>&<redacted> is stale; open /chat?tkn=***',
+    at: expect.any(String),
   }]);
   await close();
 });
@@ -1052,6 +1053,7 @@ it('lists what a plugin said in apply as a warning alert, and loads it all the s
   expect(row['alerts']).toEqual([{
     level: 'warning',
     text: 'presets.router reads OPENROUTER_API_KEY, which the daemon\'s environment does not have',
+    at: expect.any(String),
   }]);
   await close();
 });
@@ -1072,7 +1074,7 @@ it('replaces an alert with the same ref, clears it by ref, and sends the row aga
   expect(ana.heard(URI)).toContain('changed after');
   const row = (await ana.rows())['after'] as Bag;
   // The second alert replaced the first: one ref is one alert.
-  expect(row['alerts']).toEqual([{ level: 'notice', text: 'the store was read again', ref: 'store' }]);
+  expect(row['alerts']).toEqual([{ level: 'notice', text: 'the store was read again', ref: 'store', at: expect.any(String) }]);
 
   after.clearAlert('store');
   await wait(50);
