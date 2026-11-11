@@ -877,6 +877,40 @@ it('raises a probe alert when the probe throws, and clears it when one answers',
   await close();
 });
 
+it('shows a probe alert beside a gap of the same record', async () => {
+  const { host, users, collection, lists, close } = await served();
+  process.env['AHPD_TEST_AGENT_COMBO'] = 'sk-combo';
+  try {
+    await collection.put({
+      id: 'theirs',
+      engine: 'prober',
+      owner: 'host',
+      name: 'Theirs',
+      config: { target: 'broken', env: { KEY: { fromEnv: 'AHPD_TEST_AGENT_COMBO' } } },
+    });
+    await lists.openAll();
+    const fa = await as(host, users, 'fa');
+    expect(await fa.call('x-ahpd/agents/check', { id: 'theirs' })).toMatchObject({
+      result: { alerts: [{ level: 'warning', ref: 'probe' }] },
+    });
+    // A variable that goes away leaves the probe's alert in place, and a check
+    // that cannot build the record again adds the gap beside it.
+    delete process.env['AHPD_TEST_AGENT_COMBO'];
+    expect(await fa.call('x-ahpd/agents/check', { id: 'theirs' })).toMatchObject({
+      result: {
+        state: 'failed',
+        alerts: [
+          { level: 'warning', ref: 'probe' },
+          { level: 'error', ref: 'env:AHPD_TEST_AGENT_COMBO' },
+        ],
+      },
+    });
+  } finally {
+    delete process.env['AHPD_TEST_AGENT_COMBO'];
+  }
+  await close();
+});
+
 it('answers a row with the config the engine describes, and refuses one it does not', async () => {
   const { host, users, close } = await served();
   const cy = await as(host, users, 'cy');
