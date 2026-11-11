@@ -47,6 +47,8 @@ Every entry of `agents` is one backend, as the protocol's `AgentInfo`:
 | `customizations` | The skills, subagents and MCP servers a session of this backend starts with, so a client can show what a harness offers before any session exists |
 | `capabilities` | `multipleChats`, with `fork` and `sideChat` where the backend can resume at a turn; and `multipleWorkingDirectories`, with `immutablePrimary` and `primaryReplacement` where it takes more than one directory |
 
+A host can be told which agents are off, as `HostOptions.disabledAgents`: the ids whose record says `enabled: false`, read each time the list is asked for. A disabled agent is left out of `agents`, and refused a new session, a new chat, a chat move and a new turn with `<id> is turned off.` Its sessions keep their history and stay listed, and take a message again once the agent is on.
+
 `ahpd.grants` is the other half of what a client is told: one entry per subject a grant may name, each with its `title`, a one-line `description`, its `operations` and the two groups those fall into. Eleven subjects are the host's own - session, chat, file, automation, terminal, diagnostics, container, config, trust, proxy and account, plus the people and cost schemes - and every scheme a provider serves is beside them under its own name. A client draws a role editor from this one map, which is why it is advertised with or without a user directory: it says what a role *could* hold, not what anybody holds.
 
 ## What a host serves

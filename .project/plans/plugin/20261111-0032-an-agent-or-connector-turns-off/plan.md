@@ -91,7 +91,7 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - An agent record turns off](task-01-an-agent-record-turns-off.md) | done | - |
-| [02 - The host refuses a disabled agent](task-02-the-host-refuses-a-disabled-agent.md) | todo | 01 |
+| [02 - The host refuses a disabled agent](task-02-the-host-refuses-a-disabled-agent.md) | done | 01 |
 | [03 - A connector record turns off](task-03-a-connector-record-turns-off.md) | todo | - |
 
 ## Risks and tradeoffs
@@ -102,8 +102,8 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-11; task 01, 2026-11-11.
-- **Next action:** [task-02-the-host-refuses-a-disabled-agent.md](task-02-the-host-refuses-a-disabled-agent.md).
+- **Done so far:** the plan, 2026-11-11; task 01, 2026-11-11; task 02, 2026-11-11.
+- **Next action:** [task-03-a-connector-record-turns-off.md](task-03-a-connector-record-turns-off.md).
 - **Open questions:** none.
 - **Watch out for:**
 `sync` ends the sessions of each id in `before` that is no longer open. Skip a disabled id there, or a toggle deletes the sessions.

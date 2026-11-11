@@ -1,6 +1,6 @@
 ---
 title: The host refuses a disabled agent
-status: todo
+status: done
 depends: [task-01-an-agent-record-turns-off.md]
 layer: "sdk, server"
 refs:
@@ -64,3 +64,13 @@ A session on it keeps its history, and takes messages again once the agent is on
 - `TMPDIR=/home/softov/tmp/ahpd-test npx vitest run packages/sdk` passes, then `packages/server`.
 
 ## Resume
+
+2026-11-11. `HostOptions.disabledAgents` answers the ids whose record is off, `turnedOff(provider)` holds the one sentence and `isDisabled(disabled, provider)` answers whether a provider is in the set. `descriptors` leaves a disabled agent out of the root list, and `replace` publishes the list again.
+
+The host refuses a disabled agent a new session and a new chat in `createSession` and `createChat`, a new session from a tool in `createProviderSession`, `openChat` and both `create_session` paths, a chat move in the mover, a turn in `sendTurn` through `chat/error` with `sendFailed`, and a wake in `resume`, which reads the agent off the session's record before it opens anything. A live session keeps its turns, and the same session runs a message once the set no longer names it. `run.ts` passes `disabledAgents: () => agentLists.disabled()`, and `HOST.md` documents the option.
+
+The plan fixes the sentence and not the rest of each refusal, so the codes are the neighbouring ones: `-32002` for a new session and a new chat, `INVALID_PARAMS` with `data.reason` `agentUnavailable` for a move, `SessionNotFound` for a wake, and the chat's own `chat/error` for a turn.
+
+The new `host-disabled-agent.test.ts` passes 7 tests. The full `packages/sdk` suite: 236 of 237 files passed, 4719 tests passed, 5 skipped, and 2 failed in `host-permissions.test.ts`, which are the edit-approval cases that need a tmpdir outside the home. `packages/server` passed all 94 files, 1871 tests, 3 skipped. `pnpm exec tsc -p tsconfig.json --noEmit` passed. The harness denied every command with a `TMPDIR=` prefix and every `npx`, so the suites ran as `pnpm exec vitest run` without it, one at a time. The wire fixture did not change.
+
+After a restart with the record still off no backend is opened for the agent, so the catalogue has no agent to read that session's transcript and does not list it. The case that checks the stored session is still listed hands the second host the same echo instance, which is how a host that held the session when its agent was turned off runs; the refusal itself is read from the session's record and does not depend on the backend. Listing a stored session whose record is off and whose backend is not registered is a choice the plan does not answer, so it is left as it is.

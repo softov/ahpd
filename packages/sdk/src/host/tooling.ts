@@ -13,7 +13,7 @@ import { CREATED_BY_META, SEND_REMOTE_MESSAGE } from '../sessions/remotesession.
 import { SESSION_TOOL_NAMES } from '../tools/session.js';
 import { ENABLE_CUSTOM_TERMINAL_TOOL, SHELL_TOOL_NAMES } from '../tools/shell.js';
 import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
-import { mayUseAgent, ownershipOf } from '../agents/usable.js';
+import { isDisabled, mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { groupOf } from '../access/users.js';
 import { teamsOf } from '../usage/scopes.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
@@ -22,7 +22,7 @@ import { chatUriFormatOf, mintPeerChatUri } from '../vscode/chatminting.js';
 import { filterChatConfigValues } from '../vscode/chatconfig.js';
 import type { ConfigSchema } from '../vscode/chatconfig.js';
 import { AGENT_CLIENT_SCHEME } from './clienturi.js';
-import { need, noProvider } from './common.js';
+import { need, noProvider, turnedOff } from './common.js';
 import { asksForTool } from './permissions.js';
 import { preambleOf } from './preamble.js';
 import { readAggregate, startsRead } from './chatactions.js';
@@ -1938,6 +1938,9 @@ export function createTooling(ctx: HostContext): Tooling {
      */
     const agent = asked.provider === undefined ? held.agent : ctx.agents.get(asked.provider);
     if (agent === undefined) throw new Error(noProvider(asked.provider));
+    // A chat of an agent its record turned off starts nothing, said with the
+    // sentence every refusal of it uses.
+    if (isDisabled(ctx.options.disabledAgents?.(), agent.provider)) throw new Error(turnedOff(agent.provider));
     const given = checkedConfig(agent, asked.config);
     // Asked for no model, a tool's chat runs the calling chat's where the two
     // run one agent, as VS Code's create-chat takes it.
@@ -2202,6 +2205,7 @@ export function createTooling(ctx: HostContext): Tooling {
       const defaults = creationDefaults({ uri, chatUri });
       const provider = asked.provider ?? defaults.agent?.provider ?? ctx.first?.provider;
       if (provider === undefined) throw new Error(noProvider(provider));
+      if (isDisabled(ctx.options.disabledAgents?.(), provider)) throw new Error(turnedOff(provider));
       const agent = ctx.agents.get(provider);
       if (agent === undefined) throw new Error(noProvider(provider));
       const inherits = defaults.agent === agent;
@@ -2487,6 +2491,7 @@ export function createTooling(ctx: HostContext): Tooling {
         // has no parent, and spends nothing a budget keeps.
         const provider = asked.provider ?? ctx.first?.provider;
         if (provider === undefined) throw new Error(noProvider(provider));
+        if (isDisabled(ctx.options.disabledAgents?.(), provider)) throw new Error(turnedOff(provider));
         const agent = ctx.agents.get(provider);
         if (agent === undefined) throw new Error(noProvider(provider));
         const made = uriFor(crypto.randomUUID());

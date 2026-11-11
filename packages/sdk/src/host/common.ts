@@ -58,6 +58,9 @@ export const CLOSING = 'This host is closing, so nothing new starts on it';
  */
 export const noProvider = (provider: string | undefined): string => `No agent provider registered for: ${provider ?? '(none)'}`;
 
+/** What a start, a chat or a turn hears for an agent its record turned off. */
+export const turnedOff = (provider: string): string => `${provider} is turned off.`;
+
 /** The actions that end a chat's active turn. */
 export const ENDINGS = new Set(['chat/turnComplete', 'chat/turnCancelled', 'chat/error']);
 

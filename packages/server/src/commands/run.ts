@@ -1286,6 +1286,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * plugin's, and takes `session:write`.
      */
     agentOwners: () => agentLists.owners(),
+    /*
+     * The agents whose record says they are off, read from the same channel:
+     * one is left out of the root's list, and refused a new session, a new
+     * chat, a chat move and a new turn while its sessions keep their history.
+     */
+    disabledAgents: () => agentLists.disabled(),
     // The plugin and the record a host inside a machine serves a record agent with.
     handedAgent: (provider) => agentLists.handed(provider),
     /*

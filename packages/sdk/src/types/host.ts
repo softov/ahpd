@@ -355,6 +355,15 @@ export interface HostOptions {
    */
   agentOwners?: () => ReadonlyMap<string, AgentOwner | undefined>;
   /**
+   * The ids of the agents whose record says they are off, as of the last read.
+   *
+   * A disabled agent is not in the root's agent list, and the host refuses it a
+   * new session, a new chat, a chat move and a new turn, as VS Code's host does
+   * with `_isAgentDisabledOnHost`. Its sessions keep their history and take a
+   * message again once the record is on. Left out, every agent is on.
+   */
+  disabledAgents?: () => ReadonlySet<string>;
+  /**
    * The connectors this host serves, as a session's bindings are checked.
    *
    * `refs` answers every stored connector's id, adapter and owner as of the

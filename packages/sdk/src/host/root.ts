@@ -8,6 +8,7 @@ import { accepts } from '../utils/configvalues.js';
 import { clientOwnedApprovalRootConfigKeys, vscodeRootProperties } from '../vscoderootconfig.js';
 import { CLIENT_QUEUE_BYTES, MINIMUM_LIMIT_BYTES, REPLAY_BYTES } from './limits.js';
 import { ROOT } from './channels.js';
+import { isDisabled } from '../agents/usable.js';
 import type { Connection, HostOptions } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
@@ -285,13 +286,19 @@ export function createRoot(ctx: HostContext): Root {
   );
 
   /**
-   * Every backend, as the root channel advertises them.
+   * Every backend the root channel advertises: the ones that are on.
+   *
+   * A record turned off keeps its backend while a session runs on it, and that
+   * backend is left out here, so a client offering what the root lists offers
+   * no disabled agent.
    *
    * `models` is what its probe found, or empty for one that has not answered
    * yet - which is the same real answer a host gives for a harness nobody has
    * signed into.
    */
-  const descriptors = (): Bag[] => [...agents.values()].map((agent) => ({
+  const descriptors = (): Bag[] => [...agents.values()]
+    .filter((agent) => !isDisabled(options.disabledAgents?.(), agent.provider))
+    .map((agent) => ({
     provider: agent.provider,
     displayName: agent.displayName,
     // Required on `AgentInfo`, and a backend may say none: one that does not

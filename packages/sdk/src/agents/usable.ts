@@ -43,6 +43,16 @@ export const ownershipOf = (
 };
 
 /**
+ * Whether an agent's record says it is off.
+ *
+ * A disabled agent is left out of the root's list, and a host refuses it a new
+ * session, a new chat, a chat move and a new turn. Its sessions keep their
+ * history, and take a message again once the record is on.
+ */
+export const isDisabled = (disabled: ReadonlySet<string> | undefined, provider: string): boolean =>
+  disabled?.has(provider) === true;
+
+/**
  * Whether this caller may see and start a session on an agent.
  *
  * A host agent - the daemon's own, or one a plugin registered, which has no
