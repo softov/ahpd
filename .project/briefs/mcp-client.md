@@ -45,11 +45,7 @@ These facts are from VS Code's main at `a1a15017f8a`.
 | No tool answers a pending request | The same. VS Code has no door for an outside client, so no session tool answers a request. |
 | `replace` and `cancel` need a `sourceChat` | The same check. VS Code has no caller without a session. |
 | `delete_session` deletes the whole session of a chat link | The same, through `resolveKnownSession`. VS Code asks the user to confirm every `delete_session`. |
-| No `chats` on a row | Different. A VS Code row lists `chats`: the main session and its nested sessions, each with a title and an `openLink`. |
-| No tool archives one chat | Different. VS Code has `archive_chat`. |
 | Markdown parts joined with no space | The same: `join('')`. |
-| No status on a tool call | The same. |
-| `get_session_context` fields | Different. VS Code also answers `messagesSentByMe`, `assistantTruncated`, `responseTurnId` and `harness`. |
 | `list_agents` and `list_models` | VS Code has neither. They are ahpd's own tools. |
 | Two forms of a session's name | The same: `session` and `openLink`. |
 
@@ -112,7 +108,6 @@ The test session made two `Write` calls for `colour.txt`, and neither wrote the 
 ### What could be better
 
 - `get_session_context` joins the markdown parts of a turn with no space, so text reads "I'll start with step 1.Step 1: ...".
-- A tool call in the transcript has no status and no result, so a client cannot tell a refused call from one that ran.
 - Steers do not appear in the transcript. Only the first message of a turn shows as `user`.
 - `full` cuts each tool input to 200 characters, which cut the `AskUserQuestion` options in the test.
 - A row names its session as `ahp-session:/<id>`, and `create_session` answers with `agent-host-session://<agent>/<id>`. A Gemini row is `gemini:/<id>`. Both forms work as input, but a client must keep two names for one session.
@@ -144,16 +139,14 @@ Softov chose a new tool on 2026-11-11, over an operation on `send_message` and o
 ### The session tools at `/mcp`
 
 - `replace` and `cancel` work for a caller with no session. The message meta keeps the caller's user, or its token for root, as the owner.
-- `get_session_context` answers `messagesSentByMe`, `assistantTruncated`, `responseTurnId` and `harness`, as VS Code does.
 - `delete_session` refuses a link whose chat id names a nested chat, and says to use `archive_chat`.
-- `archive_chat` is built as VS Code has it, which closes the `UPSTREAM.md` item.
 - The `move_session` refusal for a host with moves off names the root config key `chatMoves.enabled`.
-- A `list_sessions` row lists its `chats`, as VS Code does.
 - A caller with no session gets descriptions with no "current session":
   - `create_session` has no `currentSession` value.
   - `create_chat` and `rename_chat` say that `session` is required.
   - `move_session` does not point at `get_current_session`.
-- The text join and the tool calls with no status stay as VS Code has them.
+- The text join stays as VS Code has it.
+- The row's `chats`, `archive_chat`, the context fields and each tool call's status are planned in host/20261111-0609-a-row-lists-chats-and-one-chat-archives and host/20261111-0609-the-session-context-tells-each-call.
 
 ### The agent list
 

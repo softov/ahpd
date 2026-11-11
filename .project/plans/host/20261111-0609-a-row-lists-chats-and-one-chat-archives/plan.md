@@ -8,7 +8,8 @@ revalidated: 2026-11-11
 requires: []
 refs:
   - git://ca131f13d - the commit of ahpd this plan was checked at
-  - "[code://.project/briefs/mcp-client.md](../../../briefs/mcp-client.md) - the brief this plan covers in part: *No chats on a row* and *No tool archives one chat*"
+  - git://e9abb18ab - the last commit whose `briefs/mcp-client.md` holds *No chats on a row* and *No tool archives one chat*, which this plan covers
+  - "[code://.project/briefs/mcp-client.md](../../../briefs/mcp-client.md) - the brief, which keeps the items this plan leaves out"
   - "[code://packages/sdk/src/tools/session.ts#L105-L140](../../../../packages/sdk/src/tools/session.ts#L105-L140) - `serializeSession`, the `list_sessions` row, which leaves out the row's `chats`"
   - "[code://packages/sdk/src/tools/session.ts#L535-L567](../../../../packages/sdk/src/tools/session.ts#L535-L567) - `list_sessions`, whose description gets VS Code's sentence on `chats`"
   - "[code://packages/sdk/src/tools/session.ts#L1029-L1053](../../../../packages/sdk/src/tools/session.ts#L1029-L1053) - `delete_session`, the shape `archive_chat` copies"

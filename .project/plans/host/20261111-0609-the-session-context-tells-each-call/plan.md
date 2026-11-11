@@ -8,7 +8,8 @@ revalidated: 2026-11-11
 requires: []
 refs:
   - git://ca131f13d - the commit of ahpd this plan was checked at
-  - "[code://.project/briefs/mcp-client.md](../../../briefs/mcp-client.md) - the brief this plan covers in part: *get_session_context fields* and *No status on a tool call*"
+  - git://e9abb18ab - the last commit whose `briefs/mcp-client.md` holds *get_session_context fields* and *No status on a tool call*, which this plan covers
+  - "[code://.project/briefs/mcp-client.md](../../../briefs/mcp-client.md) - the brief, which keeps the items this plan leaves out"
   - "[code://packages/sdk/src/tools/session.ts#L221-L226](../../../../packages/sdk/src/tools/session.ts#L221-L226) - `CAPS`, the cuts per level of detail"
   - "[code://packages/sdk/src/tools/session.ts#L242-L295](../../../../packages/sdk/src/tools/session.ts#L242-L295) - `serializeContext`, which answers no `assistantTruncated`, `responseTurnId`, `messagesSentByMe` or `harness`, and a bare name per call"
   - "[code://packages/sdk/src/tools/session.ts#L990-L1027](../../../../packages/sdk/src/tools/session.ts#L990-L1027) - `get_session_context`, which takes no `responseTurnId` or `responseOffset`"
