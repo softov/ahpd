@@ -1,6 +1,6 @@
 ---
 title: The alert says the plugin failed to start
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
@@ -29,4 +29,6 @@ The `listening` alert says the plugin failed to start, with no time.
 - `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run packages/server` passes.
 
 ## Resume
+
+Implemented 2026-11-11 in `9443da00a`. See [implemented.md](implemented.md).
 
