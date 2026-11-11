@@ -10,15 +10,16 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 ## Main
 
 - The last release is 0.14.0 (`v0.14.0`). `0.15.0-rc.1` is on npm `next` (`v0.15.0-rc.1`, #231). What the release needs is in [pending/release.md](../pending/release.md).
-- Main's last code merge is #288 (`5a9167c36`): a stored ACP session opens after a restart. It is beorn's fix for #287, with two of our commits, and #287 is closed.
-- #277 to #286 merged on 2026-11-10, and #289 on 2026-11-11. `git log` and each plan's Resume state hold the detail.
-- No PR is open on `softov/ahpd`. beorn has not said which ACP server he hit #287 with.
+- Main's last code merge is #292 (`6b6010b69`): a call to a model fetched from a connector, such as `openrouter/openai/gpt-4o`, carries its policy keys, so its limits count.
+- #277 to #286 merged on 2026-11-10, and #288 to #292 on 2026-11-11. `git log` and each plan's Resume state hold the detail.
+- The repository is `ahpio/ahpd` since 2026-11-11 (#290). No PR is open on it. beorn has not said which ACP server he hit #287 with.
 - MayCXC said on 2026-11-09 not to wait for him. His branches 0210, 1647, 2330 and 0340 are all on main, and he has pushed nothing since 0340.
-- CI shards: `linux (1/2)`, `linux (2/2)`, `processes (1/2)`, `processes (2/2)` and `windows (1/4)` to `windows (4/4)`. `check` and `check-windows` are the checks the `main` ruleset requires; each is green only when every shard of its job is.
-- A slow runner can still fail a job with nothing wrong in the code. Rerun the failed jobs once with `gh run rerun <id> -R softov/ahpd --failed`; a second failure needs a look.
-- Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`. A rebuild and a restart in his terminal wire in #289, the alerts on agent and connector rows. It needs `DEEPSEEK_API_KEY` in its environment, or the DeepSeek agents do not open. Never restart it or use the ports 5180 and 37537 yourself.
-- Code goes through a PR on `softov/ahpd`. Plan-only commits go to main. A PR merges with `gh pr merge <n> -R softov/ahpd --admin --merge`, only on Softov's word. Show a PR's text in chat before opening it.
-- `gh pr checks` has no `--json` here, and `gh pr edit` fails on the Projects classic deprecation. Read a job's log with `gh api repos/softov/ahpd/actions/jobs/<id>/logs`, and set a PR body with `gh api repos/softov/ahpd/pulls/<n> -X PATCH -F body=@<file>`.
+- CI shards: `linux (1/2)`, `linux (2/2)`, `processes (1/2)`, `processes (2/2)` and `windows (1/4)` to `windows (4/4)`. `check` and `check-windows` are green only when every shard of their job is.
+- The only ruleset on `main` is `Protect Main`. It requires a PR and lets org admins and Softov bypass it, so a plan-only push goes straight to main. It requires no check: the old `main checks` ruleset, which required `check` and `check-windows`, was deleted on 2026-11-11. Wait for both before a merge until Softov adds them back.
+- A slow runner can still fail a job with nothing wrong in the code. Rerun the failed jobs once with `gh run rerun <id> -R ahpio/ahpd --failed`; a second failure needs a look.
+- Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`. He restarted it after #291; a restart wires in #292. It has `policies.check` on, with one policy, `neach`. It needs `DEEPSEEK_API_KEY` in its environment, or the DeepSeek agents do not open. Never restart it or use the ports 5180 and 37537 yourself.
+- Code goes through a PR on `ahpio/ahpd`. Plan-only commits go to main. A PR merges with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word. Show a PR's text in chat before opening it.
+- `gh pr checks` has no `--json` here, and `gh pr edit` fails on the Projects classic deprecation. Read a job's log with `gh api repos/ahpio/ahpd/actions/jobs/<id>/logs`, and set a PR body with `gh api repos/ahpio/ahpd/pulls/<n> -X PATCH -F body=@<file>`.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it. Run one vitest suite at a time, with `TMPDIR` on a folder outside the home's dot-folders.
 - On this machine, computer-spawn's "fails a turn on a session whose CLI is gone" fails on main too. CI passes it.
 - A test daemon for checks: `source .project/pending/test-daemon.sh`, on port 39200, with its token at `~/ahpd-check/token`. Check `ss -ltnp` before you start one, and stop it by pid.
@@ -29,7 +30,6 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
   - `briefs-commit`, `plan-mcp` and `pending-check`: detached, for plan-only commits and checks.
   - `build-agents-057f374c`, `build-agents-3795760c`, `build-agents-ae3197fe`, `build-agents-e6611632`, `build-agents-ed43acf5`, `devtunnel-key-values` and `usage-task-03`: build sessions' worktrees.
   - `wait-ms` (#260) and `win-command` (#261): merged.
-  - `build-agents-8d842840`: the turn-off build, not pushed and not reviewed.
   - `release-prerelease`: merged in #163.
   - Merged branches: `build-agents-6c0a50f2` (#199), `build-agents-74d376da` (#196), `build-agents-9b7dd5b5` (#197), `build-agents-b6d26e50` (#187), `build-agents-cba21cdc` (#198), `canvas-example` (#194), `grants-follow-the-answers` (#192), `maycxc-union` and `union-ad15488a`.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334` (merged), `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`. Delete them only on his word.
@@ -38,13 +38,16 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 ## In progress on 2026-11-11
 
 - Builders are dispatched over the ahpd MCP tools from now on, so the dispatch itself is tested. The MCP token is uclau's `claude-code-mcp`, in `~/.claude.json`.
-- [plugin/20261111-0032-agents-and-connectors-list-their-alerts](../plans/plugin/20261111-0032-agents-and-connectors-list-their-alerts/plan.md) merged in #289. It stays `implemented` until Softov says `built`.
-- [plugin/20261111-0032-an-agent-or-connector-turns-off](../plans/plugin/20261111-0032-an-agent-or-connector-turns-off/plan.md) is being built in `build-agents-8d842840`, in session `8d842840`. On 2026-11-11 Softov added a paused state, stored in one `mode` field, and tasks 01 and 02 are being rebuilt for it. The build preset denies `git add`, so new files are committed by hand in review.
-- Two plans from [briefs/mcp-client.md](../briefs/mcp-client.md) are written and not committed. They wait for Softov's check: host/20261111-0609-a-row-lists-chats-and-one-chat-archives and host/20261111-0609-the-session-context-tells-each-call. Their four items leave the brief once he approves them.
-- ahpw's brief for the alert list and the switch is `ahpw/.project/briefs/an-agent-or-connector-lists-its-alerts-and-turns-off.md`, not committed. Its plan needs a mockup first. Until then ahpw's pages read `health`, which ahpd no longer sends.
+- The alerts plan (#289) and the turn-off plan (#291), plugin/20261111-0032, are `built`. The build preset denies `git add`, so a builder's new files are committed by hand in review.
+- Two plans from [briefs/mcp-client.md](../briefs/mcp-client.md) are on main and wait for Softov's check: host/20261111-0609-a-row-lists-chats-and-one-chat-archives and host/20261111-0609-the-session-context-tells-each-call. Their four items leave the brief once he approves them.
+- ahpw's brief for the alert list and the switch is on ahpw's main (`0f9d12a`), checked against #291. Its plan needs a mockup first. Until then ahpw's pages read `health`, which ahpd no longer sends.
 - A restored ACP session shows the host's added first-prompt text as the person's own words. Codex and Gemini both do it. No brief yet.
 - `/mcp` keeps no session, so an MCP client is not a row in `x-ahpd-clients`. Softov likes an MCP session (`Mcp-Session-Id`) for it. No brief yet.
 - A `get_session_context` reply over MCP is cut at the level's cap with no way to read the rest. host/20261111-0609-the-session-context-tells-each-call adds `responseTurnId`.
+- [briefs/the-policy-check-is-a-server-setting.md](../briefs/the-policy-check-is-a-server-setting.md): `policies` is not a key the server settings page edits. Its plan waits on his word.
+- The policy form saves a row that can do nothing: a `deny` with limits, or an empty `match`. A row's `pool` and a limit's `pool` are two things under one word. No brief yet.
+- [cofold/20261111-1054-cofold-reads-the-cofold-names](../plans/cofold/20261111-1054-cofold-reads-the-cofold-names/plan.md) is `planned`. It waits for a `@cofold/copapo` release that reads the cofold names.
+- MayCXC's fork has no work missing from main, as checked on 2026-11-11. `host/124-an-agents-shell-is-a-terminal-the-person-sees` stays unmerged by design: the host/20261103-1620 plans ported it.
 
 ## Left open on 2026-11-09
 
@@ -57,8 +60,9 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 
 ## Waiting for Softov
 
-- The GHCR package `ghcr.io/softov/ahpd` is private until he makes it public once.
-- Moving the repository to `ahpio/ahpd`, before or after 0.15.0: no decision. GHCR does not redirect, and `compose.yaml` names `ghcr.io/softov/ahpd`.
+- The GHCR package `ghcr.io/ahpio/ahpd` is private until he makes it public once, after the first edge image lands.
+- The machine parts are pulled from `ghcr.io/ahpio` since #290, and none is there until `0.15.0-rc.2`. Parts already on a box keep working.
+- The 13 `npm trust` commands in [pending/release.md](../pending/release.md) come before the next release.
 - `edge.yml` has no paths filter, so a plan-only push to main builds the edge image. A `paths-ignore` is suggested.
 - The API keys in his private env file were shown in a chat on 2026-11-11. He rotates them.
 

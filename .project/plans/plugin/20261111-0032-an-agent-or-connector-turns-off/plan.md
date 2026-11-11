@@ -1,7 +1,7 @@
 ---
 title: An agent or connector turns off
 domain: plugin
-status: implemented
+status: built
 priority: medium
 created: 2026-11-11
 revalidated: 2026-11-11
@@ -108,7 +108,7 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 ## Resume state
 
 - **Done so far:** tasks 01 and 02 built 2026-11-11 for the three agent states: `mode` with `enabled`, `paused` and `disabled`, the older `enabled: false` reading as disabled, the `pause` command, the channel's `disabled()` and `paused()` sets, and the host's refusals and listing for both off states through `disabledAgents` and `pausedAgents`. Task 03 stays `done` from the boolean-`enabled` build.
-- **Next action:** close the plan as `implemented`, with `implemented.md` written from the do-spec template.
+- **Next action:** none. Merged in ahpio/ahpd#291 and closed as `built`, 2026-11-11.
 - **Open questions:** none.
 - **Watch out for:**
 `sync` ends the sessions of each id in `before` that is no longer open. A paused or disabled id is skipped there, and a paused record is opened as an enabled one is.
