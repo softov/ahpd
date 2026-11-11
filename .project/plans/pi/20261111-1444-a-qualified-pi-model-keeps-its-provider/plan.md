@@ -70,7 +70,7 @@ record model -> piSession first open -> backend.setModel(options.model) -> model
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A qualified model keeps its provider](task-01-a-qualified-model-keeps-its-provider.md) | todo | - |
+| [01 - A qualified model keeps its provider](task-01-a-qualified-model-keeps-its-provider.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -79,13 +79,13 @@ record model -> piSession first open -> backend.setModel(options.model) -> model
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-qualified-model-keeps-its-provider.md](task-01-a-qualified-model-keeps-its-provider.md).
+- **Done so far:** task 01 implemented, 2026-11-11; see [implemented.md](implemented.md).
+- **Next action:** Softov reviews the PR. The plan closes as `built` on his word.
 - **Open questions:** none.
 - **Watch out for:** `available` in `setModel` holds only the models with a key. The provider check needs `getProviders()`, not `available`.
 
 ## Final verification checklist
 
-- [ ] `modelFor(models, 'deepseek/deepseek-chat', undefined, providers)` is `undefined` when `deepseek` is a provider and OpenRouter has `deepseek/deepseek-chat`.
-- [ ] A configured model pi refuses logs one `warn` line naming it.
-- [ ] `pnpm typecheck` and the agent-pi suite pass.
+- [x] `modelFor(models, 'deepseek/deepseek-chat', undefined, providers)` is `undefined` when `deepseek` is a provider and OpenRouter has `deepseek/deepseek-chat`.
+- [x] A configured model pi refuses logs one `warn` line naming it.
+- [x] `pnpm typecheck` and the agent-pi suite pass.
