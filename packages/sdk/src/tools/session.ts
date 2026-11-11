@@ -101,6 +101,31 @@ const pick = (from: Bag, pairs: [string, string][]): Bag | undefined => {
   return Object.keys(out).length > 0 ? out : undefined;
 };
 
+/**
+ * The chats of a row, the way `list_sessions` answers them.
+ *
+ * A row lists its chats only when one of them is nested: a session whose only
+ * chat is the default one is that chat, and repeating it says nothing. A
+ * tool's chat and a hidden one are not a person's to pick, so they are left
+ * out of the list, as the reference host leaves them out of its own.
+ */
+const serializeChats = (row: Summary): Bag[] | undefined => {
+  const chats = (row.chats ?? []).filter((chat) =>
+    (chat.origin as Bag | undefined)?.['kind'] !== 'tool' && chat.interactivity !== 'hidden');
+  if (!chats.some((chat) => chat.resource !== row.defaultChat)) return undefined;
+  return chats.map((chat) => {
+    const main = row.defaultChat !== undefined && chat.resource === row.defaultChat;
+    const words = chat.status === undefined ? [] : statusWords(chat.status);
+    return {
+      title: chat.title,
+      openLink: openLink(row.resource, row.provider, main ? undefined : idOf(chat.resource)),
+      ...(main ? { main: true } : {}),
+      ...(words.length > 0 ? { status: words.join(',') } : {}),
+      ...(chat.provider !== undefined && chat.provider !== row.provider ? { harness: chat.provider } : {}),
+    };
+  });
+};
+
 /** One row, the way `list_sessions` answers it. */
 export const serializeSession = (row: Summary): Bag => {
   const extra = row as Summary & {
@@ -119,6 +144,7 @@ export const serializeSession = (row: Summary): Bag => {
     ['owner', 'owner'], ['repo', 'repo'], ['pullRequestUrl', 'pullRequestUrl'],
   ]);
   const words = statusWords(row.status);
+  const chats = serializeChats(row);
   return {
     session: row.resource,
     openLink: openLink(row.resource, row.provider),
@@ -136,6 +162,7 @@ export const serializeSession = (row: Summary): Bag => {
     ...(extra.changesets !== undefined ? { changesets: extra.changesets } : {}),
     ...(git !== undefined ? { git } : {}),
     ...(github !== undefined ? { github } : {}),
+    ...(chats !== undefined ? { chats } : {}),
   };
 };
 
@@ -534,7 +561,7 @@ export const sessionTools = (): HostTool[] => [
     definition: {
       name: 'list_sessions',
       title: 'List Sessions',
-      description: 'List sessions and their compact metadata (status, activity, working directory, project, worktree changes, git/GitHub info, timestamps). Each result includes `session` for identity and tool inputs and `openLink` for clickable Markdown links; do not use `session` as a link target. Pass `session` to fetch a single known session by URI. By default archived sessions are omitted. Optionally filter by `status`, `workspace`, `agent`, `title`, `path`, `withChanges`, `unread`, `withPullRequest`, `includeArchived`, `createdAfter`, `createdBefore`, `modifiedAfter`, or `modifiedBefore`. Rows are answered newest first by `modifiedAt`; pass `limit` for only the newest ones, and the answer says `truncated: true` when the limit cut rows.',
+      description: 'List sessions and their compact metadata (status, activity, working directory, project, worktree changes, git/GitHub info, timestamps). Each result includes `session` for identity and tool inputs and `openLink` for clickable Markdown links; do not use `session` as a link target. A session with nested sessions also lists `chats`: its main session (`main: true`) and its nested sessions in order, each with a `title` and an `openLink` that names that chat in `send_message`, `get_session_context`, `rename_chat` and `archive_chat`. Pass `session` to fetch a single known session by URI. By default archived sessions are omitted. Optionally filter by `status`, `workspace`, `agent`, `title`, `path`, `withChanges`, `unread`, `withPullRequest`, `includeArchived`, `createdAfter`, `createdBefore`, `modifiedAfter`, or `modifiedBefore`. Rows are answered newest first by `modifiedAt`; pass `limit` for only the newest ones, and the answer says `truncated: true` when the limit cut rows.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -936,6 +963,78 @@ export const sessionTools = (): HostTool[] => [
   },
   {
     definition: {
+      name: 'archive_chat',
+      title: 'Archive Chat',
+      description: 'Archive a chat, or a whole session, so it no longer appears among active sessions. Use it when the user asks to archive a chat or session or to mark it done. Archiving a nested session archives only that chat. Archiving a session\'s main session (`main: true` in `chats`, or a session link without a chat id) archives the whole session with all of its nested sessions, and removes its isolated worktree after committing the worktree\'s changes. Archived chats keep their history and can be unarchived. To remove a session permanently, use `delete_session` instead. Refuses the chat this tool runs in and the main session of its own session.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          chat: { type: 'string', description: 'The chat to archive: an `agent-host-session://` chat link from `list_sessions`, `get_current_session` or `create_session`. A session link without a chat id targets that session\'s main session, which archives the whole session.' },
+        },
+        required: ['chat'],
+      },
+      annotations: { title: 'Archive Chat', readOnlyHint: false },
+    },
+    /*
+     * Offered to a person with no session too, as archiving is a thing a window
+     * asks for from outside any chat. What it may do is the target's: a chat
+     * asks `chat:mark` and a session `session:mark`, checked once the link says
+     * which it is, so a caller who may file away a session is not refused the
+     * chat half it was never offered.
+     */
+    sessionless: true,
+    grant: 'session:write',
+    deferLoading: true,
+    run: async (input, at) => {
+      const tool = 'archive_chat';
+      const asked = required(input.chat, 'chat', tool);
+      /*
+       * An explicit chat id that is empty or cannot be decoded must not fall
+       * back to the whole session: the model asked to archive one chat and
+       * wrote which badly, and archiving everything is the answer it did not
+       * ask for. The reference host refuses it in these words.
+       * https://github.com/microsoft/vscode/blob/a1a15017f8a/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L2077-L2080
+       */
+      const explicit = /[?&]chat=([^&#]*)/.exec(asked)?.[1];
+      if (explicit !== undefined) {
+        let read: string | undefined;
+        try {
+          read = explicit === '' ? undefined : decodeURIComponent(explicit);
+        } catch {
+          read = undefined;
+        }
+        if (read === undefined)
+          throw new Error(`Invalid ${tool} input: chat must name a valid chat id; omit the chat id to archive the whole session.`);
+      }
+      const found = sessionMeant(asked, await at.sessions());
+      if (found === undefined)
+        throw new Error(`Invalid ${tool} input: chat must be an agent-host-session:// link targeting a known chat (see list_sessions).`);
+      /*
+       * The default chat is the session itself: a link to it, and a link with
+       * no chat id, archive the whole session with every chat of it.
+       */
+      const chats = at.chats(found.session.resource);
+      const defaultChat = chats[0];
+      const named = found.chatId === undefined ? undefined : chats.find((one) => idOf(one.resource) === found.chatId);
+      if (found.chatId !== undefined && named === undefined)
+        throw new Error(`Invalid ${tool} input: chat must target a known chat of its session.`);
+      const wholeSession = found.chatId === undefined || (defaultChat !== undefined && named?.resource === defaultChat.resource);
+      const chat = wholeSession ? defaultChat?.resource : named?.resource;
+      // Archiving either the chat this call runs in or its own session's main
+      // chat would archive the conversation that is calling the tool.
+      if (at.chat !== undefined && chat !== undefined && chat === at.chat)
+        throw new Error(`Invalid ${tool} input: refusing to archive the chat this tool runs in.`);
+      if (wholeSession && at.session !== undefined && found.session.resource === at.session)
+        throw new Error(`Invalid ${tool} input: refusing to archive the main session of the current session, which would archive the current session.`);
+      allowed(at, wholeSession ? 'session:mark' : 'chat:mark');
+      const moved = await at.archive(found.session.resource, wholeSession ? undefined : chat);
+      const link = openLink(found.session.resource, found.session.provider, wholeSession || chat === undefined ? undefined : idOf(chat));
+      if (wholeSession) return moved ? `Archived session ${link} with all of its chats.` : `Session ${link} is already archived.`;
+      return moved ? `Archived chat ${link}.` : `Chat ${link} is already archived.`;
+    },
+  },
+  {
+    definition: {
       name: 'send_message',
       title: 'Send Message',
       description: 'Send, replace, or cancel your message in an existing session or chat. Use `delivery: "steer"` only to update an active turn; steering is handed to the provider immediately and cannot be replaced or cancelled. Use `delivery: "queue"` for a separate turn. Replace and cancel require the message ID and revision returned by an earlier call and succeed only while that queued message is pending. If it already started, the result reports `processing` or `completed`; decide whether to send a steering correction or a queued follow-up. Delivery is asynchronous; this tool does not wait for or return a reply.',
@@ -1186,7 +1285,7 @@ export const sessionTools = (): HostTool[] => [
  *
  * Read off `sessionTools()` rather than written out a second time, so the list
  * cannot drift from the tools themselves: one added there is one the option
- * switches off, and one taken away leaves the list. Only these thirteen are the
+ * switches off, and one taken away leaves the list. Only these fourteen are the
  * session tools - the artifact tools, `ahp_resource`, `ahp_terminals` and
  * `schedule_wakeup` are this host's own and are offered whatever the option
  * says.

@@ -1,6 +1,6 @@
 ---
 title: A row lists its chats
-status: todo
+status: implemented
 depends: []
 layer: "sdk, docs"
 refs:

@@ -1782,6 +1782,17 @@ export interface ToolCall {
   /** A session gone, with its chats, terminals and a clean worktree. */
   remove(session: string): Promise<void>;
   /**
+   * Archive a chat, or the whole session with every chat of it.
+   *
+   * The host's own archive, the same bit a client's `isArchivedChanged` action
+   * sets, so a tool's archive and a person's are one state to every client of
+   * the session. `chat` is the chat's channel URI; absent, it is the session
+   * that is archived, which is what its default chat and a link without a chat
+   * id mean. Answers whether the bit moved, so a tool can say the chat was
+   * already archived.
+   */
+  archive(session: string, chat?: string): Promise<boolean>;
+  /**
    * Move the calling session to a directory once the running turn ends.
    *
    * `isolation` asks for a worktree made from the directory rather than the

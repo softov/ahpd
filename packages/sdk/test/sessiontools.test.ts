@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { localPath, uriOf } from '../src/resources/fileuri.js';
-import { Status } from '../src/sessions/catalog.js';
+import { Status, idOf } from '../src/sessions/catalog.js';
 import { ROOT, createHost } from '../src/host.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { hostTools } from '../src/tools/index.js';
@@ -139,6 +139,36 @@ describe('a row as list_sessions answers it', () => {
     expect(said.workingDirectories).toEqual(['file:///a', 'file:///b']);
     expect(serializeSession(row()).unread).toBeUndefined();
     expect(serializeSession(row()).workingDirectories).toBeUndefined();
+  });
+
+  it('lists a session\'s chats in its order, the default one first with a link of its own', () => {
+    const said = serializeSession(row({
+      chats: [
+        { resource: 'ahp-chat:/main', title: 'Main', status: Status.Idle | Status.IsRead },
+        { resource: 'ahp-chat:/side', title: 'Side', status: Status.InProgress, provider: 'other' },
+      ],
+      defaultChat: 'ahp-chat:/main',
+    }));
+    expect(said.chats).toEqual([
+      { title: 'Main', openLink: 'agent-host-session://claude/s1', main: true, status: 'idle' },
+      { title: 'Side', openLink: 'agent-host-session://claude/s1?chat=side', status: 'inProgress', harness: 'other' },
+    ]);
+  });
+
+  it('has no chats when only the default one remains, and leaves out a tool or hidden chat', () => {
+    expect(serializeSession(row({
+      chats: [{ resource: 'ahp-chat:/main', title: 'Main' }],
+      defaultChat: 'ahp-chat:/main',
+    }))).not.toHaveProperty('chats');
+
+    expect(serializeSession(row({
+      chats: [
+        { resource: 'ahp-chat:/main', title: 'Main' },
+        { resource: 'ahp-chat:/tool', title: 'Tool', origin: { kind: 'tool' } },
+        { resource: 'ahp-chat:/hidden', title: 'Hidden', interactivity: 'hidden' },
+      ],
+      defaultChat: 'ahp-chat:/main',
+    }))).not.toHaveProperty('chats');
   });
 });
 
@@ -316,14 +346,15 @@ describe('the set itself', () => {
     const tools = sessionTools();
     expect(tools.map((one) => one.definition.name)).toEqual([
       'list_sessions', 'list_agents', 'list_models', 'get_current_session', 'set_workspace', 'isolate_session',
-      'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
-      'move_session',
+      'create_session', 'create_chat', 'rename_chat', 'archive_chat', 'send_message', 'get_session_context',
+      'delete_session', 'move_session',
     ]);
     const schema = (name: string) => tools.find((one) => one.definition.name === name)?.definition.inputSchema as { required?: string[] };
     expect(schema('create_session').required).toEqual(['relationship', 'prompt', 'title']);
     expect(schema('set_workspace').required).toEqual(['workspaceFolder', 'isolation']);
     expect(schema('send_message').required).toEqual(['session']);
     expect(schema('rename_chat').required).toEqual(['title']);
+    expect(schema('archive_chat').required).toEqual(['chat']);
   });
 
   /*
@@ -544,6 +575,84 @@ describe('what a session tool asks of the turn it runs in', () => {
     // with the reader's id in front of it.
     expect(said(refused)).toContain('reader may not session:write here');
     expect(refused.isError).toBe(true);
+  });
+
+  it('lists a session\'s chats, and the link of a nested one names that chat', async () => {
+    const { host } = hosting({ member: MEMBER });
+    const { client } = await signing(host, 'member');
+    const lead = await opening(client, 'lead');
+    // A turn sent by the member, still running, is what makes these calls the
+    // member's: a call with no turn running is nobody's and may not write.
+    await saying(client, lead.chat, 't1', 'hi');
+    const made = said(await call('create_chat', { prompt: 'say hi', title: 'Side' }, 0));
+    const nested = /^Chat created \((agent-host-session:\/\/[^)]+)\)\.$/.exec(made)?.[1];
+    expect(nested).toBeDefined();
+    await settle(8);
+
+    type Listed = { sessions: { session: string; title: string; chats?: { title: string; openLink: string; main?: true }[] }[] };
+    const rows = JSON.parse(said(await call('list_sessions', {}, 0))) as Listed;
+    const parent = rows.sessions.find((one) => one.session === lead.held);
+    expect(parent?.chats?.map((one) => one.openLink)).toEqual([openLink(lead.held, 'claude'), nested]);
+    expect(parent?.chats?.[0]).toMatchObject({ title: parent?.title, main: true });
+    expect(parent?.chats?.[1]).toMatchObject({ title: 'Side' });
+    expect(parent?.chats?.[1]).not.toHaveProperty('main');
+
+    // The link the row gave resolves to that chat in the tools that take one.
+    const context = JSON.parse(said(await call('get_session_context', { session: nested as string }, 0))) as { openLink: string };
+    expect(context.openLink).toBe(nested);
+    expect(said(await call('rename_chat', { chat: nested, title: 'Renamed side' }, 0)))
+      .toBe('Renamed chat to "Renamed side".');
+    const renamed = JSON.parse(said(await call('list_sessions', {}, 0))) as Listed;
+    const renamedParent = renamed.sessions.find((one) => one.session === lead.held);
+    expect(renamedParent?.chats?.find((one) => one.openLink === nested)?.title).toBe('Renamed side');
+
+    // The session's own answer carries the same chats.
+    const current = JSON.parse(said(await call('get_current_session', {}, 0))) as { chats?: unknown[] };
+    expect(current.chats).toEqual(renamedParent?.chats);
+  });
+
+  it('archives one chat alone, a session through either of its links, and refuses its own', async () => {
+    const { host } = hosting({ member: MEMBER });
+    const { client } = await signing(host, 'member');
+    const lead = await opening(client, 'lead');
+    // A turn sent by the member, still running, is what makes these calls the
+    // member's: a call with no turn running is nobody's and may not write.
+    await saying(client, lead.chat, 't1', 'hi');
+    const made = said(await call('create_chat', { prompt: 'say hi', title: 'Side' }, 0));
+    const nested = /^Chat created \((agent-host-session:\/\/[^)]+)\)\.$/.exec(made)?.[1] as string;
+    const nestedIndex = builtCount('host') - 1;
+    await settle(8);
+
+    type Listed = { sessions: { session: string; status: string; chats?: { openLink: string; status?: string }[] }[] };
+    const listed = async (includeArchived: boolean): Promise<Listed> =>
+      JSON.parse(said(await call('list_sessions', { includeArchived }, 0))) as Listed;
+
+    // A nested chat's link archives that chat, and the session stays running.
+    expect(said(await call('archive_chat', { chat: nested }, 0))).toBe(`Archived chat ${nested}.`);
+    const afterChat = await listed(true);
+    const parent = afterChat.sessions.find((one) => one.session === lead.held);
+    expect(parent?.status).not.toContain('archived');
+    expect(parent?.chats?.find((one) => one.openLink === nested)?.status).toContain('archived');
+
+    // A session link archives the whole session, and so does its default chat's link.
+    const other = await opening(client, 'other');
+    await answeredFirst(client, other.held);
+    expect(said(await call('archive_chat', { chat: openLink(other.held, 'claude') }, 0)))
+      .toBe(`Archived session ${openLink(other.held, 'claude')} with all of its chats.`);
+    const third = await opening(client, 'third');
+    await answeredFirst(client, third.held);
+    expect(said(await call('archive_chat', { chat: openLink(third.held, 'claude', idOf(third.chat)) }, 0)))
+      .toBe(`Archived session ${openLink(third.held, 'claude')} with all of its chats.`);
+    expect((await listed(false)).sessions.map((one) => one.session)).not.toContain(other.held);
+    const archived = (await listed(true)).sessions;
+    expect(archived.find((one) => one.session === other.held)?.status).toContain('archived');
+    expect(archived.find((one) => one.session === third.held)?.status).toContain('archived');
+
+    // The chat it runs in, and the main chat of its own session, are refused.
+    expect(said(await call('archive_chat', { chat: openLink(lead.held, 'claude', idOf(lead.chat)) }, 0)))
+      .toBe('Invalid archive_chat input: refusing to archive the chat this tool runs in.');
+    expect(said(await call('archive_chat', { chat: openLink(lead.held, 'claude') }, nestedIndex)))
+      .toBe('Invalid archive_chat input: refusing to archive the main session of the current session, which would archive the current session.');
   });
 
   it('carries the member into a session its turn opened, and no further', async () => {
@@ -1358,17 +1467,17 @@ describe('a tool a person calls with no session', () => {
     return await tool.run(input);
   };
 
-  it('offers a member the ten session tools, and a guest only the four it may read', async () => {
+  it('offers a member the eleven session tools, and a guest only the four it may read', async () => {
     const { host, users } = hosting();
-    const ten = [
-      'list_sessions', 'list_agents', 'list_models', 'create_session', 'create_chat', 'rename_chat', 'send_message',
-      'get_session_context', 'delete_session', 'move_session',
+    const eleven = [
+      'list_sessions', 'list_agents', 'list_models', 'create_session', 'create_chat', 'rename_chat', 'archive_chat',
+      'send_message', 'get_session_context', 'delete_session', 'move_session',
     ];
-    expect(Object.keys(offered(host, { principal: await principal(users, 'member') }))).toEqual(ten);
+    expect(Object.keys(offered(host, { principal: await principal(users, 'member') }))).toEqual(eleven);
     expect(Object.keys(offered(host, { principal: await principal(users, 'guest') })))
       .toEqual(['list_sessions', 'list_agents', 'list_models', 'get_session_context']);
     // This host's own connection is refused nothing it asks about, either.
-    expect(Object.keys(offered(host, { root: true }))).toEqual(ten);
+    expect(Object.keys(offered(host, { root: true }))).toEqual(eleven);
   });
 
   it('leaves out a tool that says nothing, and an advanced one while the host forbids them', async () => {
@@ -1386,7 +1495,7 @@ describe('a tool a person calls with no session', () => {
     const names = Object.keys(offered(host, { principal: await principal(users, 'member') }));
     expect(names).not.toContain('plain_tool');
     expect(names).not.toContain('advanced_tool');
-    expect(names).toHaveLength(10);
+    expect(names).toHaveLength(11);
   });
 
   /*
@@ -1553,6 +1662,36 @@ describe('a tool a person calls with no session', () => {
     const { host, users } = hosting();
     await expect(run(host, { principal: await principal(users, 'member') }, 'create_chat', { prompt: 'say hi' }))
       .rejects.toThrow('Invalid create_chat input: session is required when there is no calling session.');
+  });
+
+  it('archives a chat alone, and a session with all of its chats, for a caller with no session', async () => {
+    const { host, users } = hosting();
+    const member = await principal(users, 'member');
+    const made = await run(host, { principal: member }, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'At the door', workspace: uriOf(root), worktree: false,
+    });
+    const id = /^New session created \(agent-host-session:\/\/claude\/([^)]+)\)\.$/.exec(made)?.[1] as string;
+    const sessionLink = openLink(id, 'claude');
+    const chatOf = async (title: string): Promise<string> =>
+      /^Chat created \((agent-host-session:\/\/[^)]+)\)\.$/.exec(
+        await run(host, { principal: member }, 'create_chat', { session: sessionLink, prompt: 'say hi', title }))?.[1] as string;
+    const side = await chatOf('Side');
+    const other = await chatOf('Other');
+
+    // One chat archives alone, and the session keeps running.
+    expect(await run(host, { principal: member }, 'archive_chat', { chat: side })).toBe(`Archived chat ${side}.`);
+
+    // A caller who may write sessions but not mark a chat is refused one.
+    const writesOnly: Principal = { ...member, can: (grant) => grant === 'session:read' || grant === 'session:write' };
+    await expect(run(host, { principal: writesOnly }, 'archive_chat', { chat: other }))
+      .rejects.toThrow('member may not chat:mark here');
+
+    // A session link archives the whole session, and its row ceases to be active.
+    expect(await run(host, { principal: member }, 'archive_chat', { chat: sessionLink }))
+      .toBe(`Archived session ${sessionLink} with all of its chats.`);
+    type Listed = { sessions: { session: string }[] };
+    const active = JSON.parse(await run(host, { principal: member }, 'list_sessions', {})) as Listed;
+    expect(active.sessions.map((one) => one.session)).not.toContain(id);
   });
 
   it('begins a turn as the caller for a message a person sends', async () => {
