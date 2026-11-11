@@ -17,12 +17,16 @@ refs:
   - "[code://packages/sdk/src/types/sessions.ts#L123-L180](../../../../packages/sdk/src/types/sessions.ts#L123-L180) - `StoredChat`: uri, title, provider and origin"
   - "[code://packages/sdk/src/host/chatactions.ts#L112-L139](../../../../packages/sdk/src/host/chatactions.ts#L112-L139) - `chatFlag`, which archives a chat whose session is not running"
   - https://github.com/microsoft/vscode/blob/1564f100807a/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1783 - `registerRestoredChatSummary`, VS Code's catalogue entry for a restored session's chat
+  - "[code://packages/sdk/src/tools/session.ts#L44-L54](../../../../packages/sdk/src/tools/session.ts#L44-L54) - `sessionMeant`, which needs a link's agent to equal the row's provider"
+  - https://github.com/microsoft/vscode/blob/1564f100807a/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1335-L1341 - `resolveKnownSession`, which turns a link back into its session URI
+  - git://37a8335f3 - the port of the session tools that added the agent check
 ---
 
 ## Goal
 
 A `list_sessions` row of a session nothing runs lists its chats, as the row of a running one does.
 A client finds a nested chat's link after a restart, and `archive_chat` archives that chat without starting the session.
+A link finds its session by the id it carries, whatever agent it names.
 
 ## Reconnaissance
 
@@ -45,6 +49,7 @@ archive_chat { chat } -> at.chats(session) empty -> the row's chats -> chatFlag(
 ### Gaps
 
 - The plan this one requires answered that a stopped session lists its chats from its row. The row had none to list.
+- A session is `ahp-session:/<id>`, and its link is `agent-host-session://<agent>/<id>`. The link does not turn back into the URI, so `sessionMeant` matches the id and checks the agent. A correct link was refused once on 2026-11-11.
 
 ## Answers
 
@@ -55,7 +60,9 @@ archive_chat { chat } -> at.chats(session) empty -> the row's chats -> chatFlag(
 | A chat's status is `Idle` with its own flags, as a running session's chat with no state reads | `code://packages/sdk/src/host/catalogue.ts#L514` | 01 |
 | A chat the record marks closed, and a tool's chat, are left out | (defaulted: `recordedChats` drops the closed, and `toSessionSummaryChats` drops the tool's) | 01 |
 | `archive_chat` reads the row's chats and default chat when the session runs nothing | (defaulted: `chatFlag` already archives a chat of a session nothing runs) | 02 |
-| The work stacks on the branch of the plan this one requires | (defaulted: the two plans touch `archive_chat` in one file) | 01, 02 |
+| The work stacks on the branch of the plan this one requires | (defaulted: the two plans touch `archive_chat` in one file) | 01, 02, 03 |
+| A link finds its session by its id alone; the agent it names does not refuse it | Softov, 2026-11-11, asked "we need to accept both link and the id?", then "I want it" | 03 |
+| A session URI and a link stay two accepted inputs, as VS Code's tools take both | `resolveKnownSession` in VS Code | 03 |
 
 ## Proposed architecture
 
@@ -71,6 +78,7 @@ archive_chat { chat } -> at.chats(session) empty -> the row's chats -> chatFlag(
 | --- | --- | --- |
 | [01 - A stopped row lists its chats](task-01-a-stopped-row-lists-its-chats.md) | todo | - |
 | [02 - archive_chat reads the row](task-02-archive-chat-reads-the-row.md) | todo | 01 |
+| [03 - A link finds its session by id](task-03-a-link-finds-its-session-by-id.md) | todo | - |
 
 ## Risks and tradeoffs
 
@@ -87,4 +95,5 @@ archive_chat { chat } -> at.chats(session) empty -> the row's chats -> chatFlag(
 
 - [ ] After a restart, `list_sessions` lists a stopped session's nested chat with its link.
 - [ ] `archive_chat` archives that chat, and the session stays stopped and unarchived.
+- [ ] A link whose agent differs from the row's provider finds the session by its id.
 - [ ] `pnpm typecheck`, and the sdk and server suites pass.
