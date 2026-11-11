@@ -1302,6 +1302,131 @@ it('drops a connector\'s alerts when it is removed, and checks it again when it 
   await close();
 });
 
+it('turns a connector off, closes it, and answers a row with no alerts', async () => {
+  const { host, users, connectors, opened, closed, ran, probe, close } = await served();
+  // A check that was denied gives the row an alert the toggle has to clear.
+  probe.answer = async () => ({ result: 'denied', message: 'HTTP 401' });
+  const cy = await as(host, users, 'cy');
+  expect(await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'bot://motion' },
+  })).toMatchObject({ result: { state: 'unauthorized' } });
+
+  const answer = await cy.call('x-ahpd/connectors/disable', { id: 'ci' }) as { result: Bag };
+  expect(answer).toMatchObject({
+    result: { id: 'ci', adapter: 'webhook', owner: 'user:cy', state: 'disabled', enabled: false },
+  });
+  expect(answer.result).not.toHaveProperty('alerts');
+
+  // The adapter heard the stop, and the connector answers no call.
+  expect(closed).toEqual(['ci']);
+  expect(opened).toHaveLength(1);
+  await expect(connectors.run('ci', await readerOf(users, 'cy'), 'send', { text: 'x' }))
+    .rejects.toThrow('ci is not an open connector');
+  expect(ran).toEqual([]);
+
+  // The row a subscriber reads is the one the toggle answered, with no alert.
+  const iv = await as(host, users, 'iv');
+  const row = (await iv.rows())['ci'] as Bag;
+  expect(row).toMatchObject({ state: 'disabled', enabled: false });
+  expect(row).not.toHaveProperty('alerts');
+
+  // A record that is off is still a connector, so a reference to it stays valid.
+  expect(connectors.refs()).toEqual([{ id: 'ci', adapter: 'webhook', owner: 'user:cy' }]);
+  await close();
+});
+
+it('turns a connector on again, opens and checks it, and answers a ready row', async () => {
+  const { host, users, probe, opened, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'bot://motion', secret: 'sk-live-1' },
+  });
+  await cy.call('x-ahpd/connectors/disable', { id: 'ci' });
+  expect(opened).toHaveLength(1);
+  const asked = probe.asked.length;
+
+  const answer = await cy.call('x-ahpd/connectors/enable', { id: 'ci' }) as { result: Bag };
+  expect(answer).toMatchObject({
+    result: {
+      id: 'ci',
+      state: 'ready',
+      enabled: true,
+      config: { target: 'bot://motion', secret: { $secret: 'user:cy/connector/ci/secret' } },
+    },
+  });
+  expect(answer.result).not.toHaveProperty('alerts');
+  // The connector is opened again, with its secret read back for the adapter,
+  // and checked as a put checks one.
+  expect(opened[1]).toEqual({
+    id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'bot://motion', secret: 'sk-live-1' },
+  });
+  expect(probe.asked.length).toBe(asked + 1);
+  await close();
+});
+
+it('keeps a connector off and closed when a put edits it, and refuses enabled in a put', async () => {
+  const { host, users, collection, opened, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
+  await cy.call('x-ahpd/connectors/disable', { id: 'ci' });
+  expect(opened).toHaveLength(1);
+
+  expect(await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy', title: 'Renamed', config: { target: 'b' },
+  })).toMatchObject({ result: { id: 'ci', title: 'Renamed', state: 'disabled', enabled: false } });
+  expect(opened).toHaveLength(1);
+  expect((await collection.get('ci'))?.['enabled']).toBe(false);
+
+  // A put is an edit, not a toggle: only the two commands turn a connector.
+  expect(await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'b' }, enabled: true,
+  })).toMatchObject({ code: -32602, message: expect.stringContaining('does not take enabled') });
+  await close();
+});
+
+it('does not open a turned-off record at start, and reads none of its secrets', async () => {
+  const { host, users, collection, connectors, opened, probe, vault, close } = await served();
+  const reads: string[] = [];
+  const get = vault.get.bind(vault);
+  vault.get = async (name) => { reads.push(name); return get(name); };
+  await collection.put({
+    id: 'ci', adapter: 'webhook', owner: 'host', enabled: false,
+    config: { target: 'bot://motion', secret: { $secret: 'host:connector/ci/secret' } },
+  });
+
+  await connectors.openAll();
+  const ana = await as(host, users, 'ana');
+  const row = (await ana.rows())['ci'] as Bag;
+
+  expect(opened).toEqual([]);
+  expect(reads).toEqual([]);
+  expect(probe.asked).toEqual([]);
+  expect(row).toMatchObject({ id: 'ci', state: 'disabled', enabled: false });
+  expect(row).not.toHaveProperty('alerts');
+  await close();
+});
+
+it('refuses a toggle to a reader without connector:put, or to another owner', async () => {
+  const { host, users, closed, close } = await served();
+  const cy = await as(host, users, 'cy');
+  const ha = await as(host, users, 'ha');
+  const bo = await as(host, users, 'bo');
+  await cy.call('x-ahpd/connectors/put', { id: 'mine', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
+  await ha.call('x-ahpd/connectors/put', { id: 'shared', adapter: 'webhook', owner: 'host', config: { target: 'a' } });
+
+  // A person's connector is that person's to turn off, and a host's takes connector:host.
+  expect(await cy.call('x-ahpd/connectors/disable', { id: 'shared' })).toMatchObject({ code: -32009 });
+  expect(await ha.call('x-ahpd/connectors/disable', { id: 'mine' })).toMatchObject({ code: -32009 });
+  // No connector:put is no toggle at all.
+  expect(await bo.call('x-ahpd/connectors/disable', { id: 'mine' })).toMatchObject({ code: -32009 });
+  expect(await ha.call('x-ahpd/connectors/enable', { id: 'mine' })).toMatchObject({ code: -32009 });
+  expect(closed).toEqual([]);
+
+  expect(await ha.call('x-ahpd/connectors/disable', { id: 'shared' })).toMatchObject({ result: { state: 'disabled' } });
+  expect(await cy.call('x-ahpd/connectors/disable', { id: 'mine' })).toMatchObject({ result: { state: 'disabled' } });
+  await close();
+});
+
 /** A channel over one adapter that serves models, one that does not, and a provider that can refuse to answer. */
 async function providersServed() {
   const collection: RecordCollection = await memoryRecords().collection('connectors', { format: 'json' });
@@ -1350,6 +1475,9 @@ async function providersServed() {
     adapters: () => adapters,
     vault: () => vault,
     check,
+    // What the server's proxy answers for one connector; these cases read only
+    // whether the command reaches it at all.
+    models: async () => ({ models: [] }),
     onProblem: (line) => { problems.push(line); },
   });
   return { collection, connectors, problems, vault, breakProvider: (on: boolean) => { broken = on; } };
@@ -1429,6 +1557,24 @@ it('skips a provider that throws, and says the problem once', async () => {
   expect(connectors.providers()).toEqual([]);
   expect(connectors.providers()).toEqual([]);
   expect(problems).toEqual(['x-ahpd-connectors: work serves no model: the endpoint is missing']);
+});
+
+it('leaves a turned-off provider connector out of providers, and refuses its models', async () => {
+  const { collection, connectors, vault } = await providersServed();
+  await vault.set('host:connector/work/key', 'sk-hosts-own');
+  await collection.put({
+    id: 'work',
+    adapter: 'openrouter',
+    owner: 'host',
+    config: { endpoint: 'https://openrouter.ai/api/v1', key: { $secret: 'host:connector/work/key' } },
+  });
+  await connectors.openAll();
+  expect(connectors.providers()).toHaveLength(1);
+
+  await connectors.methods['x-ahpd/connectors/disable']!.handle({ id: 'work' }, undefined, 'test');
+  expect(connectors.providers()).toEqual([]);
+  await expect(connectors.methods['x-ahpd/connectors/models']!.handle({ id: 'work' }, undefined, 'test'))
+    .rejects.toThrow('work is not an open connector');
 });
 
 /** A view with one bound Text, and the data it starts from. */

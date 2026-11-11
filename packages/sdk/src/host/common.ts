@@ -58,6 +58,30 @@ export const CLOSING = 'This host is closing, so nothing new starts on it';
  */
 export const noProvider = (provider: string | undefined): string => `No agent provider registered for: ${provider ?? '(none)'}`;
 
+/** What a start, a chat or a turn hears for an agent its record turned off. */
+export const turnedOff = (provider: string): string => `${provider} is turned off.`;
+
+/** What a start, a chat, a move or a turn hears for an agent its record paused. */
+export const pausedAgent = (provider: string): string => `${provider} is paused.`;
+
+/**
+ * What a provider is refused for now in the sentence its caller hears: its
+ * record is off, or paused.
+ *
+ * `undefined` when the record lets it be used. The two states keep their own
+ * sentence, because they mean different things to the person who set them:
+ * one is waiting to be turned on again, and the other is not served at all.
+ */
+export const agentRefusal = (
+  disabled: ReadonlySet<string> | undefined,
+  paused: ReadonlySet<string> | undefined,
+  provider: string,
+): string | undefined => {
+  if (disabled?.has(provider) === true) return turnedOff(provider);
+  if (paused?.has(provider) === true) return pausedAgent(provider);
+  return undefined;
+};
+
 /** The actions that end a chat's active turn. */
 export const ENDINGS = new Set(['chat/turnComplete', 'chat/turnCancelled', 'chat/error']);
 

@@ -1750,6 +1750,13 @@ of, with `config` holding a reference where a secret was moved, and a `state`:
 | `failed` | The adapter could not open it, as when an `env` variable it reads is missing or a `$secret` it names was not in the vault |
 | `invalid` | Its config does not fit the adapter's schema |
 | `unavailable` | No loaded plugin registers its adapter, so it cannot be opened |
+| `disabled` | Its record says `enabled: false`, so it is closed and not opened, asked or served |
+
+A record that names no `enabled` is on. A record that is off is closed, so it
+answers no call and lists no model, and it shows no alerts. A start and a `put`
+do not open it, and it reads none of its secrets. It is still a connector, so a
+reference to it stays valid and no record that names it is made `invalid` by the
+switch.
 
 A row also carries `alerts` when the connector has a problem: a list of `Alert`, each with a `level`, a `text`, a `ref` and the `at` time it was raised.
 
@@ -1767,13 +1774,15 @@ A row also carries `views` when the connector shows one: its views by surface, `
 
 `connector:list` opens the channel, and reads the caller's own connectors, their teams' and the host's, and no other person's. `connector:all` reads every row, and is admitted without `connector:list`. A caller with neither grant reads no connector, its own included, and is refused the subscription. A subscribe also takes `?owner=me`, which narrows the listing to the caller's own connectors.
 
-Six commands serve a connector:
+Eight commands serve a connector:
 
 | Method | Grant | What it does |
 | --- | --- | --- |
-| `x-ahpd/connectors/put` | `connector:put`, and the owner's | Makes or changes `{ id, adapter, owner, title?, config }`, moves each `secret` value to the vault, writes the record and opens it. Answers the row, with the check it waited for |
+| `x-ahpd/connectors/put` | `connector:put`, and the owner's | Makes or changes `{ id, adapter, owner, title?, config }`, moves each `secret` value to the vault, writes the record and opens it. Answers the row, with the check it waited for. A record that is off keeps its `enabled`, and is not opened or checked |
 | `x-ahpd/connectors/remove` | `connector:remove`, and the owner's | Closes `{ id }`, takes its secrets out of the vault and takes the record out |
 | `x-ahpd/connectors/check` | `connector:put`, and the owner's, or none for the plugin of the connector's adapter | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not ready, or one whose adapter has no `check` |
+| `x-ahpd/connectors/disable` | `connector:put`, and the owner's, or none for the plugin of the connector's adapter | Closes the connector and writes `enabled: false` on `{ id }`, so it answers no call and lists no model, and answers the row |
+| `x-ahpd/connectors/enable` | `connector:put`, and the owner's, or none for the plugin of the connector's adapter | Writes `enabled: true` on `{ id }`, opens and checks it again, and answers the row |
 | `x-ahpd/connectors/note` | None: only the plugin of the connector's adapter may send it | Raises or clears the `call` alert for one call `{ id, ok, status?, error? }` the open connector made, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
 | `x-ahpd/connectors/secret` | None: only the plugin of the connector's adapter may send it | Writes a refreshed secret `{ id, values }` to the vault of an open connector, under `connector/<id>/<field>` in its owner's scope, and answers the row. Only the plugin that registered the connector's adapter may send it, and each field is one the schema marks secret. The connector is not reopened. No answer, error or log carries a value |
 | `x-ahpd/connectors/signin` | `connector:put`, and the owner's | Starts a sign-in for `{ id, adapter, owner, title?, config }`, checks what a put checks except the fields the adapter's `signIn` fills, and answers `{ url, state }` for a pasted code or `{ state, code, url, expires }` for a device code. It refuses an adapter with no `signIn` |
@@ -1926,7 +1935,8 @@ A read-only channel. One row for each engine the loaded plugins register, keyed 
 ### `x-ahpd-agents`
 
 One row for each agent, keyed by its id. A row is the record - `id`, `engine`,
-`owner`, `name`, `description`, `icon`, `model` and `config` - with a `state`:
+`owner`, `name`, `description`, `icon`, `model`, `mode` and `config` - with a
+`state`:
 
 | `state` | What it says |
 | --- | --- |
@@ -1934,6 +1944,18 @@ One row for each agent, keyed by its id. A row is the record - `id`, `engine`,
 | `failed` | The engine could not open it, as when an `env` variable it reads is missing or a `$secret` it names was not in the vault |
 | `invalid` | Its config does not fit the engine's schema |
 | `unavailable` | No loaded plugin registers its engine, so it cannot be opened |
+| `paused` | Its record says `mode: paused`, so the host starts nothing new on it while it stays open |
+| `disabled` | Its record says `mode: disabled`, so it is not opened, asked or served |
+
+A record's `mode` is `enabled`, `paused` or `disabled`. A record that names no
+`mode` is enabled. A record that is paused is opened and served
+as one that is on: its keys are read, its probe runs, its alerts show, and a
+session that already runs on it keeps its history. The host starts no new
+session or chat on it, moves no chat to it and sends it no message until it is
+enabled again. A record that is off is not opened, so no key is read for it and
+no probe runs, and it shows no alerts. Its sessions are kept: a session that
+already runs on it keeps its history, and the host holds the backend it runs on
+until the last one ends. A put keeps the `mode` a record had.
 
 A row also carries `icons`: the icons a client draws for the agent. It is the
 record's own `icon` as a one-item list when the record names one, and otherwise
@@ -1962,13 +1984,16 @@ own included, and is refused the subscription. A subscribe also takes
 `?owner=me`, which narrows the listing to the caller's own agents: a `host`
 agent belongs to everyone and to nobody, so it is left out.
 
-Three commands serve an agent:
+Six commands serve an agent:
 
 | Method | Grant | What it does |
 | --- | --- | --- |
 | `x-ahpd/agents/put` | `agent:put`, and the owner's | Makes or changes `{ id, engine, owner, name, description?, icon?, model?, config }`, checks `config` against the engine's schema, moves each secret to the vault, writes the record, calls the engine's `open` and folds the new agent list into the running host. Answers the row |
 | `x-ahpd/agents/remove` | `agent:remove`, and the owner's | Ends the sessions that run on `{ id }`, takes its secrets out of the vault and takes the record out |
-| `x-ahpd/agents/check` | `agent:put`, and the owner's | Builds `{ id }` again, asks its probe and answers the row with its alerts. A probe that has not answered in 10 seconds is `unreachable` |
+| `x-ahpd/agents/check` | `agent:put`, and the owner's | Builds `{ id }` again, asks its probe and answers the row with its alerts. A probe that has not answered in 10 seconds is `unreachable`. A record that is off is refused |
+| `x-ahpd/agents/disable` | `agent:put`, and the owner's | Writes `mode: disabled` on `{ id }`, folds the new list and answers the row. The record is not opened, and its sessions are kept |
+| `x-ahpd/agents/pause` | `agent:put`, and the owner's | Writes `mode: paused` on `{ id }`, folds the new list and answers the row. The record stays open with its alerts, and its sessions are kept |
+| `x-ahpd/agents/enable` | `agent:put`, and the owner's | Writes `mode: enabled` on `{ id }`, opens the record again, folds the new list and answers the row |
 
 The owner narrows the grant, as it does for a connector. A `host` agent needs
 `agent:put` or `agent:remove` and `agent:host` beside either. A `team:<team>`
@@ -1996,9 +2021,11 @@ answer stays written and shows as `failed`, so a key a person adds later is
 picked up at the next start.
 
 An edit keeps the agent and its sessions: the view `open` was handed is updated
-in place, so a running session reads the new record at its next turn. A record
-whose engine no plugin registers any more stays on disk and shows as
-`unavailable`, because a plugin turned off keeps its agents.
+in place, so a running session reads the new record at its next turn. A put
+keeps the record's `mode` as it was and refuses a `mode`
+parameter, so an edit is not a toggle. A record whose engine no plugin registers
+any more stays on disk and shows as `unavailable`, because a plugin turned off
+keeps its agents.
 
 The daemon keeps the agents in the JSON collection `agents`, so one is
 `<configDir>/agents/<id>.json`.

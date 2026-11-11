@@ -1,6 +1,6 @@
 ---
 title: The host refuses a disabled agent
-status: todo
+status: done
 depends: [task-01-an-agent-record-turns-off.md]
 layer: "sdk, server"
 refs:
@@ -43,24 +43,38 @@ A session on it keeps its history, and takes messages again once the agent is on
 
 1. Add the option to `HostOptions`, with a comment that names VS Code's `_isAgentDisabledOnHost`.
 2. Add `turnedOff` beside `noProvider`.
-3. Write one helper `isDisabled(provider)`, and call it from every check.
+3. Write one helper, `agentRefusal`, and call it from every check.
 4. Leave a disabled agent out of `descriptors`, and publish the list again when the set changes.
 5. Refuse a new session, a new chat, `create_session` and a chat move for a disabled agent.
 6. Refuse a turn in `sendTurn` for a disabled agent, so the client gets the refusal and no turn starts.
-7. After a restart, send a message to a stored session of a disabled agent, and make it answer `turnedOff`.
+7. After a restart, list a paused agent's stored session with its turns, and make a message answer `<id> is paused.`
 8. Pass the option from `run.ts`.
 9. Update the docs.
 10. Write the tests.
 
 ## Validation
 
+- A paused agent is not on the root list.
+- The host refuses a paused agent a new session, chat, move and message with `<id> is paused.`
+- A second host with its own backend lists a paused agent's stored session with its turns.
+- That session refuses a message with `<id> is paused.`
+- After a restart, the list leaves out a disabled agent's stored session.
+- The list shows it again once the agent is enabled.
 - `packages/sdk/test/host-disabled-agent.test.ts`: a disabled agent is not on the root list.
 - The host refuses a new session and `create_session` on it with `<id> is turned off.`
 - A session from before the toggle keeps its turns, and refuses a new message with the sentence.
 - The same session runs a message once the agent is on.
 - The host refuses a chat move into a session of the disabled agent.
-- After a restart, a message to a stored session of the disabled record answers the sentence.
-- That session is still listed.
 - `TMPDIR=/home/softov/tmp/ahpd-test npx vitest run packages/sdk` passes, then `packages/server`.
 
 ## Resume
+
+2026-11-11. The host reads both off states through two options: `disabledAgents` and `pausedAgents`. The plan named the first and not the second, so `pausedAgents?: () => ReadonlySet<string>` is the shape this task adds; both answer the ids the agents channel's `disabled()` and `paused()` hold. `turnedOff(provider)` and `pausedAgent(provider)` in `common.ts` hold the two sentences, `agentRefusal(disabled, paused, provider)` picks the one a provider's state has, and `isDisabled` / `isPaused` in `agents/usable.ts` answer membership.
+
+`descriptors` leaves both states out of the root list, and `replace` publishes the list again. A paused record is opened at start, so a paused session is served and listed with its history; a disabled record is not opened, so after a restart no listing offers its stored session. The host refuses a new session and a new chat in `createSession` and `createChat`, a new session from a tool in `createProviderSession`, `openChat` and both `create_session` paths, a chat move in the mover, and a turn in `sendTurn` through `chat/error` with `sendFailed`. A wake is still refused only for a disabled agent, so a paused session wakes and reads its turns and a message to it is answered with the paused sentence. `run.ts` passes `pausedAgents: () => agentLists.paused()` beside `disabledAgents`.
+
+The codes are the neighbouring ones: `-32002` for a new session and a new chat, a thrown `Error` with the sentence for the tool paths, `INVALID_PARAMS` with `data.reason` `agentUnavailable` for a move, `SessionNotFound` for the wake of a disabled agent, and the chat's own `chat/error` for a turn.
+
+`host-disabled-agent.test.ts` passes 14 tests: seven for the off state and seven for the paused one. The paused restart case starts a second host on the same store with a *new* echo-derived backend instance that lists `live` and answers the transcript with `t1`; the stored session is listed, keeps its turns, refuses a message with `echo is paused.`, and runs one once the set no longer names the agent. The disabled restart case starts the second host with `agents: []` and the record off, checks the session leaves the list, then turns the record on (the set no longer names it, `agents` gains a fresh backend, `host.replace`) and checks the session and its `t1` come back.
+
+The full `packages/sdk` suite: 236 of 237 files passed, 4735 tests passed, 5 skipped, and 2 failed in `host-permissions.test.ts`, which are the edit-approval cases that need a tmpdir outside the home. `packages/server` passed all 94 files, 1871 tests, 3 skipped. `pnpm exec tsc -p tsconfig.json --noEmit` passed. The harness denied every command with a `TMPDIR=` prefix and every `npx`, so the suites ran as `pnpm exec vitest run` without it, one at a time. The wire fixture did not change.

@@ -3,7 +3,7 @@ import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { RpcError } from '../rpc.js';
 import { ANNOTATIONS_PATH_SEGMENT, chatIdFor, chatOfCanvas, chatUriFor, ownerUriOf, spaceOf } from './channels.js';
-import { CLOSING, ENDINGS } from './common.js';
+import { CLOSING, ENDINGS, turnedOff } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Agent } from '../types/agent.js';
 import type { Connection } from '../types/host.js';
@@ -350,6 +350,15 @@ export function createSleep(ctx: HostContext): Sleep {
   const resume = async (asked: string, chat: string | undefined, sender: Connection | undefined): Promise<{ uri: string; chat: Session }> => {
     const id = idOf(asked);
     await closing.get(id);
+    /*
+     * A session whose agent its record turned off is not woken: it keeps its
+     * history and its listing, and a message to it is answered with the one
+     * sentence a refusal of that agent uses, as a live session's turn is.
+     */
+    const recordedAgent = kept.provider(id);
+    if (recordedAgent !== undefined && options.disabledAgents?.().has(recordedAgent) === true) {
+      throw new RpcError(AhpErrorCodes.SessionNotFound, turnedOff(recordedAgent));
+    }
     /*
      * The agent this session was recorded for, before a transcript is read or
      * a record rewritten: a session whose agent this host is not serving, or

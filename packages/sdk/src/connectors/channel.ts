@@ -122,6 +122,8 @@ const DOMAIN = 'x-ahpd/connectors';
 const PUT = `${DOMAIN}/put`;
 const REMOVE = `${DOMAIN}/remove`;
 const CHECK = `${DOMAIN}/check`;
+const ENABLE = `${DOMAIN}/enable`;
+const DISABLE = `${DOMAIN}/disable`;
 const SIGNIN = `${DOMAIN}/signin`;
 const SIGNIN_FINISH = `${DOMAIN}/signin-finish`;
 const MODELS = `${DOMAIN}/models`;
@@ -149,8 +151,8 @@ const MAX_ALERTS = 50;
 /** The least time between two refreshes that a call outcome sends. */
 const NOTE_REFRESH_MS = 1000;
 
-/** The four states a connector row can be in. */
-export type ConnectorState = 'ready' | 'unauthorized' | 'failed' | 'invalid' | 'unavailable';
+/** The states a connector row can be in. */
+export type ConnectorState = 'ready' | 'unauthorized' | 'failed' | 'invalid' | 'unavailable' | 'disabled';
 
 /** How a connectors channel reads its store, and who it writes a secret for. */
 export interface ConnectorsChannelOptions {
@@ -458,6 +460,9 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
 
   /** The state a stored connector is in now. */
   const stateOf = (record: StoredRecord): ConnectorState => {
+    // A record that is off is not opened or checked: that it is off is the one
+    // thing its row says, whatever its adapter or its config would say.
+    if (record.enabled === false) return 'disabled';
     const adapter = options.adapters()[String(record.adapter)];
     if (adapter === undefined) return 'unavailable';
     if (!fits(configOf(record), adapter.schema)) return 'invalid';
@@ -846,6 +851,11 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     asked: { command: string; filled?: string | readonly string[] },
   ): Promise<Prepared> => {
     const id = idParam(asked.command, params);
+    // An edit is not a toggle: the record keeps the `enabled` it has, and a
+    // client turns it off or on through the commands that say so.
+    if (params.enabled !== undefined) {
+      throw new RpcError(INVALID_PARAMS, `${asked.command} does not take enabled; use ${ENABLE} or ${DISABLE}`);
+    }
     const adapterName = params.adapter;
     if (typeof adapterName !== 'string' || adapterName === '') {
       throw new RpcError(INVALID_PARAMS, `${asked.command} needs adapter, the name of an adapter`);
@@ -930,6 +940,8 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       owner,
       ...(title === undefined ? {} : { title }),
       config: moved,
+      // An edit keeps the switch where it was, as an agent's put does.
+      ...(before?.enabled === undefined ? {} : { enabled: before.enabled }),
     };
     await close(id);
     await options.collection.put(record);
@@ -940,6 +952,12 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     // The secrets kept under the owner it left are no record's any more.
     if (moving && was !== undefined && before !== undefined) {
       await forgetRecordSecrets(configOf(before), was, id, CONNECTOR_SECRETS, options.vault(), problem);
+    }
+    // A record that is off is not opened or checked: it stays stored for the
+    // switch, and nothing of it reaches its adapter.
+    if (record.enabled === false) {
+      await channel.refresh();
+      return connectorRow(record);
     }
     try {
       await openOne(adapter, record, owner);
@@ -1614,10 +1632,70 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     },
   };
 
+  /**
+   * Turn one connector off or on, as a tunnel is turned off or on.
+   *
+   * Off closes the connector before the record says so, so its adapter hears
+   * the stop and the row says `disabled` with nothing to fix. On writes
+   * `enabled: true` and opens and checks the connector as a put does, so the
+   * person who turned it on learns there whether it answers. Every other field
+   * is kept, and the answer is the row.
+   */
+  const toggleOne = async (
+    command: string,
+    enabled: boolean,
+    params: Record<string, unknown>,
+    reader: Principal | undefined,
+  ): Promise<unknown> => {
+    const id = idParam(command, params);
+    const before = await options.collection.get(id);
+    if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
+    const owner = asOwner(before.owner);
+    if (owner !== undefined) refuseOwner('connector', enabled ? 'enable' : 'disable', owner, reader, 'put');
+    if (!enabled) {
+      await close(id);
+      const record: StoredRecord = { ...before, enabled: false };
+      await options.collection.put(record);
+      await channel.refresh();
+      return connectorRow(record);
+    }
+    if (owner === undefined) throw new RpcError(INVALID_PARAMS, `${id} names no owner, so it cannot be opened`);
+    const adapter = options.adapters()[String(before.adapter)];
+    if (adapter === undefined) throw new RpcError(INVALID_PARAMS, `${String(before.adapter)} is not an adapter this host serves`);
+    const record: StoredRecord = { ...before, enabled: true };
+    await options.collection.put(record);
+    try {
+      await openOne(adapter, record, owner);
+      await checkOne(id);
+    } catch (error) {
+      await channel.refresh();
+      throw new RpcError(INTERNAL_ERROR, `${id} is on, but ${adapter.name} could not open it: ${reason(error)}`);
+    }
+    await channel.refresh();
+    return connectorRow(record);
+  };
+
+  /** One toggle as a method: who may change a connector may turn it off or on, as `check` asks. */
+  const toggle = (command: string, enabled: boolean): PluginMethod => ({
+    grant: 'connector:put' as Grant,
+    describe: () => (enabled
+      ? { title: 'Turn a connector on', description: 'Writes enabled: true, opens and checks the connector again, and answers its row.' }
+      : { title: 'Turn a connector off', description: 'Closes the connector and writes enabled: false, so it answers no call and lists no model, and answers its row.' }),
+    authorize: async (params, reader) => {
+      const id = params.id;
+      if (typeof id !== 'string') return false;
+      const before = await options.collection.get(id);
+      return before !== undefined && (ownPlugin(before, reader) || ownerAllows('connector', asOwner(before.owner), reader, 'put'));
+    },
+    handle: (params, reader) => toggleOne(command, enabled, params, reader),
+  });
+
   const methods: Record<string, PluginMethod> = {
     [PUT]: put,
     [REMOVE]: remove,
     [CHECK]: check,
+    [ENABLE]: toggle(ENABLE, true),
+    [DISABLE]: toggle(DISABLE, false),
     [NOTE]: noteCall,
     [SECRET]: secretCall,
     [SIGNIN]: signin,
@@ -1644,6 +1722,8 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     openAll: async () => {
       const adapters = options.adapters();
       for (const record of [...(await stored())].sort((one, two) => one.id.localeCompare(two.id))) {
+        // A record that is off is not opened and reads none of its secrets.
+        if (record.enabled === false) continue;
         const owner = owners.get(record.id);
         const adapter = adapters[String(record.adapter)];
         if (owner === undefined) {
