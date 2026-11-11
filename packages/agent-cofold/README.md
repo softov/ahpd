@@ -1,7 +1,7 @@
 # @ahpd/agent-cofold
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Fagent-cofold)](https://www.npmjs.com/package/@ahpd/agent-cofold)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
@@ -10,7 +10,7 @@ The cofold agent runtime as a backend for [`@ahpd/sdk`](https://www.npmjs.com/pa
 
 A session uses the models and keys cofold already knows about, and runs cofold's file, shell, web and memory tools in the daemon's process.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/agent-cofold`](https://github.com/softov/ahpd/tree/main/packages/agent-cofold).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/agent-cofold`](https://github.com/ahpio/ahpd/tree/main/packages/agent-cofold).
 
 ## Install
 
@@ -19,7 +19,7 @@ ahpd plugin install @ahpd/agent-cofold
 ahpd restart
 ```
 
-Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md).
+Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md).
 
 ## Options
 
@@ -68,7 +68,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `catalogueTimeoutMs` | `15000` | How long, in milliseconds, the endpoint is given to publish its catalogue before the configured model stands alone, the time VS Code gives a runtime's model catalogue |
 | `hostTools` | `true` | Whether the host's own tools reach each session. A record can turn them off for one agent |
 
-`ahpd vault set host:<name>` keeps a key that `apiKey` or a search provider's `apiKey` reads with `{ "$secret": "host:<name>" }`, from standard input. See [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md#naming-a-secret-instead-of-holding-one) for a `$secret`.
+`ahpd vault set host:<name>` keeps a key that `apiKey` or a search provider's `apiKey` reads with `{ "$secret": "host:<name>" }`, from standard input. See [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md#naming-a-secret-instead-of-holding-one) for a `$secret`.
 
 ### `tools`
 
@@ -136,7 +136,7 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 
 ## In a machine
 
-A session in a machine runs nested: an `ahpd` from the `ahpd` part, which carries this plugin, is started inside, so any glibc image runs it with nothing installed. Its configuration is a state volume at `/ahpd/cofold`, seeded with this host's file, and the keys in that file are readable by anything in the machine. See [Cofold in a machine](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#cofold-in-a-machine).
+A session in a machine runs nested: an `ahpd` from the `ahpd` part, which carries this plugin, is started inside, so any glibc image runs it with nothing installed. Its configuration is a state volume at `/ahpd/cofold`, seeded with this host's file, and the keys in that file are readable by anything in the machine. See [Cofold in a machine](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#cofold-in-a-machine).
 
 ## The tools a session runs
 
@@ -174,8 +174,8 @@ A turn that never ran carries no resume. This is a session with no model configu
 
 | | |
 | --- | --- |
-| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md) | The whole backend, the session settings and the cofold configuration |
-| [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AGENT.md) | The `Agent` and `Session` contracts this implements |
+| [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md) | The whole backend, the session settings and the cofold configuration |
+| [AGENT.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AGENT.md) | The `Agent` and `Session` contracts this implements |
 | [cofold](https://github.com/softov/cofold) | The agent runtime this runs |
 
 ## License

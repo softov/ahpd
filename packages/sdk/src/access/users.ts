@@ -384,7 +384,7 @@ export const holds = (held: ReadonlySet<string>, grant: Grant): boolean => {
 export const DEFAULT_RESOURCE = {
   resource: 'ahpd://users',
   resource_name: 'ahpd users',
-  resource_documentation: 'https://github.com/softov/ahpd/blob/main/docs/sdk/USERS.md',
+  resource_documentation: 'https://github.com/ahpio/ahpd/blob/main/docs/sdk/USERS.md',
   /*
    * True, which is also the format's default.
    *

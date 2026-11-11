@@ -26,14 +26,14 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/softov/ahpd/tree/main/packages/agent-claude#readme",
+  "homepage": "https://github.com/ahpio/ahpd/tree/main/packages/agent-claude#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/softov/ahpd.git",
+    "url": "git+https://github.com/ahpio/ahpd.git",
     "directory": "packages/agent-claude"
   },
   "bugs": {
-    "url": "https://github.com/softov/ahpd/issues"
+    "url": "https://github.com/ahpio/ahpd/issues"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -84,7 +84,7 @@
     "links": [
       {
         "title": "Repository",
-        "url": "https://github.com/softov/ahpd"
+        "url": "https://github.com/ahpio/ahpd"
       }
     ],
     "icons": [

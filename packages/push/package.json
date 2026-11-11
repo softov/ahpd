@@ -21,14 +21,14 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/softov/ahpd/tree/main/packages/push#readme",
+  "homepage": "https://github.com/ahpio/ahpd/tree/main/packages/push#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/softov/ahpd.git",
+    "url": "git+https://github.com/ahpio/ahpd.git",
     "directory": "packages/push"
   },
   "bugs": {
-    "url": "https://github.com/softov/ahpd/issues"
+    "url": "https://github.com/ahpio/ahpd/issues"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -70,7 +70,7 @@
     "title": "Push",
     "description": "Send push notifications to your devices when a session needs your attention.",
     "categories": [],
-    "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
+    "links": [{ "title": "Repository", "url": "https://github.com/ahpio/ahpd" }],
     "icons": [
       { "src": "./icon.svg", "theme": "light" },
       { "src": "./icon-dark.svg", "theme": "dark" }

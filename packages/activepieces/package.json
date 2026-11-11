@@ -19,14 +19,14 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/softov/ahpd/tree/main/packages/activepieces#readme",
+  "homepage": "https://github.com/ahpio/ahpd/tree/main/packages/activepieces#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/softov/ahpd.git",
+    "url": "git+https://github.com/ahpio/ahpd.git",
     "directory": "packages/activepieces"
   },
   "bugs": {
-    "url": "https://github.com/softov/ahpd/issues"
+    "url": "https://github.com/ahpio/ahpd/issues"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -84,7 +84,7 @@
     "title": "Activepieces connectors",
     "description": "Use Activepieces pieces as connectors, with each action available as a host tool.",
     "categories": ["connector"],
-    "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
+    "links": [{ "title": "Repository", "url": "https://github.com/ahpio/ahpd" }],
     "icons": [{ "src": "./icon.svg" }],
     "contracts": {
       "adapters": ["ap-*"],

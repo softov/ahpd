@@ -39,7 +39,7 @@ sign-in:
 {
   "resource": "https://127.0.0.1:9187/",
   "resource_name": "ahpd users",
-  "resource_documentation": "https://github.com/softov/ahpd/blob/main/docs/sdk/USERS.md",
+  "resource_documentation": "https://github.com/ahpio/ahpd/blob/main/docs/sdk/USERS.md",
   "required": true
 }
 ```

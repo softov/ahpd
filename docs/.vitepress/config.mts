@@ -11,7 +11,7 @@ const DOCS = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = resolve(DOCS, '..');
 
 /** Where a file outside `docs/` is shown, at the branch the site is built from. */
-const GITHUB = 'https://github.com/softov/ahpd';
+const GITHUB = 'https://github.com/ahpio/ahpd';
 
 const { description } = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { description: string };
 

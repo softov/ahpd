@@ -95,7 +95,7 @@ or `--issuer github`, or `--issuer https://login.example.com` for an OpenID Conn
   "resource_name": "ahpd users",
   "authorization_servers": ["https://github.com/login/oauth"],
   "scopes_supported": ["read:user"],
-  "resource_documentation": "https://github.com/softov/ahpd/blob/main/docs/sdk/USERS.md",
+  "resource_documentation": "https://github.com/ahpio/ahpd/blob/main/docs/sdk/USERS.md",
   "required": true
 }
 ```

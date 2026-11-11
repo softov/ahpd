@@ -1,7 +1,7 @@
 # @ahpd/agent-claude
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Fagent-claude)](https://www.npmjs.com/package/@ahpd/agent-claude)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
@@ -10,7 +10,7 @@ Claude Code as a backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/s
 
 The plugin registers the engine `claude`: every Claude Code agent is a record on the agents channel, `x-ahpd-agents`, and one load serves all of them. A record's id is the provider a client names, and its `config` holds what that one agent runs on.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/agent-claude`](https://github.com/softov/ahpd/tree/main/packages/agent-claude).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/agent-claude`](https://github.com/ahpio/ahpd/tree/main/packages/agent-claude).
 
 ## Install
 
@@ -19,7 +19,7 @@ ahpd plugin install @ahpd/agent-claude
 ahpd restart
 ```
 
-Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md).
+Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md).
 
 ### What it needs
 
@@ -93,7 +93,7 @@ A `models` entry is `{ "id": "<model>", "name": "<label>" }`, and `name` may be 
 
 A record's `env` value is a string, `null` to unset the variable, `{ "fromEnv": "NAME" }` for the daemon's own `NAME`, or `{ "$secret": "host:<name>" }` for a credential kept in the vault. A `fromEnv` variable that is not there when the record opens is left unset.
 
-`ahpd vault set host:<name>` keeps the credential a record's `env` reads with `{ "$secret": "host:<name>" }`, from standard input. See [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md#marking-a-credential) for what a credential is.
+`ahpd vault set host:<name>` keeps the credential a record's `env` reads with `{ "$secret": "host:<name>" }`, from standard input. See [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md#marking-a-credential) for what a credential is.
 
 An `extraArgs` value is given by name without the `--`, and `null` for a flag that takes none. A value that is not a string reaches the CLI as its JSON text, so `"settings": { "permissions": { "allow": ["Read"] } }` is started as `--settings '{"permissions":{"allow":["Read"]}}'`.
 
@@ -103,7 +103,7 @@ A record is checked against the engine's schema when it is put, and opened again
 
 A Claude session uses the host's task tools by default. When the tasks plugin is loaded and offers `task_add`, the session's own `TodoWrite`, `TaskCreate`, `TaskUpdate`, `TaskList` and `TaskGet` are denied. The model adds its tasks with the host's tool, so every session works one list. A host that offers no `task_add` has nothing to put in their place, and the session keeps its own tools there.
 
-`hostTasks: false` in a record keeps Claude's own tools; so does a host with no tasks plugin loaded. The CLI's own Task tools are its default; `enableTasks: false` starts it with `CLAUDE_CODE_ENABLE_TASKS=0`, which gives it the legacy `TodoWrite` instead ([environment variables](https://code.claude.com/docs/en/env-vars)). A value the record's own `env` gives the variable is kept rather than written over. Each `TodoWrite`, `TaskCreate` and `TaskUpdate` is then written into the session's plan, and [The task list](https://github.com/softov/ahpd/blob/main/docs/plugins/TASK-LIST.md) says how.
+`hostTasks: false` in a record keeps Claude's own tools; so does a host with no tasks plugin loaded. The CLI's own Task tools are its default; `enableTasks: false` starts it with `CLAUDE_CODE_ENABLE_TASKS=0`, which gives it the legacy `TodoWrite` instead ([environment variables](https://code.claude.com/docs/en/env-vars)). A value the record's own `env` gives the variable is kept rather than written over. Each `TodoWrite`, `TaskCreate` and `TaskUpdate` is then written into the session's plan, and [The task list](https://github.com/ahpio/ahpd/blob/main/docs/plugins/TASK-LIST.md) says how.
 
 ## In your own host
 
@@ -153,7 +153,7 @@ A client puts the key's value, and the channel moves it to the vault under `host
 
 ### Project files, and trust
 
-A session in a folder the host was not told to trust loads none of that folder's own files. Nothing of the project is loaded: no settings, so no hooks, no project `CLAUDE.md`, and no `.mcp.json` beside the project. The person's own files are not a project's and are read either way. Trust is the window's answer, pushed in the root config - see [Trusted folders](https://github.com/softov/ahpd/blob/main/docs/sdk/AUTHENTICATION.md#trusted-folders). A session nobody vouched for is untrusted, which is the same answer a host with no window to ask gives.
+A session in a folder the host was not told to trust loads none of that folder's own files. Nothing of the project is loaded: no settings, so no hooks, no project `CLAUDE.md`, and no `.mcp.json` beside the project. The person's own files are not a project's and are read either way. Trust is the window's answer, pushed in the root config - see [Trusted folders](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AUTHENTICATION.md#trusted-folders). A session nobody vouched for is untrusted, which is the same answer a host with no window to ask gives.
 
 ### A second Claude on another endpoint
 
@@ -271,7 +271,7 @@ A record names its logins by connector id, in the order a turn tries them. A put
 { "id": "claude", "engine": "claude", "owner": "host", "name": "Claude Code", "config": { "logins": ["claude-first", "claude-second"] } }
 ```
 
-A turn uses the logins as the [model proxy](https://github.com/softov/ahpd/blob/main/docs/server/PROXY.md) uses the entries of a name:
+A turn uses the logins as the [model proxy](https://github.com/ahpio/ahpd/blob/main/docs/server/PROXY.md) uses the entries of a name:
 
 - A turn runs on the first login in the record's order that is open, that the record's owner may use, and that is not resting. The CLI gets its token as `CLAUDE_CODE_OAUTH_TOKEN`, laid over the record's `env`, in a machine too. A cloud provider's switch, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_API_KEY` stay out of that CLI's environment, because the CLI takes each before the token.
 - A record that names no login runs on the agent's own credential: the CLI's sign-in, the record's `env` or the daemon's environment. A session a client pushed a key for runs on that key and on no login. A turn whose record names logins, none of them open, is refused, and the refusal names each one, as the proxy's 503 does.
@@ -292,15 +292,15 @@ Rests are kept in memory, so a restart clears them, and the next failure names t
 
 A session in a machine runs the CLI from the `claude` part at its pinned version, not this host's: `computerCli: "host"` mounts this host's binary instead, and `computerCliFallback: "host"` mounts it only when the part cannot be built. Its configuration is a state volume at `/ahpd/<id>`, seeded from this host's settings, instructions, skills, agents, commands and the MCP servers of `~/.claude.json`, never the sign-in. A profile with `state: "host"` mounts this host's `~/.claude` instead, sign-in included.
 
-The CLI there runs with the record's own `env`, a pushed token and `CLAUDE_CONFIG_DIR`, and nothing of the daemon's environment: the daemon's `ANTHROPIC_*` and `CLAUDE_CODE_OAUTH_TOKEN` cross only when the record names them with `{ "fromEnv" }`. So a record signs in with `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, or `ANTHROPIC_API_KEY` in its `env`, and a machine that used to share this host's sign-in needs one of those or a sign-in made once inside it. See [Claude Code in a machine](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#claude-code-in-a-machine).
+The CLI there runs with the record's own `env`, a pushed token and `CLAUDE_CONFIG_DIR`, and nothing of the daemon's environment: the daemon's `ANTHROPIC_*` and `CLAUDE_CODE_OAUTH_TOKEN` cross only when the record names them with `{ "fromEnv" }`. So a record signs in with `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, or `ANTHROPIC_API_KEY` in its `env`, and a machine that used to share this host's sign-in needs one of those or a sign-in made once inside it. See [Claude Code in a machine](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#claude-code-in-a-machine).
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md) | Loading a plugin into the daemon |
-| [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AGENT.md) | The `Agent` and `Session` contracts this implements |
-| [AHP.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AHP.md) | Which actions are served, which are refused, and why |
+| [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md) | Loading a plugin into the daemon |
+| [AGENT.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AGENT.md) | The `Agent` and `Session` contracts this implements |
+| [AHP.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AHP.md) | Which actions are served, which are refused, and why |
 
 ## License
 

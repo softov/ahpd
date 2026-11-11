@@ -21,14 +21,14 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/softov/ahpd/tree/main/packages/agent-pi#readme",
+  "homepage": "https://github.com/ahpio/ahpd/tree/main/packages/agent-pi#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/softov/ahpd.git",
+    "url": "git+https://github.com/ahpio/ahpd.git",
     "directory": "packages/agent-pi"
   },
   "bugs": {
-    "url": "https://github.com/softov/ahpd/issues"
+    "url": "https://github.com/ahpio/ahpd/issues"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -71,7 +71,7 @@
     "title": "Agent pi",
     "description": "Run the pi coding agent inside the daemon.",
     "categories": ["agent"],
-    "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
+    "links": [{ "title": "Repository", "url": "https://github.com/ahpio/ahpd" }],
     "icons": [{ "src": "./icon.svg" }],
     "contracts": {
       "engines": ["pi"]

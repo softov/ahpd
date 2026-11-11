@@ -1,14 +1,14 @@
 # @ahpd/tasks
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Ftasks)](https://www.npmjs.com/package/@ahpd/tasks)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 
 A tasks plugin for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) daemon. The host keeps one list of tasks and plans for every agent and person, and offers host tools so a Claude, a pi or a cofold session reads and writes the same list.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/tasks`](https://github.com/softov/ahpd/tree/main/packages/tasks).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/tasks`](https://github.com/ahpio/ahpd/tree/main/packages/tasks).
 
 ## Install
 
@@ -17,7 +17,7 @@ ahpd plugin install @ahpd/tasks
 ahpd restart
 ```
 
-Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md).
+Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md).
 
 ## Options
 
@@ -34,7 +34,7 @@ In the configuration file, with every option set:
 
 A task is a record of the `tasks` collection and a plan a record of `plans`, kept by the host's record store. By default each one is a Markdown file beside the daemon's configuration, the fields as YAML frontmatter and a task's `body` or a plan's `goal` as the Markdown body. A plugin that takes the store over with `registerRecords(store, 'replace')` keeps them there instead, and nothing here changes.
 
-The fields, the statuses, the stamps, the ten tools and the approve grant are in [`docs/plugins/TASK-LIST.md`](https://github.com/softov/ahpd/blob/main/docs/plugins/TASK-LIST.md).
+The fields, the statuses, the stamps, the ten tools and the approve grant are in [`docs/plugins/TASK-LIST.md`](https://github.com/ahpio/ahpd/blob/main/docs/plugins/TASK-LIST.md).
 
 No option holds a credential, so the plugin takes nothing from the vault.
 

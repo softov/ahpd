@@ -1,7 +1,7 @@
 # @ahpd/webhook
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Fwebhook)](https://www.npmjs.com/package/@ahpd/webhook)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 1.0.0](https://img.shields.io/badge/AHP-1.0.0-0b7285)
@@ -10,7 +10,7 @@ Webhooks for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) da
 
 Each endpoint is a `webhook` connector, and names its own vault secrets. A call passes only with the proof its endpoint's scheme names: a bearer token by default, one sender's own signature, a header or query token, or a generic HMAC.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/webhook`](https://github.com/softov/ahpd/tree/main/packages/webhook).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/webhook`](https://github.com/ahpio/ahpd/tree/main/packages/webhook).
 
 ## Install
 
@@ -19,7 +19,7 @@ ahpd plugin install @ahpd/webhook
 ahpd restart
 ```
 
-Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md).
+Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md).
 
 ## Options
 
@@ -51,13 +51,13 @@ In the configuration file, with every option set:
 
 Sent as the params of `x-ahpd/connectors/put`, that connector answers `POST /plugins/webhook/github` for a GitHub delivery signed with its secret, and a call starts the `ci-review` automation. The secret is written to the vault, and the record holds `{ "$secret": "<name>" }` in its place. A config that names no `automation` and no `bot` fires the `webhook` trigger instead.
 
-[WEBHOOKS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/WEBHOOKS.md) describes the schemes, one example for each real sender, the event data a run reads, `match`, and the answers.
+[WEBHOOKS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/WEBHOOKS.md) describes the schemes, one example for each real sender, the event data a run reads, `match`, and the answers.
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [WEBHOOKS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/WEBHOOKS.md) | The record, the call and the answers |
+| [WEBHOOKS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/WEBHOOKS.md) | The record, the call and the answers |
 
 ## License
 

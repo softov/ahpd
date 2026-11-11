@@ -1,14 +1,14 @@
 # @ahpd/server
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Fserver)](https://www.npmjs.com/package/@ahpd/server)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22.1](https://img.shields.io/badge/node-%3E%3D22.1-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 
 A ready-to-run [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server. It installs the `ahpd` command, runs agent sessions, and serves them over a WebSocket, so several clients can watch and drive the same session at once.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/server`](https://github.com/softov/ahpd/tree/main/packages/server), and it is built on [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/server`](https://github.com/ahpio/ahpd/tree/main/packages/server), and it is built on [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk).
 
 It bundles no agent. Every backend is a plugin you install beside it:
 
@@ -17,7 +17,7 @@ It bundles no agent. Every backend is a plugin you install beside it:
 - [`@ahpd/agent-cofold`](https://www.npmjs.com/package/@ahpd/agent-cofold): any OpenAI-compatible endpoint, through the cofold runtime.
 - [`@ahpd/agent-pi`](https://www.npmjs.com/package/@ahpd/agent-pi): the pi coding agent, embedded in the daemon.
 
-A daemon with no backend refuses to start and says how to install one. To serve another agent, write an `Agent` and load it the same way: see [docs/sdk/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AGENT.md) and [docs/plugins/PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md).
+A daemon with no backend refuses to start and says how to install one. To serve another agent, write an `Agent` and load it the same way: see [docs/sdk/AGENT.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AGENT.md) and [docs/plugins/PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md).
 
 ## Install
 
@@ -82,35 +82,35 @@ ahpd automation import <f>  make a switched-off automation from that file, in --
 ahpd completion <shell>     print the completion script: bash, zsh or fish
 ```
 
-`start` runs the same program detached. It writes its output to `daemon.log` and its pid and URL to `daemon.json`, both next to the config, which is where `status` reads from. `restart` is refused while a turn is running unless the line carries `--force`: see [`ahpd restart`](https://github.com/softov/ahpd/blob/main/docs/server/RUN.md#restart).
+`start` runs the same program detached. It writes its output to `daemon.log` and its pid and URL to `daemon.json`, both next to the config, which is where `status` reads from. `restart` is refused while a turn is running unless the line carries `--force`: see [`ahpd restart`](https://github.com/ahpio/ahpd/blob/main/docs/server/RUN.md#restart).
 
-Every command has `--json`, which prints the same value the prose is rendered from, on stdout alone. `--quiet` prints only the identifier an answer names, `--verbose` adds diagnostics on stderr, `--no-color` turns colour off, and `--yes` runs a command that removes something without asking. A command line with no verb runs the daemon, and `ahpd --help` renders every command and the foreground run's flags: see [`--json`, for the things a script reads](https://github.com/softov/ahpd/blob/main/docs/server/RUN.md#output-for-scripts).
+Every command has `--json`, which prints the same value the prose is rendered from, on stdout alone. `--quiet` prints only the identifier an answer names, `--verbose` adds diagnostics on stderr, `--no-color` turns colour off, and `--yes` runs a command that removes something without asking. A command line with no verb runs the daemon, and `ahpd --help` renders every command and the foreground run's flags: see [`--json`, for the things a script reads](https://github.com/ahpio/ahpd/blob/main/docs/server/RUN.md#output-for-scripts).
 
-[REFERENCE.md](https://github.com/softov/ahpd/blob/main/docs/server/REFERENCE.md#commands) has the detail of each command: [`configure`](https://github.com/softov/ahpd/blob/main/docs/server/CONFIGURE.md#first-setup), [`vault`](https://github.com/softov/ahpd/blob/main/docs/server/VAULT.md), [`completion`](https://github.com/softov/ahpd/blob/main/docs/server/RUN.md#shell-completion) and [`--remote`](https://github.com/softov/ahpd/blob/main/docs/server/REMOTE.md#run-commands-from-another-machine) among them.
+[REFERENCE.md](https://github.com/ahpio/ahpd/blob/main/docs/server/REFERENCE.md#commands) has the detail of each command: [`configure`](https://github.com/ahpio/ahpd/blob/main/docs/server/CONFIGURE.md#first-setup), [`vault`](https://github.com/ahpio/ahpd/blob/main/docs/server/VAULT.md), [`completion`](https://github.com/ahpio/ahpd/blob/main/docs/server/RUN.md#shell-completion) and [`--remote`](https://github.com/ahpio/ahpd/blob/main/docs/server/REMOTE.md#run-commands-from-another-machine) among them.
 
-Every verb and every flag is one declaration under [`src/commands`](https://github.com/softov/ahpd/tree/main/packages/server/src/commands), and the table below says which file declares what.
+Every verb and every flag is one declaration under [`src/commands`](https://github.com/ahpio/ahpd/tree/main/packages/server/src/commands), and the table below says which file declares what.
 
 | File | What it declares |
 | --- | --- |
-| [run.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/run.ts) | `ahpd [options]`, the foreground daemon, and every flag a run takes |
-| [start.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/start.ts) | `ahpd start` |
-| [stop.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/stop.ts) | `ahpd stop` |
-| [restart.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/restart.ts) | `ahpd restart` |
-| [status.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/status.ts) | `ahpd status` |
-| [config.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/config.ts) | `ahpd config` |
-| [configure.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/configure.ts) | `ahpd configure` |
-| [user.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/user.ts) | `ahpd user list`, `add`, `rm`, `token`, `member`, `primary` |
-| [teams.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/teams.ts) | `ahpd team list`, `add`, `rm` and the same three for `project` |
-| [plugin.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/plugin.ts) | `ahpd plugin list`, `install`, `remove`, `update`, `config`, `config set`, `config unset`, `enable`, `disable` |
-| [proxy.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/proxy.ts) | `ahpd proxy list` |
-| [usage.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/usage.ts) | `ahpd usage` and `ahpd usage <pool>` |
-| [vault.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/vault.ts) | `ahpd vault set`, `delete`, `list` |
-| [automation.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/automation.ts) | `ahpd automation export`, `import` |
-| [options.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/options.ts) | Every flag and every configuration key, as one declaration |
-| [registry.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/registry.ts) | The registry each surface renders, and the commands `--remote` fetches |
-| [served.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/served.ts) | The registry a daemon serves over HTTP |
-| [authorize.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/authorize.ts) | Who a request is, read from its `Authorization` header |
-| [scopes.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/commands/scopes.ts) | The grant check every registry runs before a command body |
+| [run.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/run.ts) | `ahpd [options]`, the foreground daemon, and every flag a run takes |
+| [start.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/start.ts) | `ahpd start` |
+| [stop.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/stop.ts) | `ahpd stop` |
+| [restart.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/restart.ts) | `ahpd restart` |
+| [status.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/status.ts) | `ahpd status` |
+| [config.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/config.ts) | `ahpd config` |
+| [configure.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/configure.ts) | `ahpd configure` |
+| [user.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/user.ts) | `ahpd user list`, `add`, `rm`, `token`, `member`, `primary` |
+| [teams.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/teams.ts) | `ahpd team list`, `add`, `rm` and the same three for `project` |
+| [plugin.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/plugin.ts) | `ahpd plugin list`, `install`, `remove`, `update`, `config`, `config set`, `config unset`, `enable`, `disable` |
+| [proxy.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/proxy.ts) | `ahpd proxy list` |
+| [usage.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/usage.ts) | `ahpd usage` and `ahpd usage <pool>` |
+| [vault.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/vault.ts) | `ahpd vault set`, `delete`, `list` |
+| [automation.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/automation.ts) | `ahpd automation export`, `import` |
+| [options.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/options.ts) | Every flag and every configuration key, as one declaration |
+| [registry.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/registry.ts) | The registry each surface renders, and the commands `--remote` fetches |
+| [served.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/served.ts) | The registry a daemon serves over HTTP |
+| [authorize.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/authorize.ts) | Who a request is, read from its `Authorization` header |
+| [scopes.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/commands/scopes.ts) | The grant check every registry runs before a command body |
 
 ## Options
 
@@ -214,22 +214,22 @@ For a host of a different shape, build it from `@ahpd/sdk` and skip this package
 
 | | |
 | --- | --- |
-| [src/main.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/main.ts) | argv, the filesystem and stdout; the only file that reads any of the three |
-| [src/daemon.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/daemon.ts) | Running detached, and finding the one that is |
-| [src/config.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/config.ts) | The config file, and where this tool keeps its files |
-| [src/plugins.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/plugins.ts) | Resolving, loading and applying plugins |
-| [src/update.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/update.ts) | Asking npm whether a newer version exists, in the background |
+| [src/main.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/main.ts) | argv, the filesystem and stdout; the only file that reads any of the three |
+| [src/daemon.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/daemon.ts) | Running detached, and finding the one that is |
+| [src/config.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/config.ts) | The config file, and where this tool keeps its files |
+| [src/plugins.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/plugins.ts) | Resolving, loading and applying plugins |
+| [src/update.ts](https://github.com/ahpio/ahpd/blob/main/packages/server/src/update.ts) | Asking npm whether a newer version exists, in the background |
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [GET-STARTED.md](https://github.com/softov/ahpd/blob/main/docs/server/GET-STARTED.md) | Install, configure, start, and connect VS Code |
-| [REFERENCE.md](https://github.com/softov/ahpd/blob/main/docs/server/REFERENCE.md) | Every command and flag |
-| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md) | Loading and writing plugins |
-| [BUILD-A-HOST.md](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md) | Building a host with `@ahpd/sdk` |
-| [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AGENT.md) | Writing another agent backend |
-| [AHP.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AHP.md) | Protocol coverage, and every action it emits |
+| [GET-STARTED.md](https://github.com/ahpio/ahpd/blob/main/docs/server/GET-STARTED.md) | Install, configure, start, and connect VS Code |
+| [REFERENCE.md](https://github.com/ahpio/ahpd/blob/main/docs/server/REFERENCE.md) | Every command and flag |
+| [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md) | Loading and writing plugins |
+| [BUILD-A-HOST.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md) | Building a host with `@ahpd/sdk` |
+| [AGENT.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AGENT.md) | Writing another agent backend |
+| [AHP.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AHP.md) | Protocol coverage, and every action it emits |
 | [agent-host-protocol](https://github.com/microsoft/agent-host-protocol) | The protocol itself, and its [documentation](https://microsoft.github.io/agent-host-protocol/) |
 
 ## License

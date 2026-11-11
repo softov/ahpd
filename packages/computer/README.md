@@ -1,7 +1,7 @@
 # @ahpd/computer
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Fcomputer)](https://www.npmjs.com/package/@ahpd/computer)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
@@ -10,7 +10,7 @@ Disposable machines for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd
 
 Docker is the runtime it ships with. A machine is a container this package started, labelled `ahpd.computer=1`, kept alive with `sleep infinity`, and reached as `computer://<id>`.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/computer`](https://github.com/softov/ahpd/tree/main/packages/computer).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/computer`](https://github.com/ahpio/ahpd/tree/main/packages/computer).
 
 ## Install
 
@@ -19,7 +19,7 @@ ahpd plugin install @ahpd/computer
 ahpd restart
 ```
 
-Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md).
+Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md).
 
 ### What it needs
 
@@ -69,19 +69,19 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `prefix` | `ahpd-computer` | What the name of every machine this host makes starts with |
 | `sessionSetting` | `true` | Whether the plugin adds a `computer` session setting that names the machine a session runs in |
 | `sessionDefault` | none | That setting's default, as a `computer://<id>` URI |
-| `needs` | none | Values for any agent's machine needs, by need name. A value may be `{ "$secret": "<scope>:<name>" }`, read when the machine is made. See [Profiles](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#profiles) |
+| `needs` | none | Values for any agent's machine needs, by need name. A value may be `{ "$secret": "<scope>:<name>" }`, read when the machine is made. See [Profiles](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#profiles) |
 | `mounts` | none | What every machine this plugin makes can see, each `<host path>:<machine path>` |
 | `profiles` | none | The named sets a person picks from when making a machine. See `profiles.<name>` below |
-| `bodyMounts` | `false` | Whether a person making a machine may name `mounts` or a `folder` of their own. With it on, `computer:write` is root on the host. See [Security](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#security) |
+| `bodyMounts` | `false` | Whether a person making a machine may name `mounts` or a `folder` of their own. With it on, `computer:write` is root on the host. See [Security](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#security) |
 | `imageMounts` | `true` | Whether a part may be mounted from its own image. `false` mounts every part from a volume filled once from it |
 | `images` | any image | The images a machine may be made from, as containers-policy.json image scopes, such as `docker.io/library/node` or `ghcr.io/acme` |
 | `devcontainer` | the `devcontainer` CLI | The Dev Container CLI, as a launcher and as a machine maker. `false` switches every dev container route off. See `devcontainer` below |
 
-`ahpd vault set <scope>:<name>` keeps a value a need reads with `{ "$secret": "<scope>:<name>" }`, from standard input. A need may name `host:`, `team:<team>/` or `user:<id>/`. See [VAULT.md](https://github.com/softov/ahpd/blob/main/docs/server/VAULT.md) for the vault, and [COMPUTERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#profiles) for who a need is read for.
+`ahpd vault set <scope>:<name>` keeps a value a need reads with `{ "$secret": "<scope>:<name>" }`, from standard input. A need may name `host:`, `team:<team>/` or `user:<id>/`. See [VAULT.md](https://github.com/ahpio/ahpd/blob/main/docs/server/VAULT.md) for the vault, and [COMPUTERS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#profiles) for who a need is read for.
 
 ### `profiles.<name>`
 
-A manifest picks a profile with `"profile": "<name>"`, and its own fields still win. [Profiles](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#profiles) and [Disposable machines](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#disposable-machines) have the detail.
+A manifest picks a profile with `"profile": "<name>"`, and its own fields still win. [Profiles](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#profiles) and [Disposable machines](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#disposable-machines) have the detail.
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -111,7 +111,7 @@ A manifest picks a profile with `"profile": "<name>"`, and its own fields still 
 
 ### `devcontainer`
 
-[CONTAINERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/CONTAINERS.md#what-the-host-needs) has the detail.
+[CONTAINERS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/CONTAINERS.md#what-the-host-needs) has the detail.
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -146,11 +146,11 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 
 ## Agents in a machine
 
-A machine made for an agent carries what the agent's `machine()` declares. Each agent's CLI comes from a part, an image the release workflow builds and this host pulls at the version `images/versions.json` pins and mounts at `/opt/ahpd/<id>`, so any glibc image runs it with nothing installed. Each agent keeps its configuration in a state volume per provider, seeded from a few host files and never a login file; a profile with `state: "host"` mounts this host's own configuration instead. A value the vault fills for a need reaches only the agent whose need declared it, `run_in_computer` from that agent's session included. See [COMPUTERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#parts).
+A machine made for an agent carries what the agent's `machine()` declares. Each agent's CLI comes from a part, an image the release workflow builds and this host pulls at the version `images/versions.json` pins and mounts at `/opt/ahpd/<id>`, so any glibc image runs it with nothing installed. Each agent keeps its configuration in a state volume per provider, seeded from a few host files and never a login file; a profile with `state: "host"` mounts this host's own configuration instead. A value the vault fills for a need reaches only the agent whose need declared it, `run_in_computer` from that agent's session included. See [COMPUTERS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#parts).
 
 ## The sandbox
 
-The plugin declares VS Code's root `sandbox` property, so a VS Code window forwards its sandbox settings to the host. A chat whose sandbox is on has the commands its agent runs, and its MCP servers while `sandboxMcpServers` is on, started inside [`@vscode/sandbox-runtime`](https://www.npmjs.com/package/@vscode/sandbox-runtime) through `Start.computers.sandboxed`, wherever its session runs. On this host the runtime is this package's own dependency; inside a machine it is the `srt` on the machine's `PATH`. Each kind of machine says whether it can host the runtime, and a machine made for a session whose sandbox is on is made to host it. See [The sandbox](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#the-sandbox).
+The plugin declares VS Code's root `sandbox` property, so a VS Code window forwards its sandbox settings to the host. A chat whose sandbox is on has the commands its agent runs, and its MCP servers while `sandboxMcpServers` is on, started inside [`@vscode/sandbox-runtime`](https://www.npmjs.com/package/@vscode/sandbox-runtime) through `Start.computers.sandboxed`, wherever its session runs. On this host the runtime is this package's own dependency; inside a machine it is the `srt` on the machine's `PATH`. Each kind of machine says whether it can host the runtime, and a machine made for a session whose sandbox is on is made to host it. See [The sandbox](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#the-sandbox).
 
 ## The tools
 
@@ -177,9 +177,9 @@ Nothing under `computer:` can be written. Machines are made with the tools above
 
 | | |
 | --- | --- |
-| [COMPUTERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md) | Docker and KVM access, and `scripts/computer.mjs` for making a machine by hand |
-| [CONTAINERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/CONTAINERS.md) | Running a whole host in a dev container |
-| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md) | Loading a plugin into the daemon |
+| [COMPUTERS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md) | Docker and KVM access, and `scripts/computer.mjs` for making a machine by hand |
+| [CONTAINERS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/CONTAINERS.md) | Running a whole host in a dev container |
+| [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md) | Loading a plugin into the daemon |
 
 ## License
 

@@ -1,14 +1,14 @@
 # @ahpd/sdk
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Fsdk)](https://www.npmjs.com/package/@ahpd/sdk)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 
 A server library for the [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol). It has no agent in it: you pass one in when you create the host.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/sdk`](https://github.com/softov/ahpd/tree/main/packages/sdk), and the daemon built on it is [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/sdk`](https://github.com/ahpio/ahpd/tree/main/packages/sdk), and the daemon built on it is [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server).
 
 ## Install
 
@@ -74,16 +74,16 @@ const host = createHost({
 | `agents` | required | The backends to serve, as `Agent` implementations, each with its own `provider`. The first is what a client gets when it names none |
 | `hostName` | `host` | What the host is called in the owner `root:<hostName>` of work nobody started as themselves |
 | `agentPlugins` | none | The plugin that registered each agent, by provider, so a session of it can run nested in a machine. `foldHostOptions` writes it |
-| `resources` | none | File reads, writes and `@` completion. Use `fileResources()`. See [resources](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#resources) |
+| `resources` | none | File reads, writes and `@` completion. Use `fileResources()`. See [resources](https://github.com/ahpio/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#resources) |
 | `resourceProviders` | none | One provider per URI scheme beside `file:`; an optional `describe()` is what the host advertises in `_meta['ahpd.resourceProviders']` |
-| `terminals` | none | A shell as a terminal channel. Use `shellTerminals()`. See [terminals](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#terminals) |
-| `changes` | none | Uncommitted changes as a changeset. Use `gitChanges()`. See [changes](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#changes) |
-| `directories` | none | The current branch of each served directory. Use `gitBranches()`. See [directories](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#directories) |
+| `terminals` | none | A shell as a terminal channel. Use `shellTerminals()`. See [terminals](https://github.com/ahpio/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#terminals) |
+| `changes` | none | Uncommitted changes as a changeset. Use `gitChanges()`. See [changes](https://github.com/ahpio/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#changes) |
+| `directories` | none | The current branch of each served directory. Use `gitBranches()`. See [directories](https://github.com/ahpio/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#directories) |
 | `worktrees` | none | Sessions in their own git worktree. Use `gitWorktrees()` |
 | `worktreesRoot` | beside the repository | An absolute folder every session tree goes under, as `<root>/<repo>/<name>`. Left out, a tree sits at `<repo>.worktrees` beside its repository, which is where VS Code's host looks for it |
-| `github` | none | What GitHub knows about a session's branch, such as its pull request. Use `githubPullRequests()`. See [github](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#github) |
+| `github` | none | What GitHub knows about a session's branch, such as its pull request. Use `githubPullRequests()`. See [github](https://github.com/ahpio/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#github) |
 | `users` | none | The people who may use this host. Left out, the connection token is the whole of who may connect. Use `fileUsers({ file })` |
-| `automations` | none | Triggered agents. Use `memoryAutomations()`. The clock store for cron is the daemon's, in `@ahpd/server`. See [automations](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#automations) |
+| `automations` | none | Triggered agents. Use `memoryAutomations()`. The clock store for cron is the daemon's, in `@ahpd/server`. See [automations](https://github.com/ahpio/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#automations) |
 | `unownedAutomations` | `every` | What an automation that names no owner sees: `every` or `none` |
 | `sessions` | `memorySessions()` | Where the flags and configuration the host adds to a session are kept. A daemon wants `fileSessions({ dir })`, which outlives a restart |
 | `computers` | none | How a backend runs its process inside a named machine. The plugin that owns the `computer:` scheme contributes it |
@@ -93,7 +93,7 @@ const host = createHost({
 | `policies` | none | Where the policies that say who may use what are kept. Use `filePolicies({ file })` or `memoryPolicies()` |
 | `policiesCheck` | `false` | Whether what the policies say is enforced |
 | `vault` | none | Where the secrets the host's work needs are kept, by scoped name. Left out, a plugin that reads a secret is told there is no vault |
-| `tools` | none | Tools the host adds to every session, as the protocol's `serverTools`. Use `hostTools()`. See [The tools](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#the-tools) |
+| `tools` | none | Tools the host adds to every session, as the protocol's `serverTools`. Use `hostTools()`. See [The tools](https://github.com/ahpio/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#the-tools) |
 | `mcpServers` | none | The MCP servers every session is offered, by name, in VS Code's `mcpServers` shape |
 | `toolsServers` | none | Where the host serves its own tools as an MCP server. Use `toolServers(...)` and mount its handler on your listener |
 | `sessionConfig` | none | Session settings merged into every session's schema. The fold fills it from the plugins' `registerSessionConfig` |
@@ -105,7 +105,7 @@ const host = createHost({
 | `sessionResidencyLimit` | `10` | How many sessions are resident at most, running or with their state held. Over it, the least recently used one that nothing holds is let go first, with its state. `0` sets no limit |
 | `now`, `timer` | the system clock, `setTimeout` | The clock and the timer that sleep and agent wakeups read, which a test replaces |
 | `rootConfig` | none | The daemon's own settings, shown in root config beside the host's keys, with writes handed back |
-| `diagnostics` | none | What the host answers when a window asks for its version, logs, network or shutdown. See [What the window asks](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#what-the-window-asks-a-host-about-itself) |
+| `diagnostics` | none | What the host answers when a window asks for its version, logs, network or shutdown. See [What the window asks](https://github.com/ahpio/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md#what-the-window-asks-a-host-about-itself) |
 | `onEvent` | none | Called with one line per notable event, for a log |
 | `events` | none | What plugins subscribed to, by event. The fold fills it from `pluginHost`; `raise()` calls them |
 | `closers` | none | What plugins asked to run when the host closes. The fold fills it from `registerClose` |
@@ -140,7 +140,7 @@ A session the host can let go while it is quiet has two optional members to say 
 
 Pass it to the host like any other backend: `createHost({ path, agents: [parrot()] })`. It registers the same way as [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude), and the two can run side by side.
 
-[docs/sdk/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AGENT.md) has the contract, and [examples/echo](https://github.com/softov/ahpd/tree/main/examples/echo) is a working backend in about two hundred lines.
+[docs/sdk/AGENT.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AGENT.md) has the contract, and [examples/echo](https://github.com/ahpio/ahpd/tree/main/examples/echo) is a working backend in about two hundred lines.
 
 ## Types
 
@@ -150,29 +150,29 @@ All types are exported. Nothing under `types/` imports a runtime value, so you c
 
 | | |
 | --- | --- |
-| [src/types/](https://github.com/softov/ahpd/tree/main/packages/sdk/src/types) | Every shape, importing no runtime value |
-| [src/rpc.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/rpc.ts) | JSON-RPC framing, with no socket |
-| [src/listen.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/listen.ts) | Accepts connections on Node, Bun or Deno |
-| [src/host.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/host.ts) | Channels, subscriptions, requests and state actions |
-| [src/resources.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/resources/resources.ts) | The `resources` port: files, reads and writes |
-| [src/terminals.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/machines/terminals.ts) | The `terminals` port: a shell over pipes |
-| [src/changes.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/sessions/changes.ts) | The `changes` port: a changeset from git |
-| [src/repo/git.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/repo/git.ts) | The `directories` port: which branch a directory is on |
-| [src/automations.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/automations/automations.ts) | The `automations` port, without a clock |
-| [src/cron.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/automations/cron.ts) | Five-field cron expressions and their next occurrence |
-| [src/tools/session.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/tools/session.ts) | The tools a session's agent is given |
-| [src/users.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/access/users.ts) | The user directory, roles and grants |
-| [src/catalog.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/sessions/catalog.ts) | Session names and status bits |
-| [src/paging.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/sessions/paging.ts) | A long list of turns, served a page at a time |
-| [src/index.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/index.ts) | The entry point |
+| [src/types/](https://github.com/ahpio/ahpd/tree/main/packages/sdk/src/types) | Every shape, importing no runtime value |
+| [src/rpc.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/rpc.ts) | JSON-RPC framing, with no socket |
+| [src/listen.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/listen.ts) | Accepts connections on Node, Bun or Deno |
+| [src/host.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/host.ts) | Channels, subscriptions, requests and state actions |
+| [src/resources.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/resources/resources.ts) | The `resources` port: files, reads and writes |
+| [src/terminals.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/machines/terminals.ts) | The `terminals` port: a shell over pipes |
+| [src/changes.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/sessions/changes.ts) | The `changes` port: a changeset from git |
+| [src/repo/git.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/repo/git.ts) | The `directories` port: which branch a directory is on |
+| [src/automations.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/automations/automations.ts) | The `automations` port, without a clock |
+| [src/cron.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/automations/cron.ts) | Five-field cron expressions and their next occurrence |
+| [src/tools/session.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/tools/session.ts) | The tools a session's agent is given |
+| [src/users.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/access/users.ts) | The user directory, roles and grants |
+| [src/catalog.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/sessions/catalog.ts) | Session names and status bits |
+| [src/paging.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/sessions/paging.ts) | A long list of turns, served a page at a time |
+| [src/index.ts](https://github.com/ahpio/ahpd/blob/main/packages/sdk/src/index.ts) | The entry point |
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [BUILD-A-HOST.md](https://github.com/softov/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md) | `createHost` and the ports in full |
-| [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AGENT.md) | The `Agent` and `Session` contracts |
-| [AHP.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AHP.md) | Protocol coverage, action by action |
+| [BUILD-A-HOST.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/BUILD-A-HOST.md) | `createHost` and the ports in full |
+| [AGENT.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AGENT.md) | The `Agent` and `Session` contracts |
+| [AHP.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AHP.md) | Protocol coverage, action by action |
 
 ## License
 
