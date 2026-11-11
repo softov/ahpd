@@ -338,9 +338,16 @@ const adapterOptionsOf = (
     throw new Error(`${own}: no endpoint is configured and this backend has no default; add a provider with its "baseUrl" to ${harness.path}`);
   }
   const key = keyOf(baseUrl, options, credentials, harness, provider);
+  /*
+   * The first segment goes only where it names something here: a provider of
+   * the file, or this backend's own endpoint. On an explicit `baseUrl` any
+   * other reference is the endpoint's own id, and an id such as OpenRouter's
+   * `deepseek/deepseek-chat` carries a slash of its own, so it is sent whole.
+   */
+  const cut = named !== undefined && (provider !== undefined || named.provider === own);
   return {
     reference,
-    model: named === undefined ? reference : named.modelId,
+    model: cut ? named.modelId : reference,
     baseUrl,
     ...(key === undefined ? {} : { apiKey: key }),
     ...(provider?.headers === undefined ? {} : { headers: provider.headers }),

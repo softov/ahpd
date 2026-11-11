@@ -680,7 +680,9 @@ function wrap(sdk: Pi, session: AgentSession, found: PiResources): PiBackend {
     setModel: async (id, config) => {
       const available = await models();
       const current = session.model as PiModel | undefined;
-      const wanted = modelFor(available, id, current);
+      // Every provider pi has, not only the keyed ones `available` lists.
+      const providers = new Set(session.modelRuntime.getProviders().map((provider) => provider.id));
+      const wanted = modelFor(available, id, current, providers);
       /*
        * A pick this host cannot resolve is reported, and the session stays on
        * the model it was already on. It is usually a stale list in a client

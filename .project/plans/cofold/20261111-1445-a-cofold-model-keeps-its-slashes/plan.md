@@ -63,7 +63,7 @@ record model -> modelReferenceOf -> adapterOptionsOf -> splitModel -> adapter mo
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An endpoint gets the id it was given](task-01-an-endpoint-gets-the-id-it-was-given.md) | todo | - |
+| [01 - An endpoint gets the id it was given](task-01-an-endpoint-gets-the-id-it-was-given.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -71,13 +71,13 @@ record model -> modelReferenceOf -> adapterOptionsOf -> splitModel -> adapter mo
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-endpoint-gets-the-id-it-was-given.md](task-01-an-endpoint-gets-the-id-it-was-given.md).
+- **Done so far:** task 01 implemented, 2026-11-11; see [implemented.md](implemented.md).
+- **Next action:** Softov reviews the PR. The plan closes as `built` on his word.
 - **Open questions:** none.
 - **Watch out for:** the backend's own id is `options.provider`, the record's id in the plugin, and `cofold` for an embedder.
 
 ## Final verification checklist
 
-- [ ] `modelOf({ baseUrl, provider: 'cf-or' }, { model: 'deepseek/deepseek-chat' }).modelId` is `deepseek/deepseek-chat`.
-- [ ] `cofold/qwen/qwen3-8b` on an explicit `baseUrl` still gives `qwen/qwen3-8b`.
-- [ ] `pnpm typecheck` and the agent-cofold suite pass.
+- [x] `modelOf({ baseUrl, provider: 'cf-or' }, { model: 'deepseek/deepseek-chat' }).modelId` is `deepseek/deepseek-chat`.
+- [x] `cofold/qwen/qwen3-8b` on an explicit `baseUrl` still gives `qwen/qwen3-8b`.
+- [x] `pnpm typecheck` and the agent-cofold suite pass.
