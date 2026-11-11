@@ -225,11 +225,26 @@ const CAPS = {
 } as const;
 type Detail = keyof typeof CAPS;
 
+/** How much of a cut reply one page holds, and how long a failed call's error may be. */
+const PAGE = 8000;
+const ERROR_CAP = 200;
+
+/** One chat's pending messages, as the host answers them. */
+type PendingMessages = { kind: 'steering' | 'queued'; pending: { id: string; message: Bag } }[];
+
 const textOf = (message: unknown): string => {
   const held = typeof message === 'object' && message !== null ? message as { text?: unknown } : {};
   return typeof held.text === 'string' ? held.text : '';
 };
 const partsOf = (turn: Bag): Bag[] => (Array.isArray(turn.responseParts) ? turn.responseParts : []) as Bag[];
+/** A turn's whole reply: its markdown parts joined with no space between them, as upstream joins them. */
+const assistantTextOf = (turn: Bag): string =>
+  partsOf(turn).filter((part) => part.kind === 'markdown').map((part) => String(part.content ?? '')).join('').trim();
+/** A turn's state, in the protocol's words. */
+const stateWord = (state: unknown): string => {
+  const said = String(state ?? 'complete');
+  return said === 'complete' || said === 'cancelled' || said === 'error' ? said : 'inProgress';
+};
 const inlineInput = (input: unknown): string => {
   if (typeof input === 'string') return input;
   if (typeof input !== 'object' || input === null) return '';
@@ -238,13 +253,54 @@ const inlineInput = (input: unknown): string => {
   return typeof said === 'string' ? said : JSON.stringify(input);
 };
 
-/** A chat's turns, cut to what a level of detail says, the way upstream serialises them. */
+/** The delegation meta a message carries, where it was sent from another chat. */
+const delegationOf = (message: Bag | undefined): Bag | undefined => {
+  const meta = message?._meta;
+  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return undefined;
+  const delegation = (meta as Bag)['vscode.chat.delegation'];
+  return typeof delegation === 'object' && delegation !== null && !Array.isArray(delegation) ? delegation as Bag : undefined;
+};
+
+/**
+ * One tool call, so a reader knows what became of it.
+ *
+ * The protocol's own status word is the one thing every call has; a completed
+ * call says whether it worked, a failed one adds its error, and a cancelled
+ * one says why, in the protocol's `denied` or `skipped`. The input is the
+ * caller's to add, and only at the level that carries it.
+ */
+const serializeCall = (call: Bag, cut: (text: string, max: number) => string | undefined): Bag => {
+  const name = String(call.toolName ?? 'tool');
+  const status = String(call.status ?? '');
+  const completed = status === 'completed';
+  const error = completed && call.success === false
+    ? cut(String((call.error as Bag | undefined)?.message ?? ''), ERROR_CAP)
+    : undefined;
+  return {
+    name,
+    status,
+    ...(completed ? { ok: call.success === true } : {}),
+    ...(error === undefined ? {} : { error }),
+    ...(status === 'cancelled' && typeof call.reason === 'string' ? { reason: call.reason } : {}),
+  };
+};
+
+/**
+ * A chat's turns, cut to what a level of detail says, the way upstream
+ * serialises them.
+ *
+ * A reply longer than its level's cap carries `assistantTruncated` and the id
+ * to read it whole by. `source` says who is reading - the chat it reads from,
+ * which sees the messages it left pending here, and the agent of a chat that
+ * runs another one than its session.
+ */
 export const serializeContext = (
   session: Summary,
   chatId: string | undefined,
-  snapshot: { turns: Bag[]; activeTurn?: Bag; hasMoreHistory: boolean },
+  snapshot: { turns: Bag[]; activeTurn?: Bag; hasMoreHistory: boolean; pendingMessages?: PendingMessages },
   detail: Detail,
   limit: number,
+  source?: { chat?: string; harness?: string },
 ): Bag => {
   const caps = CAPS[detail];
   let truncated = false;
@@ -256,39 +312,62 @@ export const serializeContext = (
     truncated = true;
     return `${trimmed.slice(0, Math.max(0, max - 1))}…`;
   };
-  const entries = [...snapshot.turns.map((turn) => ({ turn, state: String(turn.state ?? 'complete') }))];
+  const entries = [...snapshot.turns.map((turn) => ({ turn, state: stateWord(turn.state) }))];
   if (snapshot.activeTurn !== undefined) entries.push({ turn: snapshot.activeTurn, state: 'inProgress' });
   if (entries.length > limit) truncated = true;
   const start = Math.max(0, entries.length - limit);
   const transcript = entries.slice(start).map((entry, index) => {
     const parts = partsOf(entry.turn);
     const user = cut(textOf(entry.turn.message), caps.user);
-    const assistant = cut(
-      parts.filter((part) => part.kind === 'markdown').map((part) => String(part.content ?? '')).join(''),
-      caps.assistant,
-    );
+    const assistantText = assistantTextOf(entry.turn);
+    const assistant = cut(assistantText, caps.assistant);
+    // The whole reply is what the cap is compared against, not the cut text:
+    // a reply that ended exactly at the cap was cut nowhere.
+    const assistantTruncated = assistantText.length > caps.assistant;
     const calls = parts.filter((part) => part.kind === 'toolCall').map((part) => (part.toolCall ?? {}) as Bag);
     const toolCalls = detail === 'summary' || calls.length === 0 ? undefined : calls.map((call) => {
-      const name = String(call.toolName ?? 'tool');
-      if (caps.toolInput <= 0) return name;
+      const said = serializeCall(call, cut);
+      if (caps.toolInput <= 0) return said;
       const input = cut(call.status === 'streaming' ? '' : inlineInput(call.toolInput), caps.toolInput);
-      return input === undefined ? { name } : { name, input };
+      return input === undefined ? said : { ...said, input };
     });
-    const state = entry.state === 'complete' || entry.state === 'cancelled' || entry.state === 'error'
-      ? entry.state : 'inProgress';
     return {
       turn: start + index + 1,
-      state,
+      state: entry.state,
       ...(user !== undefined ? { user } : {}),
       ...(assistant !== undefined ? { assistant } : {}),
+      ...(assistantTruncated
+        ? { assistantTruncated: true, ...(typeof entry.turn.id === 'string' ? { responseTurnId: entry.turn.id } : {}) }
+        : {}),
       ...(toolCalls !== undefined ? { toolCalls } : {}),
     };
   });
+  /*
+   * The caller's own messages still waiting here, which is how a chat recovers
+   * the id and revision it needs to replace or cancel one. A message another
+   * chat left, or one whose sender this host cannot name, is not its to see.
+   * https://github.com/microsoft/vscode/blob/a1a15017f8a/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1944-L1953
+   */
+  const messagesSentByMe = source?.chat === undefined ? undefined : (snapshot.pendingMessages ?? []).flatMap(
+    ({ kind, pending }) => {
+      const delegation = delegationOf(pending.message);
+      if (delegation === undefined || delegation.messageId !== pending.id || typeof delegation.revision !== 'number'
+        || typeof delegation.sourceSession !== 'string' || delegation.sourceChat !== source.chat) return [];
+      return [{
+        messageId: pending.id,
+        revision: delegation.revision,
+        delivery: kind === 'steering' ? 'steer' as const : 'queue' as const,
+        status: kind === 'steering' ? 'processing' as const : 'pending' as const,
+        message: cut(textOf(pending.message), caps.user) ?? '',
+      }];
+    });
   return {
     session: session.resource,
     openLink: openLink(session.resource, session.provider, chatId),
+    ...(source?.harness !== undefined ? { harness: source.harness } : {}),
     detail,
     transcript,
+    ...(messagesSentByMe !== undefined ? { messagesSentByMe } : {}),
     hasMoreHistory: snapshot.hasMoreHistory,
     truncated,
   };
@@ -340,6 +419,19 @@ const known = async (at: AnyToolCall, asked: string, tool: string): Promise<{ se
   if (found === undefined)
     throw new Error(`Invalid ${tool} input: session must match the URI of a known session (see list_sessions).`);
   return found;
+};
+
+/**
+ * The agent a chat runs on, where the host records another than its session's.
+ *
+ * Only a chat the caller named has one: the session's own agent is the row's
+ * `provider` already, and a chat that runs something else says so among the
+ * row's `chats`.
+ */
+const harnessOf = (row: Summary, chatId: string | undefined): string | undefined => {
+  if (chatId === undefined) return undefined;
+  const chat = (row.chats ?? []).find((one) => idOf(one.resource) === chatId);
+  return chat?.provider !== undefined && chat.provider !== row.provider ? chat.provider : undefined;
 };
 
 /**
@@ -991,13 +1083,15 @@ export const sessionTools = (): HostTool[] => [
     definition: {
       name: 'get_session_context',
       title: 'Get Session Context',
-      description: 'Read the recent conversation of an existing session or chat: a compacted transcript of its turns (messages, replies, and tool calls). Use this to see what a session you created is doing, or to gather context before sending it a message. Returns a compacted summary by default (`detail: "summary"`); request `digest` or `full` for more detail. For session metadata (status, working directory, changes, ...) use `list_sessions` with the `session` argument.',
+      description: 'Read the recent conversation of an existing session or chat and your pending messages there. Use this to see what a session you created is doing, recover message IDs and revisions before replacing or cancelling pending work, or gather context before sending a message. Returns bounded excerpts at every detail level. For a shortened assistant reply, pass its responseTurnId and follow nextResponseOffset until truncated is false to read the complete reply. For session metadata (status, working directory, changes, …) use `list_sessions` with the `session` argument.',
       inputSchema: {
         type: 'object',
         properties: {
           session: { type: 'string', description: 'The session or chat to read: a session URI from `list_sessions`, or an `agent-host-session://` link. A link carrying a chat id targets that specific chat.' },
-          detail: { type: 'string', enum: ['summary', 'digest', 'full'], description: 'How much conversation detail to return. `summary` (default): status and a short per-turn gist (the message plus a compact snippet of the reply). `digest`: adds the full assistant reply text and tool-call names. `full`: adds tool-call inputs. Higher levels return more tokens.' },
+          detail: { type: 'string', enum: ['summary', 'digest', 'full'], description: 'How much conversation detail to return. `summary` (default): status and a short per-turn gist. `digest`: longer reply excerpts and tool-call names. `full`: longer excerpts and tool-call inputs. All levels are bounded; use responseTurnId to page through a shortened reply. At `digest` and `full`, each tool call also says its `status`, with `ok`, `reason` or `error` where the call has one; `full` adds its `input`.' },
           transcriptLimit: { type: 'number', description: 'Maximum number of most-recent turns to include. Defaults to 10; capped at 50.' },
+          responseTurnId: { type: 'string', description: 'Read one completed turn\'s complete assistant reply in pages of up to 8000 characters instead of a transcript. Use the exact responseTurnId returned for a shortened reply. Follow nextResponseOffset until truncated is false before treating the reply as fully read.' },
+          responseOffset: { type: 'integer', minimum: 0, description: 'Character offset for responseTurnId, initially 0. Continue with the returned nextResponseOffset. Requires responseTurnId.' },
         },
         required: ['session'],
       },
@@ -1015,15 +1109,47 @@ export const sessionTools = (): HostTool[] => [
       if (asked !== undefined && (typeof asked !== 'number' || !Number.isFinite(asked) || asked < 1))
         throw new Error(`Invalid ${tool} input: transcriptLimit must be a positive number.`);
       const limit = Math.min(50, Math.floor(typeof asked === 'number' ? asked : 10));
+      const responseTurnId = input.responseTurnId === undefined ? undefined : required(input.responseTurnId, 'responseTurnId', tool);
+      const responseOffset = input.responseOffset === undefined ? 0 : input.responseOffset;
+      if (typeof responseOffset !== 'number' || !Number.isSafeInteger(responseOffset) || responseOffset < 0
+        || (input.responseOffset !== undefined && responseTurnId === undefined))
+        throw new Error(`Invalid ${tool} input: responseOffset must be a nonnegative safe integer and requires responseTurnId.`);
+      const harness = harnessOf(found.session, found.chatId);
       const snapshot = await at.context(found.session.resource, found.chatId);
+      const link = openLink(found.session.resource, found.session.provider, found.chatId);
+      if (responseTurnId !== undefined) {
+        const turn = snapshot?.turns.find((one) => one.id === responseTurnId);
+        if (turn === undefined)
+          throw new Error('The requested response turn is unavailable. Read the session context again for current responseTurnId values.');
+        const assistant = assistantTextOf(turn);
+        if (responseOffset > assistant.length)
+          throw new Error(`Invalid ${tool} input: responseOffset exceeds the response length.`);
+        const end = Math.min(responseOffset + PAGE, assistant.length);
+        return JSON.stringify({
+          session: found.session.resource,
+          openLink: link,
+          ...(harness !== undefined ? { harness } : {}),
+          responseTurnId,
+          responseOffset,
+          state: stateWord(turn.state),
+          assistant: assistant.slice(responseOffset, end),
+          responseLength: assistant.length,
+          ...(end < assistant.length ? { nextResponseOffset: end } : {}),
+          truncated: end < assistant.length,
+        });
+      }
       if (snapshot === undefined) {
         return JSON.stringify({
           session: found.session.resource,
-          openLink: openLink(found.session.resource, found.session.provider, found.chatId),
+          openLink: link,
+          ...(harness !== undefined ? { harness } : {}),
           detail, transcript: [], hasMoreHistory: false, truncated: false,
         });
       }
-      return JSON.stringify(serializeContext(found.session, found.chatId, snapshot, detail as Detail, limit));
+      return JSON.stringify(serializeContext(found.session, found.chatId, snapshot, detail as Detail, limit, {
+        ...(at.chat !== undefined ? { chat: at.chat } : {}),
+        ...(harness !== undefined ? { harness } : {}),
+      }));
     },
   },
   {
