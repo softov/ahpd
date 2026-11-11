@@ -12,7 +12,8 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - The last release is 0.14.0 (`v0.14.0`). `0.15.0-rc.1` is on npm `next` (`v0.15.0-rc.1`, #231). What the release needs is in [pending/release.md](../pending/release.md).
 - Main's last code merge is #295 (`cc4002706`): a stopped session's row lists its chats, and a link finds its session by its id.
 - #277 to #286 merged on 2026-11-10, and #288 to #295 on 2026-11-11. `git log` and each plan's Resume state hold the detail.
-- The repository is `ahpio/ahpd` since 2026-11-11 (#290). No PR is open on it. beorn has not said which ACP server he hit #287 with.
+- The repository is `ahpio/ahpd` since 2026-11-11 (#290). beorn has not said which ACP server he hit #287 with.
+- PRs #296 to #300 are open from the release run of 2026-11-11, none merged. [release-run.md](release-run.md) lists them with their CI. #297 has #296 merged in, and #298 has #297, because all three edit `docs/updates/v0_15.md`: they merge in that order.
 - MayCXC said on 2026-11-09 not to wait for him. His branches 0210, 1647, 2330 and 0340 are all on main, and he has pushed nothing since 0340.
 - CI shards: `linux (1/2)`, `linux (2/2)`, `processes (1/2)`, `processes (2/2)` and `windows (1/4)` to `windows (4/4)`. `check` and `check-windows` are green only when every shard of their job is.
 - The only ruleset on `main` is `Protect Main`. It requires a PR and lets org admins and Softov bypass it, so a plan-only push goes straight to main. It requires no check: the old `main checks` ruleset, which required `check` and `check-windows`, was deleted on 2026-11-11. Wait for both before a merge until Softov adds them back.
@@ -38,6 +39,8 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 ## In progress on 2026-11-11
 
 - The release run of 2026-11-11 keeps its notepad in [release-run.md](release-run.md), and its ranked problems in [problems-report-20261111.md](problems-report-20261111.md).
+- The agent tests of that run are in [release-run.md](release-run.md#agent-tests). The OpenAI key has no credit, so Codex ends at "Quota exceeded". Gemini's default model `auto` hung on Google's 503; a named model ran.
+- Plans with every task `implemented`, waiting for Softov's review to close as `built`: the five of the release run, and acp/20261110-0813, cofold/20261110-0813 (two), host/20261110-0813 (six), host/20261111-0609 (two), host/20261111-1203 and pi/20261110-0813.
 
 - Builders are dispatched over the ahpd MCP tools from now on, so the dispatch itself is tested. The MCP token is uclau's `claude-code-mcp`, in `~/.claude.json`.
 - The alerts plan (#289) and the turn-off plan (#291), plugin/20261111-0032, are `built`. The build preset denies `git add`, so a builder's new files are committed by hand in review.
