@@ -1,6 +1,6 @@
 ---
 title: An entry error names its file
-status: todo
+status: implemented
 depends: []
 layer: "computer"
 refs:
@@ -31,4 +31,6 @@ Each error that `entryOf` throws names the file that `readParts` read.
 - `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run packages/computer` passes.
 
 ## Resume
+
+Implemented 2026-11-11 in `1780c81fc`. See [implemented.md](implemented.md).
 

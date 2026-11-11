@@ -58,7 +58,7 @@ readParts(path) -> entryOf(value, where) -> said(problem) -> Error("<versionsPat
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An entry error names its file](task-01-an-entry-error-names-its-file.md) | todo | - |
+| [01 - An entry error names its file](task-01-an-entry-error-names-its-file.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -66,12 +66,12 @@ readParts(path) -> entryOf(value, where) -> said(problem) -> Error("<versionsPat
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-entry-error-names-its-file.md](task-01-an-entry-error-names-its-file.md).
+- **Done so far:** task 01 implemented, 2026-11-11; see [implemented.md](implemented.md).
+- **Next action:** Softov reviews the PR. The plan closes as `built` on his word.
 - **Open questions:** none.
 - **Watch out for:** `entryOf` in `gitdir.ts` is another function of the same name.
 
 ## Final verification checklist
 
-- [ ] An entry error from a temp file names the temp file.
-- [ ] `pnpm typecheck` and the computer suite pass.
+- [x] An entry error from a temp file names the temp file.
+- [x] `pnpm typecheck` and the computer suite pass.

@@ -129,10 +129,12 @@ it('refuses a file with two parts of one id', () => {
 
 it('refuses a version that is not one exact version, in VS Code\'s words', () => {
   for (const version of ['^2.1.1', '~2.1.1', '2.x', 'latest', '2.1', '2.1.1+build.5']) {
-    expect(() => read([npm({ version })])).toThrow(`Refusing to use codex@${version} from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
+    const at = file([npm({ version })]);
+    expect(() => readParts(at)).toThrow(`Refusing to use codex@${version} from ${at}: must be an exact version (no ^ or ~ ranges)`);
   }
-  expect(() => read([node(), npm({ packages: ['@openai/codex@0.1.0+build'] })]))
-    .toThrow(`Refusing to use @openai/codex@0.1.0+build from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
+  const at = file([node(), npm({ packages: ['@openai/codex@0.1.0+build'] })]);
+  expect(() => readParts(at))
+    .toThrow(`Refusing to use @openai/codex@0.1.0+build from ${at}: must be an exact version (no ^ or ~ ranges)`);
   // A prerelease is one version, not a range, its own dashes included.
   expect(read([node(), npm({ version: '0.2.0-rc.2' })])[1]?.version).toBe('0.2.0-rc.2');
   expect(read([node(), npm({ version: '0.2.0-rc-2' })])[1]?.version).toBe('0.2.0-rc-2');
@@ -199,6 +201,12 @@ it('refuses a url or a sum that would reach the shell as something else', () => 
 it('refuses a part that requires one the file does not name', () => {
   expect(() => read([npm()])).toThrow(/codex requires node, which it does not name/);
   expect(read([node(), npm()])).toHaveLength(2);
+});
+
+it('names the file it read in an error about an entry, not the shipped one', () => {
+  const at = file([npm({ kind: 'cargo' })]);
+  expect(at).not.toBe(versionsPath());
+  expect(() => readParts(at)).toThrow(`${at}: entry 0 names no kind this can build: cargo`);
 });
 
 it('refuses an entry that names no kind, no version or no command', () => {
@@ -330,8 +338,9 @@ it('installs a package pinned at its own version, and moves the tag with it', ()
   // The tag the image is actually built at carries the Dockerfile too.
   expect(tagOf(part, undefined, file)).toMatch(/^ahpd-part\/claude:0\.85\.1-2\.1\.291-[0-9a-f]{12}$/u);
 
+  // `read` writes the parts to the one temp file, which the refusal names.
   expect(() => read([node(), npm({ packages: ['@anthropic-ai/claude-code@^2.1.291'] })]))
-    .toThrow(`Refusing to use @anthropic-ai/claude-code@^2.1.291 from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
+    .toThrow(`Refusing to use @anthropic-ai/claude-code@^2.1.291 from ${join(loose ?? '', 'versions.json')}: must be an exact version (no ^ or ~ ranges)`);
 });
 
 it('installs an archive part\'s npm packages beside its download, each at its own version', () => {
