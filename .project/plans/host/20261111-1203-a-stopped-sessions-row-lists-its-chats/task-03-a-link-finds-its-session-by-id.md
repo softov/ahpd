@@ -1,6 +1,6 @@
 ---
 title: A link finds its session by id
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -32,3 +32,5 @@ refs:
 
 ## Resume
 
+- `sessionMeant` finds a link's row by its id alone.
+- The test case for another agent's link now finds `ahp-session:/s1`.

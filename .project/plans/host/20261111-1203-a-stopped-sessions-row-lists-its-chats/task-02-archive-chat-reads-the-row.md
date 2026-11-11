@@ -1,6 +1,6 @@
 ---
 title: archive_chat reads the row
-status: todo
+status: implemented
 depends:
   - task-01-a-stopped-row-lists-its-chats.md
 layer: "sdk"
@@ -32,3 +32,5 @@ refs:
 
 ## Resume
 
+- `archive_chat` reads the row's `chats` and `defaultChat` when `at.chats` is empty.
+- One test covers tasks 01 and 02: a second host on the same store lists the nested chat, archives it, and the session stays unarchived.

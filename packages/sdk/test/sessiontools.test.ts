@@ -86,8 +86,8 @@ describe('the names a tool has for a session', () => {
     expect(sessionMeant('agent-host-session://claude/s1', rows)?.session.resource).toBe('ahp-session:/s1');
     expect(sessionMeant('agent-host-session://claude/on-disk', rows)?.session.resource).toBe('claude:/on-disk');
     expect(sessionMeant('agent-host-session://claude/s1?chat=side', rows)).toMatchObject({ chatId: 'side' });
-    // Another provider's id is another session, however the id reads.
-    expect(sessionMeant('agent-host-session://codex/s1', rows)).toBeUndefined();
+    // A link finds its session by the id it carries, whatever agent it names.
+    expect(sessionMeant('agent-host-session://codex/s1', rows)?.session.resource).toBe('ahp-session:/s1');
     expect(sessionMeant('ahp-session:/nobody', rows)).toBeUndefined();
   });
 });
@@ -1857,6 +1857,39 @@ describe('a tool a person calls with no session', () => {
     type Listed = { sessions: { session: string }[] };
     const active = JSON.parse(await run(host, { principal: member }, 'list_sessions', {})) as Listed;
     expect(active.sessions.map((one) => one.session)).not.toContain(id);
+  });
+
+  it('lists a stopped session\'s chats from its record, and archives one of them', async () => {
+    const { host, users } = hosting();
+    const member = await principal(users, 'member');
+    const made = await run(host, { principal: member }, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'Gone quiet', workspace: uriOf(root), worktree: false,
+    });
+    const id = /^New session created \(agent-host-session:\/\/claude\/([^)]+)\)\.$/.exec(made)?.[1] as string;
+    const sessionLink = openLink(id, 'claude');
+    const side = /^Chat created \((agent-host-session:\/\/[^)]+)\)\.$/.exec(
+      await run(host, { principal: member }, 'create_chat', { session: sessionLink, prompt: 'say hi', title: 'Side' }))?.[1] as string;
+
+    // A second host on the same store: the session is a row, and nothing runs it.
+    await host.close();
+    sdk.sessions.push({ sessionId: id, summary: 'Gone quiet', lastModified: Date.now(), cwd: root });
+    const later = hosting();
+    const again = await principal(later.users, 'member');
+    type Row = { status: string; chats?: { title: string; openLink: string; main?: boolean; status?: string }[] };
+    const rowOf = async (): Promise<Row | undefined> =>
+      (JSON.parse(await run(later.host, { principal: again }, 'list_sessions', { session: sessionLink })) as { sessions: Row[] }).sessions[0];
+
+    // Its row lists the main chat and the nested one, with the link the first host gave.
+    const before = await rowOf();
+    expect(before?.chats?.map((one) => one.openLink)).toEqual([sessionLink, side]);
+    expect(before?.chats?.[0]?.main).toBe(true);
+    expect(before?.chats?.[1]?.title).toBe('Side');
+
+    // The nested chat archives alone, and the session stays as it was.
+    expect(await run(later.host, { principal: again }, 'archive_chat', { chat: side })).toBe(`Archived chat ${side}.`);
+    const after = await rowOf();
+    expect(after?.status).not.toContain('archived');
+    expect(after?.chats?.find((one) => one.openLink === side)?.status).toContain('archived');
   });
 
   it('begins a turn as the caller for a message a person sends', async () => {

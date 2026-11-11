@@ -1593,8 +1593,35 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       createdAt: row.createdAt,
       modifiedAt: row.modifiedAt,
       workingDirectories: row.workingDirectories,
+      ...storedChatsOf(row.id, row.title),
       ...changesOf(resource),
       ...ctx.describes(resource),
+    };
+  };
+  /**
+   * The chats a session nothing runs lists, from its record, as a running
+   * session's row lists them.
+   *
+   * A stopped session has its nested chats in its record alone, and its row is
+   * where a client finds a chat's link without starting the session. Read on
+   * each answer, so an archive or a rename shows on the next listing. A chat
+   * with no state is idle with its own bits, read where it has none, as a
+   * running session's chat with no state reads. The default chat carries the
+   * session's title, as it does on a running row.
+   */
+  const storedChatsOf = (id: string, title: string): { chats?: SummaryChat[]; defaultChat?: string } => {
+    const recorded = recordedChats(id);
+    const defaultChat = recorded.find((chat) => chat.default === true)?.uri;
+    const chats = toSessionSummaryChats(recorded.map((chat) => ({
+      resource: chat.uri,
+      title: chat.uri === defaultChat ? title : chat.title ?? kept.chatTitle(id, chat.uri) ?? '',
+      ...(chat.origin !== undefined ? { origin: chat.origin } : {}),
+      ...(chat.provider !== undefined ? { provider: chat.provider } : {}),
+      status: Status.Idle | (kept.chatFlags(id, chat.uri) || Status.IsRead),
+    })));
+    return {
+      ...(chats.length > 0 ? { chats } : {}),
+      ...(defaultChat !== undefined ? { defaultChat } : {}),
     };
   };
   /**
@@ -1812,6 +1839,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       // only bits set are this host's own and the client's.
       status: Status.Idle | kept.flags(idFor(row.resource)),
       ...(started === undefined ? {} : { origin: started }),
+      ...storedChatsOf(idFor(row.resource), row.title),
       ...changesOf(row.resource),
       ...ctx.describes(row.resource),
     };
