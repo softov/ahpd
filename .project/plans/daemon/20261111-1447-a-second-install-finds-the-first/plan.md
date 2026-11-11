@@ -62,7 +62,7 @@ do_install -> command -v ahpd (empty) -> resolve_prefix -> resolve_ahpd finds $B
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The version check reads the chosen folder](task-01-the-version-check-reads-the-chosen-folder.md) | todo | - |
+| [01 - The version check reads the chosen folder](task-01-the-version-check-reads-the-chosen-folder.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -70,13 +70,13 @@ do_install -> command -v ahpd (empty) -> resolve_prefix -> resolve_ahpd finds $B
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-version-check-reads-the-chosen-folder.md](task-01-the-version-check-reads-the-chosen-folder.md).
+- **Done so far:** task 01 implemented, 2026-11-11; see [implemented.md](implemented.md).
+- **Next action:** Softov reviews the PR. The plan closes as `built` on his word.
 - **Open questions:** none.
 - **Watch out for:** `resolve_prefix` makes `$BIN` outside `--dry-run`. Under `--dry-run` the folder may not exist, and the `-x` test is then false.
 
 ## Final verification checklist
 
-- [ ] An `ahpd` in the chosen prefix and off the PATH, at the target version, gives "Nothing to update." and no `npm install`.
-- [ ] The same at an older version updates and says to restart.
-- [ ] The install suite passes.
+- [x] An `ahpd` in the chosen prefix and off the PATH, at the target version, gives "Nothing to update." and no `npm install`.
+- [x] The same at an older version updates and says to restart.
+- [x] The install suite passes.
