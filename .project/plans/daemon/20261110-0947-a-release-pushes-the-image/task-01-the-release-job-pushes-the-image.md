@@ -1,6 +1,6 @@
 ---
 title: The release job pushes the image
-status: implemented
+status: done
 depends: []
 layer: "ci"
 refs:

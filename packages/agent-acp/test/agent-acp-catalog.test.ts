@@ -1222,6 +1222,23 @@ it('loads a session at the folder the server listed it under', async () => {
     .toMatchObject({ sessionId: 'listed-1', cwd: '/tmp/one' });
 });
 
+it('loads a session no list named at the folder the host recorded for it', async () => {
+  const { agent, log } = backend(['--replay'], 'acp-load-recorded');
+  // After a restart no list has said where the conversation lives, so the
+  // read asks with the folder the host kept, not the daemon's own.
+  await agent.transcript?.('acp-session-restored', { workingDirectory: '/tmp/recorded' });
+  expect(requests(log).find((one) => one.method === 'session/load')?.params)
+    .toMatchObject({ sessionId: 'acp-session-restored', cwd: '/tmp/recorded' });
+});
+
+it('loads a session at the folder the server listed it under, over the one the host recorded', async () => {
+  const { agent, log } = backend([], 'acp-load-listed-first');
+  await agent.list?.();
+  await agent.transcript?.('listed-1', { workingDirectory: '/tmp/recorded' });
+  expect(requests(log).find((one) => one.method === 'session/load')?.params)
+    .toMatchObject({ sessionId: 'listed-1', cwd: '/tmp/one' });
+});
+
 it('leaves no server behind after reading a session back', async () => {
   const pidFile = join(scratch(), 'transcript.pid');
   const { agent } = backend([`--grandchild=${pidFile}`]);
