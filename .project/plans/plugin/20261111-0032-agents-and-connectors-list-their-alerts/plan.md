@@ -99,7 +99,7 @@ resolved -> every gap of the record -> one alert per gap -> row.alerts
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02 and 03, 2026-11-10. `Alert.at`, `alertList` and `RecordGaps` are in, the plugins channel keeps its alerts in the shared list, and both agent and connector rows carry `alerts` in place of `health`, with the state `failed`.
+- **Done so far:** tasks 01, 02 and 03, 2026-11-10. `Alert.at`, `alertList` and `RecordGaps` are in, and the plugins channel keeps its alerts in the shared list. Both agent and connector rows carry `alerts` in place of `health`, with the state `failed`.
 - **Next action:** none; the plan is implemented.
 - **Open questions:** none.
 - **Watch out for:**
