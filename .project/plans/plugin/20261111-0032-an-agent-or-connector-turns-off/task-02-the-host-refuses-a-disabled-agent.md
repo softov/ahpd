@@ -54,9 +54,12 @@ A session on it keeps its history, and takes messages again once the agent is on
 
 ## Validation
 
-- A paused agent is not on the root list, and the host refuses it a new session, chat, move and message with `<id> is paused.`
-- After a restart with a separate backend instance, a paused agent's stored session is listed with its turns and refuses a message.
-- After a restart, a disabled agent's stored session is not listed, and it is listed again once the agent is enabled.
+- A paused agent is not on the root list.
+- The host refuses a paused agent a new session, chat, move and message with `<id> is paused.`
+- A second host with its own backend lists a paused agent's stored session with its turns.
+- That session refuses a message with `<id> is paused.`
+- After a restart, the list leaves out a disabled agent's stored session.
+- The list shows it again once the agent is enabled.
 - `packages/sdk/test/host-disabled-agent.test.ts`: a disabled agent is not on the root list.
 - The host refuses a new session and `create_session` on it with `<id> is turned off.`
 - A session from before the toggle keeps its turns, and refuses a new message with the sentence.
