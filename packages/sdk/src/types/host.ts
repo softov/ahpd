@@ -1705,11 +1705,19 @@ export interface ToolCall {
    * A chat's conversation, as its channel snapshot carries it.
    *
    * The newest page of turns, the running one, and whether older ones exist
-   * behind the page. Nothing for a session that is not running: a transcript
-   * on disk is opened by resuming, and a tool reading one would start an agent
-   * to answer a question about the past.
+   * behind the page. Beside them the chat's pending messages - its steering
+   * and its queue, each with the id it was sent under and the message - which
+   * are the host's and reach no backend. Nothing for a session that is not
+   * running: a transcript on disk is opened by resuming, and a tool reading
+   * one would start an agent to answer a question about the past.
    */
-  context(session: string, chatId?: string): Promise<{ turns: Bag[]; activeTurn?: Bag; hasMoreHistory: boolean } | undefined>;
+  context(session: string, chatId?: string): Promise<{
+    turns: Bag[];
+    activeTurn?: Bag;
+    hasMoreHistory: boolean;
+    /** The chat's steering and queued messages, in the protocol's `PendingMessage` shape. */
+    pendingMessages?: { kind: 'steering' | 'queued'; pending: { id: string; message: Bag } }[];
+  } | undefined>;
   /**
    * One `send_message` call, into another chat.
    *

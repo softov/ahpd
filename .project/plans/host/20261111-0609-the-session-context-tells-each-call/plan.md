@@ -76,8 +76,8 @@ get_session_context { session, responseTurnId, responseOffset } -> at.context ->
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The context answers VS Code's fields](task-01-the-context-answers-vscodes-fields.md) | todo | - |
-| [02 - Each tool call says its status](task-02-each-tool-call-says-its-status.md) | todo | 01 |
+| [01 - The context answers VS Code's fields](task-01-the-context-answers-vscodes-fields.md) | implemented | - |
+| [02 - Each tool call says its status](task-02-each-tool-call-says-its-status.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -86,10 +86,11 @@ get_session_context { session, responseTurnId, responseOffset } -> at.context ->
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-11.
-- **Next action:** [task-01-the-context-answers-vscodes-fields.md](task-01-the-context-answers-vscodes-fields.md).
+- **Done so far:** both tasks implemented, 2026-11-11. The code, tests and docs are in the tree; `pnpm exec tsc -p tsconfig.json --noEmit` is clean and `pnpm -s schema` generated 508 definitions.
+- **Next action:** run `packages/sdk` and then `packages/server` under the shared lock, restore `packages/sdk/test/fixtures/wire.jsonl` after each, then close the plan.
 - **Open questions:** none.
 - **Watch out for:**
+The vitest gates did not run: `flock /home/softov/tmp/ahpd-test/vitest.lock` is denied by this session's permission mode, so a suite cannot take the shared lock.
 `responseTurnId` reads a completed turn only; VS Code refuses an id it cannot find with its own sentence.
 `assistantTruncated` compares the reply's whole length with the cap, not the cut text, as VS Code does.
 

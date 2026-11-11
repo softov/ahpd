@@ -2073,11 +2073,38 @@ export function createTooling(ctx: HostContext): Tooling {
   /** A chat's conversation, as its channel snapshot carries it. */
   const contextOf = async (
     session: string, chatId?: string,
-  ): Promise<{ turns: Bag[]; activeTurn?: Bag; hasMoreHistory: boolean } | undefined> => {
+  ): Promise<{
+    turns: Bag[];
+    activeTurn?: Bag;
+    hasMoreHistory: boolean;
+    pendingMessages?: { kind: 'steering' | 'queued'; pending: { id: string; message: Bag } }[];
+  } | undefined> => {
     const held = sessions.get(session);
     const found = held === undefined ? undefined : chatMeant(held, chatId);
     if (found === undefined) return undefined;
     const state = found.chat.chatState() as { turns?: unknown; activeTurn?: unknown; turnsNextCursor?: unknown };
+    /*
+     * The pending messages are the host's, not the backend's: a steering
+     * message and the queue are held in the chat's state here, and the
+     * backend's own snapshot has neither.
+     */
+    const heldState = (ctx.stateOf(found.uri) ?? state) as {
+      steeringMessage?: { id?: unknown; message?: unknown };
+      queuedMessages?: { id?: unknown; message?: unknown }[];
+    };
+    const pending = (id: unknown, message: unknown): { id: string; message: Bag } => ({
+      id: String(id ?? ''),
+      message: (typeof message === 'object' && message !== null ? message : {}) as Bag,
+    });
+    const pendingMessages = [
+      ...(typeof heldState.steeringMessage === 'object' && heldState.steeringMessage !== null
+        ? [{ kind: 'steering' as const, pending: pending(heldState.steeringMessage.id, heldState.steeringMessage.message) }]
+        : []),
+      ...(Array.isArray(heldState.queuedMessages) ? heldState.queuedMessages.map((one) => ({
+        kind: 'queued' as const,
+        pending: pending(one?.id, one?.message),
+      })) : []),
+    ];
     /*
      * Frozen copies of the turns, for the same reason a tool definition is
      * one: this leaves the host with whichever host tool asked, and a tool
@@ -2087,6 +2114,7 @@ export function createTooling(ctx: HostContext): Tooling {
       turns: Array.isArray(state.turns) ? state.turns as Bag[] : [],
       ...(typeof state.activeTurn === 'object' && state.activeTurn !== null ? { activeTurn: state.activeTurn as Bag } : {}),
       hasMoreHistory: state.turnsNextCursor !== undefined,
+      pendingMessages,
     });
   };
 

@@ -22,7 +22,7 @@ Each item waits for a published 1.1.0 package or for local types, as per-chat co
 
 ### Session tools
 
-- [ ] **`send_message` sends, replaces or cancels**: `operation: send | replace | cancel`, `delivery: queue | steer`, and `messageId` with `expectedRevision` for a pending message; `get_session_context` returns the caller's pending messages. `host/20261110-0813-the-session-tools-follow-vscode` task 01.
+- [ ] **`send_message` sends, replaces or cancels**: `operation: send | replace | cancel`, `delivery: queue | steer`, and `messageId` with `expectedRevision` for a pending message; `get_session_context` returns the caller's pending messages, `assistantTruncated` and `responseTurnId` for a shortened reply, pages of a reply by `responseTurnId` and `responseOffset`, and a chat's `harness`. `host/20261110-0813-the-session-tools-follow-vscode` task 01 and `host/20261111-0609-the-session-context-tells-each-call` task 01.
 - [ ] **`move_session`** (`519383afb54e`, `741752a9eb8a`). The same plan, task 04.
 - [ ] **A chat's move of itself waits for its turn to end.** VS Code's `move_session` calls `scheduleChatMove` and answers "This chat will be … when this turn ends" (`node/shared/sessionMoveTools.ts` at `171e90619`, L256-L264 and L423). ahpd's task 04 refuses it, because the calling chat has an active turn, so a call without `session` is always refused, although the copied description says "make it your final tool call". The `set_workspace` move already waits for `chat/turnComplete` in `packages/sdk/src/host/spawn.ts`. VS Code's `maxMovedSessions: 50` and `topLevelChatOnly` are not enforced either.
 - [ ] **`isolate_session`**, on upstream before this range. `host/20261110-0813-an-agent-isolates-its-chat`.
