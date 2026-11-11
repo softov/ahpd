@@ -1926,7 +1926,8 @@ A read-only channel. One row for each engine the loaded plugins register, keyed 
 ### `x-ahpd-agents`
 
 One row for each agent, keyed by its id. A row is the record - `id`, `engine`,
-`owner`, `name`, `description`, `icon`, `model` and `config` - with a `state`:
+`owner`, `name`, `description`, `icon`, `model`, `enabled` and `config` - with a
+`state`:
 
 | `state` | What it says |
 | --- | --- |
@@ -1934,6 +1935,12 @@ One row for each agent, keyed by its id. A row is the record - `id`, `engine`,
 | `failed` | The engine could not open it, as when an `env` variable it reads is missing or a `$secret` it names was not in the vault |
 | `invalid` | Its config does not fit the engine's schema |
 | `unavailable` | No loaded plugin registers its engine, so it cannot be opened |
+| `disabled` | Its record says `enabled: false`, so it is not opened, asked or served |
+
+A record that names no `enabled` is on. A record that is off is not opened, so
+no key is read for it and no probe runs, and it shows no alerts. Its sessions
+are kept: a session that already runs on it keeps its history, and the host
+holds the backend it runs on until the last one ends.
 
 A row also carries `icons`: the icons a client draws for the agent. It is the
 record's own `icon` as a one-item list when the record names one, and otherwise
@@ -1962,13 +1969,15 @@ own included, and is refused the subscription. A subscribe also takes
 `?owner=me`, which narrows the listing to the caller's own agents: a `host`
 agent belongs to everyone and to nobody, so it is left out.
 
-Three commands serve an agent:
+Five commands serve an agent:
 
 | Method | Grant | What it does |
 | --- | --- | --- |
 | `x-ahpd/agents/put` | `agent:put`, and the owner's | Makes or changes `{ id, engine, owner, name, description?, icon?, model?, config }`, checks `config` against the engine's schema, moves each secret to the vault, writes the record, calls the engine's `open` and folds the new agent list into the running host. Answers the row |
 | `x-ahpd/agents/remove` | `agent:remove`, and the owner's | Ends the sessions that run on `{ id }`, takes its secrets out of the vault and takes the record out |
-| `x-ahpd/agents/check` | `agent:put`, and the owner's | Builds `{ id }` again, asks its probe and answers the row with its alerts. A probe that has not answered in 10 seconds is `unreachable` |
+| `x-ahpd/agents/check` | `agent:put`, and the owner's | Builds `{ id }` again, asks its probe and answers the row with its alerts. A probe that has not answered in 10 seconds is `unreachable`. A record that is off is refused |
+| `x-ahpd/agents/disable` | `agent:put`, and the owner's | Writes `enabled: false` on `{ id }`, folds the new list and answers the row. The record is not opened, and its sessions are kept |
+| `x-ahpd/agents/enable` | `agent:put`, and the owner's | Writes `enabled: true` on `{ id }`, opens the record again, folds the new list and answers the row |
 
 The owner narrows the grant, as it does for a connector. A `host` agent needs
 `agent:put` or `agent:remove` and `agent:host` beside either. A `team:<team>`
@@ -1996,9 +2005,11 @@ answer stays written and shows as `failed`, so a key a person adds later is
 picked up at the next start.
 
 An edit keeps the agent and its sessions: the view `open` was handed is updated
-in place, so a running session reads the new record at its next turn. A record
-whose engine no plugin registers any more stays on disk and shows as
-`unavailable`, because a plugin turned off keeps its agents.
+in place, so a running session reads the new record at its next turn. A put
+keeps the record's `enabled` as it was and refuses an `enabled` parameter, so
+an edit is not a toggle. A record whose engine no plugin registers any more
+stays on disk and shows as `unavailable`, because a plugin turned off keeps its
+agents.
 
 The daemon keeps the agents in the JSON collection `agents`, so one is
 `<configDir>/agents/<id>.json`.

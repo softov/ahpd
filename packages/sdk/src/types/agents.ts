@@ -67,6 +67,8 @@ export interface AgentRecord {
   model?: string;
   /** The engine's own values, held to its schema. */
   config: Record<string, unknown>;
+  /** Whether the agent is on. A record that names none is on, and an `enabled: false` record is not opened. */
+  enabled?: boolean;
 }
 
 /**
@@ -172,5 +174,5 @@ export interface ServedEngine extends Engine {
   spec?: string;
 }
 
-/** The four states an agent row can be in. */
-export type AgentState = 'ready' | 'failed' | 'invalid' | 'unavailable';
+/** The five states an agent row can be in. */
+export type AgentState = 'ready' | 'failed' | 'invalid' | 'unavailable' | 'disabled';

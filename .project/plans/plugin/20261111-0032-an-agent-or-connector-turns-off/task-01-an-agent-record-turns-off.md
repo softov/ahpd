@@ -1,6 +1,6 @@
 ---
 title: An agent record turns off
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -56,3 +56,11 @@ The channel answers which ids are disabled, for the host.
 - `TMPDIR=/home/softov/tmp/ahpd-test npx vitest run packages/sdk` passes.
 
 ## Resume
+
+2026-11-11. `AgentState` has `disabled`, and `AgentRecord` documents its optional `enabled`. The channel names `ENABLE` and `DISABLE` beside `PUT`, `REMOVE` and `CHECK`, and `stateOf` answers `disabled` for `enabled: false` before any other state.
+
+`sync` skips a disabled record before it reads the engine, drops its `open` entry, its views, its alerts and its open failures, and leaves its id out of the `endSessionsOf` loop, so a toggle keeps the sessions it has. `put` refuses an `enabled` parameter and carries the stored `enabled` into the record. `enable` and `disable` take `agent:put` and the owner's rule, write the record, run `take(await sync())`, refresh and answer the row. `check` refuses a disabled record, which shows no alerts. The channel answers `disabled()` from the last read of the collection.
+
+The tests cover the row and the fold, the kept sessions, a stored disabled record with a missing `fromEnv` variable, enabling again, a put on a disabled record, and the two refusals. `PLUGINS.md` lists the state, the field and the two methods, and the release notes say a record turns off and on.
+
+`packages/sdk/test/agents-channel.test.ts` passed 50 tests. The full `packages/sdk` suite passed 4712 tests, with 5 skipped and 2 failed in `host-permissions.test.ts`, which need a tmpdir outside the home. The harness denied every command with a `TMPDIR=` prefix, so the suite ran without it. The wire fixture did not change. `pnpm exec tsc -p tsconfig.json --noEmit` passed.
