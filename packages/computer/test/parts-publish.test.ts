@@ -68,7 +68,7 @@ it.skipIf(!posix)('builds every part for both platforms and pushes it where a ho
   // pushed, labelled with the repository.
   expect(built).toHaveLength(parts.length + 1);
   expect(built.every((one) => one.push && one.platforms.join() === 'linux/amd64,linux/arm64')).toBe(true);
-  expect(built.every((one) => one.labels.join() === 'org.opencontainers.image.source=https://github.com/softov/ahpd')).toBe(true);
+  expect(built.every((one) => one.labels.join() === 'org.opencontainers.image.source=https://github.com/ahpio/ahpd')).toBe(true);
   const at = (part: Part): number => built.findIndex((one) => one.tags.includes(remoteFor(part)));
   expect(at(node)).toBe(0);
   // The codex part copies node in by its tag, which here is the registry's image of it.

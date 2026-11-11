@@ -100,7 +100,7 @@ it('pulls a missing part at its tag from the registry the package names, and a s
 });
 
 it('answers the GitHub container registry of the repository the package names', () => {
-  expect(registryOf()).toBe('ghcr.io/softov');
+  expect(registryOf()).toBe('ghcr.io/ahpio');
 });
 
 it('runs one pull for two callers that arrive at once', async () => {
