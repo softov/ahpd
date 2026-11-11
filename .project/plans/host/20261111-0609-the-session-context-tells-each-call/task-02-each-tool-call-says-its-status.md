@@ -1,6 +1,6 @@
 ---
 title: Each tool call says its status
-status: todo
+status: implemented
 depends: [task-01-the-context-answers-vscodes-fields.md]
 layer: "sdk, docs"
 refs:
@@ -45,4 +45,6 @@ A completed call adds `ok`, a cancelled call adds `reason`, and a call that fail
 - `TMPDIR=/home/softov/tmp/ahpd-test npx vitest run packages/sdk` passes, then `packages/server`.
 
 ## Resume
+
+Implemented 2026-11-11. At `digest` and `full`, each call is `{ name, status }` from `serializeCall`. A completed call adds `ok` from its `success`. A failed call adds its `error` from `error.message`, cut to 200 characters. A cancelled call adds its `reason`. `full` still adds `input`, cut to 200, and `summary` lists no calls. The `detail` description gains the sentence on a call's status. The docs are `docs/sdk/TOOLS.md` and the *Upgrading* bullet in `docs/updates/v0_15.md`. Tests are in `packages/sdk/test/sessiontools.test.ts`. Gate: `pnpm exec tsc -p tsconfig.json --noEmit` is clean and `pnpm -s schema` generated 508 definitions. The sdk and server vitest suites did not run: the mandated `flock` prefix is denied by this session's permission mode.
 

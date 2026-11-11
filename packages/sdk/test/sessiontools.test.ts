@@ -293,13 +293,14 @@ describe('the filters list_sessions takes', () => {
 });
 
 describe('a transcript as get_session_context answers it', () => {
-  const turn = (id: string, user: string, assistant: string, calls: { toolName: string; toolInput?: unknown; status?: string }[] = []) => ({
+  type Call = { toolName: string; toolInput?: unknown; status?: string; success?: boolean; error?: { message: string }; reason?: string };
+  const turn = (id: string, user: string, assistant: string, calls: Call[] = []) => ({
     id,
     state: 'complete',
     message: { text: user, origin: { kind: 'user' } },
     responseParts: [
       { kind: 'markdown', id: `${id}-m`, content: assistant },
-      ...calls.map((call, index) => ({ kind: 'toolCall', id: `${id}-c${index}`, toolCall: { status: 'completed', ...call } })),
+      ...calls.map((call, index) => ({ kind: 'toolCall', id: `${id}-c${index}`, toolCall: { status: 'completed', success: true, ...call } })),
     ],
   });
   const snapshot = {
@@ -309,6 +310,41 @@ describe('a transcript as get_session_context answers it', () => {
     ],
     activeTurn: { id: 't3', message: { text: 'and the makefile?' }, responseParts: [] },
     hasMoreHistory: true,
+  };
+
+  type ContextAnswer = {
+    harness?: string;
+    transcript: Record<string, unknown>[];
+    messagesSentByMe?: unknown;
+    responseTurnId?: string;
+    responseOffset?: number;
+    state?: string;
+    assistant?: string;
+    responseLength?: number;
+    nextResponseOffset?: number;
+    truncated?: boolean;
+  };
+  const contextTool = () => {
+    const found = sessionTools().find((one) => one.definition.name === 'get_session_context');
+    if (found?.run === undefined) throw new Error('no get_session_context');
+    return found;
+  };
+  /** The tool's own answer, from a host that knows one row and holds one snapshot. */
+  const asking = async (
+    args: Record<string, unknown>,
+    over: { rows?: Summary[]; snapshot?: unknown; at?: Partial<ToolCall> } = {},
+  ): Promise<ContextAnswer> => {
+    const at = {
+      session: 'ahp-session:/s1',
+      chat: 'ahp-chat:/caller',
+      turn: () => 't1',
+      may: () => true,
+      refusal: () => 'refused',
+      sessions: async () => over.rows ?? [row()],
+      context: async () => over.snapshot ?? snapshot,
+      ...over.at,
+    } as unknown as ToolCall;
+    return JSON.parse(await contextTool().run(args, at) as string);
   };
 
   it('numbers the turns, marks the running one, and holds the tool calls back at summary', () => {
@@ -323,12 +359,116 @@ describe('a transcript as get_session_context answers it', () => {
     ]);
   });
 
-  it('names the tool calls at digest and shows their input at full', () => {
+  /*
+   * A call is an object at every level that carries one: the protocol's own
+   * status word is what every call has, a completed one says whether it
+   * worked, a failed one adds its error, and a cancelled one says why. The
+   * input is the caller's, and only `full` carries it.
+   */
+  it('says what became of each tool call, and shows its input only at full', () => {
     const digest = serializeContext(row(), 'side', snapshot, 'digest', 10);
     expect(digest.openLink).toBe('agent-host-session://claude/s1?chat=side');
-    expect((digest.transcript as { toolCalls?: unknown }[])[0]?.toolCalls).toEqual(['Bash']);
+    expect((digest.transcript as { toolCalls?: unknown }[])[0]?.toolCalls).toEqual([
+      { name: 'Bash', status: 'completed', ok: true },
+    ]);
     const full = serializeContext(row(), undefined, snapshot, 'full', 10);
-    expect((full.transcript as { toolCalls?: unknown }[])[0]?.toolCalls).toEqual([{ name: 'Bash', input: 'ls' }]);
+    expect((full.transcript as { toolCalls?: unknown }[])[0]?.toolCalls).toEqual([
+      { name: 'Bash', status: 'completed', ok: true, input: 'ls' },
+    ]);
+  });
+
+  it('says a call was refused, failed, or still waits for an answer', () => {
+    const calls: Call[] = [
+      { toolName: 'Write', status: 'cancelled', reason: 'denied' },
+      { toolName: 'Bash', status: 'completed', success: false, error: { message: 'x'.repeat(300) } },
+      { toolName: 'Read', status: 'pending-confirmation' },
+    ];
+    const said = serializeContext(row(), undefined, {
+      turns: [turn('t1', 'ask', 'said', calls)], hasMoreHistory: false,
+    }, 'digest', 10);
+    const listed = (said.transcript as { toolCalls?: Record<string, unknown>[] }[])[0]?.toolCalls ?? [];
+    expect(listed[0]).toEqual({ name: 'Write', status: 'cancelled', reason: 'denied' });
+    expect(listed[1]).toMatchObject({ name: 'Bash', status: 'completed', ok: false });
+    expect(String(listed[1]?.error).length).toBe(200);
+    expect(String(listed[1]?.error).endsWith('…')).toBe(true);
+    expect(listed[2]).toEqual({ name: 'Read', status: 'pending-confirmation' });
+  });
+
+  it('marks a reply longer than its cap, and names the turn to read it whole', () => {
+    const cut = serializeContext(row(), undefined, {
+      turns: [turn('long', 'ask', 'y'.repeat(200))], hasMoreHistory: false,
+    }, 'summary', 10);
+    expect((cut.transcript as Record<string, unknown>[])[0]).toMatchObject({ assistantTruncated: true, responseTurnId: 'long' });
+    const whole = serializeContext(row(), undefined, {
+      turns: [turn('short', 'ask', 'a line')], hasMoreHistory: false,
+    }, 'summary', 10);
+    expect((whole.transcript as Record<string, unknown>[])[0]?.assistantTruncated).toBeUndefined();
+    expect((whole.transcript as Record<string, unknown>[])[0]?.responseTurnId).toBeUndefined();
+  });
+
+  it('lists the pending messages the calling chat sent, and no one else\'s', () => {
+    const left = (id: string, text: string, from: string, revision: number) => ({
+      pending: {
+        id,
+        message: { text, _meta: { 'vscode.chat.delegation': { sourceSession: 'ahp-session:/caller', sourceChat: from, messageId: id, revision } } },
+      },
+    });
+    const pendingMessages = [
+      { kind: 'steering' as const, ...left('m-steer', 'stop', 'ahp-chat:/caller', 2) },
+      { kind: 'queued' as const, ...left('m-mine', 'later', 'ahp-chat:/caller', 1) },
+      { kind: 'queued' as const, ...left('m-theirs', 'theirs', 'ahp-chat:/other', 1) },
+    ];
+    const said = serializeContext(row(), 'target', { turns: [], hasMoreHistory: false, pendingMessages }, 'summary', 10, {
+      chat: 'ahp-chat:/caller',
+    });
+    expect(said.messagesSentByMe).toEqual([
+      { messageId: 'm-steer', revision: 2, delivery: 'steer', status: 'processing', message: 'stop' },
+      { messageId: 'm-mine', revision: 1, delivery: 'queue', status: 'pending', message: 'later' },
+    ]);
+    // Nobody with no session behind it has sent anything here.
+    expect(serializeContext(row(), 'target', { turns: [], hasMoreHistory: false, pendingMessages }, 'summary', 10)
+      .messagesSentByMe).toBeUndefined();
+  });
+
+  it('names the agent of a chat that runs another than its session', async () => {
+    const mixed = row({
+      chats: [
+        { resource: 'ahp-chat:/side', title: 'Side', provider: 'codex' },
+        { resource: 'ahp-chat:/same', title: 'Same' },
+      ],
+    });
+    expect((await asking({ session: 'agent-host-session://claude/s1?chat=side' }, { rows: [mixed] })).harness).toBe('codex');
+    expect((await asking({ session: 'agent-host-session://claude/s1?chat=same' }, { rows: [mixed] })).harness).toBeUndefined();
+    expect((await asking({ session: 'agent-host-session://claude/s1' }, { rows: [mixed] })).harness).toBeUndefined();
+  });
+
+  it('reads a reply longer than a page in pages of 8000, until none is cut', async () => {
+    const assistant = Array.from({ length: 17000 }, (_, i) => String.fromCharCode(97 + (i % 26))).join('');
+    const paged = { turns: [turn('long', 'ask', assistant)], hasMoreHistory: false };
+    let said = await asking({ session: 'ahp-session:/s1', responseTurnId: 'long' }, { snapshot: paged });
+    expect(said).toMatchObject({ responseTurnId: 'long', responseOffset: 0, state: 'complete', responseLength: 17000, truncated: true });
+    expect(said.assistant).toBe(assistant.slice(0, 8000));
+    expect(said.nextResponseOffset).toBe(8000);
+    let read = said.assistant ?? '';
+    let pages = 1;
+    while (said.truncated === true) {
+      said = await asking({ session: 'ahp-session:/s1', responseTurnId: 'long', responseOffset: said.nextResponseOffset }, { snapshot: paged });
+      read += said.assistant ?? '';
+      pages++;
+    }
+    expect(pages).toBe(3);
+    expect(read).toBe(assistant);
+    expect(said.nextResponseOffset).toBeUndefined();
+  });
+
+  it('refuses a turn it does not hold, an offset past the reply, and an offset on its own', async () => {
+    const paged = { turns: [turn('long', 'ask', 'a line')], hasMoreHistory: false };
+    await expect(asking({ session: 'ahp-session:/s1', responseTurnId: 'gone' }, { snapshot: paged }))
+      .rejects.toThrow('The requested response turn is unavailable. Read the session context again for current responseTurnId values.');
+    await expect(asking({ session: 'ahp-session:/s1', responseTurnId: 'long', responseOffset: 99 }, { snapshot: paged }))
+      .rejects.toThrow('Invalid get_session_context input: responseOffset exceeds the response length.');
+    await expect(asking({ session: 'ahp-session:/s1', responseOffset: 1 }))
+      .rejects.toThrow('Invalid get_session_context input: responseOffset must be a nonnegative safe integer and requires responseTurnId.');
   });
 
   it('keeps the newest turns inside the limit, and says it cut', () => {
@@ -1268,6 +1408,31 @@ describe("VS Code's limits on spawning and messaging", () => {
     }, from.at))).toMatchObject({
       action: 'rejected', reason: 'messageNotFound', messageId: queued.messageId,
     });
+  });
+
+  /*
+   * The reader's own messages still waiting in another chat, which is how it
+   * recovers the id and revision to replace or cancel one. A message another
+   * chat left there is not its to see.
+   */
+  it('gives a reader the pending message its own chat sent, and no other chat\'s', async () => {
+    const client = await top();
+    const from = await started(client, 'from');
+    const to = await started(client, 'to');
+    await turning(client, await mintedChat(client, to.held));
+    const queued = answered(await call('send_message', { session: to.held, message: 'first draft' }, from.at));
+    expect(queued).toMatchObject({ action: 'queued', revision: 1 });
+
+    const seen = JSON.parse(said(await call('get_session_context', { session: to.held }, from.at))) as {
+      messagesSentByMe?: { messageId: string; revision: number; delivery: string; status: string; message: string }[];
+    };
+    expect(seen.messagesSentByMe).toEqual([
+      { messageId: queued.messageId, revision: 1, delivery: 'queue', status: 'pending', message: 'first draft' },
+    ]);
+
+    const other = await started(client, 'elsewhere');
+    const theirs = JSON.parse(said(await call('get_session_context', { session: to.held }, other.at))) as { messagesSentByMe?: unknown };
+    expect(theirs.messagesSentByMe).toEqual([]);
   });
 });
 

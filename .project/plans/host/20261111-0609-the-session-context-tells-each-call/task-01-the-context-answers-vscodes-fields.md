@@ -1,6 +1,6 @@
 ---
 title: The context answers VS Code's fields
-status: todo
+status: implemented
 depends: []
 layer: "sdk, docs"
 refs:
@@ -54,4 +54,6 @@ It answers `messagesSentByMe` for the calling chat, and `harness` for a chat tha
 - `TMPDIR=/home/softov/tmp/ahpd-test npx vitest run packages/sdk` passes.
 
 ## Resume
+
+Implemented 2026-11-11. `get_session_context` answers `assistantTruncated` and `responseTurnId` for a reply longer than its level's cap. It takes `responseTurnId` with `responseOffset` to read one completed turn's reply in pages of 8000 characters, with `responseLength`, `nextResponseOffset` and `truncated`. It refuses an unknown turn and an offset past the reply in VS Code's own sentences. `messagesSentByMe` lists the calling chat's own pending messages from the host's new `pendingMessages`. Each one carries `messageId`, `revision`, `delivery`, `status` and `message`, and a caller with no session gets none. `harness` names a chat's agent where the host records another than its session's, through `harnessOf`, which reads the row's `chats` by `idOf`. `packages/sdk/src/types/host.ts` and `packages/sdk/src/host/tooling.ts` carry the pending messages, which are beyond this task's Files. Tests are in `packages/sdk/test/sessiontools.test.ts`. Gate: `pnpm exec tsc -p tsconfig.json --noEmit` is clean and `pnpm -s schema` generated 508 definitions. The vitest suites did not run: the mandated `flock` prefix is denied by this session's permission mode.
 
