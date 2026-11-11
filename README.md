@@ -1,9 +1,9 @@
 # <img src="docs/public/logo.svg" alt="" height="32"> ahpd - agent host platform
 
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 [![@ahpd/server](https://img.shields.io/npm/v/%40ahpd%2Fserver?label=%40ahpd%2Fserver)](https://www.npmjs.com/package/@ahpd/server)
 [![@ahpd/sdk](https://img.shields.io/npm/v/%40ahpd%2Fsdk?label=%40ahpd%2Fsdk)](https://www.npmjs.com/package/@ahpd/sdk)
-[![docs](https://img.shields.io/badge/docs-softov.github.io%2Fahpd-0b7285)](https://softov.github.io/ahpd/)
+[![docs](https://img.shields.io/badge/docs-ahpio.github.io%2Fahpd-0b7285)](https://ahpio.github.io/ahpd/)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 1.0.0](https://img.shields.io/badge/AHP-1.0.0-0b7285)
@@ -17,9 +17,9 @@ Run agents on your computer, a remote server, or in containers. Connect from you
 
 Your work stays on the server. You can close an app, switch devices, or disconnect without losing your session.
 
-Built on the [Agent Host Protocol (AHP)](https://microsoft.github.io/agent-host-protocol/). See [AHP compatibility](https://softov.github.io/ahpd/sdk/AHP) for what it implements.
+Built on the [Agent Host Protocol (AHP)](https://microsoft.github.io/agent-host-protocol/). See [AHP compatibility](https://ahpio.github.io/ahpd/sdk/AHP) for what it implements.
 
-[Read the documentation](https://softov.github.io/ahpd/) · [GitHub](https://github.com/softov/ahpd) · [ahpio.com](https://ahpio.com)
+[Read the documentation](https://ahpio.github.io/ahpd/) · [GitHub](https://github.com/ahpio/ahpd) · [ahpio.com](https://ahpio.com)
 
 ---
 
@@ -37,7 +37,7 @@ On Windows, in PowerShell:
 irm https://ahpio.com/ahpd/install.ps1 | iex
 ```
 
-The script checks for Node 22.18 or newer, installs `@ahpd/server` without sudo, adds `ahpd` to your PATH, and runs `ahpd configure`. [Install options](https://softov.github.io/ahpd/server/INSTALL)
+The script checks for Node 22.18 or newer, installs `@ahpd/server` without sudo, adds `ahpd` to your PATH, and runs `ahpd configure`. [Install options](https://ahpio.github.io/ahpd/server/INSTALL)
 
 Or install with npm, then run the setup:
 
@@ -76,7 +76,7 @@ By default, the host listens on loopback. To listen on another interface, config
 ahpd --host 0.0.0.0 --connection-token-file ~/.config/ahpd/token
 ```
 
-Only expose the host to networks you trust, and protect the token. See the [remote access documentation](https://softov.github.io/ahpd/server/REMOTE).
+Only expose the host to networks you trust, and protect the token. See the [remote access documentation](https://ahpio.github.io/ahpd/server/REMOTE).
 
 ---
 
@@ -120,7 +120,7 @@ See what each person, team, and project has spent on models. Set daily, weekly, 
 
 **🔀 Share your models**
 
-Point your agent or a script at your host and call any model with your ahpd token. The host uses the provider's key, applies your policies, and records the cost. [Model proxy](https://softov.github.io/ahpd/server/PROXY)
+Point your agent or a script at your host and call any model with your ahpd token. The host uses the provider's key, applies your policies, and records the cost. [Model proxy](https://ahpio.github.io/ahpd/server/PROXY)
 
 ---
 
@@ -150,7 +150,7 @@ ahpd supports several agent integrations. Each integration runs as a plugin.
 
 [![@ahpd/agent-claude](https://img.shields.io/npm/v/%40ahpd%2Fagent-claude?label=%40ahpd%2Fagent-claude)](https://www.npmjs.com/package/@ahpd/agent-claude)
 
-**✻ [`@ahpd/agent-claude`](packages/agent-claude/)**: Run Claude through the Claude Agent SDK. [docs](https://softov.github.io/ahpd/plugins/agent-claude)
+**✻ [`@ahpd/agent-claude`](packages/agent-claude/)**: Run Claude through the Claude Agent SDK. [docs](https://ahpio.github.io/ahpd/plugins/agent-claude)
 
 ```bash
 ahpd plugin install @ahpd/agent-claude
@@ -158,21 +158,21 @@ ahpd plugin install @ahpd/agent-claude
 
 [![@ahpd/agent-pi](https://img.shields.io/npm/v/%40ahpd%2Fagent-pi?label=%40ahpd%2Fagent-pi)](https://www.npmjs.com/package/@ahpd/agent-pi)
 
-**π [`@ahpd/agent-pi`](packages/agent-pi/)**: Run the pi coding agent directly in the host. [docs](https://softov.github.io/ahpd/plugins/agent-pi)
+**π [`@ahpd/agent-pi`](packages/agent-pi/)**: Run the pi coding agent directly in the host. [docs](https://ahpio.github.io/ahpd/plugins/agent-pi)
 ```bash
 ahpd plugin install @ahpd/agent-pi
 ```
 
 [![@ahpd/agent-acp](https://img.shields.io/npm/v/%40ahpd%2Fagent-acp?label=%40ahpd%2Fagent-acp)](https://www.npmjs.com/package/@ahpd/agent-acp)
 
-**⇄ [`@ahpd/agent-acp`](packages/agent-acp/)**: Codex, Copilot, Gemini, and other supported agents through Agent Client Protocol. [docs](https://softov.github.io/ahpd/plugins/agent-acp)
+**⇄ [`@ahpd/agent-acp`](packages/agent-acp/)**: Codex, Copilot, Gemini, and other supported agents through Agent Client Protocol. [docs](https://ahpio.github.io/ahpd/plugins/agent-acp)
 ```bash
 ahpd plugin install @ahpd/agent-acp
 ```
 
 [![@ahpd/agent-cofold](https://img.shields.io/npm/v/%40ahpd%2Fagent-cofold?label=%40ahpd%2Fagent-cofold)](https://www.npmjs.com/package/@ahpd/agent-cofold)
 
-**◈ [`@ahpd/agent-cofold`](packages/agent-cofold/)**: Generic harness to use supported OpenAI-compatible models. [docs](https://softov.github.io/ahpd/plugins/agent-cofold)
+**◈ [`@ahpd/agent-cofold`](packages/agent-cofold/)**: Generic harness to use supported OpenAI-compatible models. [docs](https://ahpio.github.io/ahpd/plugins/agent-cofold)
 ```bash
 ahpd plugin install @ahpd/agent-cofold
 ```
@@ -185,49 +185,49 @@ Each capability can be configured to fit your environment.
 
 [![@ahpd/computer](https://img.shields.io/npm/v/%40ahpd%2Fcomputer?label=%40ahpd%2Fcomputer)](https://www.npmjs.com/package/@ahpd/computer)
 
-**[`@ahpd/computer`](packages/computer/)**: Create isolated environments for agentic tasks. [docs](https://softov.github.io/ahpd/plugins/computer) 
+**[`@ahpd/computer`](packages/computer/)**: Create isolated environments for agentic tasks. [docs](https://ahpio.github.io/ahpd/plugins/computer) 
 ```bash
 ahpd plugin install @ahpd/computer
 ```
 
 [![@ahpd/bot](https://img.shields.io/npm/v/%40ahpd%2Fbot?label=%40ahpd%2Fbot)](https://www.npmjs.com/package/@ahpd/bot)
 
-**[`@ahpd/bot`](packages/bot/)**: Give an agent its own identity, workspace, and session. [docs](https://softov.github.io/ahpd/plugins/bot)
+**[`@ahpd/bot`](packages/bot/)**: Give an agent its own identity, workspace, and session. [docs](https://ahpio.github.io/ahpd/plugins/bot)
 ```bash
 ahpd plugin install @ahpd/bot
 ```
 
 [![@ahpd/webhook](https://img.shields.io/npm/v/%40ahpd%2Fwebhook?label=%40ahpd%2Fwebhook)](https://www.npmjs.com/package/@ahpd/webhook)
 
-**[`@ahpd/webhook`](packages/webhook/)**: Start work from an HTTP request. [docs](https://softov.github.io/ahpd/plugins/webhook)
+**[`@ahpd/webhook`](packages/webhook/)**: Start work from an HTTP request. [docs](https://ahpio.github.io/ahpd/plugins/webhook)
 ```bash
 ahpd plugin install @ahpd/webhook
 ```
 
 [![@ahpd/tunnel-devtunnel](https://img.shields.io/npm/v/%40ahpd%2Ftunnel-devtunnel?label=%40ahpd%2Ftunnel-devtunnel)](https://www.npmjs.com/package/@ahpd/tunnel-devtunnel)
 
-**[`@ahpd/tunnel-devtunnel`](packages/tunnel-devtunnel/)**: Reach your host from VS Code on another network, through a Microsoft Dev Tunnel. [docs](https://softov.github.io/ahpd/plugins/tunnel-devtunnel)
+**[`@ahpd/tunnel-devtunnel`](packages/tunnel-devtunnel/)**: Reach your host from VS Code on another network, through a Microsoft Dev Tunnel. [docs](https://ahpio.github.io/ahpd/plugins/tunnel-devtunnel)
 ```bash
 ahpd plugin install @ahpd/tunnel-devtunnel
 ```
 
 [![@ahpd/tasks](https://img.shields.io/npm/v/%40ahpd%2Ftasks?label=%40ahpd%2Ftasks)](https://www.npmjs.com/package/@ahpd/tasks)
 
-**[`@ahpd/tasks`](packages/tasks/)**: Keep one list of tasks and plans that every agent and person reads and writes. [docs](https://softov.github.io/ahpd/plugins/tasks)
+**[`@ahpd/tasks`](packages/tasks/)**: Keep one list of tasks and plans that every agent and person reads and writes. [docs](https://ahpio.github.io/ahpd/plugins/tasks)
 ```bash
 ahpd plugin install @ahpd/tasks
 ```
 
 [![@ahpd/push](https://img.shields.io/npm/v/%40ahpd%2Fpush?label=%40ahpd%2Fpush)](https://www.npmjs.com/package/@ahpd/push)
 
-**[`@ahpd/push`](packages/push/)**: Get a phone notification when a session needs you, with the app closed. [docs](https://softov.github.io/ahpd/plugins/push)
+**[`@ahpd/push`](packages/push/)**: Get a phone notification when a session needs you, with the app closed. [docs](https://ahpio.github.io/ahpd/plugins/push)
 ```bash
 ahpd plugin install @ahpd/push
 ```
 
 [![@ahpd/activepieces](https://img.shields.io/npm/v/%40ahpd%2Factivepieces?label=%40ahpd%2Factivepieces)](https://www.npmjs.com/package/@ahpd/activepieces)
 
-**[`@ahpd/activepieces`](packages/activepieces/)**: Use Activepieces connectors as tools for your sessions and bots. [docs](https://softov.github.io/ahpd/plugins/activepieces)
+**[`@ahpd/activepieces`](packages/activepieces/)**: Use Activepieces connectors as tools for your sessions and bots. [docs](https://ahpio.github.io/ahpd/plugins/activepieces)
 ```bash
 ahpd plugin install @ahpd/activepieces
 ```
@@ -291,7 +291,7 @@ const host = createHost({ path, agents: [claude({ paths: [path] })] });
 await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
 
-[Build your own host](https://softov.github.io/ahpd/sdk/BUILD-A-HOST)
+[Build your own host](https://ahpio.github.io/ahpd/sdk/BUILD-A-HOST)
 
 ### 🧩 Write plugins and agents
 
@@ -348,13 +348,13 @@ flowchart LR
 > Plugins execute inside the daemon with its permissions: install only code you trust.
 > Add the integrations you need. Remove or disable the ones you do not use.
 
-[Write a plugin](https://softov.github.io/ahpd/plugins/PLUGINS) · [Write an agent](https://softov.github.io/ahpd/sdk/AGENT) · [Smallest agent example](examples/echo)
+[Write a plugin](https://ahpio.github.io/ahpd/plugins/PLUGINS) · [Write an agent](https://ahpio.github.io/ahpd/sdk/AGENT) · [Smallest agent example](examples/echo)
 
 ---
 
 ## Documentation
 
-The full documentation is at [softov.github.io/ahpd](https://softov.github.io/ahpd/).
+The full documentation is at [ahpio.github.io/ahpd](https://ahpio.github.io/ahpd/).
 
 | Document | Purpose |
 | --- | --- |
@@ -382,12 +382,12 @@ Tips, PRs, and contributions are welcome!
 
 Read [DEVELOPER.md](DEVELOPER.md) for detailed development guidelines.
 
-Discuss development, issues, and ideas on the [GitHub Discussions](https://github.com/softov/ahpd/discussions) page.
+Discuss development, issues, and ideas on the [GitHub Discussions](https://github.com/ahpio/ahpd/discussions) page.
 
 Any development starts with cloning or forking the repository and installing dependencies.
 
 ```bash
-git clone https://github.com/softov/ahpd
+git clone https://github.com/ahpio/ahpd
 cd ahpd
 
 pnpm install
@@ -417,4 +417,4 @@ Use it for a personal project, a development team, or an application that needs 
 
 ahpd is part of ahpio, the Agent Host Platform. Get to know the whole platform at [ahpio.com](https://ahpio.com).
 
-[Documentation](https://softov.github.io/ahpd/) · [Source Code](https://github.com/softov/ahpd) · [ahpio.com](https://ahpio.com)
+[Documentation](https://ahpio.github.io/ahpd/) · [Source Code](https://github.com/ahpio/ahpd) · [ahpio.com](https://ahpio.com)

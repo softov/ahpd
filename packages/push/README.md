@@ -1,7 +1,7 @@
 # @ahpd/push
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Fpush)](https://www.npmjs.com/package/@ahpd/push)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 1.0.0](https://img.shields.io/badge/AHP-1.0.0-0b7285)
@@ -10,7 +10,7 @@ Push notifications for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/
 
 It is two halves. A `push:` resource provider keeps the registered devices. The plugin is VS Code's sessions window notifier, carried to a phone or a browser: a client of the daemon that holds its session list and tells a person's devices when one of their sessions needs them, completes or fails.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/push`](https://github.com/softov/ahpd/tree/main/packages/push).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/push`](https://github.com/ahpio/ahpd/tree/main/packages/push).
 
 ## Install
 
@@ -19,7 +19,7 @@ ahpd plugin install @ahpd/push
 ahpd restart
 ```
 
-Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md).
+Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md).
 
 ## Options
 
@@ -127,8 +127,8 @@ A push service sees which host talks to which browser, and when. The message is 
 
 | | |
 | --- | --- |
-| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md) | Writing and loading a plugin, and the events a plugin may watch |
-| [GET-STARTED.md](https://github.com/softov/ahpd/blob/main/docs/server/GET-STARTED.md) | Running the daemon |
+| [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md) | Writing and loading a plugin, and the events a plugin may watch |
+| [GET-STARTED.md](https://github.com/ahpio/ahpd/blob/main/docs/server/GET-STARTED.md) | Running the daemon |
 
 ## License
 

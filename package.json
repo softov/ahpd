@@ -9,7 +9,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/softov/ahpd.git"
+    "url": "git+https://github.com/ahpio/ahpd.git"
   },
   "scripts": {
     "build": "tsc -p packages/sdk && tsc -p packages/agent-claude && tsc -p packages/agent-cofold && tsc -p packages/agent-acp && tsc -p packages/agent-pi && tsc -p packages/computer && tsc -p packages/bot && tsc -p packages/push && tsc -p packages/webhook && tsc -p packages/tasks && tsc -p packages/tunnel-devtunnel && tsc -p packages/activepieces && tsc -p packages/server",

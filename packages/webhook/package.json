@@ -19,14 +19,14 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/softov/ahpd/tree/main/packages/webhook#readme",
+  "homepage": "https://github.com/ahpio/ahpd/tree/main/packages/webhook#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/softov/ahpd.git",
+    "url": "git+https://github.com/ahpio/ahpd.git",
     "directory": "packages/webhook"
   },
   "bugs": {
-    "url": "https://github.com/softov/ahpd/issues"
+    "url": "https://github.com/ahpio/ahpd/issues"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -69,7 +69,7 @@
     "title": "Webhook",
     "description": "Give a bot or an automation its own URL, with a secret for each endpoint.",
     "categories": ["connector"],
-    "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
+    "links": [{ "title": "Repository", "url": "https://github.com/ahpio/ahpd" }],
     "icons": [
       { "src": "./icon.svg", "theme": "light" },
       { "src": "./icon-dark.svg", "theme": "dark" }

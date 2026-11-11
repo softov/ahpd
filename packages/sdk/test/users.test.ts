@@ -37,7 +37,7 @@ const AREAS: Grant[] = [
 
 it('advertises a record the standard recognises: a page field and no invented issuer', () => {
   const record = open().resource;
-  expect(record.resource_documentation).toBe('https://github.com/softov/ahpd/blob/main/docs/sdk/USERS.md');
+  expect(record.resource_documentation).toBe('https://github.com/ahpio/ahpd/blob/main/docs/sdk/USERS.md');
   expect(record).not.toHaveProperty('authorization_servers');
   expect(record.required).toBe(true);
   expect(record.resource_name).toBe('ahpd users');
@@ -49,7 +49,7 @@ it('advertises the identifier a deployment names, and keeps the rest of the reco
   const record = signInRecord('https://ahpd.example.com/');
   expect(record.resource).toBe('https://ahpd.example.com/');
   expect(record.resource_name).toBe('ahpd users');
-  expect(record.resource_documentation).toBe('https://github.com/softov/ahpd/blob/main/docs/sdk/USERS.md');
+  expect(record.resource_documentation).toBe('https://github.com/ahpio/ahpd/blob/main/docs/sdk/USERS.md');
   expect(record).not.toHaveProperty('authorization_servers');
 });
 

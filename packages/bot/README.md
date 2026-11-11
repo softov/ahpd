@@ -1,14 +1,14 @@
 # @ahpd/bot
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Fbot)](https://www.npmjs.com/package/@ahpd/bot)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 1.0.0](https://img.shields.io/badge/AHP-1.0.0-0b7285)
 
 A bot plugin for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) daemon. It serves the `bot:` scheme, where a bot is a record with a workspace of its own, talked to in a chat of its own.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/bot`](https://github.com/softov/ahpd/tree/main/packages/bot).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/bot`](https://github.com/ahpio/ahpd/tree/main/packages/bot).
 
 ## Install
 
@@ -17,7 +17,7 @@ ahpd plugin install @ahpd/bot
 ahpd restart
 ```
 
-Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md).
+Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md).
 
 ## Options
 
@@ -43,7 +43,7 @@ The plugin's own entry needs `session:read` and `session:write`: a message is se
 
 A bot is a record of the host's record store, so the daemon keeps each one in a folder of its own: `<configDir>/bots/<slug>/bot.md`, the fields as YAML frontmatter, with the tombstones in `<configDir>/bots-gone/`. Beside the record are `sessions/` for the back session rows and `logs/` for the chat logs. A file there that cannot be read is reported and skipped, and every other bot is kept. A bot's `AGENTS.md` is not there: it is in the bot's work folder, `<root>/<slug>/`.
 
-The record store is a port, so a plugin that takes it over with `registerRecords(store, 'replace')` - a sqlite or a postgresql store - keeps the bots there instead of in files, and nothing in this plugin changes. [`docs/plugins/BOTS.md`](https://github.com/softov/ahpd/blob/main/docs/plugins/BOTS.md#the-record-file) shows one bot file and what a hand edit may change.
+The record store is a port, so a plugin that takes it over with `registerRecords(store, 'replace')` - a sqlite or a postgresql store - keeps the bots there instead of in files, and nothing in this plugin changes. [`docs/plugins/BOTS.md`](https://github.com/ahpio/ahpd/blob/main/docs/plugins/BOTS.md#the-record-file) shows one bot file and what a hand edit may change.
 
 No option holds a credential, so the plugin takes nothing from the vault.
 
@@ -104,7 +104,7 @@ A listing shows what a read would allow: a list that showed a bot the reader can
 
 ### The catalogue
 
-A subscribe to `x-ahpd-bots://` answers `{ bots }`, the bots the reader may read, then `x-ahpd-bots/added`, `x-ahpd-bots/changed` and `x-ahpd-bots/removed` as they change - [BOTS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/BOTS.md#the-catalogue).
+A subscribe to `x-ahpd-bots://` answers `{ bots }`, the bots the reader may read, then `x-ahpd-bots/added`, `x-ahpd-bots/changed` and `x-ahpd-bots/removed` as they change - [BOTS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/BOTS.md#the-catalogue).
 
 ### The workspace
 
@@ -134,9 +134,9 @@ A deleted slug is not made again. A client held the address, and a different bot
 
 | | |
 | --- | --- |
-| [BOTS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/BOTS.md) | The `bot:` scheme, the record and the chat |
-| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md) | Writing and loading a plugin |
-| [GET-STARTED.md](https://github.com/softov/ahpd/blob/main/docs/server/GET-STARTED.md) | Running the daemon |
+| [BOTS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/BOTS.md) | The `bot:` scheme, the record and the chat |
+| [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md) | Writing and loading a plugin |
+| [GET-STARTED.md](https://github.com/ahpio/ahpd/blob/main/docs/server/GET-STARTED.md) | Running the daemon |
 
 ## License
 

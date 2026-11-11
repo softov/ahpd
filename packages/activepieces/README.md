@@ -1,7 +1,7 @@
 # @ahpd/activepieces
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Factivepieces)](https://www.npmjs.com/package/@ahpd/activepieces)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
@@ -12,7 +12,7 @@ A connector of a piece is one account: a Resend connector is one Resend key, and
 
 The pieces run in the engine, the process Activepieces runs piece code in, with no Activepieces server and no Docker. A piece bundles an HTTP client that turns off TLS checks for the process it runs in. The daemon starts one engine for the pieces and pins that setting there.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/activepieces`](https://github.com/softov/ahpd/tree/main/packages/activepieces).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/activepieces`](https://github.com/ahpio/ahpd/tree/main/packages/activepieces).
 
 ## Install
 
@@ -23,7 +23,7 @@ ahpd restart
 
 The pieces in the table below are dependencies of this package, so they arrive with it. A piece this package does not depend on is installed when its name is saved in `pieces`. The install goes into the plugin's own `installed/` folder, so a name that is not a dependency still arrives. Write a version after the name to pick one, as in `@activepieces/piece-postgres@0.5.1`; a name with no version installs the newest. The plugin says on its own row how each install ended, and a piece that still does not load is a warning there.
 
-Update, remove and one-run flags are in [Plugins](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md).
+Update, remove and one-run flags are in [Plugins](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md).
 
 ## Options
 
@@ -61,7 +61,7 @@ An adapter is named `ap-` and the piece's own name: `ap-resend`, `ap-telegram-bo
 | Stripe | `@activepieces/piece-stripe` | 0.9.0 | `SECRET_TEXT`, one secret key | MIT |
 | HubSpot | `@activepieces/piece-hubspot` | 0.13.1 | `CUSTOM_AUTH`, a private app access token | MIT |
 
-The versions are exact, and the versions `@activepieces/pieces-framework` at `0.32.0` describes. Each piece is in `packages/pieces/community/` or `packages/pieces/core/` of [github.com/activepieces/activepieces](https://github.com/activepieces/activepieces), which is MIT outside its `ee` folders. Slack, GitHub, Notion and HubSpot declare an OAuth2 connection beside the auth in the table, and this plugin offers only the auth in the table. An action that takes a file, such as Slack's file upload, takes it as a string: [An action that takes or writes a file](https://github.com/softov/ahpd/blob/main/docs/plugins/activepieces.md#an-action-that-takes-or-writes-a-file).
+The versions are exact, and the versions `@activepieces/pieces-framework` at `0.32.0` describes. Each piece is in `packages/pieces/community/` or `packages/pieces/core/` of [github.com/activepieces/activepieces](https://github.com/activepieces/activepieces), which is MIT outside its `ee` folders. Slack, GitHub, Notion and HubSpot declare an OAuth2 connection beside the auth in the table, and this plugin offers only the auth in the table. An action that takes a file, such as Slack's file upload, takes it as a string: [An action that takes or writes a file](https://github.com/ahpio/ahpd/blob/main/docs/plugins/activepieces.md#an-action-that-takes-or-writes-a-file).
 
 ## A connector
 
@@ -103,7 +103,7 @@ An action its piece marks for humans alone, with `audience: 'human'`, is not off
 
 | | |
 | --- | --- |
-| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md) | What a plugin is, and how a daemon loads one |
+| [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md) | What a plugin is, and how a daemon loads one |
 
 ## License
 

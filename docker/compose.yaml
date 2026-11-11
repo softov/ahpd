@@ -2,14 +2,14 @@
 # folder beside this file served as /work.
 #
 #   mkdir work
-#   curl -fsSLO https://raw.githubusercontent.com/softov/ahpd/v0.15.0-rc.1/docker/compose.yaml
+#   curl -fsSLO https://raw.githubusercontent.com/ahpio/ahpd/v0.15.0-rc.1/docker/compose.yaml
 #   docker compose up -d
 #
 # It listens on 127.0.0.1 only. The token is in the volume, at
 # ~/.config/ahpd/connection-token, and is never a flag.
 services:
   ahpd:
-    image: ghcr.io/softov/ahpd:${AHPD_TAG:-0.15.0-rc.1}
+    image: ghcr.io/ahpio/ahpd:${AHPD_TAG:-0.15.0-rc.1}
     restart: unless-stopped
     # Longer than the 30 s `ahpd stop` waits, so a stop finishes rather than
     # being killed at the end of the wait.

@@ -307,7 +307,7 @@ export function sdkService(options: ServiceOptions): Service {
  */
 function sdkCloud(connector: string, options: ServiceOptions): Cloud {
   const management = new TunnelManagementHttpClient(
-    'ahpd-tunnel-devtunnel (https://github.com/softov/ahpd)',
+    'ahpd-tunnel-devtunnel (https://github.com/ahpio/ahpd)',
     ManagementApiVersions.Version20230927preview,
     async () => {
       const open = await options.token(connector);

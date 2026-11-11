@@ -1,7 +1,7 @@
 # @ahpd/agent-pi
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Fagent-pi)](https://www.npmjs.com/package/@ahpd/agent-pi)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
@@ -10,7 +10,7 @@ The [pi coding agent](https://github.com/earendil-works/pi) as a backend for [`@
 
 pi runs inside the daemon's process through pi's own SDK, not as a `pi --mode rpc` subprocess.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/agent-pi`](https://github.com/softov/ahpd/tree/main/packages/agent-pi).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/agent-pi`](https://github.com/ahpio/ahpd/tree/main/packages/agent-pi).
 
 ## Install
 
@@ -19,7 +19,7 @@ ahpd plugin install @ahpd/agent-pi
 ahpd restart
 ```
 
-Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md).
+Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md).
 
 ### What it needs
 
@@ -56,7 +56,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 
 `projectTrust` is `trust` or `deny`. pi's third answer, `ask`, is not offered, because a daemon has nobody at a terminal to answer it. `trust` loads the project's pi resources, which runs its code.
 
-The host's own answer about the folder is asked as well, and both have to say yes. A folder no window vouched for loads none of the project's extensions, skills or prompts, however `projectTrust` is set. See [Trusted folders](https://github.com/softov/ahpd/blob/main/docs/sdk/AUTHENTICATION.md#trusted-folders).
+The host's own answer about the folder is asked as well, and both have to say yes. A folder no window vouched for loads none of the project's extensions, skills or prompts, however `projectTrust` is set. See [Trusted folders](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AUTHENTICATION.md#trusted-folders).
 
 With `sessionDir` left alone, `pi` run by hand in the same directory lists the sessions started here, and the other way round.
 
@@ -130,7 +130,7 @@ pi's agent directory inside is `/ahpd/pi`, set as `PI_CODING_AGENT_DIR`: a state
 } }] }
 ```
 
-Such a key reaches pi's nested host and no other agent in the machine. A variable only pi's own `models.json` names is not declared, and does not reach a machine. See [pi in a machine](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#pi-in-a-machine).
+Such a key reaches pi's nested host and no other agent in the machine. A variable only pi's own `models.json` names is not declared, and does not reach a machine. See [pi in a machine](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#pi-in-a-machine).
 
 ## What maps, and what does not
 
@@ -160,8 +160,8 @@ Sessions are listed from two places at once: every file pi's store holds, read w
 
 | | |
 | --- | --- |
-| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md) | Loading a plugin into the daemon |
-| [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AGENT.md) | The `Agent` and `Session` contracts this implements |
+| [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md) | Loading a plugin into the daemon |
+| [AGENT.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AGENT.md) | The `Agent` and `Session` contracts this implements |
 | [pi](https://github.com/earendil-works/pi) | The coding agent this runs |
 
 ## License

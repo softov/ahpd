@@ -25,14 +25,14 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/softov/ahpd/tree/main/packages/computer#readme",
+  "homepage": "https://github.com/ahpio/ahpd/tree/main/packages/computer#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/softov/ahpd.git",
+    "url": "git+https://github.com/ahpio/ahpd.git",
     "directory": "packages/computer"
   },
   "bugs": {
-    "url": "https://github.com/softov/ahpd/issues"
+    "url": "https://github.com/ahpio/ahpd/issues"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -78,7 +78,7 @@
     "title": "Computer",
     "description": "Isolated machines for agent sessions: Docker containers, libvirt or Proxmox VMs, and ssh boxes.",
     "categories": ["channel", "tool"],
-    "links": [{ "title": "Repository", "url": "https://github.com/softov/ahpd" }],
+    "links": [{ "title": "Repository", "url": "https://github.com/ahpio/ahpd" }],
     "icons": [
       { "src": "./icon.svg", "theme": "light" },
       { "src": "./icon-dark.svg", "theme": "dark" }

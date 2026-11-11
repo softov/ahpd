@@ -7,7 +7,7 @@
 # `install` puts the server and its sibling packages into a prefix with
 # node-pty compiled, and `runtime` carries that prefix and none of the
 # toolchain. The same build serves `docker build .` from a checkout and
-# `docker build https://github.com/softov/ahpd.git#<ref>` from Git.
+# `docker build https://github.com/ahpio/ahpd.git#<ref>` from Git.
 
 ARG NODE_IMAGE=node:22-bookworm-slim
 
@@ -68,7 +68,7 @@ FROM ${NODE_IMAGE} AS runtime
 ARG AHPD_UID=1000
 ARG VERSION=dev
 ARG REVISION=unknown
-ARG SOURCE=https://github.com/softov/ahpd
+ARG SOURCE=https://github.com/ahpio/ahpd
 
 LABEL org.opencontainers.image.title="ahpd" \
       org.opencontainers.image.description="An Agent Host Protocol server for Claude, pi, ACP agents and any agent a plugin adds" \

@@ -1,7 +1,7 @@
 # @ahpd/agent-acp
 
 [![npm](https://img.shields.io/npm/v/%40ahpd%2Fagent-acp)](https://www.npmjs.com/package/@ahpd/agent-acp)
-[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![CI](https://github.com/ahpio/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/ahpio/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
@@ -12,7 +12,7 @@ The plugin registers the engine `acp`: every ACP server is a record on the agent
 
 Any program that speaks ACP over its stdio is one record, not a package of its own, so `copilot --acp`, `codex-acp`, `gemini --acp` and `@deepseek-ai/dsh-acp` all run through this one package.
 
-Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/agent-acp`](https://github.com/softov/ahpd/tree/main/packages/agent-acp).
+Part of [ahpd](https://github.com/ahpio/ahpd). The source is in [`packages/agent-acp`](https://github.com/ahpio/ahpd/tree/main/packages/agent-acp).
 
 ## Install
 
@@ -21,7 +21,7 @@ ahpd plugin install @ahpd/agent-acp
 ahpd restart
 ```
 
-Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/softov/ahpd/blob/main/docs/server/PLUGINS.md).
+Update, remove and one-run flags such as `--plugin` are in [Plugins](https://github.com/ahpio/ahpd/blob/main/docs/server/PLUGINS.md).
 
 ### What it needs
 
@@ -97,11 +97,11 @@ A record whose `command` is missing, whose `base` names no shipped row, or whose
 | `state` | `/ahpd/<id>` for a record from a shipped row | The absolute directory the agent keeps its configuration in, as a state volume |
 | `seed` | the agent's own host files | The host files `state` is seeded from, each `{ "source", "target", "keep", "drop" }` |
 
-Each shipped row that names a part brings a `machine`. It holds the CLI's part and a state directory at `/ahpd/<id>`, seeded from the agent's own host files and never its login file. It also holds the variables that point the CLI there. So a record made from one runs from its part on any glibc image, and signs in with the key a person adds in `machine.env`. A vault-filled key reaches only this agent's commands in the machine. `cline` and `omp` came with a row, a command and arguments but no part, so their templates carry no `machine`. See [ACP agents in a machine](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#acp-agents-in-a-machine).
+Each shipped row that names a part brings a `machine`. It holds the CLI's part and a state directory at `/ahpd/<id>`, seeded from the agent's own host files and never its login file. It also holds the variables that point the CLI there. So a record made from one runs from its part on any glibc image, and signs in with the key a person adds in `machine.env`. A vault-filled key reaches only this agent's commands in the machine. `cline` and `omp` came with a row, a command and arguments but no part, so their templates carry no `machine`. See [ACP agents in a machine](https://github.com/ahpio/ahpd/blob/main/docs/plugins/COMPUTERS.md#acp-agents-in-a-machine).
 
 A row whose sign-in depends on a variable sends it only when the daemon's own environment or the record's `env` has the variable, and for a session placed in a machine also when the record's `machine.env` sets it.
 
-`ahpd vault set host:<name>` keeps the credential a record's `env` reads with `{ "$secret": "host:<name>" }`, from standard input. See [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md#naming-a-secret-instead-of-holding-one) for a `$secret`.
+`ahpd vault set host:<name>` keeps the credential a record's `env` reads with `{ "$secret": "host:<name>" }`, from standard input. See [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md#naming-a-secret-instead-of-holding-one) for a `$secret`.
 
 ### A record, written out
 
@@ -161,7 +161,7 @@ It spawns the command, completes the ACP handshake over its stdio, and opens one
 
 The server's session config options are the session's. The values of its model option are the models a client is offered, said again where the server moves them, and the values of its mode option are the session's `availableApprovalModes`. Every other option is a control of the session's under `<provider>.<id>`, offering the values the server gave as the session opened, and a value the server moves is said with `session/configChanged`. A `thought_level` option holds the reasoning level of the model the server runs on, so each model a session has run on is listed with those levels as its `thinkingLevel`, in the property VS Code's Codex agent gives a model's effort, and the agent keeps them for its later sessions. A turn whose model selection names one of those levels runs at it, and any other turn runs at the session's own value of the control.
 
-A `plan` update is also written into the session's plan. Each update carries the whole list, and the backend hands the host each entry's `content` as its text with its `status` and `priority`. So a `codex-acp` session fills the host task list the tasks plugin keeps - see [The task list](https://github.com/softov/ahpd/blob/main/docs/plugins/TASK-LIST.md). A plan update is no tool call the agent made, so the bridge draws no row of the chat for it, as VS Code draws nothing for a plan notification that is no tool call.
+A `plan` update is also written into the session's plan. Each update carries the whole list, and the backend hands the host each entry's `content` as its text with its `status` and `priority`. So a `codex-acp` session fills the host task list the tasks plugin keeps - see [The task list](https://github.com/ahpio/ahpd/blob/main/docs/plugins/TASK-LIST.md). A plan update is no tool call the agent made, so the bridge draws no row of the chat for it, as VS Code draws nothing for a plan notification that is no tool call.
 
 The host's own tools, and with them the tools a session's clients provide, are offered to the agent as one HTTP MCP server named `host`, the name VS Code gives the server carrying its host's tools, where `hostTools` is on, which it is by default. A call the agent makes to a client's tool is reported against the client that provides it, named by the tool as the client announced it, `openFile` where the agent called `mcp__host__<clientId>__openFile`, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L626-L638) names a client's call. It waits for that client's answer, which reaches the agent as the tool result with everything the client sent, images and resources included. A client that arrives after the agent listed its tools is heard of as `toolsChanged` says: under `notify`, the default, the host holds a stream open and sends `notifications/tools/list_changed` down it, and under `list` nothing is sent. Both serve the current list either way, so an agent that ignores the notification and never lists again is one that misses every tool a client announced after it looked.
 
@@ -177,9 +177,9 @@ An `elicitation/create` is a question, and it is asked on the chat as a `chat/in
 
 | | |
 | --- | --- |
-| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md) | The ACP options in the daemon, and what the server may ask the host for |
-| [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AGENT.md) | The `Agent` and `Session` contracts this implements |
-| [AHP.md](https://github.com/softov/ahpd/blob/main/docs/sdk/AHP.md) | Which actions are served, which are refused, and why |
+| [PLUGINS.md](https://github.com/ahpio/ahpd/blob/main/docs/plugins/PLUGINS.md) | The ACP options in the daemon, and what the server may ask the host for |
+| [AGENT.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AGENT.md) | The `Agent` and `Session` contracts this implements |
+| [AHP.md](https://github.com/ahpio/ahpd/blob/main/docs/sdk/AHP.md) | Which actions are served, which are refused, and why |
 
 ## License
 

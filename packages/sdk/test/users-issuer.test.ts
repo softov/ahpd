@@ -275,7 +275,7 @@ it('puts the issuer on the record, and leaves it off when there is none', async 
   expect(withIssuer.authorization_servers).toEqual(['https://github.com/login/oauth']);
   expect(withIssuer.scopes_supported).toEqual(['read:user']);
   expect(withIssuer.resource).toBe('https://ahpd.test/');
-  expect(withIssuer.resource_documentation).toBe('https://github.com/softov/ahpd/blob/main/docs/sdk/USERS.md');
+  expect(withIssuer.resource_documentation).toBe('https://github.com/ahpio/ahpd/blob/main/docs/sdk/USERS.md');
 });
 
 it('names every provider when there is more than one, with the scopes of all of them', () => {
