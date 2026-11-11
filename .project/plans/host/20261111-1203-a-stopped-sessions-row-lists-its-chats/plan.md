@@ -76,9 +76,9 @@ archive_chat { chat } -> at.chats(session) empty -> the row's chats -> chatFlag(
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A stopped row lists its chats](task-01-a-stopped-row-lists-its-chats.md) | todo | - |
-| [02 - archive_chat reads the row](task-02-archive-chat-reads-the-row.md) | todo | 01 |
-| [03 - A link finds its session by id](task-03-a-link-finds-its-session-by-id.md) | todo | - |
+| [01 - A stopped row lists its chats](task-01-a-stopped-row-lists-its-chats.md) | implemented | - |
+| [02 - archive_chat reads the row](task-02-archive-chat-reads-the-row.md) | implemented | 01 |
+| [03 - A link finds its session by id](task-03-a-link-finds-its-session-by-id.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -86,8 +86,8 @@ archive_chat { chat } -> at.chats(session) empty -> the row's chats -> chatFlag(
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-11.
-- **Next action:** [task-01-a-stopped-row-lists-its-chats.md](task-01-a-stopped-row-lists-its-chats.md).
+- **Done so far:** tasks 01, 02 and 03 implemented 2026-11-11, on the branch of this plan.
+- **Next action:** Softov's review, then `done` on each task.
 - **Open questions:** none.
 - **Watch out for:** the tool's `serializeChats` decides when a row shows `chats`, not the host.
 

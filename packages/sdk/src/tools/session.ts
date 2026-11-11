@@ -36,17 +36,21 @@ export const openLink = (session: string, provider: string, chatId?: string): st
 /**
  * The session a tool named, by its URI or by an `agent-host-session://` link.
  *
- * A link carries the provider and the id; a row is matched on both, whichever
- * scheme it is under - a session this host started is `ahp-session:/` and one
- * read off a backend's disk is `<provider>:/`, and both are the same id to the
- * client that opens them. `?chat=` names one chat in it.
+ * A link carries the agent and the id, and a row is matched on the id alone,
+ * whichever scheme it is under - a session this host started is
+ * `ahp-session:/` and one read off a backend's disk is `<provider>:/`. A
+ * reference link turns back into its session's URI, because there the scheme
+ * is the provider; here a link names the agent and the URI does not, so the
+ * id is what both share. A listing holds one row per id, so the agent adds
+ * nothing to the match and only refused a link a row named another way.
+ * `?chat=` names one chat in it.
  */
 export const sessionMeant = (asked: string, rows: Summary[]): { session: Summary; chatId?: string } | undefined => {
   const link = /^agent-host-session:\/\/([^/?#]+)\/([^?#]+)(?:\?([^#]*))?/i.exec(asked);
   if (link !== null) {
     const id = decodeURIComponent(link[2] ?? '');
     const chat = /(?:^|&)chat=([^&]*)/.exec(link[3] ?? '')?.[1];
-    const row = rows.find((one) => idOf(one.resource) === id && one.provider === link[1]);
+    const row = rows.find((one) => idOf(one.resource) === id);
     return row === undefined ? undefined : { session: row, ...(chat ? { chatId: decodeURIComponent(chat) } : {}) };
   }
   const row = rows.find((one) => one.resource === asked);
@@ -1103,10 +1107,14 @@ export const sessionTools = (): HostTool[] => [
         throw new Error(`Invalid ${tool} input: chat must be an agent-host-session:// link targeting a known chat (see list_sessions).`);
       /*
        * The default chat is the session itself: a link to it, and a link with
-       * no chat id, archive the whole session with every chat of it.
+       * no chat id, archive the whole session with every chat of it. A session
+       * nothing runs has no live chats, so the ones its row lists are the
+       * chats a link can name, as `list_sessions` showed them.
        */
-      const chats = at.chats(found.session.resource);
-      const defaultChat = chats[0];
+      const live = at.chats(found.session.resource);
+      const chats = live.length > 0 ? live : (found.session.chats ?? []).map((one) => ({ resource: one.resource }));
+      const defaultResource = live[0]?.resource ?? found.session.defaultChat ?? chats[0]?.resource;
+      const defaultChat = chats.find((one) => one.resource === defaultResource);
       const named = found.chatId === undefined ? undefined : chats.find((one) => idOf(one.resource) === found.chatId);
       if (found.chatId !== undefined && named === undefined)
         throw new Error(`Invalid ${tool} input: chat must target a known chat of its session.`);

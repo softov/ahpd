@@ -1,6 +1,6 @@
 ---
 title: A stopped row lists its chats
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -34,3 +34,5 @@ The row of a session nothing runs carries `chats` and `defaultChat` from the rec
 
 ## Resume
 
+- `storedChatsOf` in `catalogue.ts` builds a stopped row's `chats` and `defaultChat` from the record, in `toSessionSummaryChats`' shape.
+- Both `registerListedSession` and `getSurfacedSessionSummary` use it, since the listing rebuilds each stopped row in the second.
