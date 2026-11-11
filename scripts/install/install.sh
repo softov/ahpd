@@ -349,7 +349,12 @@ check_installed_version() {
     say "would check: ahpd --version prints $want"
     return 0
   fi
+  # The PATH first, as the update found it, then the bin folder it went into:
+  # a shell that has not read the PATH line yet still has that ahpd.
   found="$(command -v ahpd 2>/dev/null || true)"
+  if [ -z "$found" ] && [ -x "$BIN/ahpd" ]; then
+    found="$BIN/ahpd"
+  fi
   if [ -z "$found" ]; then
     fail 1 "ahpd $want was installed at $PREFIX, but ahpd is not on the PATH. Add $BIN to the PATH and run this again."
   fi
@@ -777,7 +782,16 @@ do_install() {
     # An ahpd on the PATH is updated where it is, before a prefix is chosen:
     # the prefix that holds this ahpd is the one the update goes into, and a
     # second copy in another folder is what left the old version in the shell.
+    # With none on the PATH, the prefix is chosen first, and an ahpd already in
+    # its bin folder - a shell that has not read the PATH line yet, such as a
+    # login shell that skips ~/.bashrc - gets the same check.
     ahpd="$(command -v ahpd 2>/dev/null || true)"
+    if [ -z "$ahpd" ]; then
+      resolve_prefix
+      if [ -x "$BIN/ahpd" ]; then
+        ahpd="$BIN/ahpd"
+      fi
+    fi
     if [ -n "$ahpd" ]; then
       old="$(ahpd_version "$ahpd")"
       if [ -z "$old" ]; then
@@ -801,8 +815,6 @@ do_install() {
       fi
       BIN="$PREFIX/bin"
       confirm_update "$old" "$new"
-    else
-      resolve_prefix
     fi
   fi
 

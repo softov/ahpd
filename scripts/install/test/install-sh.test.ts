@@ -404,6 +404,39 @@ describe.skipIf(!posix)('install.sh', () => {
     expect(calls(box).some((line) => line.startsWith('npm install '))).toBe(false);
   });
 
+  /*
+   * A login shell that skips ~/.bashrc, as `sudo -iu <user>` runs, has no PATH
+   * line, so the ahpd of the first install is only in the prefix's bin folder.
+   */
+  it('stops when the ahpd in the chosen prefix, not on the PATH, is already the target version', async () => {
+    const box = makeBox();
+    installAhpd(box, '0.13.0');
+
+    const result = await run(box, ['--no-onboard', '--yes']);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(
+      `ahpd 0.13.0 is installed at ${box.prefix}, already at 0.13.0. Nothing to update.`,
+    );
+    expect(calls(box).some((line) => line.startsWith('npm install '))).toBe(false);
+    expect(result.stdout).not.toContain('ahpd restart');
+  });
+
+  it('updates the ahpd in the chosen prefix, not on the PATH, and says to restart', async () => {
+    const box = makeBox();
+    installAhpd(box, '0.12.0');
+
+    const result = await run(box, ['--no-onboard', '--yes']);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(`ahpd 0.12.0 is installed at ${box.prefix}.`);
+    expect(calls(box)).toContain(
+      `npm install -g --prefix ${box.prefix} --no-fund --no-audit --allow-scripts=node-pty @ahpd/server`,
+    );
+    expect(calls(box)).toContain('ahpd plugin update all');
+    expect(result.stdout).toContain('ahpd restart');
+  });
+
   it('stops and names the folder when the ahpd is not in an npm prefix', async () => {
     const box = makeBox();
     writeAhpd(box);
