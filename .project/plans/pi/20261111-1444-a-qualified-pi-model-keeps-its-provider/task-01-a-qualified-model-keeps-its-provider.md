@@ -1,6 +1,6 @@
 ---
 title: A qualified model keeps its provider
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -41,4 +41,6 @@ refs:
 - `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run packages/agent-pi` passes.
 
 ## Resume
+
+Implemented 2026-11-11 in `2e5f28906`. The fake needed no change: the default of `providers` reads its runtime. See [implemented.md](implemented.md).
 

@@ -96,14 +96,25 @@ export function listed(model: PiModel, levels: readonly string[], startsOn?: str
  * accepted only when exactly one model answers to it, or when it is already
  * the model this session is on. Guessing a provider for an ambiguous name
  * would run the turn somewhere nobody asked for, on somebody's paid account.
+ *
+ * An id whose text before its first slash is one of `providers` is qualified,
+ * and answers to that provider's model or to nothing. It is never read as a
+ * bare id, though another provider may list one that is spelled the same:
+ * OpenRouter's `deepseek/deepseek-chat` is not pi's `deepseek` provider's
+ * model, and a record that names `deepseek` names its key and its account.
+ * `providers` is every provider pi has, keyed or not, because a provider with
+ * no key yet is still the one the id names.
  */
 export function modelFor<T extends PiModel>(
   models: readonly T[],
   wanted: string,
   current?: PiModel,
+  providers: ReadonlySet<string> = new Set(models.map((model) => model.provider)),
 ): T | undefined {
   const exact = models.find((model) => idOf(model) === wanted);
   if (exact !== undefined) return exact;
+  const slash = wanted.indexOf('/');
+  if (slash > 0 && providers.has(wanted.slice(0, slash))) return undefined;
   const bare = models.filter((model) => model.id === wanted);
   if (bare.length === 1) return bare[0];
   if (current?.id === wanted) return bare.find((model) => model.provider === current.provider);
