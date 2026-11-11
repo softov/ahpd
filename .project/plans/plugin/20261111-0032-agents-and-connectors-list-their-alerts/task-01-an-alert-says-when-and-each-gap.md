@@ -49,7 +49,7 @@ One sdk list keeps alerts by `ref`, and plugin rows use it.
 
 ## Resume
 
-2026-11-10. `Alert.at` is added, and `alertList(limit)` in `packages/sdk/src/plugins/alerts.ts` holds one list's alerts by `ref`. The plugins channel keeps each plugin's list in one, and `alerts()` answers a copy of it. The plugins channel still maps an alert to `level`, `text` and `ref` on the row, so the server's existing alert tests pass unchanged; `at` is held by the list and not served there.
+2026-11-10. `Alert.at` is added, and `alertList(limit)` in `packages/sdk/src/plugins/alerts.ts` holds one list's alerts by `ref`. The plugins channel keeps each plugin's list in one, and `alerts()` answers a copy of it. The plugins channel still maps an alert to `level`, `text` and `ref` on the row; `at` is held by the list and not served there. Three server tests that read `alerts()` directly compare the whole alert, so they now expect `at` as `expect.any(String)`; the row tests pass unchanged.
 
 `RecordGaps` carries every gap of a record, and `resolved` now walks a nested array in order rather than with `Promise.all`, so the gaps come out in config order and the message is the first gap's text. A `fromEnv` on a record that is not the host's, and a vault that throws, are still thrown at once as a plain error.
 

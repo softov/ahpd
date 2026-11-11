@@ -226,6 +226,7 @@ describe('resolvePlugin', () => {
     expect(alerts['escape']).toEqual([{
       level: 'warning',
       text: `Expected the entry (${outside}) to be included inside the plugin's folder (${escape}). This might make the plugin non-portable.`,
+      at: expect.any(String),
     }]);
   });
 
