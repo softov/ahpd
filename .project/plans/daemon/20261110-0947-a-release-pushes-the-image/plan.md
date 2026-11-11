@@ -1,7 +1,7 @@
 ---
 title: A release pushes the image
 domain: daemon
-status: planned
+status: built
 priority: medium
 created: 2026-11-10
 revalidated: 2026-11-10
@@ -75,8 +75,8 @@ git push main -> edge job -> ghcr.io/<owner>/ahpd:edge, sha-<short>
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The release job pushes the image](task-01-the-release-job-pushes-the-image.md) | implemented | - |
-| [02 - Main pushes an edge image](task-02-main-pushes-an-edge-image.md) | implemented | 01 |
+| [01 - The release job pushes the image](task-01-the-release-job-pushes-the-image.md) | done | - |
+| [02 - Main pushes an edge image](task-02-main-pushes-an-edge-image.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -87,7 +87,7 @@ git push main -> edge job -> ghcr.io/<owner>/ahpd:edge, sha-<short>
 ## Resume state
 
 - **Done so far:** the plan, 2026-11-10. Task 01 is implemented, 2026-11-10: the tag check also holds `docker/compose.yaml`'s default `AHPD_TAG` to the image the tag publishes, and `release.yml` has an `image` job after `parts` that builds both platforms and pushes `ghcr.io/<owner>/ahpd` with the version and npm-channel tags, `provenance: true` and `sbom: true`, and pushes nothing on a `dry_run`. Task 02 is implemented, 2026-11-10: `edge.yml` pushes `edge` and `sha-<short>` from each push to `main`, and moves no tag a release owns.
-- **Next action:** review, then the `workflow_dispatch` dry run and the first push to `main` with Actions.
+- **Next action:** none. The plan is built, and [implemented.md](implemented.md) says what exists. The first tag is the one check left: its image lists both platforms.
 - **Open questions:** none.
 - **Watch out for:**
 `latest` must never go on a pre-release, as npm refuses one.
@@ -96,6 +96,6 @@ The `edge` build must not move `latest` or `next`.
 
 ## Final verification checklist
 
-- [ ] A `dry_run` of `release.yml` builds both platforms and pushes nothing.
+- [x] A `dry_run` of `release.yml` builds both platforms and pushes nothing.
 - [ ] After the first tag, `docker manifest inspect ghcr.io/<owner>/ahpd:<version>` lists `linux/amd64` and `linux/arm64`.
-- [ ] After a push to `main`, `ghcr.io/<owner>/ahpd:edge` exists and its revision label is that commit.
+- [x] After a push to `main`, `ghcr.io/<owner>/ahpd:edge` exists and its revision label is that commit.

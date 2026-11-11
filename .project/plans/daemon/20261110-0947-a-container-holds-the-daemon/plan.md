@@ -1,7 +1,7 @@
 ---
 title: A container holds the daemon
 domain: daemon
-status: planned
+status: built
 priority: medium
 created: 2026-11-10
 revalidated: 2026-11-10
@@ -91,9 +91,9 @@ ahpd stop, ahpd update -> record names container -> refused with the container's
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A container daemon writes its record and refuses a stop](task-01-a-container-daemon-writes-its-record.md) | implemented | - |
-| [02 - A restart exits for the restart policy](task-02-a-restart-exits-for-the-policy.md) | implemented | 01 |
-| [03 - An update names the image](task-03-an-update-names-the-image.md) | implemented | 01 |
+| [01 - A container daemon writes its record and refuses a stop](task-01-a-container-daemon-writes-its-record.md) | done | - |
+| [02 - A restart exits for the restart policy](task-02-a-restart-exits-for-the-policy.md) | done | 01 |
+| [03 - An update names the image](task-03-an-update-names-the-image.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -102,8 +102,8 @@ ahpd stop, ahpd update -> record names container -> refused with the container's
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-10; task 01, 2026-11-10; task 02, 2026-11-10; task 03, 2026-11-10.
-- **Next action:** none; every task is `implemented`, and the plan waits for Softov's review before any task is `done`.
+- **Done so far:** the plan, 2026-11-10; tasks 01 to 03, 2026-11-10, merged in #282 and #284; reviewed and closed, 2026-11-11.
+- **Next action:** none. The plan is built, and [implemented.md](implemented.md) says what exists.
 - **Open questions:** none.
 - **Watch out for:**
 `runForeground` removes `AHPD_SERVICE` from the environment at once, so a session shell does not inherit it.
@@ -115,7 +115,7 @@ A refusal is thrown in one place and answered by the terminal and the served met
 
 ## Final verification checklist
 
-- [ ] A daemon started with `AHPD_SERVICE=container` is seen by `ahpd status --json`, which exits 0.
-- [ ] A served restart and a terminal restart each leave the process exited with 75 and no successor.
-- [ ] `ahpd stop` and `ahpd update` under the container kind refuse with their sentences, and the daemon still runs.
-- [ ] `pnpm typecheck` and `pnpm test` pass.
+- [x] A daemon started with `AHPD_SERVICE=container` is seen by `ahpd status --json`, which exits 0.
+- [x] A served restart and a terminal restart each leave the process exited with 75 and no successor.
+- [x] `ahpd stop` and `ahpd update` under the container kind refuse with their sentences, and the daemon still runs.
+- [x] `pnpm typecheck` and `pnpm test` pass.

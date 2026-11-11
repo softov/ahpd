@@ -10,6 +10,7 @@ covers:
   - packages/server/src/pty.ts
   - packages/server/src/commands/**
   - .github/workflows/release.yml
+  - .github/workflows/edge.yml
   - .github/workflows/parts-bump.yml
   - packages/computer/images/versions.json
 decisions:
@@ -111,6 +112,20 @@ WHEN the person passes `--force`
 THEN the daemon restarts even with a turn running.
 On Linux and macOS a restart is the signal `SIGHUP`, and a forced restart is `SIGUSR2`.
 
+### A container holds the daemon
+
+WHEN the daemon starts with `AHPD_SERVICE=container`
+THEN it writes its own record with `service: container`
+AND `ahpd status` and a client find it.
+
+WHEN a client or `ahpd restart` restarts it
+THEN the daemon closes, removes its record and exits with 75
+AND the container's restart policy starts it again.
+
+WHEN a person runs `ahpd stop` or `ahpd update` in the container
+THEN ahpd refuses and says to stop the container, or to pull the new image.
+The reason: the restart policy starts again any daemon that exits, and the image owns the files an update would replace.
+
 ### Windows reaches a daemon through a pipe
 
 WHEN a daemon runs on Windows
@@ -188,6 +203,11 @@ WHEN a `v*` tag is pushed
 THEN the release workflow checks that the tag equals the version of every package in `PUBLISHED`
 AND it stages each package version that npm does not hold yet.
 `PUBLISHED` holds eleven packages, `@ahpd/computer` included, and they all move to one version together.
+
+WHEN the checks of a `v*` tag pass
+THEN the workflow pushes `ghcr.io/<owner>/ahpd` for `linux/amd64` and `linux/arm64`, before npm is approved
+AND the tags are the version and its channel, `latest` or `next`, with `X.Y` and `X` on a stable version.
+The default `AHPD_TAG` in `docker/compose.yaml` must name that image, or the tag check fails.
 
 WHEN a package has never been published
 THEN the workflow warns that it needs one publish with a token and a trusted publisher

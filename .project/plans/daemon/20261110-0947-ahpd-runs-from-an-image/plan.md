@@ -1,7 +1,7 @@
 ---
 title: ahpd runs from an image
 domain: daemon
-status: planned
+status: active
 priority: medium
 created: 2026-11-10
 revalidated: 2026-11-10
@@ -79,6 +79,7 @@ docker compose up -> tini -> entrypoint.sh run -> missing plugins installed -> v
 | Default command: `run --host 0.0.0.0 --port 9187 --connection-token-file /home/ahpd/.config/ahpd/connection-token --path /work --no-cwd` | (defaulted: `0.0.0.0` inside forces a token; the file keeps it off `docker inspect`) | 01 |
 | The entrypoint runs `ahpd plugin update all` when the image version differs from `image-version` in the volume | (defaulted: a plugin follows the sdk of the image it runs on) | 02 |
 | The entrypoint refuses an image older than `image-version`, unless `AHPD_ALLOW_DOWNGRADE=1` | (defaulted: a setting with the safe default) | 02 |
+| The downgrade check compares with the server's `semver`, so a pre-release to its release is an upgrade | Softov, 2026-11-11, chose the recommended answer for "How should the entrypoint's downgrade check be fixed?" | 06 |
 | A command other than `run` runs as `ahpd <command>` | (defaulted: `docker run <image> --version` reads as ahpd) | 02 |
 | Compose publishes `127.0.0.1:9187`, sets `restart: unless-stopped` and `stop_grace_period: 40s` | (defaulted: loopback first; 40 s is above the 30 s `ahpd stop` waits) | 03 |
 | CI builds the image from the PR's GitHub URL as well as from the checkout | Softov, 2026-11-10, chose the recommended answer for "Should I add the two run-from-GitHub paths to the Docker plans?" | 04 |
@@ -104,6 +105,7 @@ docker compose up -> tini -> entrypoint.sh run -> missing plugins installed -> v
 | [03 - Compose runs the image](task-03-compose-runs-the-image.md) | implemented | 02 |
 | [04 - CI runs the image checks](task-04-ci-runs-the-image-checks.md) | implemented | 03 |
 | [05 - The docs say how to run it in Docker](task-05-the-docs-say-how-to-run-in-docker.md) | implemented | 03 |
+| [06 - The downgrade check reads versions as semver](task-06-the-downgrade-check-reads-semver.md) | todo | 02 |
 
 ## Risks and tradeoffs
 
@@ -116,7 +118,7 @@ docker compose up -> tini -> entrypoint.sh run -> missing plugins installed -> v
 ## Resume state
 
 - **Done so far:** tasks 01 to 05 are implemented: the image builds from the checkout, `docker/entrypoint.sh` seeds and updates the volume's plugins, the two Compose files run it on loopback, the `image` CI job builds it and runs `docker/test/smoke.sh`, and `docs/server/DOCKER.md` says how to install, configure, upgrade, back up and move a host install, with `.project/pending/docker-checks.md` for the two checks CI cannot run. Every Docker check is left for review, because Docker is denied in this session.
-- **Next action:** review, and run `docker build`, `docker/test/smoke.sh ahpd:dev` and the two pending checks on a host with Docker.
+- **Next action:** [task-06-the-downgrade-check-reads-semver.md](task-06-the-downgrade-check-reads-semver.md). Review on 2026-11-11 found that `sort -V` reads `0.15.0-rc.1` to `0.15.0` as a downgrade, so that start is refused. Tasks 01 to 05 were reviewed on 2026-11-11 and are closed with task 06.
 - **Open questions:** none.
 - **Watch out for:**
 The pack stage must run pnpm, not npm, or the tarballs carry `workspace:^`.

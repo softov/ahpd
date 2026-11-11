@@ -1,6 +1,6 @@
 ---
 title: An update names the image
-status: implemented
+status: done
 depends: [task-01-a-container-daemon-writes-its-record.md]
 layer: "server"
 refs:

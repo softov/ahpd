@@ -1,6 +1,6 @@
 ---
 title: A restart exits for the restart policy
-status: implemented
+status: done
 depends: [task-01-a-container-daemon-writes-its-record.md]
 layer: "server"
 refs:

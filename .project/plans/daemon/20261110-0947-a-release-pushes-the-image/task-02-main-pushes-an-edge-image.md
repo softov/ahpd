@@ -1,6 +1,6 @@
 ---
 title: Main pushes an edge image
-status: implemented
+status: done
 depends: [task-01-the-release-job-pushes-the-image.md]
 layer: "ci"
 refs:
