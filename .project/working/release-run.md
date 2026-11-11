@@ -8,15 +8,15 @@ Softov is away. This run reviews, tests the agents, writes problems, plans, buil
 
 ## Now
 
-- Step 3: problem files for what the agent tests found.
+- Step 5: build pi/20261111-1444-a-qualified-pi-model-keeps-its-provider in a worktree.
 
 ## Queue
 
 1. ~~Review HANDOFF, pending/release.md and pending/triage.md.~~ Read; the edits go in with the plan commit.
 2. ~~Test the agents on a test daemon on port 39200.~~ Done, see *Agent tests*.
-3. Problem files and the ranked report.
-4. Plans for the problems worth fixing now.
-5. Builds in worktrees, PRs, CI.
+3. ~~Problem files and the ranked report.~~ [problems-report-20261111.md](problems-report-20261111.md).
+4. ~~Plans for the problems worth fixing now.~~ Three, in *Written*.
+5. Builds in worktrees, PRs, CI: pi, then cofold, then daemon.
 6. Ideas.
 
 ## Agent tests
@@ -62,9 +62,18 @@ Seen and not a fault of ahpd:
 ## Decisions taken in this run
 
 - The test daemon is run by hand from a launcher, not with `source test-daemon.sh`: the classifier refused the script's `ahpd stop`. The launcher stops nothing; the daemon is stopped by pid.
+- Three problems are planned now. The two from the tests hurt any user of pi or cofold on a common setup.
+- The install problem is small, and on the first path a new user runs. The rest wait, as the report ranks them.
+- PR bodies are written here and opened without showing them first, as the run's brief says to work without asking.
 - No key goes in the test vault. The cofold plugin option test names a model only, and the harness variables give the endpoint and key.
 
 ## Written
+
+- Problems, new: [a-plugin-option-key-cannot-come-from-the-environment.md](../problems/a-plugin-option-key-cannot-come-from-the-environment.md). The pi and cofold problems were planned and deleted; they are in `git://af15608ab`.
+- Plans, ranked 1 to 3 in the report:
+  - [pi/20261111-1444-a-qualified-pi-model-keeps-its-provider](../plans/pi/20261111-1444-a-qualified-pi-model-keeps-its-provider/plan.md)
+  - [cofold/20261111-1445-a-cofold-model-keeps-its-slashes](../plans/cofold/20261111-1445-a-cofold-model-keeps-its-slashes/plan.md)
+  - [daemon/20261111-1447-a-second-install-finds-the-first](../plans/daemon/20261111-1447-a-second-install-finds-the-first/plan.md)
 
 ## PRs
 

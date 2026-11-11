@@ -4,7 +4,7 @@ title: "Problems report, 2026-11-11"
 
 # Problems report, 2026-11-11
 
-Every file in [problems/](../problems/) on 2026-11-11, ranked by how much it hurts 0.15.0 or a user. Three are new from this run's agent tests, marked *new*. The rank reads each file's own symptom and impact; "not reproduced" files were read from the code only.
+Every file in [problems/](../problems/) on 2026-11-11 at `af15608ab`, ranked by how much it hurts 0.15.0 or a user. Three are new from this run's agent tests, marked *new*. The rank reads each file's own symptom and impact; "not reproduced" files were read from the code only.
 
 None of them blocks the tag: each is a fault in one path, with a workaround or a narrow reach. The first group is what a person meets on a common path, so it goes first.
 
@@ -12,9 +12,9 @@ None of them blocks the tag: each is a fault in one path, with a workaround or a
 
 | # | Problem | Severity | Why here |
 | --- | --- | --- | --- |
-| 1 | [a-pi-record-model-runs-on-another-provider.md](../problems/a-pi-record-model-runs-on-another-provider.md) *new* | major | A pi record's model runs on another provider's paid account. The README's own example does it |
-| 2 | [a-cofold-model-on-an-explicit-endpoint-loses-its-first-segment.md](../problems/a-cofold-model-on-an-explicit-endpoint-loses-its-first-segment.md) *new* | major | Every OpenRouter model named on a cofold record fails, and the picker's first row is the broken one |
-| 3 | [an-install-at-the-same-version-says-to-load-a-new-one.md](../problems/an-install-at-the-same-version-says-to-load-a-new-one.md) | minor | The install script is the first thing a new user runs; a second run reinstalls and says to restart |
+| 1 | A pi model named with its provider runs on another provider *new*, planned as [pi/20261111-1444](../plans/pi/20261111-1444-a-qualified-pi-model-keeps-its-provider/plan.md) | major | A pi record's model runs on another provider's paid account. The README's own example does it |
+| 2 | A cofold model with a slash on an explicit endpoint loses its first segment *new*, planned as [cofold/20261111-1445](../plans/cofold/20261111-1445-a-cofold-model-keeps-its-slashes/plan.md) | major | Every OpenRouter model named on a cofold record fails, and the picker's first row is the broken one |
+| 3 | An install at the same version says to load a new version, planned as [daemon/20261111-1447](../plans/daemon/20261111-1447-a-second-install-finds-the-first/plan.md) | minor | The install script is the first thing a new user runs; a second run reinstalls and says to restart |
 
 ## Major, on a path a person meets
 
