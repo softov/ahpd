@@ -84,9 +84,9 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 
 ## Proposed architecture
 
-- **Data flow** - `enabled` is a host field of the record, as it is for a tunnel. `put` carries the stored value over.
-- **Agents** - `sync` leaves a disabled record out of the agents it opens, and does not end its sessions. The host's `replace` keeps that backend while a session runs on it, as it does today.
-- **Host** - a new option `disabledAgents?: () => ReadonlySet<string>` sits beside `agentOwners`. The root list, a new session, a new chat, a chat move and `sendTurn` read it.
+- **Data flow** - an agent record carries `mode`, as a tunnel carries `enabled`; a connector record keeps its boolean `enabled`. `put` carries the stored value over.
+- **Agents** - `sync` leaves a disabled record out of the agents it opens, opens a paused one as it opens an enabled one, and ends the sessions of neither. The host's `replace` keeps that backend while a session runs on it, as it does today.
+- **Host** - a new option `disabledAgents?: () => ReadonlySet<string>` sits beside `agentOwners`, and a `pausedAgents` option beside it names the paused ids so the refusal sentence differs. The root list, a new session, a new chat, a chat move and `sendTurn` read both.
 - **Connectors** - `disable` closes the connector, and `openAll` and `put` skip a disabled one. A closed connector already answers no call and lists no model.
 - **Layer responsibilities** - sdk: the field, the methods, the host option and its checks. server: `run.ts` passes the option. ahpw: its own plan.
 - **Source-of-truth files** - [`code://packages/sdk/src/agents/channel.ts`](../../../../packages/sdk/src/agents/channel.ts), [`code://packages/sdk/src/connectors/channel.ts`](../../../../packages/sdk/src/connectors/channel.ts), [`code://packages/sdk/src/types/host.ts`](../../../../packages/sdk/src/types/host.ts).
@@ -95,7 +95,7 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An agent record turns off](task-01-an-agent-record-turns-off.md) | todo | - |
+| [01 - An agent record turns off](task-01-an-agent-record-turns-off.md) | done | - |
 | [02 - The host refuses a disabled agent](task-02-the-host-refuses-a-disabled-agent.md) | todo | 01 |
 | [03 - A connector record turns off](task-03-a-connector-record-turns-off.md) | done | - |
 
@@ -107,13 +107,13 @@ x-ahpd/connectors/disable -> record enabled: false -> close -> no calls, no mode
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 03 built 2026-11-11 with a boolean `enabled`. Task 03 stays `done`.
-- **Next action:** tasks 01 and 02 again, for the three agent states in *Answers*: `mode` replaces the agent's `enabled`, and `paused` is new.
+- **Done so far:** task 01 built 2026-11-11 for the three agent states: `mode` with `enabled`, `paused` and `disabled`, the older `enabled: false` reading as disabled, the `pause` command, and the channel's `disabled()` and `paused()` sets. Task 03 stays `done` from the boolean-`enabled` build.
+- **Next action:** task 02: the host's refusals for a paused agent, the root list, and the restart cases.
 - **Open questions:** none.
 - **Watch out for:**
-`sync` ends the sessions of each id in `before` that is no longer open. Skip a paused or disabled id there, or a toggle deletes the sessions.
-A paused record is opened at start, so the host's refusal is the only gate on it; `disabledAgents` names both states, and the sentence differs.
-The restart test needs a second host with its own backend instance, or it does not test a restart.
+`sync` ends the sessions of each id in `before` that is no longer open. A paused or disabled id is skipped there, and a paused record is opened as an enabled one is.
+A paused record is opened at start, so the host's refusal is the only gate on it. `disabledAgents` names the disabled ids, and the host needs the paused ids too because the sentence differs; task 02 adds a `pausedAgents` option beside it.
+The restart test needs a second host with its own backend instance, or it does not test a restart. The disabled case checks the stored session leaves the list and comes back after `enable`.
 
 ## Final verification checklist
 

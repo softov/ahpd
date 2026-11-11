@@ -67,9 +67,25 @@ export interface AgentRecord {
   model?: string;
   /** The engine's own values, held to its schema. */
   config: Record<string, unknown>;
-  /** Whether the agent is on. A record that names none is on, and an `enabled: false` record is not opened. */
+  /** Whether the agent is on, paused or off. A record that names none is enabled. */
+  mode?: AgentMode;
+  /**
+   * Whether the agent is on, in the records written before `mode`.
+   *
+   * A record that holds `enabled: false` reads as `disabled`, and one that
+   * holds no `mode` and no `enabled` reads as `enabled`.
+   */
   enabled?: boolean;
 }
+
+/**
+ * The three states an agent record can be in.
+ *
+ * `enabled` opens and serves the agent. `paused` opens and serves it too, so a
+ * session keeps its history and its keys stay read, but the host starts nothing
+ * new on it. `disabled` does not open it at all.
+ */
+export type AgentMode = 'enabled' | 'paused' | 'disabled';
 
 /**
  * The live view of one record, as an engine's `open` is handed it.
@@ -174,5 +190,5 @@ export interface ServedEngine extends Engine {
   spec?: string;
 }
 
-/** The five states an agent row can be in. */
-export type AgentState = 'ready' | 'failed' | 'invalid' | 'unavailable' | 'disabled';
+/** The six states an agent row can be in. */
+export type AgentState = 'ready' | 'failed' | 'invalid' | 'unavailable' | 'paused' | 'disabled';

@@ -857,17 +857,78 @@ it('turns an agent off: the row is disabled and the fold no longer gets it', asy
   expect(folded.at(-1)).toContain('mine');
 
   const answer = await cy.call('x-ahpd/agents/disable', { id: 'mine' }) as Bag;
-  expect(answer['result']).toMatchObject({ id: 'mine', enabled: false, state: 'disabled' });
+  expect(answer['result']).toMatchObject({ id: 'mine', mode: 'disabled', state: 'disabled' });
   expect(answer['result']).not.toHaveProperty('alerts');
   expect(folded.at(-1)).not.toContain('mine');
   expect(await cy.agents()).not.toContain('mine');
-  expect((await cy.rows())['mine']).toMatchObject({ state: 'disabled', enabled: false });
+  expect((await cy.rows())['mine']).toMatchObject({ state: 'disabled', mode: 'disabled' });
   // A record that is off is not built, so nothing is asked of its engine.
   expect(opened).toHaveLength(1);
   await close();
 });
 
-it('keeps the sessions of an agent turned off', async () => {
+it('pauses an agent: it stays open, its row is paused and its alerts show', async () => {
+  const folded: string[][] = [];
+  const { host, users, opened, close } = await served({
+    fold: async (agents) => { folded.push(agents.map((one) => one.provider)); },
+  });
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/agents/put', {
+    id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' },
+  });
+  expect(opened).toHaveLength(1);
+
+  const answer = await cy.call('x-ahpd/agents/pause', { id: 'mine' }) as Bag;
+  expect(answer['result']).toMatchObject({ id: 'mine', mode: 'paused', state: 'paused' });
+  // A paused record is opened, so it is folded and nothing is rebuilt for it.
+  expect(folded.at(-1)).toContain('mine');
+  expect(opened).toHaveLength(1);
+  expect(await cy.agents()).toContain('mine');
+  expect((await cy.rows())['mine']).toMatchObject({ state: 'paused', mode: 'paused' });
+  await close();
+});
+
+it('keeps the alerts of a paused record', async () => {
+  const { host, users, collection, lists, close } = await served();
+  delete process.env['AHPD_TEST_PAUSED_KEY'];
+  await collection.put({
+    id: 'theirs', engine: 'checker', owner: 'host', name: 'Theirs', mode: 'paused',
+    config: { target: 'a', secret: { fromEnv: 'AHPD_TEST_PAUSED_KEY' } },
+  });
+  await lists.openAll();
+
+  const fa = await as(host, users, 'fa');
+  const row = (await fa.rows())['theirs'];
+  // A paused record is read as one that is on, so its missing key raises an
+  // alert, and the row still says it is paused.
+  expect(row).toMatchObject({ state: 'paused', mode: 'paused' });
+  expect(row?.['alerts']).toMatchObject([{ level: 'error', ref: 'env:AHPD_TEST_PAUSED_KEY' }]);
+  await close();
+});
+
+it('moves a record to paused from enabled or off, and out again', async () => {
+  const { host, users, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/agents/put', {
+    id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' },
+  });
+
+  expect(await cy.call('x-ahpd/agents/pause', { id: 'mine' })).toMatchObject({
+    result: { mode: 'paused', state: 'paused' },
+  });
+  expect(await cy.call('x-ahpd/agents/disable', { id: 'mine' })).toMatchObject({
+    result: { mode: 'disabled', state: 'disabled' },
+  });
+  expect(await cy.call('x-ahpd/agents/pause', { id: 'mine' })).toMatchObject({
+    result: { mode: 'paused', state: 'paused' },
+  });
+  expect(await cy.call('x-ahpd/agents/enable', { id: 'mine' })).toMatchObject({
+    result: { mode: 'enabled', state: 'ready' },
+  });
+  await close();
+});
+
+it('keeps the sessions of an agent turned off or paused', async () => {
   const { host, users, ended, close } = await served();
   const cy = await as(host, users, 'cy');
   await cy.call('x-ahpd/agents/put', {
@@ -876,6 +937,8 @@ it('keeps the sessions of an agent turned off', async () => {
   await cy.call('createSession', { channel: 'ahp-session:/on-mine', provider: 'mine' });
 
   expect(await cy.call('x-ahpd/agents/disable', { id: 'mine' })).toMatchObject({ result: { state: 'disabled' } });
+  expect(ended).not.toContain('mine');
+  expect(await cy.call('x-ahpd/agents/pause', { id: 'mine' })).toMatchObject({ result: { state: 'paused' } });
   expect(ended).not.toContain('mine');
   await close();
 });
@@ -891,7 +954,9 @@ it('raises no alert for a disabled record whose environment variable is missing'
 
   const fa = await as(host, users, 'fa');
   const row = (await fa.rows())['theirs'];
-  expect(row).toMatchObject({ state: 'disabled', enabled: false });
+  // The older field still reads as the state it named.
+  expect(row).toMatchObject({ state: 'disabled' });
+  expect(row).not.toHaveProperty('mode');
   expect(row).not.toHaveProperty('alerts');
   // Nothing was opened, so no key was read.
   expect(opened).toHaveLength(0);
@@ -909,7 +974,7 @@ it('turns an agent on again and opens it', async () => {
   await cy.call('x-ahpd/agents/disable', { id: 'mine' });
 
   const answer = await cy.call('x-ahpd/agents/enable', { id: 'mine' }) as Bag;
-  expect(answer['result']).toMatchObject({ id: 'mine', enabled: true, state: 'ready' });
+  expect(answer['result']).toMatchObject({ id: 'mine', mode: 'enabled', state: 'ready' });
   expect(opened).toHaveLength(2);
   expect(await cy.agents()).toContain('mine');
   await close();
@@ -926,8 +991,8 @@ it('keeps an agent off when its record is put again', async () => {
   const answer = await cy.call('x-ahpd/agents/put', {
     id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine, renamed', config: { target: 'b' },
   }) as Bag;
-  expect(answer['result']).toMatchObject({ id: 'mine', name: 'Mine, renamed', enabled: false, state: 'disabled' });
-  expect((await collection.get('mine'))?.enabled).toBe(false);
+  expect(answer['result']).toMatchObject({ id: 'mine', name: 'Mine, renamed', mode: 'disabled', state: 'disabled' });
+  expect((await collection.get('mine'))?.mode).toBe('disabled');
   expect(await cy.agents()).not.toContain('mine');
 
   // An edit is not a toggle.
@@ -935,7 +1000,13 @@ it('keeps an agent off when its record is put again', async () => {
     id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', enabled: true, config: { target: 'b' },
   })).toMatchObject({
     code: -32602,
-    message: 'x-ahpd/agents/put does not take enabled; use x-ahpd/agents/enable or x-ahpd/agents/disable',
+    message: 'x-ahpd/agents/put does not take mode or enabled; use x-ahpd/agents/enable, x-ahpd/agents/pause or x-ahpd/agents/disable',
+  });
+  expect(await cy.call('x-ahpd/agents/put', {
+    id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', mode: 'enabled', config: { target: 'b' },
+  })).toMatchObject({
+    code: -32602,
+    message: 'x-ahpd/agents/put does not take mode or enabled; use x-ahpd/agents/enable, x-ahpd/agents/pause or x-ahpd/agents/disable',
   });
   await close();
 });
@@ -951,10 +1022,13 @@ it('refuses a toggle to a caller without agent:put and to one who is not the own
 
   expect(await ana.call('x-ahpd/agents/disable', { id: 'mine' })).toMatchObject({ code: -32009 });
   expect(await gi.call('x-ahpd/agents/disable', { id: 'mine' })).toMatchObject({ code: -32009 });
+  expect(await ana.call('x-ahpd/agents/pause', { id: 'mine' })).toMatchObject({ code: -32009 });
+  expect(await gi.call('x-ahpd/agents/pause', { id: 'mine' })).toMatchObject({ code: -32009 });
   expect(await cy.call('x-ahpd/agents/disable', { id: 'mine' })).toMatchObject({ result: { state: 'disabled' } });
 
   expect(await ana.call('x-ahpd/agents/enable', { id: 'mine' })).toMatchObject({ code: -32009 });
   expect(await gi.call('x-ahpd/agents/enable', { id: 'mine' })).toMatchObject({ code: -32009 });
+  expect(await gi.call('x-ahpd/agents/pause', { id: 'mine' })).toMatchObject({ code: -32009 });
   expect(await cy.call('x-ahpd/agents/enable', { id: 'mine' })).toMatchObject({ result: { state: 'ready' } });
   await close();
 });

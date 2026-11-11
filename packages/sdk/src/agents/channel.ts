@@ -5,7 +5,8 @@
  * as it is kept, a `state` and its `alerts`. The state is `ready`, `failed` when
  * the engine could not open it, `invalid` when its config does not fit the
  * engine's schema, `unavailable` when no plugin registers its engine any more,
- * or `disabled` when its record says `enabled: false`. Each alert names one
+ * `paused` when its record says `mode: paused`, or `disabled` when its record
+ * says `mode: disabled`. Each alert names one
  * problem a person has to fix: an `env:` or a `secret:` a record is missing, an
  * `open` that failed, or a `probe` that did not answer. The engines themselves
  * are listed on `x-ahpd-engines`, built in `agents/engines.ts`.
@@ -33,7 +34,7 @@
  * owner is neither the record's nor the host. A record a start reads back is
  * not checked: the agents open before the connectors do.
  *
- * Five commands serve an agent. `x-ahpd/agents/put` takes
+ * Six commands serve an agent. `x-ahpd/agents/put` takes
  * `{ id, engine, owner, name, description?, icon?, model?, config }`, checks
  * `config` against the engine's schema, writes the record, calls the engine's
  * `open` with each secret read back, and folds the new agent list into the
@@ -41,10 +42,12 @@
  * run on it, takes its secrets out of the vault and takes the record out. Both
  * answer the row a client now holds. `x-ahpd/agents/check` takes `{ id }`,
  * builds the backend again, asks its probe and answers the row with its alerts.
- * `x-ahpd/agents/disable` takes `{ id }` and writes `enabled: false`, so the
+ * `x-ahpd/agents/disable` takes `{ id }` and writes `mode: disabled`, so the
  * record is no longer opened, its sessions are kept, and the row reads
- * `disabled`; `x-ahpd/agents/enable` writes `enabled: true` and opens it again.
- * Both answer the row.
+ * `disabled`; `x-ahpd/agents/enable` writes `mode: enabled` and opens it again.
+ * `x-ahpd/agents/pause` writes `mode: paused`: the record stays open and its
+ * sessions and alerts are kept, and the host starts nothing new on it. All
+ * three answer the row.
  *
  * An edit keeps the agent and its sessions: the view `open` was handed is
  * updated in place, so a running session reads the new record at its next
@@ -80,7 +83,7 @@ import { alertList, dropOpenAlerts, raiseOpenAlerts } from '../plugins/alerts.js
 import { bag, isRecord, reason } from '../utils/values.js';
 import type { Icon } from '@microsoft/agent-host-protocol';
 import type { Agent } from '../types/agent.js';
-import type { AgentOwner, AgentState, AgentTemplate, ServedEngine } from '../types/agents.js';
+import type { AgentMode, AgentOwner, AgentState, AgentTemplate, ServedEngine } from '../types/agents.js';
 import type { HandedAgent } from '../types/computers.js';
 import type { ConnectorRef } from '../types/connectors.js';
 import type { PluginMethod, ViewHandle } from '../types/plugin.js';
@@ -96,6 +99,7 @@ const PUT = `${DOMAIN}/put`;
 const REMOVE = `${DOMAIN}/remove`;
 const CHECK = `${DOMAIN}/check`;
 const ENABLE = `${DOMAIN}/enable`;
+const PAUSE = `${DOMAIN}/pause`;
 const DISABLE = `${DOMAIN}/disable`;
 
 /** How long a probe may take before its agent is called `unreachable`. */
@@ -211,14 +215,24 @@ export interface AgentsChannel {
    */
   owners(): ReadonlyMap<string, AgentOwner | undefined>;
   /**
-   * The ids of the stored records whose `enabled` is false, as the last read of
-   * the collection found them.
+   * The ids of the stored records whose mode is `disabled`, as the last read
+   * of the collection found them.
    *
    * A disabled record is not opened, so it is not in the agents the host folds;
    * this is what the host reads to refuse a new session on it and to leave it
    * out of the root's agent list.
    */
   disabled(): ReadonlySet<string>;
+  /**
+   * The ids of the stored records whose mode is `paused`, as the last read of
+   * the collection found them.
+   *
+   * A paused record is opened and folded, so the host holds its agent and its
+   * sessions keep their history; this is what the host reads to refuse a new
+   * session on it, to leave it out of the root's agent list, and to answer its
+   * refusals with the paused sentence.
+   */
+  paused(): ReadonlySet<string>;
   /**
    * The plugin and the record one open agent runs on inside a machine.
    *
@@ -238,12 +252,18 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
    */
   let owners = new Map<string, AgentOwner | undefined>();
   /**
-   * The ids whose stored record says `enabled: false`.
+   * The ids whose stored record says `mode: disabled`.
    *
    * Built by the same read as `owners` and swapped in whole, for the same
    * reason: a caller holding the set it was given keeps what it read.
    */
   let disabledIds = new Set<string>();
+  /**
+   * The ids whose stored record says `mode: paused`.
+   *
+   * Built beside `disabledIds`, from the same read.
+   */
+  let pausedIds = new Set<string>();
   /**
    * The ids a removal is taking out right now.
    *
@@ -370,11 +390,27 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     }
   };
 
+  /**
+   * The mode a stored record names.
+   *
+   * A record with no `mode` is enabled, unless it is one written before the
+   * field and holds `enabled: false`, which reads as disabled. A `mode` that
+   * names one of the three states wins over the older field.
+   */
+  const modeOf = (record: StoredRecord): AgentMode => {
+    if (record.mode === 'enabled' || record.mode === 'paused' || record.mode === 'disabled') return record.mode;
+    return record.enabled === false ? 'disabled' : 'enabled';
+  };
+
   /** The state a stored record is in now. */
   const stateOf = (record: StoredRecord): AgentState => {
+    const mode = modeOf(record);
     // A record that is off is not opened or checked: that it is off is the one
     // thing its row says, whatever its engine or its config would say.
-    if (record.enabled === false) return 'disabled';
+    if (mode === 'disabled') return 'disabled';
+    // A paused record is opened, probed and shown like one that is on, so its
+    // row keeps its alerts and says `paused` rather than what the open says.
+    if (mode === 'paused') return 'paused';
     const engine = engineOf(record);
     if (engine === undefined) return 'unavailable';
     if (!fits(configOf(record), engine.schema)) return 'invalid';
@@ -538,12 +574,16 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
      */
     const read = new Map<string, AgentOwner | undefined>();
     const off = new Set<string>();
+    const paused = new Set<string>();
     for (const one of records) {
       read.set(one.id, asOwner(one.owner));
-      if (one.enabled === false) off.add(one.id);
+      const mode = modeOf(one);
+      if (mode === 'disabled') off.add(one.id);
+      if (mode === 'paused') paused.add(one.id);
     }
     owners = read;
     disabledIds = off;
+    pausedIds = paused;
     return records;
   };
 
@@ -566,7 +606,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
        * is built for it. What it showed is taken away, and its sessions are
        * kept: the host still holds the backend they run on.
        */
-      if (record.enabled === false) {
+      if (modeOf(record) === 'disabled') {
         open.delete(record.id);
         views.drop(record.id);
         alerts.delete(record.id);
@@ -648,9 +688,9 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
      */
     for (const [id, was] of before) {
       if (open.get(id) === was) continue;
-      // A record turned off leaves the open list, and keeps its sessions: the
-      // host holds their backend until the last one ends.
-      if (disabledIds.has(id)) continue;
+      // A record turned off or paused leaves the open list, and keeps its
+      // sessions: the host holds their backend until the last one ends.
+      if (disabledIds.has(id) || pausedIds.has(id)) continue;
       try {
         await options.endSessionsOf(id);
       } catch (error) {
@@ -834,6 +874,18 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
   };
 
   /**
+   * The mode fields a stored record keeps through a put.
+   *
+   * A record written before `mode` keeps its `enabled`, and one that names a
+   * mode keeps it, so an edit never turns the agent on, off or paused.
+   */
+  const keptMode = (before: StoredRecord | undefined): Partial<StoredRecord> => {
+    if (before === undefined) return {};
+    if (before.mode !== undefined) return { mode: before.mode };
+    return typeof before.enabled === 'boolean' ? { enabled: before.enabled } : {};
+  };
+
+  /**
    * Make or change one record, once its turn comes.
    *
    * A new record is opened before it is written: an engine that cannot make a
@@ -844,10 +896,10 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
    */
   const putOne = async (params: Record<string, unknown>, reader: Principal | undefined): Promise<unknown> => {
     const id = idParam(PUT, params);
-    // An edit is not a toggle: the record keeps the `enabled` it has, and a
-    // client turns it off or on through the commands that say so.
-    if (params.enabled !== undefined) {
-      throw new RpcError(INVALID_PARAMS, `${PUT} does not take enabled; use ${ENABLE} or ${DISABLE}`);
+    // An edit is not a toggle: the record keeps the mode it has, and a client
+    // turns it off, on or paused through the commands that say so.
+    if (params.mode !== undefined || params.enabled !== undefined) {
+      throw new RpcError(INVALID_PARAMS, `${PUT} does not take mode or enabled; use ${ENABLE}, ${PAUSE} or ${DISABLE}`);
     }
     const engineName = params.engine;
     if (typeof engineName !== 'string' || engineName === '') {
@@ -923,7 +975,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       ...(description === undefined ? {} : { description }),
       ...(icon === undefined ? {} : { icon }),
       ...(model === undefined ? {} : { model }),
-      ...(typeof before?.enabled === 'boolean' ? { enabled: before.enabled } : {}),
+      ...keptMode(before),
       config: moved,
     };
     let built: Opened | undefined;
@@ -1059,7 +1111,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       const before = await options.collection.get(id);
       if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
       // A record that is off shows no alerts, so there is nothing to build or probe.
-      if (before.enabled === false) throw new RpcError(INVALID_PARAMS, `${id} is turned off.`);
+      if (modeOf(before) === 'disabled') throw new RpcError(INVALID_PARAMS, `${id} is turned off.`);
       const owner = asOwner(before.owner);
       if (owner !== undefined) refuseOwner('agent', 'check', owner, reader, 'put');
       const engine = engineOf(before);
@@ -1095,15 +1147,17 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
   };
 
   /**
-   * Turn one record on or off, once its turn comes.
+   * Put one record in one mode, once its turn comes.
    *
    * A record that is off is not opened, so turning one off leaves the backend a
-   * running session holds alone and ends nothing; turning it on opens it again.
-   * The record keeps every other field it held, and the answer is its row.
+   * running session holds alone and ends nothing; turning it on or paused opens
+   * it again, or keeps it open. The record keeps every other field it held, and
+   * the older `enabled` field goes out with the mode that replaced it. The
+   * answer is the record's row.
    */
   const toggleOne = async (
     command: string,
-    enabled: boolean,
+    mode: AgentMode,
     params: Record<string, unknown>,
     reader: Principal | undefined,
   ): Promise<unknown> => {
@@ -1111,43 +1165,47 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     const before = await options.collection.get(id);
     if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
     const owner = asOwner(before.owner);
-    if (owner !== undefined) refuseOwner('agent', enabled ? 'enable' : 'disable', owner, reader, 'put');
+    if (owner !== undefined) refuseOwner('agent', mode === 'enabled' ? 'enable' : mode === 'paused' ? 'pause' : 'disable', owner, reader, 'put');
     if (owner === undefined) {
       throw new RpcError(INVALID_PARAMS, `${id} names no owner, so it cannot be served`);
     }
-    const record: StoredRecord = { ...before, enabled };
+    const record: StoredRecord = { ...before, mode };
+    delete record.enabled;
     await options.collection.put(record);
     try {
       await take(await sync());
     } catch (error) {
       await channel.refresh();
-      throw new RpcError(INTERNAL_ERROR, `${id} is ${enabled ? 'on' : 'off'}, but the host did not take the new list: ${reason(error)}`);
+      throw new RpcError(INTERNAL_ERROR, `${id} is ${mode}, but the host did not take the new list: ${reason(error)}`);
     }
     await channel.refresh();
     return row(record);
   };
 
-  /** One toggle as a method: who may change an agent may turn it off or on, as `check` asks. */
-  const toggle = (command: string, enabled: boolean): PluginMethod => ({
+  /** One toggle as a method: who may change an agent may turn it off, on or paused, as `check` asks. */
+  const toggle = (command: string, mode: AgentMode): PluginMethod => ({
     grant: 'agent:put' as Grant,
-    describe: () => (enabled
-      ? { title: 'Turn an agent on', description: 'Writes enabled: true, opens the record again and answers its row.' }
-      : { title: 'Turn an agent off', description: 'Writes enabled: false, so the record is not opened or served, and answers its row.' }),
+    describe: () => {
+      if (mode === 'enabled') return { title: 'Turn an agent on', description: 'Writes mode: enabled, opens the record again and answers its row.' };
+      if (mode === 'paused') return { title: 'Pause an agent', description: 'Writes mode: paused, so the record stays open and its sessions are kept, and answers its row.' };
+      return { title: 'Turn an agent off', description: 'Writes mode: disabled, so the record is not opened or served, and answers its row.' };
+    },
     authorize: async (params, reader) => {
       const id = params.id;
       if (typeof id !== 'string') return false;
       const before = await options.collection.get(id);
       return before !== undefined && ownerAllows('agent', asOwner(before.owner), reader, 'put');
     },
-    handle: (params, reader) => inTurn(() => toggleOne(command, enabled, params, reader)),
+    handle: (params, reader) => inTurn(() => toggleOne(command, mode, params, reader)),
   });
 
   const methods: Record<string, PluginMethod> = {
     [PUT]: put,
     [REMOVE]: remove,
     [CHECK]: check,
-    [ENABLE]: toggle(ENABLE, true),
-    [DISABLE]: toggle(DISABLE, false),
+    [ENABLE]: toggle(ENABLE, 'enabled'),
+    [PAUSE]: toggle(PAUSE, 'paused'),
+    [DISABLE]: toggle(DISABLE, 'disabled'),
   };
 
   return {
@@ -1173,6 +1231,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     },
     owners: ownersFor,
     disabled: () => disabledIds,
+    paused: () => pausedIds,
     handed,
   };
 }
