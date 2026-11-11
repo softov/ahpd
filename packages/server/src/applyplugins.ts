@@ -107,8 +107,10 @@ const unfixable = (ports: object, providers: object): boolean =>
  */
 export const eventFailed = (set: PluginSet, log: (line: string, level?: LogLevel) => void, type: 'listening' | 'stopping') => (line: string, by: string): void => {
   log(line, 'error');
-  const when = type === 'listening' ? 'when ahpd started' : 'when ahpd stopped it';
-  set.alert(by, { level: 'error', ref: `event:${type}`, text: `This plugin failed ${when}, and the ahpd log has the details.` });
+  // A plugin starts when ahpd does or when it is enabled later, so the words
+  // name the plugin's start and not the daemon's.
+  const what = type === 'listening' ? 'failed to start' : 'failed when ahpd stopped it';
+  set.alert(by, { level: 'error', ref: `event:${type}`, text: `This plugin ${what}, and the ahpd log has the details.` });
 };
 
 export const applyPlugins = async (options: ApplyPluginsOptions): Promise<Applied> => {

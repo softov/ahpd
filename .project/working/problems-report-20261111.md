@@ -50,7 +50,7 @@ These hurt a user of machines and nodes, a smaller group than the ones above.
 | 19 | [an-absolute-path-after-at-is-read-as-relative.md](../problems/an-absolute-path-after-at-is-read-as-relative.md) | minor | `@/` lists the session folder, not `/` |
 | 20 | [a-cofold-title-changes-after-a-restart.md](../problems/a-cofold-title-changes-after-a-restart.md) | minor | A title moves after a restart |
 | 21 | [a-plugin-option-key-cannot-come-from-the-environment.md](../problems/a-plugin-option-key-cannot-come-from-the-environment.md) *new* | minor | One `fromEnv` option skips the whole plugin |
-| 22 | [a-plugin-enabled-later-that-fails-says-when-ahpd-started.md](../problems/a-plugin-enabled-later-that-fails-says-when-ahpd-started.md) | minor | A wrong time in a failure line |
+| 22 | A plugin enabled later that fails says it failed when ahpd started, planned as [plugin/20261111-1507](../plans/plugin/20261111-1507-a-plugin-that-fails-to-start-says-so/plan.md) | minor | A wrong time in a failure line |
 | 23 | [a-plugin-that-does-not-resolve-has-an-id-with-a-slash.md](../problems/a-plugin-that-does-not-resolve-has-an-id-with-a-slash.md) | minor | A broken plugin a client cannot touch |
 | 24 | [the-served-plugin-config-does-not-know-a-plugin-by-its-id.md](../problems/the-served-plugin-config-does-not-know-a-plugin-by-its-id.md) | minor | A plugin listed twice |
 | 25 | [a-reopened-claude-session-shows-no-compaction.md](../problems/a-reopened-claude-session-shows-no-compaction.md) | minor | Live and reopened views differ |
@@ -76,7 +76,7 @@ These hurt a user of machines and nodes, a smaller group than the ones above.
 | 40 | [a-minute-limit-reads-nothing-under-a-plugin-usage-store.md](../problems/a-minute-limit-reads-nothing-under-a-plugin-usage-store.md) | minor |
 | 41 | [a-restart-refused-late-says-force-to-an-ahp-caller.md](../problems/a-restart-refused-late-says-force-to-an-ahp-caller.md) | minor |
 | 42 | [each-chat-action-walks-every-session-and-chat.md](../problems/each-chat-action-walks-every-session-and-chat.md) | minor, a cost at scale |
-| 43 | [a-parts-file-read-from-elsewhere-reports-the-shipped-one.md](../problems/a-parts-file-read-from-elsewhere-reports-the-shipped-one.md) | minor |
+| 43 | A parts file read from elsewhere reports the shipped one, planned as [container/20261111-1507](../plans/container/20261111-1507-a-parts-file-names-itself/plan.md) | minor |
 
 ## Tests and CI
 

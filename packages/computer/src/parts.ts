@@ -129,8 +129,8 @@ export const packageOf = (spec: string): { name: string; version?: string } => {
   return at > 0 ? { name: spec.slice(0, at), version: spec.slice(at + 1) } : { name: spec };
 };
 
-/** One error, as the one line a person reads. */
-const said = (problem: string): never => { throw new Error(`${versionsPath()}: ${problem}`); };
+/** One error about the parts file at `file`, as the one line a person reads. */
+const said = (file: string, problem: string): never => { throw new Error(`${file}: ${problem}`); };
 
 /**
  * One entry, read as an entry or refused as one.
@@ -140,11 +140,13 @@ const said = (problem: string): never => { throw new Error(`${versionsPath()}: $
  * something else, an id no image can be named by, an archive nobody can check,
  * a `requires` naming a part that is not in the file. The file is small and
  * read on every build, so a refusal here is a refusal that costs nothing.
+ * `path` is the file the entry was read from, which each refusal names.
  */
-const entryOf = (value: unknown, where: string): Part => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return said(`${where} is not an entry`);
+const entryOf = (value: unknown, where: string, path: string): Part => {
+  const refuse = (problem: string): never => said(path, problem);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return refuse(`${where} is not an entry`);
   const held = value as Record<string, unknown>;
-  const text = (key: string): string => (typeof held[key] === 'string' ? held[key] : said(`${where} has no ${key}`));
+  const text = (key: string): string => (typeof held[key] === 'string' ? held[key] : refuse(`${where} has no ${key}`));
   // What lands unquoted in a Dockerfile's shell lines, refused in VS Code's words.
   const token = (one: string, label: string): string => {
     if (!SHELL_TOKEN.test(one)) throw new Error(`Unsafe ${label} value for shell interpolation: ${JSON.stringify(one)}`);
@@ -152,27 +154,27 @@ const entryOf = (value: unknown, where: string): Part => {
   };
   // An exact version, refused as VS Code refuses a pinned SDK's that is not one.
   const exact = (name: string, one: string): string => {
-    if (!EXACT.test(one)) throw new Error(`Refusing to use ${name}@${one} from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
+    if (!EXACT.test(one)) throw new Error(`Refusing to use ${name}@${one} from ${path}: must be an exact version (no ^ or ~ ranges)`);
     return one;
   };
   const id = token(text('id'), 'part id');
-  if (!PATH_COMPONENT.test(id)) return said(`${where} has the id ${id}, which an image name cannot hold: invalid reference format`);
+  if (!PATH_COMPONENT.test(id)) return refuse(`${where} has the id ${id}, which an image name cannot hold: invalid reference format`);
   const kind = text('kind');
-  if (!KINDS.includes(kind as Part['kind'])) return said(`${where} names no kind this can build: ${kind}`);
+  if (!KINDS.includes(kind as Part['kind'])) return refuse(`${where} names no kind this can build: ${kind}`);
   const version = exact(id, text('version'));
   const archives = ((): Part['archives'] => {
     if (held.archives === undefined) return undefined;
     if (typeof held.archives !== 'object' || held.archives === null || Array.isArray(held.archives)) {
-      return said(`${where} has archives that are not one per platform`);
+      return refuse(`${where} has archives that are not one per platform`);
     }
     const per: NonNullable<Part['archives']> = {};
     for (const [platform, one] of Object.entries(held.archives as Record<string, unknown>)) {
       const file = typeof one === 'object' && one !== null && !Array.isArray(one) ? one as Record<string, unknown> : {};
-      const url = typeof file.url === 'string' ? file.url : said(`${where} has no url for ${platform}`);
-      if (!URL_SAFE.test(url)) return said(`${where} has the url ${url} for ${platform}, which is not a plain https url`);
+      const url = typeof file.url === 'string' ? file.url : refuse(`${where} has no url for ${platform}`);
+      if (!URL_SAFE.test(url)) return refuse(`${where} has the url ${url} for ${platform}, which is not a plain https url`);
       const sha256 = typeof file.sha256 === 'string' && file.sha256 !== '' ? file.sha256
-        : said(`${where} has no sha256 for ${platform}, so a download of it could not be checked`);
-      if (!SHA256.test(sha256)) return said(`${where} has the sha256 ${sha256} for ${platform}, which is not 64 hex digits`);
+        : refuse(`${where} has no sha256 for ${platform}, so a download of it could not be checked`);
+      if (!SHA256.test(sha256)) return refuse(`${where} has the sha256 ${sha256} for ${platform}, which is not 64 hex digits`);
       per[platform] = { url, sha256 };
     }
     return per;
@@ -181,41 +183,41 @@ const entryOf = (value: unknown, where: string): Part => {
     (Array.isArray(held[key]) && (held[key] as unknown[]).every((one) => typeof one === 'string')
       ? held[key] as string[]
       : undefined);
-  const bin = (list('bin') ?? said(`${where} names no command`)).map((one) => token(one, 'bin'));
+  const bin = (list('bin') ?? refuse(`${where} names no command`)).map((one) => token(one, 'bin'));
   for (const spec of list('packages') ?? []) {
     const { name, version: own } = packageOf(spec);
     if (own !== undefined) exact(name, own);
     // An archive's version is its download's, so a package in one names its own.
     if (kind === 'archive' && own === undefined) {
-      return said(`${where} has the package ${spec} with no version of its own, which an archive part has to give`);
+      return refuse(`${where} has the package ${spec} with no version of its own, which an archive part has to give`);
     }
   }
   if (kind === 'archive' && list('packages') !== undefined && !(list('requires') ?? []).includes('node')) {
-    return said(`${where} installs npm packages and does not require node`);
+    return refuse(`${where} installs npm packages and does not require node`);
   }
   // Each a path in the download, of segments a shell line takes unquoted.
   const paths = ((): Part['paths'] => {
     if (held.paths === undefined) return undefined;
-    if (kind !== 'archive') return said(`${where} names paths, which only an archive part's download has`);
+    if (kind !== 'archive') return refuse(`${where} names paths, which only an archive part's download has`);
     if (typeof held.paths !== 'object' || held.paths === null || Array.isArray(held.paths)) {
-      return said(`${where} has paths that are not one per command`);
+      return refuse(`${where} has paths that are not one per command`);
     }
     const per: Record<string, string> = {};
     for (const [command, one] of Object.entries(held.paths as Record<string, unknown>)) {
-      if (!bin.includes(command)) return said(`${where} has a path for ${command}, which its bin does not name`);
-      const path = typeof one === 'string' ? one : said(`${where} has the path of ${command}, which is not text`);
+      if (!bin.includes(command)) return refuse(`${where} has a path for ${command}, which its bin does not name`);
+      const path = typeof one === 'string' ? one : refuse(`${where} has the path of ${command}, which is not text`);
       if (path.split('/').some((segment) => segment === '.' || segment === '..' || !SHELL_TOKEN.test(segment))) {
-        return said(`${where} has the path ${path} for ${command}, which is not a path in its download`);
+        return refuse(`${where} has the path ${path} for ${command}, which is not a path in its download`);
       }
       per[command] = path;
     }
     return per;
   })();
   const pathless = kind === 'archive' && list('packages') === undefined ? bin.find((command) => paths?.[command] === undefined) : undefined;
-  if (pathless !== undefined) return said(`${where} names no path in its download for ${pathless}`);
+  if (pathless !== undefined) return refuse(`${where} names no path in its download for ${pathless}`);
   const updates = typeof held.updates === 'object' && held.updates !== null && !Array.isArray(held.updates)
     ? Object.fromEntries(Object.entries(held.updates as Record<string, unknown>).map(([key, one]) =>
-      [token(key, 'update variable'), token(typeof one === 'string' ? one : said(`${where} has the update ${key}, which is not text`), 'update value')]))
+      [token(key, 'update variable'), token(typeof one === 'string' ? one : refuse(`${where} has the update ${key}, which is not text`), 'update value')]))
     : undefined;
   return {
     id,
@@ -251,7 +253,7 @@ export const readParts = (path: string = versionsPath()): Part[] => {
   if (!Array.isArray(parsed)) throw new Error(`${path} is not a list of parts`);
   const byId = new Map<string, Part>();
   for (const [at, value] of parsed.entries()) {
-    const part = entryOf(value, `entry ${String(at)}`);
+    const part = entryOf(value, `entry ${String(at)}`, path);
     if (byId.has(part.id)) throw new Error(`${path} names ${part.id} twice`);
     byId.set(part.id, part);
   }
