@@ -8,7 +8,7 @@ Softov is away. This run reviews, tests the agents, writes problems, plans, buil
 
 ## Now
 
-- Step 5: build pi/20261111-1444-a-qualified-pi-model-keeps-its-provider in a worktree.
+- Step 5: build daemon/20261111-1447-a-second-install-finds-the-first in `/github/ahpd.worktrees/install-second-run`.
 
 ## Queue
 
@@ -76,5 +76,10 @@ Seen and not a fault of ahpd:
   - [daemon/20261111-1447-a-second-install-finds-the-first](../plans/daemon/20261111-1447-a-second-install-finds-the-first/plan.md)
 
 ## PRs
+
+| PR | Branch | Worktree | CI |
+| --- | --- | --- | --- |
+| [#296](https://github.com/ahpio/ahpd/pull/296) | `pi/20261111-1444-a-qualified-pi-model-keeps-its-provider` | `pi-qualified-model` | green, run 43043230880 |
+| [#297](https://github.com/ahpio/ahpd/pull/297) | `cofold/20261111-1445-a-cofold-model-keeps-its-slashes`, with #296 merged in | `cofold-model-slashes` | running |
 
 ## Report
