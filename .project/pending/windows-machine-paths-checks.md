@@ -15,6 +15,7 @@ This check runs that turn again. It takes about 30 minutes.
 - The Windows 10 VM, with Docker Desktop running on WSL 2.
 - Node 22, pnpm, and Git for Windows. Run `node -v`, `pnpm -v` and `git --version` to see them. If pnpm is missing, run `corepack enable`.
 - One PowerShell window. Every command below runs in it, in order. Do not close it until the end: the commands use variables it sets.
+- Scripts allowed in that window. Windows 10 blocks `pnpm.ps1` and `ahpc.ps1` by default, so run `Set-ExecutionPolicy -Scope Process Bypass` first.
 
 Your own daemon is not touched. The test daemon has its own folders under `$HOME\ahpd-check-home` and listens on port 39200.
 
@@ -122,8 +123,40 @@ node $HOME\ahpd-check\packages\server\dist\main.js stop
 Remove-Item C:\work\demo\painted.txt, C:\work\demo\acp-server.mjs
 ```
 
-The machine is removed five minutes after its session goes.
+The daemon removes a disposable machine five minutes after its session goes, and the `stop` above comes first.
+So run `docker ps -a` and remove each `ahpd-computer-*` container left with `docker rm -f <name>`, and its `ahpd-git-<name>` volume with `docker volume rm`.
 Close the PowerShell window to drop the `XDG_*` variables.
+
+## Results on Windows, 2026-11-12
+
+Run by Claude over ssh on the Windows 10 VM, from ahpd `main` at `b4ad32951` and ahpc 0.10.0.
+The VM has Docker Desktop 29.9.1 on WSL 2 and Node 22.23.3.
+The check is not passed: the terminal now runs in the machine, and two steps need the plans in the table.
+
+- **Steps 1 to 4:** pass.
+- **Step 5:** fail. `Request "createSession" timed out after 30000ms`, because making the machine took about 38 s.
+  It passed with the ahpc limit raised by hand on the VM.
+- **Step 6, the terminal:** pass. Docker's events show `exec_create: echo hello from the shell` in the session's machine, and no `error code: 267`.
+  The window title in the output, `Administrator: ...powershell.exe`, is the parent console's title, not where the command ran.
+- **Step 6, the turn:** pass after a manual answer. The turn stopped on a permission, *Remove a file*, until `ahpc confirm` answered it.
+  *Paint and preview* completed, and `painted.txt` holds `a line of paint`.
+- **Step 6, `git status`:** fail. `hello.txt` and `written.txt` are there too.
+- **Step 7:** the machine and six `ahpd-git-*` volumes stayed after `stop`.
+
+The table names the plan for each finding.
+
+| Finding | Plan |
+| --- | --- |
+| ahpc stops waiting for `createSession` after 30 s | [host/20261112-0821-making-a-session-reports-progress](../plans/host/20261112-0821-making-a-session-reports-progress/plan.md), then ahpc's `cli/20261112-0821-create-session-waits-on-progress` |
+| The git seed makes about nine `docker exec` calls, one at a time | [container/20261112-0821-a-git-seed-takes-three-execs](../plans/container/20261112-0821-a-git-seed-takes-three-execs/plan.md) |
+| A new session with no message is never removed, with its machine | [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) |
+| A failed machine create leaves its container and git volume | [container/20261112-0821-a-failed-machine-leaves-nothing](../plans/container/20261112-0821-a-failed-machine-leaves-nothing/plan.md) |
+| `session/list` runs the agent's machine command on Windows at each connect | [acp/20261112-0821-sessions-are-listed-in-their-machines](../plans/acp/20261112-0821-sessions-are-listed-in-their-machines/plan.md) |
+| Session remove runs `rm -rf` of a host attachments path in the machine | [container/20261112-0821-only-copied-attachments-are-removed](../plans/container/20261112-0821-only-copied-attachments-are-removed/plan.md) |
+| Host tools are left out, with the daemon on 127.0.0.1 | [container/20261112-0821-a-machine-says-how-it-reaches-the-host](../plans/container/20261112-0821-a-machine-says-how-it-reaches-the-host/plan.md) |
+| The host's instructions start the test agent's `term`, `ask` and `write` | [acp/20261112-0821-the-test-agent-reads-what-was-said](../plans/acp/20261112-0821-the-test-agent-reads-what-was-said/plan.md) |
+
+Docker Desktop failed at its first start with `WSL update required`, and started after a restart. That is the VM, not ahpd.
 
 ## Reply
 
