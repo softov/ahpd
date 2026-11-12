@@ -690,6 +690,29 @@ it('shows a call\'s terminal and diff content, and records the diff in the chang
   ]);
 });
 
+/*
+ * The fixture names its scripts from the last text block, which is what the
+ * person said. A host tool's instruction opens the first prompt, and a word in
+ * it is not a name for a script: a prompt that says `paint` runs the paint
+ * script alone, whatever the instruction beside it says.
+ */
+it('runs only the script the person named when the instructions hold another', async () => {
+  const { client, peer: p, uri, chatUri } = await talking({
+    tools: [{ ...HOST_TOOL, instruction: 'Use a terminal, and ask before you remove a file.' }],
+  });
+  begin(client, chatUri, 't1', 'paint it');
+  await until(() => ended(p, chatUri));
+
+  const started = actions(p, chatUri)
+    .filter((e) => e.action.type === 'chat/toolCallStart')
+    .map((e) => String(e.action.displayName));
+  expect(started).toEqual(['Paint and preview']);
+  // Nothing asked a person, and nothing ran the shell the instruction named.
+  expect(types(p, uri)).not.toContain('session/inputNeededSet');
+  expect(prose(p, chatUri)).not.toContain('term=');
+  expect(prose(p, chatUri)).not.toContain('perm=');
+});
+
 it('shows a diff as both sides the call said, with the lines each lacks', async () => {
   const changes = gitChanges();
   const { client, peer: p, chatUri, path } = await talking({ changes });

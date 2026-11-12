@@ -49,6 +49,7 @@ prompt -> blocksFor: [instructions, what was said] -> fixture textOf -> promptSc
 | --- | --- | --- |
 | The fixture matches words only in the last text block | Softov, 2026-11-12: "Only the last text block" | 01 |
 | `paint` waits for its terminal's exit before it releases it | `(defaulted: ACP release kills a running command, so a wait is the only way the command runs)` | 01 |
+| The last text block stays the rule, though an attachment's text comes after the person's; attachment cases name their files for the script | Softov, 2026-11-12: "Keep last text block" | 01 |
 | The host's release keeps ending a running command | [code://packages/sdk/src/host/terminals.ts#L584-L588](../../../../packages/sdk/src/host/terminals.ts#L584-L588) | - |
 
 ## Proposed architecture
@@ -61,7 +62,7 @@ prompt -> blocksFor: [instructions, what was said] -> fixture textOf -> promptSc
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The fixture reads the last block](task-01-the-fixture-reads-the-last-block.md) | todo | - |
+| [01 - The fixture reads the last block](task-01-the-fixture-reads-the-last-block.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -69,10 +70,10 @@ prompt -> blocksFor: [instructions, what was said] -> fixture textOf -> promptSc
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-fixture-reads-the-last-block.md](task-01-the-fixture-reads-the-last-block.md).
+- **Done so far:** task 01 implemented, 2026-11-12; see [implemented.md](implemented.md).
+- **Next action:** review and merge the PR, then the [Windows check](../../../pending/windows-machine-paths-checks.md). The plan closes as `built` on Softov's word.
 - **Open questions:** none.
-- **Watch out for:** an attachment adds blocks after the text; the last *text* block is what was said.
+- **Watch out for:** an attachment adds its text block after the person's text, so that block is the last one rather than what was said. The new case needs a terminal, so it is in the turn test rather than the blocks harness.
 
 ## Final verification checklist
 

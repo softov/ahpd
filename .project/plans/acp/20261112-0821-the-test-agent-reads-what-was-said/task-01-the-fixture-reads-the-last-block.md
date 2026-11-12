@@ -1,6 +1,6 @@
 ---
 title: The fixture reads the last block
-status: todo
+status: implemented
 depends: []
 layer: "agent-acp test fixture"
 refs:
@@ -31,3 +31,8 @@ The fixture picks its scripts from the last text block only, and `paint` waits f
 - `pnpm typecheck` and the agent-acp suite pass.
 
 ## Resume
+
+Implemented 2026-11-12. `textOf` reads the last text block, and `paint` waits for its terminal before the release.
+Step 4 is not run: Softov runs the agent-acp suite. The cases that put their word in an earlier block are fixed.
+The new case is in `packages/agent-acp/test/agent-acp-turn.test.ts`, because the blocks harness opens no terminals.
+See [implemented.md](implemented.md).
