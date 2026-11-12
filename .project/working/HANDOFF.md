@@ -51,12 +51,13 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - Batch 1, 2026-11-12:
   - #304 `acp/20261112-0821-the-test-agent-reads-what-was-said` merged. Softov kept "last text block" after the builder found that an attachment's text comes after the person's.
   - #305 `container/20261112-0821-a-git-seed-takes-three-execs` merged at `239e83ede`.
-  - #306 `acp/20261112-0821-sessions-are-listed-in-their-machines` open, pushed at `305fc1e0c`, with an optional `state` on `ComputerPort` as Softov chose. Waiting for CI; Softov said merge when green.
+  - #306 `acp/20261112-0821-sessions-are-listed-in-their-machines` merged at `925b3c42b`, with an optional `state` on `ComputerPort` as Softov chose.
   - The three plans close as `built` after the Windows check.
 - Batch 2 builders started 2026-11-12 from `239e83ede`:
-  - failed machine: `agent-host-session://claude-deepseek-build/a55c8cdc-bc09-485c-b147-1db6e3898262`. It changes `packages/computer/src/plugin.ts`, as #306 does: the later of the two merges `origin/main` and reruns CI.
+  - failed machine: `agent-host-session://claude-deepseek-build/a55c8cdc-bc09-485c-b147-1db6e3898262`. It changes `packages/computer/src/plugin.ts`, as #306 did: merge `origin/main` into it before its PR, and rerun CI.
   - copied attachments: `agent-host-session://claude-deepseek-build/ceb92687-682e-4453-a16f-acba8e41a1a2`.
-- Batch 3 plans change `types/computers.ts`, as #306 does, so they start from a main that holds #306.
+- Batch 3 starts from a main that holds #306, which changed `types/computers.ts` too. The progress plan goes first, then the plan of how a machine reaches the host.
+- The flaky `tunnel-devtunnel-view.test.ts` case reddened #304, #306 and `main`; a rerun passed each time.
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" fails some runs, on `main` too (`02a57e731`). No problem file yet.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`: Softov chose deletion as VS Code does. Its Resume state has the research and the two questions left before task 01 is rewritten.
 
