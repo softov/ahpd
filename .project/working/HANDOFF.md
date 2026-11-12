@@ -56,6 +56,7 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - Batch 2 builders started 2026-11-12 from `239e83ede`:
   - failed machine: `agent-host-session://claude-deepseek-build/a55c8cdc-bc09-485c-b147-1db6e3898262`. It changes `packages/computer/src/plugin.ts`, as #306 did: merge `origin/main` into it before its PR, and rerun CI.
   - copied attachments: `agent-host-session://claude-deepseek-build/ceb92687-682e-4453-a16f-acba8e41a1a2`.
+  - Both stopped at 10:33 on DeepSeek `402 Insufficient Balance`; Softov topped up, and both resumed at 11:19 in the same sessions.
 - Batch 3 starts from a main that holds #306, which changed `types/computers.ts` too. The progress plan goes first, then the plan of how a machine reaches the host.
 - The flaky `tunnel-devtunnel-view.test.ts` case reddened #304, #306 and `main`; a rerun passed each time.
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" fails some runs, on `main` too (`02a57e731`). No problem file yet.
