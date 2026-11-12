@@ -55,6 +55,7 @@ Choices asked on 2026-11-08. A plan builds them after Softov validates this file
 | Decision | Options | Chosen |
 | --- | --- | --- |
 | Whose grants a tunnel caller gets | A person the tunnel names; pass every token through, as at `e388d12f5`; the derived token as root, as VS Code's CLI | A person the tunnel names (Softov, 2026-11-08) |
+| How tunnel connections reach the daemon | In the daemon's own process, with no local port, as VS Code's CLI; a local port, as today | No local port, plus a person the tunnel names (Softov, 2026-11-11) |
 | An `Origin` check on the WebSocket upgrade | Check it against the list the `/api` routes use; no check | Open: "skip this one for now" (Softov, 2026-11-08) |
 
 The chosen fix:
@@ -66,7 +67,7 @@ The chosen fix:
 - A tunnel has no person as its owner, so the setting is new (`packages/sdk/src/tunnels/channel.ts` header).
 - The plan finds how the hop gets a token for a person, because the hop holds only the daemon's token today.
 
-Found on 2026-11-11, not chosen yet:
+Found on 2026-11-11, and chosen the same day:
 
 - VS Code's CLI also sets the token on each tunnel request. It takes the tunnel's streams in its own process, and listens on no local port.
 - The tunnel SDK that ahpd uses can do the same: `forwardConnectionsToLocalPorts` off, and each stream from `forwardedPortConnecting`.
