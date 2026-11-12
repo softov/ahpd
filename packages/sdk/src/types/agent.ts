@@ -956,8 +956,21 @@ export interface Agent<Started extends Session | Promise<Session> = Session | Pr
    */
   directories?(): string[];
 
-  /** Sessions this backend already has. Ordering is the host's business. */
-  list?(): Promise<Listed[]>;
+  /**
+   * Sessions this backend already has. Ordering is the host's business.
+   *
+   * `machines` is where this backend has kept sessions, one entry per machine,
+   * and absent when it has kept none. A backend whose own program runs inside a
+   * machine lists there, through the port it is handed; the host builds each
+   * entry from the sessions it recorded, as `delete` is handed a machine.
+   *
+   * `host` says whether a kept session ran on this host. It is true with no
+   * `machines`, where no kept session places this backend and its listing is
+   * the host's alone, and when a kept session ran here beside the machines;
+   * false when every kept session ran in a machine. A backend that ignores
+   * both answers as it always did.
+   */
+  list?(machines?: SessionMachine[], host?: boolean): Promise<Listed[]>;
 
   /**
    * This backend's row for one session, read without listing the rest.

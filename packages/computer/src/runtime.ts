@@ -2263,6 +2263,28 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   };
 
   /**
+   * Remove a machine a create did not finish, with its own git directory.
+   *
+   * A create that fails partway leaves the container Docker made, and the
+   * volume mounted into it, and neither is of any use: nothing will start in
+   * the machine, and nothing will read what the volume holds. Both are
+   * removed, so the next attempt finds a clean host. A removal that fails is
+   * said in the log and not thrown: the first error is the one that says why
+   * the machine was not made, and it is the one the caller is answered with.
+   */
+  const cleanUpFailed = async (container: string, volume: string | undefined): Promise<void> => {
+    const gone = await ran(options, ['rm', '-f', container]);
+    if (gone.code !== 0) {
+      options.log?.(`${container} was not removed after a failed create: ${gone.stderr.trim() || 'no output'}`, 'warn');
+    }
+    if (volume === undefined) return;
+    const dropped = await ran(options, ['volume', 'rm', volume]);
+    if (dropped.code !== 0) {
+      options.log?.(`the volume ${volume} was not removed after a failed create: ${dropped.stderr.trim() || 'no output'}`, 'warn');
+    }
+  };
+
+  /**
    * Seed a machine's own git directory, in the machine, from the tree it was given.
    *
    * The machine's git directory is a volume, which Docker made owned by root,
@@ -2283,9 +2305,9 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
    * mounted at the same path - so a host change nobody committed shows up in
    * the machine as the uncommitted change it is.
    *
-   * A machine whose repository could not be made is not a machine: it is removed
-   * before git's own words are thrown, so nothing is left up with nothing to
-   * commit into.
+   * A machine whose repository could not be made is not a machine: the caller
+   * removes it before git's own words are thrown, so nothing is left up with
+   * nothing to commit into.
    */
   const seedGit = async (machine: string, spec: MachineSpec, git: GitMounts, container: string): Promise<void> => {
     /*
@@ -2308,74 +2330,68 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     const asUser = (args: string[]): Promise<string> =>
       must(['exec', ...(spec.user === undefined ? [] : ['--user', spec.user]), container, ...args]);
     const own = [`--git-dir=${at}`, `--work-tree=${root}`];
-    try {
-      const ids = await idsOfMachine(spec, container);
-      if (ids === undefined) options.log?.(`${machine} leaves its git directory root's: the ids of its user could not be read inside it`, 'warn');
-      else if (ids.uid !== 0 || ids.gid !== 0) {
-        // The volume's own mount point, which is the git directory under
-        // `shared` and the tree it sits in under `copy`: either way it is what
-        // Docker made root's and what the machine's git has to write in.
-        await must(['exec', '--user', '0', container, 'chown', `${String(ids.uid)}:${String(ids.gid)}`, git.volume]);
-      }
-      /*
-       * A git directory at `at` itself, and not the `<at>/.git` a plain `init`
-       * would make: the volume is mounted where git looks for the directory, so
-       * the layout has to be the directory's own.
-       */
-      await asUser(['git', 'init', '--bare', '-q', at]);
-      /*
-       * The two files git reads that say what the directory is, in the one
-       * `cp -a` that also carries `objects/info/`: the `config`, which turns
-       * `core.bare` off so the machine knows this directory belongs to a
-       * working tree - the one the gitfile names it from, or the folder the
-       * volume is mounted over - and the `HEAD`, naming the branch the tree is
-       * on, which `init` left at its default. A shell would do this with
-       * `git config` and `git symbolic-ref`; the archive does it for an image
-       * whose git comes without one, and costs one copy instead of five calls.
-       *
-       * The same archive holds where the history is: the host's objects,
-       * read-only at the mount they were given, named as the machine's
-       * alternate. Written through `cp -a` rather than a shell, and owned as
-       * the machine's own user, who is what its git runs as. `objects/info/`
-       * is carried by the archive as well, since a git that does not make it
-       * on `init` would otherwise have nowhere to put the file.
-       */
-      const owner = ids ?? { uid: 0, gid: 0 };
-      await must(
-        ['cp', '-a', '-', `${container}:${at}`],
-        undefined,
-        archiveOf([
-          { name: 'config', bytes: Buffer.from(gitConfigOf(seed), 'utf8'), ...owner },
-          ...(seed.branch === undefined ? [] : [{ name: 'HEAD', bytes: Buffer.from(`ref: refs/heads/${seed.branch}\n`, 'utf8'), ...owner }]),
-          ...(objects === undefined ? [] : [
-            { name: 'objects/info/', bytes: Buffer.alloc(0), directory: true, ...owner },
-            { name: 'objects/info/alternates', bytes: Buffer.from(`${objects}\n`, 'utf8'), ...owner },
-          ]),
+    const ids = await idsOfMachine(spec, container);
+    if (ids === undefined) options.log?.(`${machine} leaves its git directory root's: the ids of its user could not be read inside it`, 'warn');
+    else if (ids.uid !== 0 || ids.gid !== 0) {
+      // The volume's own mount point, which is the git directory under
+      // `shared` and the tree it sits in under `copy`: either way it is what
+      // Docker made root's and what the machine's git has to write in.
+      await must(['exec', '--user', '0', container, 'chown', `${String(ids.uid)}:${String(ids.gid)}`, git.volume]);
+    }
+    /*
+     * A git directory at `at` itself, and not the `<at>/.git` a plain `init`
+     * would make: the volume is mounted where git looks for the directory, so
+     * the layout has to be the directory's own.
+     */
+    await asUser(['git', 'init', '--bare', '-q', at]);
+    /*
+     * The two files git reads that say what the directory is, in the one
+     * `cp -a` that also carries `objects/info/`: the `config`, which turns
+     * `core.bare` off so the machine knows this directory belongs to a
+     * working tree - the one the gitfile names it from, or the folder the
+     * volume is mounted over - and the `HEAD`, naming the branch the tree is
+     * on, which `init` left at its default. A shell would do this with
+     * `git config` and `git symbolic-ref`; the archive does it for an image
+     * whose git comes without one, and costs one copy instead of five calls.
+     *
+     * The same archive holds where the history is: the host's objects,
+     * read-only at the mount they were given, named as the machine's
+     * alternate. Written through `cp -a` rather than a shell, and owned as
+     * the machine's own user, who is what its git runs as. `objects/info/`
+     * is carried by the archive as well, since a git that does not make it
+     * on `init` would otherwise have nowhere to put the file.
+     */
+    const owner = ids ?? { uid: 0, gid: 0 };
+    await must(
+      ['cp', '-a', '-', `${container}:${at}`],
+      undefined,
+      archiveOf([
+        { name: 'config', bytes: Buffer.from(gitConfigOf(seed), 'utf8'), ...owner },
+        ...(seed.branch === undefined ? [] : [{ name: 'HEAD', bytes: Buffer.from(`ref: refs/heads/${seed.branch}\n`, 'utf8'), ...owner }]),
+        ...(objects === undefined ? [] : [
+          { name: 'objects/info/', bytes: Buffer.alloc(0), directory: true, ...owner },
+          { name: 'objects/info/alternates', bytes: Buffer.from(`${objects}\n`, 'utf8'), ...owner },
         ]),
-      );
-      /*
-       * On another box's Docker, the history is a bundle of the tree's `HEAD`
-       * instead, or the session's branch fetched from `origin` where the
-       * profile says `clone`, fetched into the seed ref either way: the commit
-       * the checkout below is made at is read back from that ref.
-       */
-      const reached: FarSeed = {
-        name: spec.name,
-        must: asUser,
-        ran: (command) => ran(options, ['exec', ...(spec.user === undefined ? [] : ['--user', spec.user]), container, ...command]),
-        put: async (file, path) => { await must(['cp', file, `${container}:${path}`]); },
-        drop: async (path) => { await ran(options, ['exec', '--user', '0', container, 'rm', '-f', path]); },
-      };
-      const far = (): Promise<string | undefined> => (codeRouteOf(spec) === 'clone'
-        ? fetchedInto(reached, root, at, seed.branch)
-        : bundledInto(reached, root, at));
-      const commit = objects === undefined ? await far() : seed.commit;
-      await checkedOut(asUser, own, seed, commit, git.copy === true);
-    }
-    catch (error) {
-      await ran(options, ['rm', '-f', container]);
-      throw error;
-    }
+      ]),
+    );
+    /*
+     * On another box's Docker, the history is a bundle of the tree's `HEAD`
+     * instead, or the session's branch fetched from `origin` where the
+     * profile says `clone`, fetched into the seed ref either way: the commit
+     * the checkout below is made at is read back from that ref.
+     */
+    const reached: FarSeed = {
+      name: spec.name,
+      must: asUser,
+      ran: (command) => ran(options, ['exec', ...(spec.user === undefined ? [] : ['--user', spec.user]), container, ...command]),
+      put: async (file, path) => { await must(['cp', file, `${container}:${path}`]); },
+      drop: async (path) => { await ran(options, ['exec', '--user', '0', container, 'rm', '-f', path]); },
+    };
+    const far = (): Promise<string | undefined> => (codeRouteOf(spec) === 'clone'
+      ? fetchedInto(reached, root, at, seed.branch)
+      : bundledInto(reached, root, at));
+    const commit = objects === undefined ? await far() : seed.commit;
+    await checkedOut(asUser, own, seed, commit, git.copy === true);
   };
 
   /**
@@ -3150,8 +3166,21 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
          * The machine's own git directory, seeded in the container the CLI made
          * - reached by its id, which is what every command before the name is
          * read back goes through.
+         *
+         * A seed that fails leaves a container the CLI made and the volume
+         * mounted into it, so both are removed before git's own words are
+         * thrown: this is the second caller of the seed, and the `run` above
+         * guards only its own.
          */
-        if (git !== undefined) await seedGit(spec.name, spec, git, made.containerId);
+        if (git !== undefined) {
+          try {
+            await seedGit(spec.name, spec, git, made.containerId);
+          }
+          catch (error) {
+            await cleanUpFailed(made.containerId, guard === 'fetch' ? gitVolumeOf(spec.name) : undefined);
+            throw error;
+          }
+        }
         /*
          * The probe, taken once for the container this `up` answered.
          *
@@ -3333,17 +3362,30 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       }
       const keeps = [image, 'sleep', 'infinity'];
       const copies = spec.copies ?? [];
-      if (copies.length === 0) {
-        await must(['run', '-d', ...flags, ...keeps], given.env);
+      /*
+       * Everything Docker makes for this machine, and the seed after it, under
+       * one guard: a `run` Docker refused, a copy that did not land, a start
+       * that failed and a seed whose git refused all leave a container, the
+       * volume mounted into it, or both. The first error is the one thrown,
+       * after what was left is removed.
+       */
+      try {
+        if (copies.length === 0) {
+          await must(['run', '-d', ...flags, ...keeps], given.env);
+        }
+        else {
+          await must(['create', ...flags, ...keeps], given.env);
+          for (const copy of copies) await must(['cp', copy.source, `${spec.name}:${copy.target}`]);
+          await must(['start', spec.name]);
+        }
+        // The machine's own git directory, seeded from the tree now that there
+        // is a machine to seed it in.
+        if (git !== undefined) await seedGit(spec.name, spec, git, spec.name);
       }
-      else {
-        await must(['create', ...flags, ...keeps], given.env);
-        for (const copy of copies) await must(['cp', copy.source, `${spec.name}:${copy.target}`]);
-        await must(['start', spec.name]);
+      catch (error) {
+        await cleanUpFailed(spec.name, git !== undefined && guard === 'fetch' ? gitVolumeOf(spec.name) : undefined);
+        throw error;
       }
-      // The machine's own git directory, seeded from the tree now that there is
-      // a machine to seed it in.
-      if (git !== undefined) await seedGit(spec.name, spec, git, spec.name);
       return { id: spec.name, image, status: 'running', created: new Date().toISOString() };
     },
 
