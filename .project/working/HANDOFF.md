@@ -56,11 +56,12 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - Batch 2, 2026-11-12. Both builders stopped once on DeepSeek `402 Insufficient Balance`, and resumed after Softov topped up:
   - #307 `container/20261112-0821-only-copied-attachments-are-removed`, pushed at `36e64b4e7`; sdk 4762 passed. At review, `leavesWith` also drops the record of copied paths.
   - #308 `container/20261112-0821-a-failed-machine-leaves-nothing`, pushed at `6b134bf21`; computer 604 passed, 1 real-Docker case failed once and passed in its file. At review, the start leaves a machine that names no daemon alone.
-  - #307 is red at `36e64b4e7`: `computer-attachments.test.ts` expected the whole folder removed from a disposable machine. The builder rewrote the case; at review its log check was fixed, and `origin/main` merged in at `872bf415f`, not pushed. The new disposable case never reaches the machine's removal in its harness; sent back again. Its builder may run that one file.
+  - #307 is red at `36e64b4e7`: `computer-attachments.test.ts` expected the whole folder removed from a disposable machine. The builder rewrote the case; at review its log check was fixed, and `origin/main` merged in at `872bf415f`, not pushed. The case missed the removal because `letGo` waits on `bringBack` before `leave`; the case now uses `disposableDelay: 1000`. Computer suite runs before the push.
   - #308 merged at `ca9b0b2a7`.
 - Batch 3 started 2026-11-12 from `ca9b0b2a7`, which holds #305, #306 and #308:
   - progress: `agent-host-session://claude-deepseek-build/45c80a22-1db4-417e-820d-964b549ed273`.
-  - Progress built 2026-11-12. At review: sdk `host-handshake.test.ts` pins no progress for a create, as VS Code's host. Softov chose progress only while making a machine. The machine steps were also lost before the runtime. Sent back for both.
+  - #309 `host/20261112-0821-making-a-session-reports-progress`, pushed at `3a4296677`: progress only for a create that makes a machine, as Softov chose; the plugin's `run` wrapper had dropped `progress`. sdk 4763, computer 607. Merges when green.
+  - ahpc's `cli/20261112-0821-create-session-waits-on-progress` must keep its timeout for a create with no machine, which now sends no progress.
   - The plan of how a machine reaches the host starts after progress merges, since both change the same files.
 - The flaky `tunnel-devtunnel-view.test.ts` case reddened #304, #306 and `main`; a rerun passed each time.
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" fails some runs, on `main` too (`02a57e731`). No problem file yet.
