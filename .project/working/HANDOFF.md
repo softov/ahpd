@@ -48,15 +48,15 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - ahpc's plan `cli/20261112-0821-create-session-waits-on-progress` is in the ahpc repository, and waits for the progress plan.
 - The brief [the-terminal-tool-runs-on-windows-when-set.md](../briefs/the-terminal-tool-runs-on-windows-when-set.md) waits for Softov's word to plan it. Its open points are where the setting lives and its name.
 - ahpw #69 merged: an `env` secret taken out of the agent form is dropped.
-- Batch 1 builders started 2026-11-12 on `claude-deepseek-build`, each in its own `build/` worktree from `822b9aea0`:
-  - git seed: `agent-host-session://claude-deepseek-build/dac555f8-98bc-4f2c-8ea8-130b0ce68e72`
-  - sessions listed in their machines: `agent-host-session://claude-deepseek-build/f11ac330-3c1a-473f-8c4a-e6b1c1e21e71`
-  - test agent reads what was said: `agent-host-session://claude-deepseek-build/25a46e8a-ecdc-41d4-9bdd-24549b0b1225`
-- Batch 1 state, 2026-11-12:
-  - `acp/20261112-0821-the-test-agent-reads-what-was-said` is #304, pushed at `47b986f24`; agent-acp 363/363. Softov kept "last text block" after the builder found that an attachment's text comes after the person's. Green: check and check-windows passed, after one rerun of `linux (1/2)`. Ready for Softov's word.
-  - `container/20261112-0821-a-git-seed-takes-three-execs` pushed at `a19080ecb`, after a fix: the alternates had landed at `<at>/info/alternates`. Computer 600 passed; the 2 timeouts (devcontainer, libvirt) fail on `main` too. It is #305: check and check-windows passed. Ready for Softov's word.
-  - `acp/20261112-0821-sessions-are-listed-in-their-machines` is #306, pushed at `305fc1e0c`, with an optional `state` on `ComputerPort` as Softov chose. agent-acp 372, sdk 4760 (5 skipped), computer 601 (1 skipped). Waiting for CI.
-  - Batch 3 plans change `types/computers.ts` too, so they merge `origin/main` after #306.
+- Batch 1, 2026-11-12:
+  - #304 `acp/20261112-0821-the-test-agent-reads-what-was-said` merged. Softov kept "last text block" after the builder found that an attachment's text comes after the person's.
+  - #305 `container/20261112-0821-a-git-seed-takes-three-execs` merged at `239e83ede`.
+  - #306 `acp/20261112-0821-sessions-are-listed-in-their-machines` open, pushed at `305fc1e0c`, with an optional `state` on `ComputerPort` as Softov chose. Waiting for CI; Softov said merge when green.
+  - The three plans close as `built` after the Windows check.
+- Batch 2 builders started 2026-11-12 from `239e83ede`:
+  - failed machine: `agent-host-session://claude-deepseek-build/a55c8cdc-bc09-485c-b147-1db6e3898262`. It changes `packages/computer/src/plugin.ts`, as #306 does: the later of the two merges `origin/main` and reruns CI.
+  - copied attachments: `agent-host-session://claude-deepseek-build/ceb92687-682e-4453-a16f-acba8e41a1a2`.
+- Batch 3 plans change `types/computers.ts`, as #306 does, so they start from a main that holds #306.
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" fails some runs, on `main` too (`02a57e731`). No problem file yet.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`: Softov chose deletion as VS Code does. Its Resume state has the research and the two questions left before task 01 is rewritten.
 
