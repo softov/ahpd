@@ -56,10 +56,11 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - Batch 2, 2026-11-12. Both builders stopped once on DeepSeek `402 Insufficient Balance`, and resumed after Softov topped up:
   - #307 `container/20261112-0821-only-copied-attachments-are-removed`, pushed at `36e64b4e7`; sdk 4762 passed. At review, `leavesWith` also drops the record of copied paths.
   - #308 `container/20261112-0821-a-failed-machine-leaves-nothing`, pushed at `6b134bf21`; computer 604 passed, 1 real-Docker case failed once and passed in its file. At review, the start leaves a machine that names no daemon alone.
-  - #307 is red: `computer-attachments.test.ts` still expects the whole folder removed from a disposable machine. Sent back to its builder; the review ran only the sdk suite, and a change to sdk behaviour needs the computer suite too.
+  - #307 is red at `36e64b4e7`: `computer-attachments.test.ts` expected the whole folder removed from a disposable machine. The builder rewrote the case; at review its log check was fixed, and `origin/main` merged in at `872bf415f`, not pushed. Computer and sdk suites run before the push.
   - #308 merged at `ca9b0b2a7`.
 - Batch 3 started 2026-11-12 from `ca9b0b2a7`, which holds #305, #306 and #308:
   - progress: `agent-host-session://claude-deepseek-build/45c80a22-1db4-417e-820d-964b549ed273`.
+  - Progress built 2026-11-12; sent back to close the progress on a refusal before the claim too, as the plan says "answers or throws". Suites not run yet.
   - The plan of how a machine reaches the host starts after progress merges, since both change the same files.
 - The flaky `tunnel-devtunnel-view.test.ts` case reddened #304, #306 and `main`; a rerun passed each time.
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" fails some runs, on `main` too (`02a57e731`). No problem file yet.
