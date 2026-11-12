@@ -12,13 +12,16 @@ refs:
   - "[code://packages/server/src/commands/run.ts#L748-L762](../../packages/server/src/commands/run.ts#L748-L762) - `root: true` on a daemon with users"
   - "[code://packages/sdk/src/listen.ts#L268-L290](../../packages/sdk/src/listen.ts#L268-L290) - the upgrade checks the token and no `Origin`"
   - git://1564b69aa - the hop became an HTTP proxy that sets the token
+  - https://github.com/microsoft/vscode/blob/1564f100807a/cli/src/tunnels/control_server.rs#L214-L215 - VS Code's CLI takes the agent host port with `add_port_direct`, so no local port listens
+  - https://github.com/microsoft/vscode/blob/1564f100807a/cli/src/tunnels/agent_host.rs#L1547-L1553 - VS Code's CLI sets `?tkn=` on each request that comes through the tunnel
   - git://83efef0ca - the audit branch's head when the problem was read
   - git://598b5d35b - main when the problem was read again, on 2026-11-11
 ---
 
 ## Symptom
 
-Read from the code in the security review of 2026-11-08, and not reproduced.
+Read from the code in the security review of 2026-11-08.
+Softov reproduced it on 2026-11-11, on a tunnel with `anonymous: true`.
 A daemon with a token and a users directory runs the system tunnel on a port other than 31546.
 A process on the same machine opens `ws://127.0.0.1:31546/` with no token.
 The daemon admits the socket as root.
@@ -62,3 +65,9 @@ The chosen fix:
 - With no person set, the hop swaps nothing, so VS Code over a tunnel needs an admin to name a person first.
 - A tunnel has no person as its owner, so the setting is new (`packages/sdk/src/tunnels/channel.ts` header).
 - The plan finds how the hop gets a token for a person, because the hop holds only the daemon's token today.
+
+Found on 2026-11-11, not chosen yet:
+
+- VS Code's CLI also sets the token on each tunnel request, but it takes the tunnel's streams in its own process and listens on no local port.
+- The tunnel SDK that ahpd uses can do the same: `forwardConnectionsToLocalPorts` off, and each stream from `forwardedPortConnecting`.
+- That removes the local process and the web page from the impact. A tunnel visitor still gets the token, so the person setting is still needed.
