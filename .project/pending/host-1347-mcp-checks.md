@@ -42,7 +42,7 @@ ahpd token mint --user mia --label mcp-check
 
 ## Steps
 
-1. Start the `ahpd` server in VS Code. Check that it lists the seven session tools.
+1. Start the `ahpd` server in VS Code. Check that it lists the eleven session tools that `ELEVEN` names in `packages/server/test/mcp.test.ts`, `archive_chat` and `move_session` among them.
 2. Ask the chat to list your sessions. Check that the answer holds only that person's sessions.
 3. Ask it to create a session with `relationship: independent` and a named `agent`. Check that the session runs that agent and belongs to that person.
 4. Ask it to send a message to that session. Check that the turn shows that person as the sender.

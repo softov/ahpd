@@ -24,6 +24,8 @@ export AHPD_URL=ws://127.0.0.1:37537 AHPD_TOKEN_FILE=/home/softov/.vscode/cli/ag
 rpc() { node /github/ahpd/.project/pending/rpc.mjs "$@"; }
 ```
 
+Your daemon has users, so since #303 the system tunnel lets VS Code in only when the plugin's `person` option names a person. Without it, VS Code gets a 401, and the tunnel's row says to set `person`. Before step 1, set `person` to `user:` and your id in the `@ahpd/tunnel-devtunnel` entry of `config-dev.json`, as the plugin's README shows under *Options*.
+
 If the view is not there, the system tunnel failed at start: see the problem `a-system-tunnel-that-fails-at-start-is-not-retried`. Disable and enable it in ahpw.
 
 ## Results so far
