@@ -18,21 +18,20 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - CI shards: `linux (1/2)`, `linux (2/2)`, `processes (1/2)`, `processes (2/2)` and `windows (1/4)` to `windows (4/4)`. `check` and `check-windows` are green only when every shard of their job is.
 - The only ruleset on `main` is `Protect Main`. It requires a PR and lets org admins and Softov bypass it, so a plan-only push goes straight to main. It requires no check: the old `main checks` ruleset, which required `check` and `check-windows`, was deleted on 2026-11-11. Wait for both before a merge until Softov adds them back.
 - A slow runner can still fail a job with nothing wrong in the code. Rerun the failed jobs once with `gh run rerun <id> -R ahpio/ahpd --failed`; a second failure needs a look.
-- Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`. He restarted it after #291; a restart wires in #292 to #297, #299 and #300. It has `policies.check` on, with one policy, `neach`. It needs `DEEPSEEK_API_KEY` in its environment, or the DeepSeek agents do not open. Never restart it or use the ports 5180 and 37537 yourself.
+- Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`. He restarted it at 20:17 local on 2026-11-11, on `d269b3abf`, so it runs everything to #300. It runs from `src`, so a restart is all a merge needs. It has `policies.check` on, with one policy, `neach`. It needs `DEEPSEEK_API_KEY` in its environment, or the DeepSeek agents do not open. Never restart it or use the ports 5180 and 37537 yourself.
 - Code goes through a PR on `ahpio/ahpd`. Plan-only commits go to main. A PR merges with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word. Show a PR's text in chat before opening it.
 - `gh pr checks` has no `--json` here, and `gh pr edit` fails on the Projects classic deprecation. Read a job's log with `gh api repos/ahpio/ahpd/actions/jobs/<id>/logs`, and set a PR body with `gh api repos/ahpio/ahpd/pulls/<n> -X PATCH -F body=@<file>`.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it. Run one vitest suite at a time, with `TMPDIR` on a folder outside the home's dot-folders.
 - On this machine, computer-spawn's "fails a turn on a session whose CLI is gone" fails on main too. CI passes it.
 - A test daemon for checks: `source .project/pending/test-daemon.sh`, on port 39200, with its token at `~/ahpd-check/token`. Check `ss -ltnp` before you start one, and stop it by pid.
 - `/github/ahpd` is a shared checkout, and the dev daemon runs from it. Work in a worktree from `origin/main` under `/github/ahpd.worktrees/`.
-- Worktrees in `/github/ahpd.worktrees/`. Remove one only on Softov's word:
-  - `audit-guards`, on `host/20261108-1222-the-audit-keeps-its-guards`: another session's, with changes not committed.
-  - `base-0210`, `base-1647`, `base-2330` and `base-main`: detached, at the bases of the audit merge.
-  - `briefs-commit`, `plan-mcp` and `pending-check`: detached, for plan-only commits and checks.
-  - `build-agents-057f374c`, `build-agents-3795760c`, `build-agents-ae3197fe`, `build-agents-e6611632`, `build-agents-ed43acf5`, `devtunnel-key-values` and `usage-task-03`: build sessions' worktrees.
-  - `wait-ms` (#260) and `win-command` (#261): merged.
-  - `release-prerelease`: merged in #163.
-  - Merged branches: `build-agents-6c0a50f2` (#199), `build-agents-74d376da` (#196), `build-agents-9b7dd5b5` (#197), `build-agents-b6d26e50` (#187), `build-agents-cba21cdc` (#198), `canvas-example` (#194), `grants-follow-the-answers` (#192), `maycxc-union` and `union-ad15488a`.
+- Worktrees in `/github/ahpd.worktrees/`, after Softov had 60 merged ones removed on 2026-11-11. Remove one only on his word:
+  - `audit-guards`, on `host/20261108-1222-the-audit-keeps-its-guards`: 11 audit problems from 2026-11-08 that were never committed, and 3 problem deletions.
+  - `brief-pr-details`: detached, with the brief `a-client-shows-what-github-says-of-a-pull-request.md` never committed.
+  - `build-agents-3795760c`, `build-agents-ae3197fe`, `build-agents-ed43acf5` and `usage-task-03`: branches not merged by hash. Their work reached main in other commits.
+  - `base-main`: detached, in use by another session's test daemon.
+  - `pending-check`: detached, built for checks on a test daemon.
+- Branches of the removed worktrees are kept. Delete them only on his word.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334` (merged), `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`. Delete them only on his word.
 - Many ACP servers at once: each read of the session list starts one server per ACP preset that has `session/list`, 8 on his box. A proper fix would answer the list from the record and ask the servers only on a refresh; no brief yet.
 
