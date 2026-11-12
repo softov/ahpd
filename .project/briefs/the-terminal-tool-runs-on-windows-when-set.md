@@ -15,7 +15,8 @@ refs:
 
 # The agent terminal tool runs on Windows when a setting says so
 
-Softov wants an agent on Windows to run its shell commands in a terminal the host owns, as it does on Linux and macOS: the person sees the terminal and can type into it.
+Softov wants an agent on Windows to run its shell commands in a terminal the host owns, as on Linux and macOS.
+The person sees that terminal and can type into it.
 Today `enableCustomTerminalTool` does nothing on Windows.
 He chose on 2026-11-12: "A setting, off by default."
 
@@ -51,4 +52,5 @@ He chose on 2026-11-12: "A setting, off by default."
 
 - Where the setting lives. A root config key can be pushed by any client with `config:change`. A daemon config key can be set only by the operator, which suits a choice about running commands with no sandbox.
 - The setting's name.
-- Whether the PowerShell form needs more than the shell integration that passed: the async commands of #213, and the prompt and sentinel lines the answer must not show.
+- Whether the PowerShell form needs more than the shell integration that passed.
+  The async commands of #213 are untested on Windows, and so is an answer with no prompt or sentinel line.
