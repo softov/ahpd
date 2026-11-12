@@ -7,7 +7,9 @@
  * Status, URL and error are in memory only: they change while the daemon runs,
  * and a stored copy would be stale after a restart. The list's state also
  * carries `operations`, the calls a client may make, and the tunnel half of
- * each one runs on a row by id.
+ * each one runs on a row by id. Each row carries `operations`, the ids it
+ * offers now, so a client draws an enabled record's Disable and a disabled
+ * one's Enable.
  *
  * The settings a kind asks for are fields of the record. Where a kind's schema
  * marks a field `secret`, a put moves it to the vault under `tunnel/<id>/<field>`
@@ -172,8 +174,8 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
     };
   };
 
-  /** One row as a client is shown it: the record, and what the host knows of it now. */
-  const rowOf = (record: StoredRecord): Record<string, unknown> => {
+  /** One row as a client is shown it, before its operations: the record, and what the host knows of it now. */
+  const stateOf = (record: StoredRecord): Record<string, unknown> => {
     const held = live.get(record.id);
     return {
       ...record,
@@ -182,6 +184,40 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
       ...(held?.error === undefined ? {} : { error: held.error }),
       ...(held?.operation === undefined ? {} : { operation: held.operation }),
     };
+  };
+
+  /**
+   * The ids of the operations this row offers now.
+   *
+   * The host's own follow the record's state: a record is edited and removed
+   * whatever it says, enabled once it is off, and disabled once it is on. A
+   * kind's operation is offered when its `offered` answers true, and always when
+   * it declares none.
+   */
+  const offersOf = (row: Record<string, unknown>): string[] => {
+    const kind = options.kinds()[String(row['kind'])];
+    if (kind === undefined) return [];
+    const named = (name: string): string => `${kind.name}/${name}`;
+    const ids: string[] = [];
+    if (kind.update !== undefined) ids.push(named('update'));
+    ids.push(named('remove'));
+    ids.push(named(row['enabled'] === true ? 'disable' : 'enable'));
+    for (const operation of kind.operations ?? []) {
+      if (operation.offered === undefined || operation.offered(row)) ids.push(named(operation.id));
+    }
+    return ids;
+  };
+
+  /** One row as a client is shown it: the record, what the host knows of it, and its operations. */
+  const rowOf = (record: StoredRecord): Record<string, unknown> => {
+    const row = stateOf(record);
+    return { ...row, operations: offersOf(row) };
+  };
+
+  /** Whether one record offers an operation now. */
+  const offers = async (target: string, operationId: string): Promise<boolean> => {
+    const record = await options.collection.get(target);
+    return record !== undefined && offersOf(stateOf(record)).includes(operationId);
   };
 
   /** The settings a create or an update keeps: each secret moved, and a reference in its place. */
@@ -547,7 +583,7 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
     return await rowNow(record.id, record);
   };
 
-  const operations: OperationChannel = { uri: URI, operations: operationsOf, begin, settle, run };
+  const operations: OperationChannel = { uri: URI, operations: operationsOf, begin, settle, offers, run };
 
   const startAll = async (port: number): Promise<void> => {
     const before = await options.collection.list();

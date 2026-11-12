@@ -1,6 +1,6 @@
 ---
 title: Connectors serve an operations list
-status: todo
+status: implemented
 depends: [task-01-a-record-lists-its-operations.md]
 layer: "sdk"
 refs:
@@ -20,9 +20,9 @@ refs:
 
 ## Steps
 
-1. List Enable, Disable, Sign in and Remove, with labels, the grants the fixed methods check, and Remove's confirmation.
+1. List Enable, Disable and Remove, with labels, the grants the fixed methods check, and Remove's confirmation.
 2. Offer Enable on a disabled record and Disable on an enabled one.
-3. Offer Sign in on a record whose adapter signs in, and Remove on every record.
+3. Offer Remove on every record. Sign in stays `x-ahpd/connectors/signin`, and no record lists it.
 4. Run each operation through the same code as its fixed method.
 5. Register the connectors channel with `invokeOperation` as task 02 registers agents.
 
@@ -34,4 +34,15 @@ refs:
 - The sdk suite passes.
 
 ## Resume
+
+Implemented 2026-11-11 in the worktree; the reviewer commits. Files changed:
+
+- `packages/sdk/src/connectors/channel.ts` - Enable, Disable and Remove as an `OperationChannel`, each row's `operations`, `offers`, and `removeOne` shared with the fixed command.
+- `packages/sdk/src/types/kinds.ts` - `OperationScope` gains `connector`, with the comment.
+- `packages/server/src/commands/run.ts` - the connectors channel joins `channels` in `run.ts`.
+- `packages/sdk/test/connectors-channel.test.ts` - the ids by state, Disable and Remove through `x-ahpd/invokeOperation`, and the refusal of a second Disable.
+
+Sign in stays `x-ahpd/connectors/signin`, as the Answers table says, and no record lists it. The fixed `enable`, `disable` and `remove` commands still answer: the operations call the same `toggleOne` and `removeOne`.
+
+Checked: `pnpm exec tsc -p tsconfig.json --noEmit` at the root passes.
 

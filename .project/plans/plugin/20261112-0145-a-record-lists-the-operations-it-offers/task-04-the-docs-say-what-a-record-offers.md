@@ -1,6 +1,6 @@
 ---
 title: The docs say what a record offers
-status: todo
+status: implemented
 depends: [task-02-agents-serve-an-operations-list.md, task-03-connectors-serve-an-operations-list.md]
 layer: "docs"
 refs:
@@ -29,4 +29,11 @@ The docs say that each record lists the operations it offers, and which channels
 - Read the page against tasks 01 to 03.
 
 ## Resume
+
+Implemented 2026-11-11 in the worktree; the reviewer commits. Files changed:
+
+- `docs/plugins/PLUGINS.md` - the kind's `offered`, each row's `operations` on the tunnels, clients, agents and connectors sections, and the four channels and the refusal in `x-ahpd/invokeOperation`.
+- `docs/updates/v0_15.md` - one line under Plugins.
+
+Checked: the page read against tasks 01 to 03.
 

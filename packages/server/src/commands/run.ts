@@ -1061,12 +1061,17 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     onProblem: listProblem,
   });
   /*
-   * The one command over every channel that offers operations. The tunnels and
-   * clients channels are its two now; a computers channel joins them later
-   * without another command being served.
+   * The one command over every channel that offers operations. The tunnels,
+   * clients, agents and connectors channels are its four now; a computers
+   * channel joins them later without another command being served.
    */
   const channelOperations = invokeOperation({
-    channels: () => ({ [tunnels.operations.uri]: tunnels.operations, [clients.operations.uri]: clients.operations }),
+    channels: () => ({
+      [tunnels.operations.uri]: tunnels.operations,
+      [clients.operations.uri]: clients.operations,
+      [agentLists.operations.uri]: agentLists.operations,
+      [connectorLists.operations.uri]: connectorLists.operations,
+    }),
     check: (value, schema, label) => { check(value, schema as JsonSchema, label); },
     onProblem: listProblem,
   });

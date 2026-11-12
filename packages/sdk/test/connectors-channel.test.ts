@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { connectorsChannel } from '../src/connectors/channel.js';
 import { createHost } from '../src/host.js';
+import { invokeOperation } from '../src/kinds/operations.js';
 import { fileUsers } from '../src/access/users.js';
 import { fileResources } from '../src/resources/resources.js';
 import { memoryRecords } from '../src/resources/records.js';
@@ -186,7 +187,14 @@ async function served(register = true) {
     check,
     onProblem: (line) => { problems.push(line); },
   });
-  const wire = servedRecords('ahpd', [connectors.channel], connectors.methods);
+  const wire = servedRecords('ahpd', [connectors.channel], {
+    ...connectors.methods,
+    'x-ahpd/invokeOperation': invokeOperation({
+      channels: () => ({ [URI]: connectors.operations }),
+      check,
+      onProblem: (line) => { problems.push(line); },
+    }),
+  });
   const users = fileUsers({ path: usersFile });
   const host = createHost({
     path: home,
@@ -1361,6 +1369,56 @@ it('turns a connector on again, opens and checks it, and answers a ready row', a
     id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'bot://motion', secret: 'sk-live-1' },
   });
   expect(probe.asked.length).toBe(asked + 1);
+  await close();
+});
+
+it('lists on a connector record the toggle its state calls for, and Remove', async () => {
+  const { host, users, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' },
+  });
+
+  expect((await cy.rows())['ci']).toMatchObject({ operations: ['disable', 'remove'] });
+  await cy.call('x-ahpd/connectors/disable', { id: 'ci' });
+  expect((await cy.rows())['ci']).toMatchObject({ operations: ['enable', 'remove'] });
+  await close();
+});
+
+it('turns a connector off through x-ahpd/invokeOperation, as the fixed command does', async () => {
+  const { host, users, collection, closed, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' },
+  });
+
+  expect(await cy.call('x-ahpd/invokeOperation', {
+    channel: URI, operationId: 'disable', target: { id: 'ci' },
+  })).toMatchObject({
+    result: { id: 'ci', state: 'disabled', enabled: false, operations: ['enable', 'remove'] },
+  });
+  // The adapter heard the stop, and the store holds the record off.
+  expect(closed).toEqual(['ci']);
+  expect((await collection.get('ci'))?.['enabled']).toBe(false);
+
+  // A record that is off does not offer the toggle that turned it off.
+  expect(await cy.call('x-ahpd/invokeOperation', {
+    channel: URI, operationId: 'disable', target: { id: 'ci' },
+  })).toMatchObject({ code: -32602, message: 'disable is not offered on ci now' });
+  await close();
+});
+
+it('removes a connector through x-ahpd/invokeOperation, as the fixed command does', async () => {
+  const { host, users, collection, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' },
+  });
+
+  expect(await cy.call('x-ahpd/invokeOperation', {
+    channel: URI, operationId: 'remove', target: { id: 'ci' },
+  })).toEqual({ result: {} });
+  expect(await collection.get('ci')).toBeUndefined();
   await close();
 });
 

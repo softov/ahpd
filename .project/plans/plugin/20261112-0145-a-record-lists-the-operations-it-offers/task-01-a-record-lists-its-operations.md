@@ -1,6 +1,6 @@
 ---
 title: A record lists the operations it offers
-status: todo
+status: implemented
 depends: []
 layer: "sdk, tunnel-devtunnel"
 refs:
@@ -44,4 +44,16 @@ Each record in `x-ahpd-tunnels` and `x-ahpd-clients` carries `operations`, the i
 - `pnpm schema` once, then the sdk suite and the tunnel-devtunnel suite pass.
 
 ## Resume
+
+Implemented 2026-11-11 in the worktree; the reviewer commits. Files changed:
+
+- `packages/sdk/src/types/kinds.ts` - `KindOperation.offered`, with the comment naming `.project/ideas/an-operation-says-when-it-applies.md`.
+- `packages/sdk/src/kinds/operations.ts` - `OperationChannel.offers`, and the refusal in `invokeOperation`.
+- `packages/sdk/src/tunnels/channel.ts` - each row's `operations`, `offers`, and the module's note.
+- `packages/sdk/src/clients/channel.ts` - each row carries `operations: ['drop']`.
+- `packages/tunnel-devtunnel/src/kind.ts` - Start, Stop and Restart conditions.
+- `packages/sdk/test/tunnels-channel.test.ts` - the record ids and the refusal.
+- `packages/tunnel-devtunnel/test/tunnel-devtunnel-kind.test.ts` - devtunnel's ids by status.
+
+Checked: `pnpm exec tsc -p tsconfig.json --noEmit` at the root passes, and the sdk package check passes too. The tunnel-devtunnel package check names `@ahpd/sdk` from `dist`, which is not built in this worktree, so the root checker is what covers that package.
 
