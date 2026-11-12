@@ -1,6 +1,6 @@
 ---
 title: A refused protocol is written again
-status: todo
+status: implemented
 depends: []
 layer: "tunnel-devtunnel"
 refs:
@@ -34,4 +34,20 @@ refs:
 - `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run packages/tunnel-devtunnel` passes.
 
 ## Resume
+
+- **Done so far:** `writePort` in `packages/tunnel-devtunnel/src/service.ts` writes a port through the `Host`.
+  When the service answers "The tunnel port protocol cannot be changed" it takes the port off with `Host.remove` and writes it again with `Host.add`.
+  `sdkService.add` and `sdkService.access` both go through it, and `access` refreshes the relay after a recovery.
+  `fakeCloud` in `packages/tunnel-devtunnel/test/tunnel-devtunnel.test.ts` now answers a `refuse` text for the first write of a kind.
+  Three service cases cover the add refusal, the access refusal and another error.
+- **Next action:** the reviewer runs the suite and commits.
+  Nothing is committed here.
+- **Files:** `packages/tunnel-devtunnel/src/service.ts`, `packages/tunnel-devtunnel/test/tunnel-devtunnel.test.ts`, this task file, the plan and `implemented.md`.
+- **Open questions:** none.
+- **Departures:** the recovery sits in `sdkService`, one layer above the task's `service.ts:409-418`, because the stand-in client is the `Host`.
+  A recovery inside `sdkCloud` could not be reached by the tests.
+  The retry writes through `Host.add` on both paths, because `updateTunnelPort` sends `If-Match: *` and a port cannot be updated after a delete.
+- **Watch out for:** `packages/tunnel-devtunnel/tsconfig.json` has no `paths` for `@ahpd/sdk`, so a fresh worktree resolves it only after `pnpm exec tsc -p packages/sdk`.
+  With that build, `pnpm exec tsc -p tsconfig.json --noEmit` passes in the package.
+  The root `pnpm exec tsc -p tsconfig.json --noEmit` passes without it, and it covers the package's source and its tests.
 
