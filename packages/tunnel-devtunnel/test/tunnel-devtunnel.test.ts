@@ -175,17 +175,36 @@ interface Calls {
  * `get` answers the tunnel kept by id and `find` the account's tunnel by its
  * name, which is what makes a restart keep the Dev Tunnel's id. The host counts
  * the calls that matter to the arrangement: one host for a connector, and a
- * refresh after every port.
+ * refresh after every port. A `refuse` text answers the first write of that
+ * kind with it, as the service answers a port whose protocol it will not
+ * change.
  */
-const fakeCloud = (options: { found?: Remote; kept?: Remote } = {}) => {
+const fakeCloud = (options: { found?: Remote; kept?: Remote; refuse?: { add?: string; access?: string } } = {}) => {
   const calls: Calls = {
     got: [], found: [], made: 0, synced: [], hosted: 0, deleted: 0, refreshed: 0, restarted: 0, closed: 0,
     added: [], removed: [], access: [],
   };
   let held: Remote | undefined;
+  /** The writes already refused, so the next one of the same kind goes through. */
+  const refused = new Set<'add' | 'access'>();
+  const refusal = (kind: 'add' | 'access'): Error | undefined => {
+    const text = options.refuse?.[kind];
+    if (text === undefined || refused.has(kind)) return undefined;
+    refused.add(kind);
+    return new Error(text);
+  };
   const host: Host = {
-    add: async (port) => { calls.added.push(port); return `https://url-${String(port)}.example.test/`; },
-    access: async (port, on) => { calls.access.push([port, on]); },
+    add: async (port) => {
+      calls.added.push(port);
+      const error = refusal('add');
+      if (error !== undefined) throw error;
+      return `https://url-${String(port)}.example.test/`;
+    },
+    access: async (port, on) => {
+      calls.access.push([port, on]);
+      const error = refusal('access');
+      if (error !== undefined) throw error;
+    },
     remove: async (port) => { calls.removed.push(port); },
     refresh: async () => { calls.refreshed += 1; },
     restart: async () => { calls.restarted += 1; },
@@ -376,6 +395,57 @@ it('writes a port as auto, with an anonymous allow when it is public and a deny 
     protocol: 'auto',
     accessControl: { entries: [{ type: 'Anonymous', isDeny: true, subjects: [], scopes: ['connect'] }] },
   });
+});
+
+// A port kept from an earlier run may carry a protocol other than `auto`. The
+// service refuses to change it, and VS Code's CLI takes the port off and adds
+// it again, which is what the fake service is stood in for here.
+const OTHER_PROTOCOL = 'Tunnel service error: Invalid arguments. The tunnel port protocol cannot be changed.';
+
+it('writes a port again after removing it, when the service refuses its protocol', async () => {
+  const { cloud, calls } = fakeCloud({ found: REMOTE, refuse: { add: OTHER_PROTOCOL } });
+  const served = await serviceOver(cloud).add('mine', 9101, false);
+
+  expect(calls.added).toEqual([9101, 9101]);
+  expect(calls.removed).toEqual([9101]);
+  expect(calls.refreshed).toBe(1);
+  expect(served.url).toBe('https://url-9101.example.test/');
+});
+
+it('writes an access change again after removing the port, when the service refuses its protocol', async () => {
+  const { cloud, calls } = fakeCloud({ found: REMOTE, refuse: { access: OTHER_PROTOCOL } });
+  const service = serviceOver(cloud);
+  await service.add('mine', 9101, false);
+  calls.refreshed = 0;
+
+  await service.access('mine', 9101, true);
+
+  expect(calls.access).toEqual([[9101, true]]);
+  expect(calls.removed).toEqual([9101]);
+  // The port comes back by the write `add` makes, not the update the service
+  // refused, and the relay is then told about it again.
+  expect(calls.added).toEqual([9101, 9101]);
+  expect(calls.refreshed).toBe(1);
+});
+
+it('writes a moved port again after removing it, when the service refuses its protocol', async () => {
+  const { cloud, calls } = fakeCloud({ found: REMOTE, refuse: { add: OTHER_PROTOCOL } });
+
+  const url = await serviceOver(cloud).replace('mine', 9101, 9102, false);
+
+  expect(calls.removed).toEqual([9101, 9102]);
+  expect(calls.added).toEqual([9102, 9102]);
+  expect(url).toBe('https://url-9102.example.test/');
+});
+
+it('passes another error on, and leaves the port where it is', async () => {
+  const other = 'Tunnel service error: Invalid arguments. Something else.';
+  const { cloud, calls } = fakeCloud({ found: REMOTE, refuse: { add: other } });
+
+  await expect(serviceOver(cloud).add('mine', 9101, false)).rejects.toThrow(other);
+
+  expect(calls.added).toEqual([9101]);
+  expect(calls.removed).toEqual([]);
 });
 
 it('hosts one Dev Tunnel for a connector, and refreshes it for every port', async () => {
