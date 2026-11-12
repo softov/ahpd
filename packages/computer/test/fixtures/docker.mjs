@@ -223,10 +223,12 @@ if (verb === 'build') {
 }
 
 /*
- * `docker info --format {{json .}}`: the Engine's version and its image
- * store, the containerd one unless `imageMounts: false` says the daemon runs
- * a classic storage driver; `engine` names another version, and `failInfo`
- * is a daemon that does not answer.
+ * `docker info --format {{json .}}`: the Engine's version, its operating
+ * system and its image store, the containerd one unless `imageMounts: false`
+ * says the daemon runs a classic storage driver; `engine` names another
+ * version, and `failInfo` is a daemon that does not answer. `operatingSystem`
+ * is `Docker Desktop` on a Docker Desktop install, and `--format
+ * {{.OperatingSystem}}` answers the same name alone.
  */
 if (verb === 'info') {
   keep();
@@ -234,9 +236,16 @@ if (verb === 'info') {
     process.stderr.write('Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n');
     process.exit(1);
   }
+  const operatingSystem = held.operatingSystem ?? 'Debian GNU/Linux 12 (bookworm)';
+  const format = args.includes('--format') ? args[args.indexOf('--format') + 1] : undefined;
+  if (format === '{{.OperatingSystem}}') {
+    process.stdout.write(`${operatingSystem}\n`);
+    process.exit(0);
+  }
   const classic = held.imageMounts === false;
   process.stdout.write(`${JSON.stringify({
     ServerVersion: held.engine ?? '29.0.0',
+    OperatingSystem: operatingSystem,
     Driver: classic ? 'overlay2' : 'overlayfs',
     DriverStatus: classic ? [['Backing Filesystem', 'extfs'], ['Supports d_type', 'true']] : [['driver-type', 'io.containerd.snapshotter.v1']],
   })}\n`);
@@ -660,7 +669,7 @@ if (verb === 'run' || verb === 'create') {
    * reads it: a machine runs `<image> sleep infinity`, and a probe or a fill
    * helper is `<image> x`.
    */
-  const valued = new Set(['--name', '--label', '-v', '-e', '-w', '--cpus', '--memory', '--mount', '--user']);
+  const valued = new Set(['--name', '--label', '-v', '-e', '-w', '--cpus', '--memory', '--mount', '--user', '--add-host']);
   let image;
   let imageAt = -1;
   for (let i = 1; i < args.length; i++) {

@@ -217,6 +217,9 @@ export const routed = (
     parts: (id) => about(id, (runtime, name) => runtime.parts(name)),
     owner: (id) => about(id, (runtime, name) => runtime.owner(name)),
     how: (id, asked) => about(id, (runtime, name) => runtime.how(name, asked)),
+    // A runtime that cannot map the address has no answer, which is the same
+    // answer for a machine it did not make.
+    reach: (id, url) => about(id, (runtime, name) => runtime.reach?.(name, url) ?? Promise.resolve(undefined)),
     hostCommand: (id) => about(id, (runtime, name) => runtime.hostCommand(name)),
     // Not bounded: it moves a machine's work, which takes what it takes over a
     // network, and a bring-back cut off is a removal refused for good.

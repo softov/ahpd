@@ -456,7 +456,7 @@ describe('the MCP servers a session is opened with', () => {
    * machine's `docker exec` would, so the handshake is the fixture's own and
    * only where the session says it runs differs.
    */
-  const inBox = (url: string): Partial<Start> => ({
+  const inBox = (url: string, reach?: (id: string, url: string) => Promise<string | undefined>): Partial<Start> => ({
     settings: { computer: 'computer://box' },
     computers: {
       how: async (_id, spawn) => ({
@@ -464,6 +464,7 @@ describe('the MCP servers a session is opened with', () => {
         args: spawn.args ?? [],
         ...(spawn.env === undefined ? {} : { env: spawn.env }),
       }),
+      ...(reach === undefined ? {} : { reach }),
     },
     toolsServer: () => ({ url, token: 't-kn', setTools: () => {}, close: () => {} }),
   });
@@ -504,6 +505,44 @@ describe('the MCP servers a session is opened with', () => {
       headers: [{ name: 'authorization', value: 'Bearer t-kn' }],
     }]);
     expect(said).toEqual([]);
+  });
+
+  it('uses the address a machine\'s port answers for the host\'s tools', async () => {
+    const asked: [string, string][] = [];
+    const mapped = 'http://host.docker.internal:4242/ahp-mcp/one';
+    const { agent, log, said } = withLog();
+    const { session, watch } = await start(agent, 'boxed-mapped', inBox('http://127.0.0.1:4242/ahp-mcp/one', async (id, url) => {
+      asked.push([id, url]);
+      return mapped;
+    }));
+    const before = watch.endings().length;
+    session.sendMessage('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    // The port is asked with the machine and the daemon's own address, and
+    // its answer is the URL the agent is given.
+    expect(asked).toEqual([['box', 'http://127.0.0.1:4242/ahp-mcp/one']]);
+    expect(opened(log)).toEqual([{
+      type: 'http',
+      name: 'host',
+      url: mapped,
+      headers: [{ name: 'authorization', value: 'Bearer t-kn' }],
+    }]);
+    expect(said).toEqual([]);
+  });
+
+  it('keeps its own reading when the machine\'s port has no address for the daemon', async () => {
+    const { agent, log, said } = withLog();
+    const { session, watch } = await start(agent, 'boxed-unmapped', inBox(
+      'http://127.0.0.1:4242/ahp-mcp/one',
+      async () => undefined,
+    ));
+    const before = watch.endings().length;
+    session.sendMessage('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    expect(opened(log)).toEqual([]);
+    expect(said).toEqual(['host tools: computer://box cannot reach the daemon at 127.0.0.1:4242, so they were left out']);
   });
 });
 

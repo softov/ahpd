@@ -1992,6 +1992,15 @@ export const apply: Plugin['apply'] = (host, options) => {
   host.registerComputers({
     how: reach,
     /*
+     * The URL a machine uses for an address of this host's, from its runtime's
+     * own answer.
+     *
+     * Docker Desktop publishes the host at a name of its own, and other Docker
+     * does for a wildcard bind; a box over ssh, or another box's Docker,
+     * answers nothing, and the caller keeps its own reading.
+     */
+    reach: async (id, url) => made.reach?.(id, url),
+    /*
      * The socket a session in a node runs on, which the node dialled.
      *
      * Only a node's id is this port's to answer: a docker machine or an ssh box

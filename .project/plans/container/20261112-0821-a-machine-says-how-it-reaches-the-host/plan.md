@@ -53,6 +53,7 @@ serversFor -> own() endpoint http://127.0.0.1:<port> -> toolsReachable(url, mach
 | The port answers the URL a machine uses for a host endpoint, and `serversFor` uses that answer | Softov, 2026-11-12: "Machine says its address" | 01 |
 | The docker runtime maps loopback and wildcard hosts to `host.docker.internal` on Docker Desktop | Softov, 2026-11-12: "Machine says its address" | 02 |
 | On other Docker, a wildcard bind maps to `host.docker.internal` with `--add-host host.docker.internal:host-gateway`, and loopback has no answer | Softov, 2026-11-12: "Machine says its address" | 02 |
+| A dev container is answered only on Docker Desktop; on other Docker it has no `--add-host`, so it gets no answer | (defaulted: a name the container cannot resolve is not answered) | 02 |
 | Docker Desktop is told by `docker info` naming `Docker Desktop` as its operating system | `(defaulted: what the VM's Docker answered)` | 02 |
 | A port with no answer keeps today's guess | [code://packages/agent-acp/src/session/opening.ts#L87-L90](../../../../packages/agent-acp/src/session/opening.ts#L87-L90) | 01 |
 
@@ -66,8 +67,8 @@ serversFor -> own() endpoint http://127.0.0.1:<port> -> toolsReachable(url, mach
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The port answers a host URL](task-01-the-port-answers-a-host-url.md) | todo | - |
-| [02 - Docker maps the host address](task-02-docker-maps-the-host-address.md) | todo | 01 |
+| [01 - The port answers a host URL](task-01-the-port-answers-a-host-url.md) | implemented | - |
+| [02 - Docker maps the host address](task-02-docker-maps-the-host-address.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -76,8 +77,8 @@ serversFor -> own() endpoint http://127.0.0.1:<port> -> toolsReachable(url, mach
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-port-answers-a-host-url.md](task-01-the-port-answers-a-host-url.md).
+- **Done so far:** both tasks implemented on 2026-11-12, and the typecheck passes; no suite has run.
+- **Next action:** review and merge the PR, then check both cases by hand on the Windows VM, in the [Windows check](../../../pending/windows-machine-paths-checks.md).
 - **Open questions:** none.
 - **Watch out for:** `--add-host` goes at `docker run`, so a machine made before the change has no `host.docker.internal` on Linux.
 
