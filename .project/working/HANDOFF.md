@@ -56,7 +56,7 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - Batch 2, 2026-11-12. Both builders stopped once on DeepSeek `402 Insufficient Balance`, and resumed after Softov topped up:
   - #307 `container/20261112-0821-only-copied-attachments-are-removed`, pushed at `36e64b4e7`; sdk 4762 passed. At review, `leavesWith` also drops the record of copied paths.
   - #308 `container/20261112-0821-a-failed-machine-leaves-nothing`, pushed at `6b134bf21`; computer 604 passed, 1 real-Docker case failed once and passed in its file. At review, the start leaves a machine that names no daemon alone.
-  - #307 is red at `36e64b4e7`: `computer-attachments.test.ts` expected the whole folder removed from a disposable machine. The builder rewrote the case; at review its log check was fixed, and `origin/main` merged in at `872bf415f`, not pushed. The case missed the removal because `letGo` waits on `bringBack` before `leave`; the case now uses `disposableDelay: 1000`. Pushed at `7fae0a961`; computer 605 passed, the one `computer-spawn.test.ts` timeout fails on `main` too. Merges when green.
+  - #307 merged at `76625e8a1`, after its disposable case was rewritten to the plan's behaviour.
   - #308 merged at `ca9b0b2a7`.
 - Batch 3 started 2026-11-12 from `ca9b0b2a7`, which holds #305, #306 and #308:
   - progress: `agent-host-session://claude-deepseek-build/45c80a22-1db4-417e-820d-964b549ed273`.
