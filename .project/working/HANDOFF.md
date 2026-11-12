@@ -56,13 +56,13 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - Batch 2, 2026-11-12. Both builders stopped once on DeepSeek `402 Insufficient Balance`, and resumed after Softov topped up:
   - #307 `container/20261112-0821-only-copied-attachments-are-removed`, pushed at `36e64b4e7`; sdk 4762 passed. At review, `leavesWith` also drops the record of copied paths.
   - #308 `container/20261112-0821-a-failed-machine-leaves-nothing`, pushed at `6b134bf21`; computer 604 passed, 1 real-Docker case failed once and passed in its file. At review, the start leaves a machine that names no daemon alone.
-  - #307 is red at `36e64b4e7`: `computer-attachments.test.ts` expected the whole folder removed from a disposable machine. The builder rewrote the case; at review its log check was fixed, and `origin/main` merged in at `872bf415f`, not pushed. The case missed the removal because `letGo` waits on `bringBack` before `leave`; the case now uses `disposableDelay: 1000`. Computer suite runs before the push.
+  - #307 merged at `76625e8a1`, after its disposable case was rewritten to the plan's behaviour.
   - #308 merged at `ca9b0b2a7`.
 - Batch 3 started 2026-11-12 from `ca9b0b2a7`, which holds #305, #306 and #308:
   - progress: `agent-host-session://claude-deepseek-build/45c80a22-1db4-417e-820d-964b549ed273`.
-  - #309 `host/20261112-0821-making-a-session-reports-progress`, pushed at `3a4296677`: progress only for a create that makes a machine, as Softov chose; the plugin's `run` wrapper had dropped `progress`. sdk 4763, computer 607. Merges when green.
+  - #309 `host/20261112-0821-making-a-session-reports-progress`, merged at `9f86a7097`: progress only for a create that makes a machine, as Softov chose.
   - ahpc's `cli/20261112-0821-create-session-waits-on-progress` must keep its timeout for a create with no machine, which now sends no progress.
-  - The plan of how a machine reaches the host starts after progress merges, since both change the same files.
+  - reaches the host: `agent-host-session://claude-deepseek-build/e6a1b4b0-d750-4690-8f25-6d64a9b45134`, started from `9f86a7097`.
 - The flaky `tunnel-devtunnel-view.test.ts` case reddened #304, #306 and `main`; a rerun passed each time.
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" fails some runs, on `main` too (`02a57e731`). No problem file yet.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`: Softov chose deletion as VS Code does. Its Resume state has the research and the two questions left before task 01 is rewritten.
