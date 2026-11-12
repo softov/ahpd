@@ -1,10 +1,11 @@
 import { WAIT_MS } from '../../../tools/wait.ts';
 import { loggerOf } from '@ahpd/sdk';
 import { createHash } from 'node:crypto';
-import { createServer as createHttpServer, get as httpGet } from 'node:http';
+import { createServer as createHttpServer } from 'node:http';
 import type { IncomingMessage } from 'node:http';
-import { connect, createServer } from 'node:net';
+import { createServer } from 'node:net';
 import type { AddressInfo, Socket } from 'node:net';
+import { Duplex } from 'node:stream';
 import { afterEach, expect, it, vi } from 'vitest';
 import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import type { Host as DaemonHost } from '../../sdk/src/types/host.js';
@@ -14,12 +15,11 @@ import {
   deriveConnectionToken, displayLabel, normalizeTunnelName, tunnelNameFromHostname,
   LAUNCHER_LABEL, MAX_TUNNEL_NAME_LENGTH, PROTOCOL_LABEL, TUNNEL_PORT,
 } from '../src/discovery.js';
-import { forward } from '../src/forward.js';
 import { devtunnelKind } from '../src/kind.js';
 import type { KindOptions } from '../src/kind.js';
 import { apply } from '../src/plugin.js';
 import { labelsOf, portOf, sdkService } from '../src/service.js';
-import type { Cloud, Host, Kept, Remote, Service } from '../src/service.js';
+import type { Carried, Cloud, Host, Kept, Remote, Service } from '../src/service.js';
 
 /*
  * The convention, the hop and the kind, with a fake SDK instead of an account.
@@ -77,70 +77,311 @@ it('names a tunnel as VS Code does: the host name cleaned, a configured name nor
   expect(labelsOf('dev03')).toEqual(['dev03', PROTOCOL_LABEL, LAUNCHER_LABEL]);
 });
 
-// The hop -----------------------------------------------------------------
+// The carried stream ------------------------------------------------------
 
 const closing: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
   for (const close of closing.splice(0)) await close();
 });
 
-it('carries a connection from the well-known port to the one the daemon bound', async () => {
-  const daemon = createServer((socket) => { socket.on('data', (chunk) => socket.write(`seen ${chunk}`)); });
-  await new Promise<void>((done) => { daemon.listen(0, '127.0.0.1', done); });
-  closing.push(() => new Promise<void>((done) => { daemon.close(() => done()); }));
-  const bound = (daemon.address() as AddressInfo).port;
+/** What the daemon on loopback was asked, which is what a visitor reached it with. */
+interface Asked {
+  url: string;
+  authorization?: string;
+}
 
-  // Not the well-known port: the whole point is that the two are different.
-  const hop = await forward(0, bound, () => {});
-  closing.push(() => hop.close());
+/** A daemon on loopback that answers each request `plain`, and records what it was asked. */
+const daemonOn = async (upgrade = false) => {
+  const asked: Asked[] = [];
+  const remember = (request: IncomingMessage): void => {
+    asked.push({
+      url: request.url ?? '',
+      ...(request.headers.authorization === undefined ? {} : { authorization: request.headers.authorization }),
+    });
+  };
+  const server = createHttpServer((request, answer) => { remember(request); answer.end('plain'); });
+  if (upgrade) {
+    server.on('upgrade', (request: IncomingMessage, socket: Socket) => {
+      remember(request);
+      socket.end('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
+    });
+  }
+  await new Promise<void>((done) => { server.listen(0, '127.0.0.1', done); });
+  closing.push(() => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }));
+  return { asked, port: (server.address() as AddressInfo).port };
+};
 
-  const answer = await new Promise<string>((done, fail) => {
-    const client = connect({ host: '127.0.0.1', port: hop.port }, () => { client.write('frame'); });
-    client.on('data', (chunk) => { done(String(chunk)); client.destroy(); });
-    client.on('error', fail);
+/** A service that keeps the handlers the kind gives it, and answers a made-up Dev Tunnel. */
+const carrying = () => {
+  const handlers = new Map<string, Carried>();
+  const at = (connector: string, port: number): string => `${connector}:${String(port)}`;
+  const service: Service = {
+    add: async () => ({ remote: REMOTE }),
+    access: async () => {},
+    replace: async () => undefined,
+    carry: (connector, port, handler) => {
+      if (handler === undefined) handlers.delete(at(connector, port));
+      else handlers.set(at(connector, port), handler);
+    },
+    remove: async () => {},
+    restart: async () => {},
+    show: async () => undefined,
+    close: async () => {},
+  };
+  return { service, handlers, at };
+};
+
+/**
+ * One visitor's connection, as the relay hands it over.
+ *
+ * The stream is both ways, like the SSH channel it stands in for: what the
+ * visitor sent is pushed into the readable side, and what the daemon answers is
+ * collected from the writable one.
+ */
+const visit = async (handler: Carried, request: string): Promise<string> => {
+  const answers: string[] = [];
+  let answer: (text: string) => void = () => {};
+  const answered = new Promise<string>((done) => { answer = done; });
+  const stream = new Duplex({
+    read: () => {},
+    write: (chunk: Buffer, _encoding, callback) => {
+      answers.push(String(chunk));
+      callback();
+      answer(answers.join(''));
+    },
   });
-  expect(answer).toBe('seen frame');
+  try {
+    handler(stream);
+    stream.push(request);
+    return await answered;
+  } finally {
+    stream.destroy();
+  }
+};
+
+/** The system tunnel on its well-known port, as the host hands it over. */
+const systemTunnel = (person?: string): Tunnel => tunnel({
+  purpose: 'system',
+  settings: { connector: 'mine', port: TUNNEL_PORT, ...(person === undefined ? {} : { person }) },
 });
 
-/*
- * Over a guarded daemon the hop sets the daemon's own token on every request
- * it carries, a WebSocket upgrade among them, as VS Code's CLI injects its
- * agent host's token into each request arriving over a tunnel
- * (cli/src/tunnels/agent_host.rs L1651-L1709 at 6b68d3fe).
- */
-it('sets the daemon\'s token as the tkn of every request it carries, an upgrade among them', async () => {
-  const seen: string[] = [];
-  const daemon = createHttpServer((asked, answer) => { seen.push(asked.url ?? ''); answer.end('plain'); });
-  daemon.on('upgrade', (asked: IncomingMessage, socket: Socket) => {
-    seen.push(asked.url ?? '');
-    socket.end('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
-  });
-  await new Promise<void>((done) => { daemon.listen(0, '127.0.0.1', done); });
-  closing.push(() => new Promise<void>((done) => { daemon.closeAllConnections(); daemon.close(() => done()); }));
-  const bound = (daemon.address() as AddressInfo).port;
-  const hop = await forward(0, bound, () => {}, 's3cret');
-  closing.push(() => hop.close());
+it('carries a visitor with the derived token to the daemon as the person the tunnel names', async () => {
+  const { service, handlers, at } = carrying();
+  const daemon = await daemonOn();
+  const { kind } = kindFor(service, {
+    person: 'user:ada',
+    daemonPort: () => daemon.port,
+  }, { users: true, key: 'key-for-ada' });
 
-  // A plain request, with a query and a token of the client's own.
-  const plain = await new Promise<string>((done, fail) => {
-    httpGet({ host: '127.0.0.1', port: hop.port, path: '/api/x?a=1&tkn=derived' }, (answer) => {
-      let body = '';
-      answer.on('data', (chunk) => { body += String(chunk); });
-      answer.on('end', () => { done(body); });
-    }).on('error', fail);
-  });
-  expect(plain).toBe('plain');
+  await kind.create(systemTunnel('user:ada'), reporting().report);
+  const handler = handlers.get(at('mine', TUNNEL_PORT));
+  expect(handler).toBeDefined();
 
-  // A WebSocket handshake, written by hand as a client sends one.
-  const upgraded = await new Promise<string>((done, fail) => {
-    const client = connect({ host: '127.0.0.1', port: hop.port }, () => {
-      client.write('GET /?tkn=derived HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: x\r\nSec-WebSocket-Version: 13\r\n\r\n');
-    });
-    client.on('data', (chunk) => { done(String(chunk)); client.destroy(); });
-    client.on('error', fail);
+  const derived = await deriveConnectionToken(REMOTE.id);
+  const answer = await visit(handler!, `GET /api/x?a=1&tkn=${derived} HTTP/1.1\r\nHost: example.com\r\n\r\n`);
+
+  // The body is the daemon's answer whole: a carried stream is bytes both ways,
+  // so its status line and headers reach the visitor exactly as the daemon wrote
+  // them, and the request the daemon read is what the next check reads.
+  expect(answer.slice(answer.indexOf('\r\n\r\n') + 4)).toBe('plain');
+  // What reached the daemon is the person's key, and not the token the client derived.
+  expect(daemon.asked).toEqual([{ url: '/api/x?a=1&tkn=key-for-ada' }]);
+});
+
+it('carries a token of the visitor\'s own, and its Authorization header, unchanged', async () => {
+  const { service, handlers, at } = carrying();
+  const daemon = await daemonOn();
+  const { kind } = kindFor(service, { person: 'user:ada', daemonPort: () => daemon.port }, { users: true, key: 'key-for-ada' });
+
+  await kind.create(systemTunnel('user:ada'), reporting().report);
+  const handler = handlers.get(at('mine', TUNNEL_PORT));
+
+  await visit(
+    handler!,
+    'GET /api/x?tkn=mine HTTP/1.1\r\nHost: example.com\r\nAuthorization: Bearer mine\r\n\r\n',
+  );
+
+  expect(daemon.asked).toEqual([{ url: '/api/x?tkn=mine', authorization: 'Bearer mine' }]);
+});
+
+it('answers 401, and warns on the row, on a host with users and no person named', async () => {
+  const { service, handlers, at } = carrying();
+  const daemon = await daemonOn();
+  const { kind, alerts } = kindFor(service, { daemonPort: () => daemon.port }, { users: true });
+
+  await kind.create(systemTunnel(), reporting().report);
+  const handler = handlers.get(at('mine', TUNNEL_PORT));
+
+  const derived = await deriveConnectionToken(REMOTE.id);
+  const answer = await visit(handler!, `GET /?tkn=${derived} HTTP/1.1\r\nHost: example.com\r\n\r\n`);
+
+  expect(answer).toContain('401 Unauthorized');
+  expect(daemon.asked).toEqual([]);
+  expect(alerts).toContainEqual({ level: 'error', ref: 'tunnel', text: expect.stringContaining('names nobody') });
+});
+
+it('does not start a tunnel naming a person whose record requires the issuer', async () => {
+  const { service, handlers, at } = carrying();
+  const daemon = await daemonOn();
+  // A record requiring the issuer admits no key, so `personKey` answers nothing
+  // and the tunnel has nobody it could carry a visitor to the daemon as.
+  const { kind, alerts } = kindFor(service, { daemonPort: () => daemon.port }, { users: true });
+  const report = reporting();
+
+  await kind.create(systemTunnel('user:ada'), report.report);
+
+  const last = report.seen.at(-1);
+  expect(last).toMatchObject({ status: 'error' });
+  expect(last?.error).toContain('user:ada');
+  expect(last?.error).toContain('issuer');
+  expect(last?.error).toContain('another person');
+  // The row says the same, and nothing was put on the service: no handler was
+  // registered and the daemon was not reached.
+  expect(alerts).toContainEqual({ level: 'error', ref: 'tunnel', text: expect.stringContaining('another person') });
+  expect(alerts.at(-1)?.text).toContain('issuer');
+  expect(handlers.has(at('mine', TUNNEL_PORT))).toBe(false);
+  expect(daemon.asked).toEqual([]);
+});
+
+it('sets the daemon\'s own token on a host with no users', async () => {
+  const { service, handlers, at } = carrying();
+  const daemon = await daemonOn();
+  const { kind } = kindFor(service, {
+    daemonPort: () => daemon.port,
+    guarded: () => true,
+    connectionToken: () => 's3cret',
   });
-  expect(upgraded).toContain('101 Switching Protocols');
-  expect(seen).toEqual(['/api/x?a=1&tkn=s3cret', '/?tkn=s3cret']);
+
+  await kind.create(systemTunnel(), reporting().report);
+  const handler = handlers.get(at('mine', TUNNEL_PORT));
+
+  const derived = await deriveConnectionToken(REMOTE.id);
+  await visit(handler!, `GET /?tkn=${derived} HTTP/1.1\r\nHost: example.com\r\n\r\n`);
+
+  expect(daemon.asked).toEqual([{ url: '/?tkn=s3cret' }]);
+});
+
+it('leaves the derived token as it came on a tunnel that requires a token', async () => {
+  const { service, handlers, at } = carrying();
+  const daemon = await daemonOn();
+  // Without the setting, a host with no users gives the derived token the
+  // daemon's own token. With it, nothing is mapped and the daemon decides.
+  const { kind } = kindFor(service, {
+    daemonPort: () => daemon.port,
+    guarded: () => true,
+    connectionToken: () => 's3cret',
+  });
+
+  await kind.create(tunnel({
+    purpose: 'system',
+    settings: { connector: 'mine', port: TUNNEL_PORT, requireToken: true },
+  }), reporting().report);
+  const handler = handlers.get(at('mine', TUNNEL_PORT));
+  const derived = await deriveConnectionToken(REMOTE.id);
+
+  await visit(handler!, `GET /?tkn=${derived} HTTP/1.1\r\nHost: example.com\r\n\r\n`);
+
+  expect(daemon.asked).toEqual([{ url: `/?tkn=${derived}` }]);
+});
+
+it('sets no key on a tunnel that requires a token, though it names a person', async () => {
+  const { service, handlers, at } = carrying();
+  const daemon = await daemonOn();
+  const { kind } = kindFor(service, { person: 'user:ada', daemonPort: () => daemon.port }, { users: true, key: 'key-for-ada' });
+
+  await kind.create(tunnel({
+    purpose: 'system',
+    settings: { connector: 'mine', port: TUNNEL_PORT, person: 'user:ada', requireToken: true },
+  }), reporting().report);
+  const handler = handlers.get(at('mine', TUNNEL_PORT));
+  const derived = await deriveConnectionToken(REMOTE.id);
+
+  await visit(handler!, `GET /?tkn=${derived} HTTP/1.1\r\nHost: example.com\r\n\r\n`);
+
+  // The person's key is not set: the request reaches the daemon as the visitor wrote it.
+  expect(daemon.asked).toEqual([{ url: `/?tkn=${derived}` }]);
+});
+
+it('carries a visitor\'s own token unchanged when a token is required', async () => {
+  const { service, handlers, at } = carrying();
+  const daemon = await daemonOn();
+  const { kind } = kindFor(service, { daemonPort: () => daemon.port });
+
+  await kind.create(tunnel({
+    purpose: 'system',
+    settings: { connector: 'mine', port: TUNNEL_PORT, requireToken: true },
+  }), reporting().report);
+  const handler = handlers.get(at('mine', TUNNEL_PORT));
+
+  await visit(handler!, 'GET /api/x?tkn=mine HTTP/1.1\r\nHost: example.com\r\nAuthorization: Bearer mine\r\n\r\n');
+
+  expect(daemon.asked).toEqual([{ url: '/api/x?tkn=mine', authorization: 'Bearer mine' }]);
+});
+
+it('applies a change of requireToken on a running tunnel', async () => {
+  const { service, handlers, at } = carrying();
+  const daemon = await daemonOn();
+  const { kind } = kindFor(service, {
+    daemonPort: () => daemon.port,
+    guarded: () => true,
+    connectionToken: () => 's3cret',
+  });
+  const record = (requireToken: boolean): Tunnel => tunnel({
+    purpose: 'system',
+    settings: { connector: 'mine', port: TUNNEL_PORT, ...(requireToken ? { requireToken: true } : {}) },
+  });
+  const derived = await deriveConnectionToken(REMOTE.id);
+  const request = `GET /?tkn=${derived} HTTP/1.1\r\nHost: example.com\r\n\r\n`;
+
+  await kind.create(record(false), reporting().report);
+  const handler = handlers.get(at('mine', TUNNEL_PORT));
+  await visit(handler!, request);
+  expect(daemon.asked.at(-1)).toEqual({ url: '/?tkn=s3cret' });
+
+  await kind.update!(record(true), { connector: 'mine', port: TUNNEL_PORT }, reporting().report);
+
+  await visit(handler!, request);
+  expect(daemon.asked.at(-1)).toEqual({ url: `/?tkn=${derived}` });
+});
+
+it('takes requireToken for the system tunnel from its option', () => {
+  const on = kindFor(carrying().service, { connector: 'mine', requireToken: true });
+  expect(on.kind.system?.({ port: 9187 })).toMatchObject({ connector: 'mine', requireToken: true });
+  const off = kindFor(carrying().service, { connector: 'mine' });
+  expect(off.kind.system?.({ port: 9187 })).not.toHaveProperty('requireToken');
+});
+
+it('carries a WebSocket upgrade with the derived token to the daemon as the person', async () => {
+  const { service, handlers, at } = carrying();
+  const daemon = await daemonOn(true);
+  const { kind } = kindFor(service, { person: 'user:ada', daemonPort: () => daemon.port }, { users: true, key: 'key-for-ada' });
+
+  await kind.create(systemTunnel('user:ada'), reporting().report);
+  const handler = handlers.get(at('mine', TUNNEL_PORT));
+
+  const derived = await deriveConnectionToken(REMOTE.id);
+  const answer = await visit(
+    handler!,
+    `GET /?tkn=${derived} HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: x\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+  );
+
+  expect(answer).toContain('101 Switching Protocols');
+  expect(daemon.asked).toEqual([{ url: '/?tkn=key-for-ada' }]);
+});
+
+it('leaves a port other than the well-known one to the service, and stops carrying the one it took', async () => {
+  const { service, handlers, at } = carrying();
+  const { kind } = kindFor(service);
+
+  // Another record than the system tunnel's, so the second start is a start and
+  // not the same record asked for twice, which the kind leaves alone.
+  await kind.create(tunnel({ id: 'devtunnel-2', settings: { connector: 'mine', port: 9101 } }), reporting().report);
+  expect(handlers.has(at('mine', 9101))).toBe(false);
+
+  await kind.create(systemTunnel(), reporting().report);
+  expect(handlers.has(at('mine', TUNNEL_PORT))).toBe(true);
+  await kind.invoke('stop', systemTunnel(), reporting().report);
+  expect(handlers.has(at('mine', TUNNEL_PORT))).toBe(false);
 });
 
 // The fake SDK ------------------------------------------------------------
@@ -269,6 +510,7 @@ const unusedService = (): Service => ({
   add: async () => { throw new Error('the fake service was not asked to add a port'); },
   access: async () => {},
   replace: async () => undefined,
+  carry: () => {},
   remove: async () => {},
   restart: async () => {},
   show: async () => undefined,
@@ -292,17 +534,27 @@ const reporting = () => {
   return { seen, report: (report: TunnelReport) => { seen.push(report); } };
 };
 
+/** Who the host verifies, and what a minted key is here. */
+interface People {
+  /** Whether the host has a users directory. */
+  users?: boolean;
+  /** The key `personKey` answers, which is a made-up one. */
+  key?: string;
+}
+
 /** The kind over a service, with the lines, alerts and page it made kept. */
-const kindFor = (service: Service, over: Partial<KindOptions> = {}) => {
+const kindFor = (service: Service, over: Partial<KindOptions> = {}, people: People = {}) => {
   const said: string[] = [];
   const logged: string[] = [];
   const alerts: Alert[] = [];
   const views: PluginView[] = [];
   const cleared: string[] = [];
   const { host } = pluginHost('tunnel', context({
+    ...(people.users === true ? { hasUsers: true } : {}),
     say: (line) => { said.push(line); },
     log: loggerOf((line: string) => { logged.push(line); }),
   }), {
+    ...(people.key === undefined ? {} : { personKey: async () => people.key }),
     alert: (alert) => { alerts.push(alert); },
     clearAlert: (ref) => { cleared.push(ref); },
     showView: (_surface, view) => { views.push(view); },

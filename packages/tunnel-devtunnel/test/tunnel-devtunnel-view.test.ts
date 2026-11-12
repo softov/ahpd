@@ -47,6 +47,7 @@ const scripted = (answers: Answer[]) => {
     add: async () => ({ remote: { id: TUNNEL, labels: [] }, url: URL }),
     access: async () => {},
     replace: async () => URL,
+    carry: () => {},
     remove: async () => {},
     restart: async () => {},
     show: next,
@@ -221,6 +222,7 @@ it('starts no poll when the tunnel stops during its first read', async () => {
     add: async () => ({ remote: { id: TUNNEL, labels: [] }, url: URL }),
     access: async () => {},
     replace: async () => URL,
+    carry: () => {},
     remove: async () => {},
     restart: async () => {},
     show: async () => { shown.push(UP); return await pending; },
@@ -229,7 +231,9 @@ it('starts no poll when the tunnel stops during its first read', async () => {
   const { kind, views } = kindFor(service);
 
   const started = kind.create(SYSTEM, () => {});
-  await vi.advanceTimersByTimeAsync(0);
+  // The first read comes after the tunnel id is digested, which is a turn of
+  // the event loop, so the read is waited for rather than assumed.
+  for (let at = 0; at < 50 && shown.length === 0; at++) await vi.advanceTimersByTimeAsync(0);
   expect(shown).toHaveLength(1);
 
   await kind.invoke('stop', SYSTEM, () => {});

@@ -1,0 +1,17 @@
+{
+  "name": "plugin-person-key",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "ahpd": {
+    "entry": "./index.ts",
+    "title": "Person key",
+    "optionsSchema": {
+      "type": "object",
+      "properties": {
+        "person": { "type": "string", "title": "Person" }
+      },
+      "required": ["person"]
+    }
+  }
+}

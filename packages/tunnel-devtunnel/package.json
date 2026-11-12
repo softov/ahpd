@@ -93,6 +93,8 @@
         "name": { "type": "string", "description": "Tunnel name shown in clients. Defaults to this machine's hostname." },
         "keep": { "type": "boolean", "description": "Keep the tunnel after the daemon stops. On by default." },
         "anonymous": { "type": "boolean", "description": "Let people not signed in to this account reach the tunnel. Off by default." },
+        "person": { "type": "string", "pattern": "^user:.+$", "description": "Who a visitor to this host's tunnel is, as user:<id>. On a host with users and no person, the tunnel's derived token is refused." },
+        "requireToken": { "type": "boolean", "description": "Require every visitor to bring a token this host accepts. The derived token is then never swapped, and VS Code over the tunnel cannot connect. Off by default." },
         "allowAccountChange": { "type": "boolean", "description": "Let a new sign-in replace the connector's GitHub account. Off by default." }
       }
     }

@@ -27,11 +27,13 @@ Set the connector's name as the plugin's `connector` option, and sign in to it i
 
 ## Options
 
-In the configuration file, with every option set:
+In the configuration file, with one tunnel and the person it is for:
 
 ```json
-{ "plugins": [{ "name": "@ahpd/tunnel-devtunnel", "options": { "connector": "dev03", "name": "dev03", "keep": true, "anonymous": true, "allowAccountChange": true } }] }
+{ "plugins": [{ "name": "@ahpd/tunnel-devtunnel", "options": { "connector": "dev03", "name": "dev03", "person": "user:ada" } }] }
 ```
+
+`person` and `requireToken` are the two settings that decide who gets in, and [The tunnel kind](#the-tunnel-kind) has both. Every option is in the table.
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -39,6 +41,8 @@ In the configuration file, with every option set:
 | `name` | this machine's hostname | What the Dev Tunnel is called in a client's list, and how it is found. A configured name is normalized as VS Code normalizes one (lowercase, word characters and dashes, twenty at most) and the hostname is cleaned as VS Code and its CLI clean one, so `code tunnel` and this plugin give one machine the same name |
 | `keep` | `true` | Whether the Dev Tunnel outlives the daemon |
 | `anonymous` | `false` | Whether somebody not signed in to this account may reach the system tunnel |
+| `person` | none | Who a visitor to the system tunnel is, as `user:` and the id the users directory holds them under. Presenting the tunnel's derived token gets that person's grants; a host with users and no person here refuses the token; a person whose record requires the issuer cannot be named, and the tunnel does not start |
+| `requireToken` | `false` | Whether a visitor to the system tunnel must bring a token this host accepts. On, the derived token is never mapped, and VS Code over the tunnel cannot connect |
 | `allowAccountChange` | `false` | Whether a second sign-in may replace a connector's GitHub account |
 
 Keep `keep` on: a client derives its connection token from the Dev Tunnel's id, so a new tunnel on every start is a new token on every start.
@@ -61,13 +65,17 @@ The Dev Tunnels service is reached with that token through the SDK, for the port
 
 ## The tunnel kind
 
-The plugin registers one tunnel kind, `devtunnel`. A record of it is a connector, a port and whether the port is anonymous:
+The plugin registers one tunnel kind, `devtunnel`, and the host adds the one tunnel a client reaches: the system tunnel on port 31546, the fixed port VS Code looks for. One tunnel is enough. Its public URL is the Dev Tunnel's address, and its two settings decide who gets in.
 
-```json
-{ "kind": "devtunnel", "settings": { "connector": "dev03", "port": 9187, "anonymous": false } }
-```
+- With `person` set, VS Code connects over the tunnel, and every visitor who presents the tunnel's derived token gets that person's grants. `person` is `user:` and the id the users directory holds them under, as in `"person": "user:ada"`. A host with no users needs no person: the derived token is accepted as it is, or given the daemon's own token when the daemon requires one.
+- With `requireToken` on, a visitor brings a token this host accepts, as `?tkn=<token>` in the URL. VS Code cannot connect that way, because it presents only the derived token.
+- On a host with users and neither set, the derived token is refused: the request is answered with a 401 and never reaches the daemon, and the tunnel's row says to set `person`. Only a person's own token gets in.
 
-Starting a record puts its port on its connector's Dev Tunnel and asks the relay to serve it. Stopping it takes the port off. Two records of one connector are two ports on that connector's one Dev Tunnel, and one relay host serves both. A connector's Dev Tunnel is found as VS Code's CLI finds the tunnel it hosts: by the id the plugin kept for the connector, else by its name with the `vscode-server-launcher` label, so a restart reuses it and keeps its id, and with it every client's token. A tunnel of that name another machine is hosting is refused with the CLI's words. A port is written with the protocol `auto`, and a private one carries an anonymous deny, so a public default on the tunnel does not open it.
+A saved change of `person` or `requireToken` takes effect on the running tunnel. A person whose record requires the issuer cannot be named: no key is minted for them, the row reports an error saying the tunnel needs another person, and the tunnel does not start.
+
+A tunnel on another port is not a way to get a public URL for the daemon: it forwards that port as it is, with no token mapping, so a visitor gets whatever that port offers. When it is anonymous and that port has no sign-in of its own, anyone with the URL gets in, so leave `anonymous` off unless you mean it.
+
+The host keeps the system tunnel as a record of the kind: the connector, port 31546, and one of the two settings. Starting a record puts its port on its connector's Dev Tunnel and asks the relay to serve it. Stopping it takes the port off. Two records of one connector are two ports on that connector's one Dev Tunnel, and one relay host serves both. A connector's Dev Tunnel is found as VS Code's CLI finds the tunnel it hosts: by the id the plugin kept for the connector, else by its name with the `vscode-server-launcher` label, so a restart reuses it and keeps its id, and with it every client's token. A tunnel of that name another machine is hosting is refused with the CLI's words. A port is written with the protocol `auto`, and a private one carries an anonymous deny, so a public default on the tunnel does not open it.
 
 The kind offers `start`, `stop`, `restart` and `anonymous`. `restart` connects the relay to the same Dev Tunnel again without removing a port, which is what to try when the relay dropped. `anonymous` takes `{ "on": true }` or `{ "on": false }` and changes who may reach the port live, and the host saves it in the record.
 
@@ -112,11 +120,15 @@ tunnel sunny-otter-9k3 (dev03), port 31546
 
 In VS Code, sign in to the same Dev Tunnels account and run **Agents: Connect to Remote Agent Host via Dev Tunnel**. Finding a tunnel needs that sign-in. A direct WebSocket address does not, and is what **Agents: Add Remote Agent Host...** takes.
 
+This is the way in when the tunnel sets `person`. With `requireToken` on, VS Code presents only the derived token, which the daemon does not accept, so it cannot connect.
+
 ## The connection token
 
-A client connecting over a tunnel computes its token from the tunnel's id, as the unpadded base64url of its SHA-256, and presents it as `?tkn=`. Only people who pass the Dev Tunnels access check can reach the tunnel, so the token does not need to be secret.
+A client connecting over a tunnel computes its token from the tunnel's id, as the unpadded base64url of its SHA-256, and presents it as `?tkn=`. Anyone who knows the tunnel's id can compute it, and on an anonymous tunnel anyone can reach it, so the token is not a secret. What the host does with it is the tunnel's setting, and [The tunnel kind](#the-tunnel-kind) has the three cases.
 
-A daemon on loopback with no connection token of its own accepts it, and that needs no configuration. A daemon started with `--connection-token` is reached through the hop from the tunnel's port to its own, which sets the daemon's token as the `tkn` of every request it carries, a WebSocket upgrade among them, as VS Code's CLI injects its agent host's token into each request arriving over a tunnel; the `listening` event carries the token to the plugin. A guarded daemon bound to the tunnel's own port has no hop, and the plugin prints the derived token on its own line so you can make the two agree:
+No local port listens for the tunnel. The relay hands each connection to the daemon's own process, which reads the request there and carries it to the daemon over a loopback dial, so nothing on this machine accepts a connection on the tunnel's port unless the daemon itself is bound to it (as VS Code's CLI takes its agent host's port in its own process). The port is still 31546 on the reverse-proxy side, which is the one VS Code looks for.
+
+A guarded daemon the plugin was not handed a token for still has the derived token printed on its own line, so you can make the two agree:
 
 ```
 tunnel token 4d8f...  - what a client presents over the tunnel; this daemon requires its own
@@ -135,7 +147,7 @@ With the `connector` option set, the host adds one system tunnel of the `devtunn
 1. Finds the connector's Dev Tunnel by the id kept for it, else by its name with the launcher label, or makes one.
 2. Labels it with its name, `protocolv5` and `vscode-server-launcher`, which is what makes a client list it, and keeps its id for the next start.
 3. Puts port 31546 on it, the fixed port VS Code looks for.
-4. Forwards 31546 on loopback to the port the daemon bound, unless the daemon is already on 31546.
+4. Carries each connection on 31546 to the port the daemon bound, in the daemon's own process, with no local listener.
 5. Hosts the Dev Tunnel and prints its address.
 
 If any step fails, the daemon keeps running without the tunnel.
