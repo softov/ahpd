@@ -55,7 +55,8 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - Batch 1 state, 2026-11-12:
   - `acp/20261112-0821-the-test-agent-reads-what-was-said` is #304, pushed at `47b986f24`; agent-acp 363/363. Softov kept "last text block" after the builder found that an attachment's text comes after the person's. Green: check and check-windows passed, after one rerun of `linux (1/2)`. Ready for Softov's word.
   - `container/20261112-0821-a-git-seed-takes-three-execs` pushed at `a19080ecb`, after a fix: the alternates had landed at `<at>/info/alternates`. Computer 600 passed; the 2 timeouts (devcontainer, libvirt) fail on `main` too. It is #305: check and check-windows passed. Ready for Softov's word.
-  - sessions listed in their machines: agent-acp 368/368. `ComputerPort` has no running read; Softov chose an optional `state` on the port. The builder is adding it; sdk suite not run yet.
+  - `acp/20261112-0821-sessions-are-listed-in-their-machines` is #306, pushed at `305fc1e0c`, with an optional `state` on `ComputerPort` as Softov chose. agent-acp 372, sdk 4760 (5 skipped), computer 601 (1 skipped). Waiting for CI.
+  - Batch 3 plans change `types/computers.ts` too, so they merge `origin/main` after #306.
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" fails some runs, on `main` too (`02a57e731`). No problem file yet.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`: Softov chose deletion as VS Code does. Its Resume state has the research and the two questions left before task 01 is rewritten.
 
