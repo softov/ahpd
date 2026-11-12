@@ -1,14 +1,16 @@
 ---
-title: Check the agent terminal tool and ask_user on Windows and macOS
+title: Check the agent terminal tool and ask_user on macOS
 plans:
   - plans/host/20261103-1620-a-shell-runs-vscodes-shell-integration/plan.md
   - plans/host/20261103-1620-an-agent-asks-the-person/plan.md
   - plans/host/20261103-1620-the-agent-terminal-tool/plan.md
 ---
 
-# Check the agent terminal tool and ask_user on Windows and macOS
+# Check the agent terminal tool and ask_user on macOS
 
-The plans of #209, #210 and #211 passed on Linux on 2026-11-04, with the async commands of #213. Run the same sections once on Windows and once on a Mac.
+The plans of #209, #210 and #211 passed on Linux on 2026-11-04, with the async commands of #213.
+On Windows, #209 and #210 passed on 2026-11-12 (Softov). #211 does not apply there, as *The agent terminal tool (#211)* says.
+Left: the three sections once on a Mac.
 
 ## Set up
 
@@ -16,17 +18,23 @@ On that machine, start a daemon built from main, as [macos-checks.md](macos-chec
 
 ## Shell integration (#209)
 
-1. Open a terminal in ahpw or ahpc, and run `ls`, then `false`.
+Passed on Windows on 2026-11-12.
+
+1. In ahpw, open any session on the test daemon, and press **New terminal** in the session's header. Run `ls`, then `false`.
 2. Check that each command is its own part, with exit code 0 for `ls` and 1 for `false`. On Windows, run them in PowerShell, with `Get-ChildItem` in place of `ls`.
 3. Run `vim`, and check that the client draws it full screen. Quit with `:q`.
 
 ## ask_user (#210)
+
+Passed on Windows on 2026-11-12.
 
 1. Open a pi session, and send: `Ask me which colour I like, with the options red and blue, then say my answer.`
 2. Check that the question shows in the client with its two options.
 3. Pick one, and check that the model says the colour you picked.
 
 ## The agent terminal tool (#211)
+
+Not on Windows: the host never offers the tool there, whatever `enableCustomTerminalTool` says, as VS Code leaves the agent its own shell on Windows ([`code://packages/sdk/src/host/tooling.ts#L523-L526`](../../packages/sdk/src/host/tooling.ts#L523-L526)). Run it on the Mac only.
 
 1. In a second terminal, turn the tool on in the root config:
 

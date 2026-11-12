@@ -56,7 +56,7 @@ After that, the first release from `ahpio/ahpd` is `0.15.0-rc.2`. It also pushes
 - **A working day.** Softov uses the daemon on main for one working day: ahpw, VS Code, ahpc, bots, sessions and the tunnel. A fault is a problem file or a fix before 0.15.0.
 - **The Compose tag.** The bump sets the default `AHPD_TAG` in [docker/compose.yaml](../../docker/compose.yaml). A stable version takes its `X.Y`, such as `0.15`, and a pre-release takes the full version. The tag check in `release.yml` refuses a tag that the file does not name. After the first tag run, [docker-image-first-push.md](docker-image-first-push.md) makes the image public.
 - **The checks by hand.** [triage.md](triage.md) orders them. The ones for features a user meets first:
-  - [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md), on Windows and macOS. It passed on Linux.
+  - [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md), on macOS. It passed on Linux, and on Windows on 2026-11-12.
   - [cofold-resume-checks.md](cofold-resume-checks.md). The Claude resume passed on 2026-11-09, and the pi resume on 2026-11-10.
   - [host-1347-mcp-checks.md](host-1347-mcp-checks.md), the tools at `/mcp`.
   - [update-checks.md](update-checks.md).
