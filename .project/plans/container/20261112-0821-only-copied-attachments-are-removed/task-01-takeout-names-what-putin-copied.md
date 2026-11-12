@@ -1,6 +1,6 @@
 ---
 title: takeOut names what putIn copied
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -33,3 +33,12 @@ refs:
 - `pnpm typecheck` and the sdk suite pass.
 
 ## Resume
+
+Implemented 2026-11-12 in the worktree; the reviewer commits. Files changed:
+
+- `packages/sdk/src/host/machines.ts` - the per-session set of copied paths, `takeOut` sending it, and `leavesWith` answering whether a disposable machine goes with the session.
+- `packages/sdk/src/host/lifecycle.ts` - teardown calls `leavesWith` and skips `takeOut` for the machine that goes with the session.
+- `packages/sdk/test/host-machine-attachments.test.ts` - the kept-machine case now expects only the copied path, and new cases cover no attachment and a disposable machine.
+
+The port has no question that reads a machine's disposable label, so the host records each machine it makes from a `disposable:` source.
+Checked with `pnpm exec tsc -p tsconfig.json --noEmit` at the root. No vitest run; Softov runs the suites.

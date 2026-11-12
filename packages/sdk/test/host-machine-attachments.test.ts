@@ -90,6 +90,9 @@ const hexOf = (path: string): string | undefined =>
  */
 const port = (said: Asked, order: string[] = []): ComputerPort => ({
   how: async () => undefined,
+  // A source is always made into the one machine, which is what a disposable
+  // session's `disposable:box` setting names.
+  create: async () => 'box',
   putIn: async (id, paths) => {
     order.push('putIn');
     said.put.push({ id, paths: [...paths], hex: paths.map(hexOf) });
@@ -229,7 +232,7 @@ it('says so in a line when a copy fails, and runs the turn anyway', async () => 
   expect(String(first(attached(first(turns))).uri)).toMatch(/^file:\/\/.*\.png$/);
 });
 
-it('takes a gone session\'s folder back out of its machine', async () => {
+it('takes back out only the paths it copied into a kept machine', async () => {
   const said = asked();
   const { dir, client, open, turn } = await serving(port(said));
   const chat = await open('echo:/one');
@@ -239,16 +242,46 @@ it('takes a gone session\'s folder back out of its machine', async () => {
   await client.handle({ method: 'disposeSession', params: { channel: 'echo:/one' } });
   await settle();
   /*
-   * The folder the host keeps for that one session, named as the store names
-   * it. Only the path crosses: the machine holds its own copy of every file
-   * under it, so the host's own folder having gone by the time the port is
-   * asked is not a thing the machine notices.
+   * The one path the machine was handed, and not the session's whole folder:
+   * a machine that stays carries nothing this session did not put in it. Only
+   * the path crosses, so the host's own folder having gone by the time the
+   * port is asked is not a thing the machine notices.
    */
   expect(said.taken.map((one) => ({ id: one.id, paths: one.paths }))).toEqual([
-    { id: 'box', paths: [join(dir, 'attachments', 'one')] },
+    { id: 'box', paths: first(said.put).paths },
   ]);
   // And the host's own copy goes with the session, as it did before this.
   expect(existsSync(join(dir, 'attachments', 'one'))).toBe(false);
+});
+
+it('takes nothing out of a machine for a session that copied nothing', async () => {
+  const said = asked();
+  const { client, open, turn, said: turns } = await serving(port(said));
+  const chat = await open('echo:/one');
+  await turn(chat, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'look' } });
+  await until(() => turns.length > 0);
+
+  await client.handle({ method: 'disposeSession', params: { channel: 'echo:/one' } });
+  await settle();
+  // Nothing was put in, so there is nothing to take out: the session's folder
+  // in the machine was never made.
+  expect(said.put).toEqual([]);
+  expect(said.taken).toEqual([]);
+});
+
+it('leaves a disposable machine\'s copies where they are', async () => {
+  const said = asked();
+  const { client, open, turn } = await serving(port(said));
+  const chat = await open('echo:/one', 'disposable:box');
+  await turn(chat, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'look', attachments: [png()] } });
+  await until(() => said.put.length > 0);
+  expect(first(said.put).id).toBe('box');
+
+  await client.handle({ method: 'disposeSession', params: { channel: 'echo:/one' } });
+  await settle();
+  // The machine goes with its last session, so the copy goes with the machine
+  // and nothing is removed from it first.
+  expect(said.taken).toEqual([]);
 });
 
 it('hands nothing over for a session in no machine', async () => {

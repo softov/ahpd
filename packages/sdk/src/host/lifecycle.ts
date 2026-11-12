@@ -301,7 +301,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     madeFrom, restoredSessions, githubFacts, principals, presence, marks, lives, beside,
     dispatch, broadcast, flushDeltas, log, fire, sessionEvents, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
-    sessionMachines, enteredIn, inMachine, takeOut, placedIn, followOf,
+    sessionMachines, enteredIn, inMachine, takeOut, leavesWith, placedIn, followOf,
     isolating, charged, senders, sentBy, forgetSender, forgetSendersIn, forgetKeys, keepKeys,
     checked, principalFor, machineFor, ownerFor,
     contributedDefaults, rootConfig,
@@ -498,13 +498,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * And the session's own files, taken back out of that machine.
      *
      * What a session in a machine was handed, one message at a time, is this
-     * host's copy made for that one session. A machine
+     * host's copy made for that one session, and the paths it copied are what
+     * goes out. A machine
      * another session is still in keeps nothing of the one that has gone, and
      * a machine that has gone with the session is nothing to take anything out
-     * of. Asked before the leave below, because a machine whose last session
-     * this is may start its own countdown the moment it hears that.
+     * of - which is the disposable machine this session is the last of, and
+     * which the leave below is about to remove. Asked before that leave,
+     * because a machine whose last session this is may start its own countdown
+     * the moment it hears that.
      */
-    takeOut(left, uri);
+    if (!leavesWith(left, uri)) takeOut(left, uri);
     /*
      * And the machine it was running in, told that this session has left.
      *
