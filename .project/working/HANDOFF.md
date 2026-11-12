@@ -48,6 +48,11 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - ahpc's plan `cli/20261112-0821-create-session-waits-on-progress` is in the ahpc repository, and waits for the progress plan.
 - The brief [the-terminal-tool-runs-on-windows-when-set.md](../briefs/the-terminal-tool-runs-on-windows-when-set.md) waits for Softov's word to plan it. Its open points are where the setting lives and its name.
 - ahpw #69 merged: an `env` secret taken out of the agent form is dropped.
+- Batch 1 builders started 2026-11-12 on `claude-deepseek-build`, each in its own `build/` worktree from `822b9aea0`:
+  - git seed: `agent-host-session://claude-deepseek-build/dac555f8-98bc-4f2c-8ea8-130b0ce68e72`
+  - sessions listed in their machines: `agent-host-session://claude-deepseek-build/f11ac330-3c1a-473f-8c4a-e6b1c1e21e71`
+  - test agent reads what was said: `agent-host-session://claude-deepseek-build/25a46e8a-ecdc-41d4-9bdd-24549b0b1225`
+- Next: review each diff against its plan, run the gates one at a time, then rename, push, and show the PR text before opening it.
 
 ## In progress on 2026-11-11
 
