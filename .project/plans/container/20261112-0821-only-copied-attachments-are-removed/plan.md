@@ -59,7 +59,7 @@ removeSession -> teardown -> takeOut(machine, uri) -> computers.takeOut -> docke
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - takeOut names what putIn copied](task-01-takeout-names-what-putin-copied.md) | todo | - |
+| [01 - takeOut names what putIn copied](task-01-takeout-names-what-putin-copied.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -67,10 +67,10 @@ removeSession -> teardown -> takeOut(machine, uri) -> computers.takeOut -> docke
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-takeout-names-what-putin-copied.md](task-01-takeout-names-what-putin-copied.md).
+- **Done so far:** task 01 implemented. [implemented.md](implemented.md) says what exists, what was checked and where the work left the plan.
+- **Next action:** review and merge the PR, then the [Windows check](../../../pending/windows-machine-paths-checks.md). The plan closes as `built` on Softov's word.
 - **Open questions:** none.
-- **Watch out for:** the `leave` after `takeOut` decides the removal; the check reads the machine's disposable label and its session set before `leave`.
+- **Watch out for:** the `leave` after `takeOut` decides the removal. Teardown asks `leavesWith` before it, from the disposable machines the host recorded and the sessions `enteredIn` holds.
 
 ## Final verification checklist
 

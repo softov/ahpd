@@ -1,7 +1,6 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { idOf } from '../sessions/catalog.js';
 import { computerId, computerSource, machineRefusal, openComputer } from '../machines/computers.js';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { sessionSandboxConfig } from '../sandbox.js';
@@ -21,6 +20,7 @@ export interface Machines {
   inMachine(id: string | undefined, uri: string, entering: boolean): void;
   putIn(uri: string, paths: string[]): Promise<void>;
   takeOut(id: string | undefined, uri: string): void;
+  leavesWith(id: string | undefined, uri: string): boolean;
   settled(): Promise<void>;
   bringBackOf(uri: string): Promise<BroughtBack | undefined>;
   followOf(uri: string): Promise<void>;
@@ -113,7 +113,7 @@ const notOwn = (found: GitDir, made: { repository: string } | undefined): string
 };
 
 export function createMachines(ctx: HostContext): Machines {
-  const { options, agents, charged, checked, kept } = ctx;
+  const { options, agents, charged, checked } = ctx;
 
   /**
    * The machine a session made from a source, and the source it named.
@@ -137,6 +137,28 @@ export function createMachines(ctx: HostContext): Machines {
    * starts and the one a session moving away lets go.
    */
   const enteredIn = new Map<string, string>();
+
+  /**
+   * The attachment paths this host copied into a machine for a session.
+   *
+   * A message's attachment is a file this host wrote, and the machine holds a
+   * copy of it at the path the message names. That copy is the host's, belongs
+   * to one session, and is what a gone session takes back out: the paths it
+   * actually copied rather than its whole attachments folder, which a session
+   * that sent nothing never made.
+   */
+  const copied = new Map<string, Set<string>>();
+
+  /**
+   * The machines this host made from a `disposable:` source, by their id.
+   *
+   * A disposable machine goes a delay after its last session leaves, so what
+   * the session copied into it goes with it: taking the copies out first is a
+   * removal the machine's own removal makes pointless. The plugin keeps that
+   * label on the machine, and the port has no question that reads it, so the
+   * host keeps the answer beside the machine it made.
+   */
+  const disposables = new Set<string>();
 
   /**
    * The enters and the leaves this host started and has not seen finish.
@@ -210,17 +232,29 @@ export function createMachines(ctx: HostContext): Machines {
    */
   const putIn = async (named: string, paths: string[]): Promise<void> => {
     const id = enteredIn.get(named);
-    if (id === undefined || paths.length === 0) return;
+    const into = options.computers?.putIn;
+    if (id === undefined || into === undefined || paths.length === 0) return;
     try {
-      await options.computers?.putIn?.(id, paths);
+      await into.call(options.computers, id, paths);
     }
     catch (error) {
       ctx.log.error(`computers: putting a message's attachments into ${id} for ${named} failed: ${error instanceof Error ? error.message : String(error)}`);
+      return;
     }
+    // The paths the machine now holds for this session, which are the ones its
+    // removal names.
+    const made = copied.get(named) ?? new Set<string>();
+    for (const path of paths) made.add(path);
+    copied.set(named, made);
   };
 
   /**
-   * A gone session's attachments folder, taken back out of its machine.
+   * What a gone session copied into its machine, taken back out.
+   *
+   * The paths `putIn` named rather than the session's whole attachments
+   * folder, because the folder is what a session that sent nothing never had a
+   * copy of. The record goes whatever is sent, so a session that had nothing
+   * copied leaves nothing behind here.
    *
    * A session being removed is the one moment this is asked, and the machine is
    * named rather than read back out of `enteredIn`, as `letGo`'s is. In flight
@@ -228,9 +262,33 @@ export function createMachines(ctx: HostContext): Machines {
    * leaving a machine writing into a folder something is removing.
    */
   const takeOut = (id: string | undefined, uri: string): void => {
-    const folder = kept.attachmentsDir?.(idOf(uri));
-    if (id === undefined || folder === undefined) return;
-    watched(`taking ${folder} out of ${id} for ${uri}`, () => options.computers?.takeOut?.(id, [folder]));
+    const paths = copied.get(uri);
+    copied.delete(uri);
+    if (id === undefined || paths === undefined || paths.size === 0) return;
+    watched(`taking what was copied into ${id} back out for ${uri}`, () => options.computers?.takeOut?.(id, [...paths]));
+  };
+
+  /**
+   * Whether a session leaving a machine takes the machine with it.
+   *
+   * A disposable machine is removed a delay after its last session leaves, so
+   * what the session copied into it goes with it: taking the copies out first
+   * is a removal the machine's own removal makes pointless. Read here, before
+   * the leave is said, because that leave is what starts the delay.
+   *
+   * The machine is disposable as this host recorded it when it made the
+   * machine from the session's `disposable:` source, and its last session is
+   * the one `enteredIn` holds as the only session in it. The id goes with the
+   * machine: nothing names it again once its last session has left.
+   */
+  const leavesWith = (id: string | undefined, uri: string): boolean => {
+    if (id === undefined || !disposables.has(id)) return false;
+    const others = [...enteredIn].filter(([other, machine]) => other !== uri && machine === id);
+    if (others.length > 0) return false;
+    disposables.delete(id);
+    // The copies go with the machine, so their record goes now.
+    copied.delete(uri);
+    return true;
   };
 
   /**
@@ -525,8 +583,12 @@ export function createMachines(ctx: HostContext): Machines {
       ...(progress === undefined ? {} : { progress }),
     });
     sessionMachines.set(uri, { source: said, machine });
+    // The machine's own label, kept here because the port cannot be asked for
+    // it: what `leavesWith` reads to know the machine goes with the session.
+    const made = computerId(machine);
+    if (said.startsWith('disposable:') && made !== undefined) disposables.add(made);
     config.computer = machine;
   };
 
-  return { sessionMachines, enteredIn, inMachine, putIn, takeOut, settled, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn };
+  return { sessionMachines, enteredIn, inMachine, putIn, takeOut, leavesWith, settled, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn };
 }
