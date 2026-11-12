@@ -62,7 +62,10 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
   - progress: `agent-host-session://claude-deepseek-build/45c80a22-1db4-417e-820d-964b549ed273`.
   - #309 `host/20261112-0821-making-a-session-reports-progress`, merged at `9f86a7097`: progress only for a create that makes a machine, as Softov chose.
   - ahpc's `cli/20261112-0821-create-session-waits-on-progress` must keep its timeout for a create with no machine, which now sends no progress.
-  - #310 `container/20261112-0821-a-machine-says-how-it-reaches-the-host`, pushed at `a78a03ee5`. A dev container on other Docker gets no `reach` answer (defaulted). One shared `docker info` read. sdk 4763, agent-acp 375, computer 615. Merges when green.
+  - #310 `container/20261112-0821-a-machine-says-how-it-reaches-the-host` merged at `5341abc30`. A dev container on other Docker gets no `reach` answer (defaulted).
+- All seven planned plans of the Windows check are merged: #304 to #310. Each closes as `built` on Softov's word, after the Windows check runs again.
+- Next: ahpc's `cli/20261112-0821-create-session-waits-on-progress`, which keeps its timeout for a create with no machine; the draft unused-session plan's two questions.
+- Flaky on CI today, each passed on a rerun: `tunnel-devtunnel-view.test.ts` (Linux, main too) and `host-attachments.test.ts` "hands a queued and a steering message their attachments" (Windows, once).
 - `computer-spawn.test.ts` "fails a turn on a session whose CLI is gone" times out on this box, `main` included, and passes in CI.
 - The flaky `tunnel-devtunnel-view.test.ts` case reddened #304, #306 and `main`; a rerun passed each time.
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" fails some runs, on `main` too (`02a57e731`). No problem file yet.
