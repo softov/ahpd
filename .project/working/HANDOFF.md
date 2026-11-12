@@ -18,7 +18,7 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - CI shards: `linux (1/2)`, `linux (2/2)`, `processes (1/2)`, `processes (2/2)` and `windows (1/4)` to `windows (4/4)`. `check` and `check-windows` are green only when every shard of their job is.
 - The only ruleset on `main` is `Protect Main`. It requires a PR and lets org admins and Softov bypass it, so a plan-only push goes straight to main. It requires no check: the old `main checks` ruleset, which required `check` and `check-windows`, was deleted on 2026-11-11. Wait for both before a merge until Softov adds them back.
 - A slow runner can still fail a job with nothing wrong in the code. Rerun the failed jobs once with `gh run rerun <id> -R ahpio/ahpd --failed`; a second failure needs a look.
-- Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`. He restarted it at 21:50 local on 2026-11-11, with the API keys, so it runs everything to #300. It runs from `src`, so a restart is all a merge needs. A restart now wires in #301, #302 and #303. It has `policies.check` on, with one policy, `neach`. It needs `DEEPSEEK_API_KEY` in its environment, or the DeepSeek agents do not open. Never restart it or use the ports 5180 and 37537 yourself.
+- Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`. He restarted it at 02:22 local on 2026-11-12, with the API keys, so it runs everything to #303. It runs from `src`, so a restart is all a merge needs. It has `policies.check` on, with one policy, `neach`. It needs `DEEPSEEK_API_KEY` in its environment, or the DeepSeek agents do not open. Never restart it or use the ports 5180 and 37537 yourself.
 - Code goes through a PR on `ahpio/ahpd`. Plan-only commits go to main. A PR merges with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word. Show a PR's text in chat before opening it.
 - `gh pr checks` has no `--json` here, and `gh pr edit` fails on the Projects classic deprecation. Read a job's log with `gh api repos/ahpio/ahpd/actions/jobs/<id>/logs`, and set a PR body with `gh api repos/ahpio/ahpd/pulls/<n> -X PATCH -F body=@<file>`.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it. Run one vitest suite at a time, with `TMPDIR` on a folder outside the home's dot-folders.
@@ -35,6 +35,19 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - The MCP path: `list_agents` drops an agent that failed to open with no reason, and `get_session_context` once answered an empty transcript for a session with a finished turn.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334` (merged), `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`. Delete them only on his word.
 - Many ACP servers at once: each read of the session list starts one server per ACP preset that has `session/list`, 8 on his box. A proper fix would answer the list from the record and ask the servers only on a refresh; no brief yet.
+
+## Next: the plans of the Windows check, 2026-11-12
+
+- The Windows machine check ran on 2026-11-12, and its results are in [pending/windows-machine-paths-checks.md](../pending/windows-machine-paths-checks.md#results-on-windows-2026-11-12). Each finding has a plan, all on main since `d0d845bfa`.
+- All eight were reviewed on 2026-11-12 against their code refs. Seven are `planned`. [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) is `draft`: Softov chose to release the session as VS Code does, not to delete it, and its Resume state holds the questions to research first.
+- [acp/20261112-0821-sessions-are-listed-in-their-machines](../plans/acp/20261112-0821-sessions-are-listed-in-their-machines/plan.md) took Softov's answer on the failed host listing: the watched rows answer until the record changes.
+- Build order, by the files each plan changes. Up to three builders at once:
+  1. [container/20261112-0821-a-git-seed-takes-three-execs](../plans/container/20261112-0821-a-git-seed-takes-three-execs/plan.md), [acp/20261112-0821-sessions-are-listed-in-their-machines](../plans/acp/20261112-0821-sessions-are-listed-in-their-machines/plan.md) and [acp/20261112-0821-the-test-agent-reads-what-was-said](../plans/acp/20261112-0821-the-test-agent-reads-what-was-said/plan.md). They share no file.
+  2. [container/20261112-0821-a-failed-machine-leaves-nothing](../plans/container/20261112-0821-a-failed-machine-leaves-nothing/plan.md), after the git seed merges, since both change `seedGit`; and [container/20261112-0821-only-copied-attachments-are-removed](../plans/container/20261112-0821-only-copied-attachments-are-removed/plan.md).
+  3. [host/20261112-0821-making-a-session-reports-progress](../plans/host/20261112-0821-making-a-session-reports-progress/plan.md), then [container/20261112-0821-a-machine-says-how-it-reaches-the-host](../plans/container/20261112-0821-a-machine-says-how-it-reaches-the-host/plan.md). Both change `types/computers.ts`, `machines/computers.ts` and the `docker run` in `runtime.ts`, which the failed-machine plan changes too.
+- ahpc's plan `cli/20261112-0821-create-session-waits-on-progress` is in the ahpc repository, and waits for the progress plan.
+- The brief [the-terminal-tool-runs-on-windows-when-set.md](../briefs/the-terminal-tool-runs-on-windows-when-set.md) waits for Softov's word to plan it. Its open points are where the setting lives and its name.
+- ahpw #69 merged: an `env` secret taken out of the agent form is dropped.
 
 ## In progress on 2026-11-11
 

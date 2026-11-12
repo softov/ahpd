@@ -51,6 +51,7 @@ listSessions -> catalogue -> agent.list() -> catalogueOf -> listingFor -> server
 | --- | --- | --- |
 | The listing runs in each machine where the agent has kept sessions, and on the host only for the sessions that ran there | Softov, 2026-11-12: "List inside its machines" | 01 |
 | `loadedSession` and `findListed` use the machine the session ran in | `(defaulted: the same rule as the listing)` | 02 |
+| An agent with no kept session lists on the host; after that listing fails, the agent answers from the watched rows until its record changes, with one log line | Softov, 2026-11-12: "Use watched rows until it changes" | 01 |
 | Rows from each machine merge with the rows the host watched, as today | [code://packages/agent-acp/src/catalog.ts#L566](../../../../packages/agent-acp/src/catalog.ts#L566) | 01 |
 
 ## Proposed architecture
@@ -77,9 +78,7 @@ listSessions -> catalogue -> agent.list() -> catalogueOf -> listingFor -> server
 
 - **Done so far:** nothing.
 - **Next action:** [task-01-the-listing-runs-in-its-machines.md](task-01-the-listing-runs-in-its-machines.md).
-- **Open questions:**
-  1. An agent with no kept session still lists on the host, and fails once for a machine path.
-     Proposed: after that failure, use the watched rows until the record changes.
+- **Open questions:** none.
 - **Watch out for:** a disposable machine goes with its session, so its sessions are listed from the watched rows after that.
 
 ## Final verification checklist

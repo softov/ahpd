@@ -28,7 +28,9 @@ It lists on the host only when a kept session ran there, or none is kept.
 3. In `catalogueOf`, spawn through `computers.how` for each running machine, as `forgetSession` does.
 4. Spawn on the host only when a kept row ran there, or the agent has no kept row.
 5. Merge the rows of every spawn with the watched rows.
-6. Write the agent-acp cases with a fake computers port.
+6. If the host listing fails for an agent with no kept session, log one line.
+7. Then answer that agent from the watched rows until its record changes.
+8. Write the agent-acp cases with a fake computers port, and a failed host listing.
 
 ## Validation
 

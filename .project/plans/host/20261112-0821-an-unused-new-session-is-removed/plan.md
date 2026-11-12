@@ -1,7 +1,7 @@
 ---
 title: An unused new session is removed
 domain: host
-status: planned
+status: draft
 priority: medium
 created: 2026-11-12
 revalidated: 2026-11-12
@@ -46,9 +46,7 @@ createSession -> markSessionProvisional -> (no message) -> timer -> removeSessio
 
 | What | Source | Task |
 | --- | --- | --- |
-| A provisional session with no message is removed after a set time, which lets its machine go | Softov, 2026-11-12: "Remove it when unused" | 01 |
-| The setting is `unusedSessionMinutes`; unset is 10; zero keeps the session | `(defaulted: the shape of sleepAfterMinutes)` | 01 |
-| The timer stops at the session's first message | `(defaulted: a message makes it a session in use)` | 01 |
+| An unused provisional session is released as VS Code releases a session no client observes, and is not deleted | Softov, 2026-11-12: "Release it, as VS Code" | 01 |
 
 ## Proposed architecture
 
@@ -60,7 +58,7 @@ createSession -> markSessionProvisional -> (no message) -> timer -> removeSessio
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A provisional session times out](task-01-a-provisional-session-times-out.md) | todo | - |
+| [01 - A provisional session times out](task-01-a-provisional-session-times-out.md) | blocked | - |
 
 ## Risks and tradeoffs
 
@@ -70,8 +68,11 @@ createSession -> markSessionProvisional -> (no message) -> timer -> removeSessio
 ## Resume state
 
 - **Done so far:** nothing.
-- **Next action:** [task-01-a-provisional-session-times-out.md](task-01-a-provisional-session-times-out.md).
-- **Open questions:** none.
+- **Next action:** read what VS Code's release does to an idle provisional session, then rewrite task 01 and set the plan back to `planned`.
+- **Open questions:**
+  1. What VS Code's residency does to an idle provisional session at release: `agentSessionResidency.ts`, with `DEFAULT_SESSION_IDLE_RELEASE_MS` of 10 s for a session no client observes.
+  2. ahpd's counterpart is sleep, and [`code://packages/sdk/src/host/sleep.ts#L181-L192`](../../../../packages/sdk/src/host/sleep.ts#L181-L192) never sleeps a chat with no turns.
+  3. A sleep closes the agent but does not make the session leave its machine, so a release must also let a disposable machine go.
 - **Watch out for:** a provisional session has no row to drop, so the removal must not broadcast a `sessionRemoved`.
 
 ## Final verification checklist

@@ -1,6 +1,6 @@
 ---
 title: A provisional session times out
-status: todo
+status: blocked
 depends: []
 layer: "sdk, server"
 refs:
@@ -37,3 +37,5 @@ A provisional session that gets no message within `unusedSessionMinutes` is remo
 - `pnpm typecheck` and the sdk suite pass.
 
 ## Resume
+
+2026-11-12: blocked. Softov chose release as VS Code over deletion, so these steps are rewritten after the plan's open questions are answered.
