@@ -164,10 +164,15 @@ const PICTURE = carried({
   data: 'aW1hZ2U=',
 });
 
-/** A pasted file that is not an image. */
+/**
+ * A pasted file that is not an image.
+ *
+ * Its text block is the last one a prompt carrying it ends on, so the name the
+ * fixture reads its script from has to be in the label.
+ */
 const NOTES = carried({
   type: 'embeddedResource',
-  label: 'notes.txt',
+  label: 'blocks.txt',
   contentType: 'text/plain',
   data: 'bm90ZXM=',
 });
@@ -198,8 +203,19 @@ it('names the image in the text for a server that does not take them', async () 
   // this server never agreed to read.
   const { agent } = backend();
   const { session, watch } = await start(agent, 'no-image');
-  expect(await prompt(session, watch, [PICTURE]))
-    .toBe('blocks=text:what are these blocks?|text:The user provided the following references:\n- shot.png');
+  /*
+   * The fixture reads its script's name from the last text block, and here that
+   * block is the reference naming the image. The picture is labelled for that,
+   * so the report the name asks for still comes.
+   */
+  const picture = carried({
+    type: 'embeddedResource',
+    label: 'blocks.png',
+    contentType: 'image/png',
+    data: 'aW1hZ2U=',
+  });
+  expect(await prompt(session, watch, [picture]))
+    .toBe('blocks=text:what are these blocks?|text:The user provided the following references:\n- blocks.png');
 });
 
 it('sends a file the host wrote as an embedded resource to a server that takes context', async () => {
@@ -225,29 +241,33 @@ it('inlines an attachment that never reached a file, which names no resource', a
   const { agent } = backend(['--prompt-caps']);
   const { session, watch } = await start(agent, 'no-file');
   expect(await prompt(session, watch, [NOTES]))
-    .toBe('blocks=text:what are these blocks?|text:notes.txt (lines 1-1):\n```\nnotes\n```');
+    .toBe('blocks=text:what are these blocks?|text:blocks.txt (lines 1-1):\n```\nnotes\n```');
 });
 
 it('names what the server cannot take rather than dropping it', async () => {
   const { agent } = backend();
   const { session, watch } = await start(agent, 'named');
   // A pasted file is the text it holds, which is what any server takes; a
-  // simple attachment is the text its producer wrote for the model.
-  const said = await prompt(session, watch, [NOTES, carried({
+  // simple attachment is the text its producer wrote for the model. The pasted
+  // file comes last, because the fixture reads its script's name from the last
+  // text block and that block is the file's.
+  const said = await prompt(session, watch, [carried({
     type: 'simple',
     label: 'the first paragraph',
     modelRepresentation: 'It was a dark and stormy night.',
-  })]);
+  }), NOTES]);
   expect(said).toBe(
     'blocks=text:what are these blocks?'
-    + '|text:notes.txt (lines 1-1):\n```\nnotes\n```'
-    + '|text:It was a dark and stormy night.',
+    + '|text:It was a dark and stormy night.'
+    + '|text:blocks.txt (lines 1-1):\n```\nnotes\n```',
   );
 });
 
 it('names a file the client gave by URI, and does not read it', async () => {
   const dir = scratch();
-  const path = join(dir, 'note.txt');
+  // The reference naming this file is the last text block of the prompt, which
+  // is where the fixture reads its script's name, so the name carries it.
+  const path = join(dir, 'blocks.txt');
   writeFileSync(path, 'the note body');
   const asked: string[] = [];
   const store = fileResources();
@@ -257,20 +277,22 @@ it('names a file the client gave by URI, and does not read it', async () => {
   });
   const said = await prompt(session, watch, [carried({
     type: 'resource',
-    label: 'note.txt',
+    label: 'blocks.txt',
     uri: `file://${path}`,
   })]);
   // A file in somebody's workspace is named by its path and left where it is:
   // the agent opens it with its own tools, and this host never read it at all.
   expect(said).toBe(`blocks=text:what are these blocks?|text:The user provided the following references:\n- ${path}`);
-  expect(asked.filter((uri) => uri.includes('note.txt'))).toEqual([]);
+  expect(asked.filter((uri) => uri.includes('blocks.txt'))).toEqual([]);
 });
 
 // A named pipe made with `mkfifo` and the device `/dev/zero` are POSIX files,
 // and Windows has neither.
 it.skipIf(!posix)('names a large file, a pipe and a device without reading them', async () => {
   const dir = scratch();
-  const big = join(dir, 'huge.bin');
+  // The reference list is the last text block, which is where the fixture reads
+  // its script's name: the large file carries it.
+  const big = join(dir, 'blocks.bin');
   writeFileSync(big, Buffer.alloc(6 * 1024 * 1024, 7));
   const pipe = join(dir, 'a-pipe');
   execFileSync('mkfifo', [pipe]);
@@ -280,7 +302,7 @@ it.skipIf(!posix)('names a large file, a pipe and a device without reading them'
   const { agent } = backend(['--prompt-caps']);
   const { session, watch } = await start(agent, 'limits');
   const said = await prompt(session, watch, [
-    carried({ type: 'resource', label: 'huge.bin', uri: `file://${big}`, contentType: 'application/octet-stream' }),
+    carried({ type: 'resource', label: 'blocks.bin', uri: `file://${big}`, contentType: 'application/octet-stream' }),
     carried({ type: 'resource', label: 'a-pipe', uri: `file://${pipe}` }),
     carried({ type: 'resource', label: 'zero', uri: 'file:///dev/zero' }),
   ]);

@@ -548,12 +548,24 @@ const askWithdrawn = (method, params) => {
   return answered;
 };
 
-/** The prompt's text, out of the content blocks the client sent. */
+/**
+ * The prompt's last text block, out of the content blocks the client sent.
+ *
+ * The host opens a prompt with what it has to say - the session's instructions
+ * first, then the turn's - and the person's own words come after them. Reading
+ * every text block would name a script from a word in the host's instructions,
+ * so only the last one is read.
+ *
+ * An attachment adds its own blocks after the person's text, so a message with
+ * a textual attachment ends on that block rather than on what was said.
+ */
 const textOf = (params) => {
   const blocks = Array.isArray(params?.prompt) ? params.prompt : [];
-  return blocks
-    .map((block) => (block !== null && block.type === 'text' ? String(block.text ?? '') : ''))
-    .join('');
+  for (let at = blocks.length - 1; at >= 0; at -= 1) {
+    const block = blocks[at];
+    if (block !== null && block.type === 'text') return String(block.text ?? '');
+  }
+  return '';
 };
 
 /**
@@ -1506,6 +1518,10 @@ const promptScript = async (id, params) => {
         { type: 'diff', path, oldText: 'a blank canvas\n', newText: 'a line of paint\n' },
       ],
     });
+    // Wait for the shell before the release, which ends a command that has not
+    // exited: a release on its own kills the `echo` as it starts in a host
+    // whose terminal is the machine's rather than this process's.
+    await ask('terminal/wait_for_exit', { sessionId: session, terminalId });
     await ask('terminal/release', { sessionId: session, terminalId });
   }
 

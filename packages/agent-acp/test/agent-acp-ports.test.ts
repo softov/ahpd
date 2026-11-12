@@ -425,6 +425,10 @@ it('says a pseudoterminal runs a terminal, and names a command\'s while it runs'
   // A call whose content names a terminal the server opened through the host,
   // titled by the call it belongs to.
   begin('t1', 'paint it');
+  // The fixture waits for the shell before it releases it, and this shell is
+  // the test's to end: `echo painted` finishes at once on a real one.
+  await until(() => pty.started.length > 0);
+  pty.exit();
   await endedTurn(p, chatUri, 1);
   const painted = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete' && e.action.toolCallId === 'call-paint');
   expect(((painted?.action.result as Bag).content as Bag[])[0]).toMatchObject({ ...named, title: 'Paint and preview' });
