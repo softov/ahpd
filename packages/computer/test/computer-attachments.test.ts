@@ -115,10 +115,13 @@ const settle = async (times = 30): Promise<void> => {
  * together: real milliseconds for the work, then the clock.
  */
 const advanceUntil = async (check: () => boolean, times = 400): Promise<void> => {
-  for (let i = 0; i < times && !check(); i++) {
+  for (let i = 0; i < times; i++) {
+    if (check()) return;
     await new Promise((resolve) => { realSetTimeout(resolve, 5); });
     await vi.advanceTimersByTimeAsync(1000);
   }
+  if (check()) return;
+  throw new Error(`still waiting after ${times * 1000} ms of clock`);
 };
 
 /** The one a case waited for, which nothing hands back without one. */
@@ -253,8 +256,15 @@ async function room(hostOptions: HostOptions) {
   return { client, open, send };
 }
 
-/** The profile a session makes its machine from, which works in the session's folder. */
-const DISPOSABLE = { claude: { title: 'Claude', image: 'node:22', disposable: true, sessionFolder: true } };
+/**
+ * The profile a session makes its machine from, which works in the session's folder.
+ *
+ * The delay is the short one the disposable suite uses: `letGo` fetches the
+ * machine's work back before it says the session left, and that fetch is a real
+ * subprocess. The clock a removal case moves runs only while that fetch is in
+ * flight, so the default 300 s delay would outlive the run and never come due.
+ */
+const DISPOSABLE = { claude: { title: 'Claude', image: 'node:22', disposable: true, sessionFolder: true, disposableDelay: 1000 } };
 
 /** The folder the host keeps one session's own files in, as the store names it. */
 const folderOf = (sessions: string, id: string): string => join(sessions, 'attachments', id);

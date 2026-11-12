@@ -23,6 +23,7 @@ A session that sent no attachment makes no `rm` in any machine.
 
 - `pnpm exec tsc -p tsconfig.json --noEmit` at the root passes.
 - The sdk suite at review, 2026-11-12: 4762 passed, 5 skipped.
+- The computer suite after the test fix: 605 passed, 1 skipped. The one failure, `computer-spawn.test.ts` "fails a turn on a session whose CLI is gone", times out on `main` too.
 - At review, `leavesWith` also drops the session's record of copied paths, since `takeOut` is not asked for a machine that goes with the session.
 
 ## Departures from the plan
