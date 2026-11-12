@@ -46,11 +46,13 @@ createSession -> markSessionProvisional -> (no message) -> timer -> removeSessio
 
 | What | Source | Task |
 | --- | --- | --- |
-| An unused provisional session is released as VS Code releases a session no client observes, and is not deleted | Softov, 2026-11-12: "Release it, as VS Code" | 01 |
+| A session with no message is deleted with its disposable machine 30 s after the last client stops watching it, as VS Code's agent service deletes an unused draft | Softov, 2026-11-12: "Delete as VS Code" | 01 |
 
 ## Proposed architecture
 
-- **Data flow** - `markSessionProvisional` arms a timer; the first message clears it; when it fires, `removeSession` runs.
+- **Data flow** - the last client to stop watching a provisional session arms a 30 s timer.
+  A new watch or the first message clears it.
+  When it fires on a session still provisional, `removeSession` runs.
 - **Layer responsibilities** - sdk: the timer and the removal · server: the setting.
 - **Source-of-truth files** - [`code://packages/sdk/src/host/lifecycle.ts`](../../../../packages/sdk/src/host/lifecycle.ts)
 
@@ -67,12 +69,15 @@ createSession -> markSessionProvisional -> (no message) -> timer -> removeSessio
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** read what VS Code's release does to an idle provisional session, then rewrite task 01 and set the plan back to `planned`.
+- **Done so far:** VS Code read at `1564f100807a`, 2026-11-12.
+  - `agentSessionResidency.ts` skips a session while `isUnusedDraft` is true, so its release never reaches an unused draft.
+  - `agentService.ts` `_maybeScheduleSessionGc` runs at the last unsubscribe, waits `SESSION_GC_GRACE_MS` of 30 s, checks again, and calls `disposeSession`.
+  - The check: no subscriber, no turn, no active turn, still an unused draft. `disposeSession` removes the provider session, the worktree and the stored state.
+  - ahpd's sleep, at [`code://packages/sdk/src/host/sleep.ts#L181-L192`](../../../../packages/sdk/src/host/sleep.ts#L181-L192), skips a chat with no turns, so a sleep changes nothing here.
+- **Next action:** rewrite task 01 to the trigger in *Answers*, then set the plan to `planned`.
 - **Open questions:**
-  1. What VS Code's residency does to an idle provisional session at release: `agentSessionResidency.ts`, with `DEFAULT_SESSION_IDLE_RELEASE_MS` of 10 s for a session no client observes.
-  2. ahpd's counterpart is sleep, and [`code://packages/sdk/src/host/sleep.ts#L181-L192`](../../../../packages/sdk/src/host/sleep.ts#L181-L192) never sleeps a chat with no turns.
-  3. A sleep closes the agent but does not make the session leave its machine, so a release must also let a disposable machine go.
+  1. Where ahpd knows that the last client stopped watching a session: `watched` in `sleep.ts` is the first place to read.
+  2. Whether the 30 s is a constant, as in VS Code, or a setting such as `unusedSessionMinutes`.
 - **Watch out for:** a provisional session has no row to drop, so the removal must not broadcast a `sessionRemoved`.
 
 ## Final verification checklist

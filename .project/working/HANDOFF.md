@@ -52,7 +52,11 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
   - git seed: `agent-host-session://claude-deepseek-build/dac555f8-98bc-4f2c-8ea8-130b0ce68e72`
   - sessions listed in their machines: `agent-host-session://claude-deepseek-build/f11ac330-3c1a-473f-8c4a-e6b1c1e21e71`
   - test agent reads what was said: `agent-host-session://claude-deepseek-build/25a46e8a-ecdc-41d4-9bdd-24549b0b1225`
-- Next: review each diff against its plan, run the gates one at a time, then rename, push, and show the PR text before opening it.
+- Batch 1 state, 2026-11-12:
+  - `acp/20261112-0821-the-test-agent-reads-what-was-said` pushed at `47b986f24`; agent-acp 363/363. Softov kept "last text block" after the builder found that an attachment's text comes after the person's. PR text waits for Softov.
+  - `container/20261112-0821-a-git-seed-takes-three-execs` pushed at `a19080ecb`, after a fix: the alternates had landed at `<at>/info/alternates`. Computer 600 passed; the 2 timeouts (devcontainer, libvirt) fail on `main` too. PR text waits for Softov.
+  - sessions listed in their machines: agent-acp 368/368; sent back because it spawns in a stopped machine, where task 01 says running machines only. sdk suite not run yet.
+- [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`: Softov chose deletion as VS Code does. Its Resume state has the research and the two questions left before task 01 is rewritten.
 
 ## In progress on 2026-11-11
 

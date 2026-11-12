@@ -38,4 +38,4 @@ A provisional session that gets no message within `unusedSessionMinutes` is remo
 
 ## Resume
 
-2026-11-12: blocked. Softov chose release as VS Code over deletion, so these steps are rewritten after the plan's open questions are answered.
+2026-11-12: blocked. Softov chose deletion as VS Code does, 30 s after the last client stops watching. These steps still arm the timer at create, so they are rewritten first.
