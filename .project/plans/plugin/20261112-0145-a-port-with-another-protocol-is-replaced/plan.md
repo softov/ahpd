@@ -56,7 +56,7 @@ kind start -> service.host().add(port) -> createOrUpdateTunnelPort -> service re
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A refused protocol is written again](task-01-a-refused-protocol-is-written-again.md) | todo | - |
+| [01 - A refused protocol is written again](task-01-a-refused-protocol-is-written-again.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -65,9 +65,15 @@ kind start -> service.host().add(port) -> createOrUpdateTunnelPort -> service re
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-refused-protocol-is-written-again.md](task-01-a-refused-protocol-is-written-again.md).
+- **Done so far:** task 01 is implemented.
+  `sdkService.add` and `sdkService.access` remove a port and write it again when the service refuses its protocol.
+  The tests stand the refusal in with a `refuse` text on the fake `Host`.
+  Nothing is committed; the diff is in the worktree.
+- **Next action:** review task 01 and run `packages/tunnel-devtunnel`'s suite.
 - **Watch out for:** plugin/20261112-0145-a-tunnel-visitor-is-the-named-person builds on this branch and changes the same file.
+  The recovery is in `sdkService` over the `Host`, not in `sdkCloud`, so that the stand-in client can exercise it.
+  A second `updateTunnelPort` would fail after the delete, because the SDK sends `If-Match: *`; the retry writes with `Host.add`.
+  `replace` writes its new port with a bare `Host.add` and does not recover from the same refusal.
 
 ## Final verification checklist
 

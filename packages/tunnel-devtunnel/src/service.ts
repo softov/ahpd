@@ -23,6 +23,7 @@
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/cli/src/tunnels/dev_tunnels.rs#L575-L805
  */
 
+import { reason } from '@ahpd/sdk';
 import { TunnelRelayTunnelHost } from '@microsoft/dev-tunnels-connections';
 import {
   TunnelAccessControlEntryType, TunnelAccessScopes, TunnelEndpoint, TunnelProtocol,
@@ -174,6 +175,50 @@ export function labelsOf(name: string): string[] {
 const inUse = (name: string): string =>
   `A tunnel with the name ${name} exists and is in-use. Please pick a different name or stop the existing tunnel.`;
 
+/** What the service answers when a port carries another protocol than the one written. */
+const OTHER_PROTOCOL = 'The tunnel port protocol cannot be changed';
+
+/**
+ * Whether a write was refused because the tunnel's port carries another
+ * protocol.
+ *
+ * The SDK answers no error code for this refusal, so it is matched by its
+ * text, as VS Code's CLI matches it.
+ * https://github.com/microsoft/vscode/blob/1564f100807a/cli/src/tunnels/dev_tunnels.rs#L1340-L1348
+ */
+const refusesProtocol = (error: unknown): boolean => reason(error).includes(OTHER_PROTOCOL);
+
+/** What a port write answered. */
+interface Written {
+  /** The URL the service answered for the port, when it answered one. */
+  url?: string;
+  /** Whether the port was taken off and written again. */
+  replaced: boolean;
+}
+
+/**
+ * Write a port, and when the service refuses the protocol the tunnel already
+ * holds, take the port off and write it again, as VS Code's CLI does.
+ * https://github.com/microsoft/vscode/blob/1564f100807a/cli/src/tunnels/dev_tunnels.rs#L1119-L1141
+ */
+async function writePort(
+  host: Host,
+  port: number,
+  anonymous: boolean,
+  write: () => Promise<string | undefined>,
+): Promise<Written> {
+  try {
+    const url = await write();
+    return { ...(url === undefined ? {} : { url }), replaced: false };
+  }
+  catch (error) {
+    if (!refusesProtocol(error)) throw error;
+    await host.remove(port);
+    const url = await host.add(port, anonymous);
+    return { ...(url === undefined ? {} : { url }), replaced: true };
+  }
+}
+
 /** The service over the SDK, with one management client and one host for each connector. */
 export function sdkService(options: ServiceOptions): Service {
   interface Entry {
@@ -232,28 +277,37 @@ export function sdkService(options: ServiceOptions): Service {
   return {
     add: async (connector, port, anonymous) => {
       const { one, host } = await hosted(connector);
-      const url = await host.add(port, anonymous);
+      const written = await writePort(host, port, anonymous, () => host.add(port, anonymous));
       one.ports.add(port);
       // The host connected before this port was on the tunnel, so it has to be
       // told about it again.
       await host.refresh();
-      return { remote: one.remote, ...(url === undefined ? {} : { url }) };
+      return { remote: one.remote, ...(written.url === undefined ? {} : { url: written.url }) };
     },
 
     access: async (connector, port, anonymous) => {
       const one = served.get(connector);
       if (one?.host === undefined || !one.ports.has(port)) return;
-      await one.host.access(port, anonymous);
+      const host = one.host;
+      // An update requires the port to exist, so a port taken off comes back
+      // by the create-or-update write `add` makes, with the access asked here.
+      const written = await writePort(host, port, anonymous, async () => {
+        await host.access(port, anonymous);
+        return undefined;
+      });
+      // A port taken off and written again is one the relay has to be told
+      // about again, as after an add.
+      if (written.replaced) await host.refresh();
     },
 
     replace: async (connector, from, to, anonymous) => {
       const { one, host } = await hosted(connector);
       await host.remove(from);
       one.ports.delete(from);
-      const url = await host.add(to, anonymous);
+      const written = await writePort(host, to, anonymous, () => host.add(to, anonymous));
       one.ports.add(to);
       await host.refresh();
-      return url;
+      return written.url;
     },
 
     remove: async (connector, port, keep) => {
