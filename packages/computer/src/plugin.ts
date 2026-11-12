@@ -1543,9 +1543,30 @@ export const apply: Plugin['apply'] = (host, options) => {
       const mine = one.host === host.hostId;
       const adopted = one.disposable !== undefined && one.session !== undefined && mine && await host.sessionKept(one.session);
       if (one.disposable !== undefined && one.session !== undefined && !adopted) {
-        host.log(mine
-          ? `${name}: left the disposable machine ${one.id} alone; ${one.session} is not a session this daemon keeps`
-          : `${name}: left the disposable machine ${one.id} alone; it is another daemon's machine`);
+        if (!mine) {
+          host.log(`${name}: left the disposable machine ${one.id} alone; it is another daemon's machine`);
+          continue;
+        }
+        // Only a machine that names this daemon is removed: one that names no
+        // daemon matches a loader with no id, and nothing says it is this one's.
+        if (one.host === undefined) {
+          host.log(`${name}: left the disposable machine ${one.id} alone; it names no daemon`);
+          continue;
+        }
+        /*
+         * This daemon's own machine, for a session it does not keep: nothing
+         * will ever run in it, so it goes with the volume its git directory is
+         * in rather than staying up for the rest of the daemon's life. A
+         * removal Docker refuses is said and not thrown: the listing is what
+         * finds the machine, and the next one finds it again.
+         */
+        try {
+          await made.remove(one.id);
+          host.log(`${name}: removed the disposable machine ${one.id}; ${one.session} is not a session this daemon keeps`);
+        }
+        catch (error) {
+          host.log.error(`${name}: could not remove ${one.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
         continue;
       }
       /*

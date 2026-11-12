@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
-import { MACHINE_OBJECTS } from '../src/gitdir.js';
+import { gitVolumeOf, MACHINE_GIT_TARGET, MACHINE_OBJECTS } from '../src/gitdir.js';
 import { dockerRuntime } from '../src/runtime.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { createHost } from '../../sdk/src/host.js';
@@ -808,17 +808,18 @@ it('keeps a session\'s machine across a restart, and lets it go when the session
   expect(held(state).calls.some((one) => one[0] === 'rm' && one[2] === box)).toBe(true);
 });
 
-it('leaves alone a leftover whose session this daemon does not keep', async () => {
+it('leaves alone a leftover another daemon made, whose session this daemon does not keep', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const dir = temp();
   const state = join(dir, 'docker.json');
   // Another daemon's machine, up and running, with the session it was made for
-  // on its label. This daemon keeps no sessions at all.
+  // on its label. This daemon keeps no sessions at all, and the machine's own
+  // `ahpd.host` is what says it is not this daemon's to remove.
   writeFileSync(state, JSON.stringify({
     machines: [{
       name: 'theirs',
       image: 'node:22',
-      labels: { 'ahpd.disposable': 'claude', 'ahpd.session': 'echo:/theirs' },
+      labels: { 'ahpd.disposable': 'claude', 'ahpd.session': 'echo:/theirs', 'ahpd.host': 'daemon-there' },
     }],
     calls: [],
   }));
@@ -826,17 +827,51 @@ it('leaves alone a leftover whose session this daemon does not keep', async () =
   const lines: string[] = [];
   await load(options(state, {
     profiles: { claude: { title: 'Claude', disposable: true, disposableDelay: 1000 } },
-  }), [], (line) => { lines.push(line); });
+  }), [], (line) => { lines.push(line); }, {}, 'daemon-here');
 
   await until(() => lines.some((one) => one.includes('left the disposable machine theirs alone')));
-  // Said instead of the line a machine this daemon's own gets, which is what a
-  // person reading the log needs to tell the two apart.
+  // Said as another daemon's, instead of the removal a machine this daemon's
+  // own and unkept gets.
+  expect(lines.some((one) => one.includes('it is another daemon\'s machine'))).toBe(true);
   expect(lines.some((one) => one.includes('found the disposable machine theirs'))).toBe(false);
 
   await vi.advanceTimersByTimeAsync(10000);
   await wait(300);
   expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(false);
   expect(held(state).machines.map((one) => one.name)).toEqual(['theirs']);
+});
+
+it('removes this daemon\'s own disposable machine when the session it was made for is not kept', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  // This daemon's machine, up, for a session no store here keeps: nothing will
+  // ever run in it, and its own git directory is in the volume it mounts.
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'unkept',
+      image: 'node:22',
+      state: 'running',
+      mounts: [`${gitVolumeOf('unkept')}:${MACHINE_GIT_TARGET}`],
+      labels: { 'ahpd.disposable': 'claude', 'ahpd.session': 'echo:/gone', 'ahpd.host': 'daemon-here', 'ahpd.git': 'fetch' },
+    }],
+    calls: [],
+    volumes: { [gitVolumeOf('unkept')]: { files: [] } },
+  }));
+
+  const lines: string[] = [];
+  await load(options(state, {
+    profiles: { claude: { title: 'Claude', disposable: true, disposableDelay: 1000 } },
+  }), [], (line) => { lines.push(line); }, {}, 'daemon-here');
+
+  await until(() => lines.some((one) => one.includes('removed the disposable machine unkept')));
+  // Said with the session, which is what says why it went.
+  expect(lines.some((one) => one.includes('echo:/gone is not a session this daemon keeps'))).toBe(true);
+  // The machine and the volume its git directory is in go together, so the next
+  // attempt finds a clean host rather than a leftover nothing mounts.
+  expect(held(state).machines).toEqual([]);
+  expect(held(state).volumes?.[gitVolumeOf('unkept')]).toBeUndefined();
+  expect(held(state).calls).toContainEqual(['rm', '-f', 'unkept']);
+  expect(held(state).calls).toContainEqual(['volume', 'rm', gitVolumeOf('unkept')]);
 });
 
 it('labels a machine with the daemon that made it', async () => {
@@ -916,9 +951,18 @@ it('refuses an alone machine another daemon made, and says whose one of its own 
     calls: [],
   }));
 
+  /*
+   * The session `ours` was made for is one this daemon keeps, so the machine
+   * stays: a machine of this daemon's whose session is not kept is removed at
+   * startup, and this case is about what `keptFor` answers, not about removal.
+   */
+  const store = memorySessions();
+  store.setProvider('one', 'echo');
+  store.setConfig('one', { computer: 'computer://ours' });
+
   const { options: loaded } = await load(options(state, {
     profiles: { claude: { title: 'Claude', disposable: true, disposableAlone: true } },
-  }), [agentWith()], () => {}, {}, 'daemon-here');
+  }), [agentWith()], () => {}, { sessions: store }, 'daemon-here');
   const port = loaded.computers;
   if (port === undefined) throw new Error('the computer plugin registered no port');
 
