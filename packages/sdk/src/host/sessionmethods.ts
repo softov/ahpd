@@ -1,6 +1,6 @@
-import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
+import { INTERNAL_ERROR, INVALID_PARAMS, RpcError, optionalStringParam } from '../rpc.js';
 import { idOf, Status, uriFor } from '../sessions/catalog.js';
-import { computerId } from '../machines/computers.js';
+import { computerId, computerSource } from '../machines/computers.js';
 import { older } from '../sessions/paging.js';
 import { namesOf } from '../usage/scopes.js';
 import { localPath } from '../resources/fileuri.js';
@@ -1252,160 +1252,195 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      */
     createSession: async (params) => {
       if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
-      const uri = named(String(params.channel ?? ''), 'session');
-      const provider = params.provider === undefined ? ctx.first?.provider : String(params.provider);
-      if (provider === undefined) throw new RpcError(-32002, noProvider(provider));
-      // An agent whose record is off or paused starts no session, said with
-      // the sentence that state uses.
-      const unavailable = agentRefusal(options.disabledAgents?.(), options.pausedAgents?.(), provider);
-      if (unavailable !== undefined) throw new RpcError(-32002, unavailable);
       /*
-       * An agent this caller may not use answers as one this host does not
-       * serve, before anything is claimed or made: an id it is refused is an
-       * id it is not told exists.
+       * Followed under the client's progress token, as a collection is: each
+       * step of making the session said as it happens, and one more when the
+       * request answers, carrying `progress` and `total` as the same number so
+       * a client that waits on progress can clear its line. A client that
+       * sends no token is told nothing, and so is a create that asks for no
+       * machine: a progress line a person sees is about a machine being made.
        */
-      if (!mayUseAgent(connection.principal, ownershipOf(options.agentOwners?.(), provider), {
-        root: connection.root === true,
-        hasDirectory: options.users !== undefined,
-      }))
-        throw new RpcError(-32002, noProvider(provider));
-      /*
-       * The creator's entry names the creator. The protocol says its
-       * `clientId` MUST match the one this connection gave at `initialize`,
-       * and VS Code's host refuses a request whose entry names another client
-       * or none, before anything is made for it.
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/commands.ts#L77-L85
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213
-       */
-      const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
-        ? params.activeClient as Bag
-        : undefined;
-      const clientId = connection.clientId;
-      if (claimed !== undefined && claimed.clientId !== clientId)
-        throw new RpcError(INVALID_PARAMS, 'createSession.activeClient.clientId must match the connection\'s clientId');
-      /*
-       * A session this host holds under this name, made again for the agent
-       * it is held under, is answered as made and kept as it is, recent in
-       * the residency, as VS Code's host runs a creation of a URI registered
-       * to the same provider over the state it keeps: a window whose
-       * subscription a reconnect reported missing creates the session again
-       * before it subscribes.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6166-L6174
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6323-L6328
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1239-L1246
-       */
-      if ((sessions.get(uri)?.agent ?? owners.get(uri))?.provider === provider) {
-        ctx.touch(uri);
-        return null;
-      }
-      unheld(uri);
-      /*
-       * The name, claimed before anything is made for the session, so a second
-       * creation of it while this one waits on a worktree or a machine is
-       * refused; let go again unless the session was made.
-       */
-      const pending: Claimed = { kind: 'session', of: uri };
-      claims.set(uri, pending);
-      const release = (): void => {
-        if (claims.get(uri) === pending) claims.delete(uri);
+      const asksMachine = computerSource(configOf(params).computer) !== undefined;
+      const token = optionalStringParam(params, 'progressToken');
+      let step = 0;
+      const progress = token === undefined || !asksMachine
+        ? undefined
+        : (message: string): void => {
+          step += 1;
+          ctx.broadcast(ROOT, 'root/progress', { channel: ROOT, progressToken: token, progress: step, message });
+        };
+      const done = (): void => {
+        if (progress === undefined || token === undefined) return;
+        ctx.broadcast(ROOT, 'root/progress', { channel: ROOT, progressToken: token, progress: step, total: step });
       };
+      /*
+       * Every path below, from the first refusal to the session made, ends
+       * the wait the client follows. A refusal before the claim is as much an
+       * end as an answer, so the close stands outside it all and runs once.
+       */
       try {
-        const config = configOf(params) as Record<string, string>;
+        const uri = named(String(params.channel ?? ''), 'session');
+        const provider = params.provider === undefined ? ctx.first?.provider : String(params.provider);
+        if (provider === undefined) throw new RpcError(-32002, noProvider(provider));
+        // An agent whose record is off or paused starts no session, said with
+        // the sentence that state uses.
+        const unavailable = agentRefusal(options.disabledAgents?.(), options.pausedAgents?.(), provider);
+        if (unavailable !== undefined) throw new RpcError(-32002, unavailable);
         /*
-         * Where the client asked the agent to work.
-         *
-         * A list on the wire and one directory to a session, so the first is
-         * the answer. `file://` comes off: everything below here deals in
-         * paths, and a backend handed a URI would open a directory called
-         * `file:`.
+         * An agent this caller may not use answers as one this host does not
+         * serve, before anything is claimed or made: an id it is refused is an
+         * id it is not told exists.
          */
-        const wanted = (Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
-          .filter((entry): entry is string => typeof entry === 'string')
-          .map((entry) => localPath(entry));
-        const asked = wanted[0];
-        // None named, the daemon's `workspacelessFolder` says where it works.
-        const where = asked ?? await scratchFolder(uri);
-        // The peers of the first, which the protocol says are equal to each
-        // other and to it in everything but which one the process is rooted
-        // at. A backend that cannot take them is told none.
-        const peers = agents.get(provider)?.multipleDirectories === true ? wanted.slice(1) : [];
+        if (!mayUseAgent(connection.principal, ownershipOf(options.agentOwners?.(), provider), {
+          root: connection.root === true,
+          hasDirectory: options.users !== undefined,
+        }))
+          throw new RpcError(-32002, noProvider(provider));
         /*
-         * A worktree session runs in the folder the client picked until its
-         * first send, which makes the tree and starts the session again in
-         * it, as VS Code's host resolves a session's worktree on the first
-         * send: a tree git cannot make fails that send.
-         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
+         * The creator's entry names the creator. The protocol says its
+         * `clientId` MUST match the one this connection gave at `initialize`,
+         * and VS Code's host refuses a request whose entry names another client
+         * or none, before anything is made for it.
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/commands.ts#L77-L85
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213
          */
-        const running = where;
-        await resolveCreatedSessionConfig(uri, where, config, connection.principal);
+        const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
+          ? params.activeClient as Bag
+          : undefined;
+        const clientId = connection.clientId;
+        if (claimed !== undefined && claimed.clientId !== clientId)
+          throw new RpcError(INVALID_PARAMS, 'createSession.activeClient.clientId must match the connection\'s clientId');
         /*
-         * Checked before the machine is made, so a refused session makes
-         * none, against the computer the client asked for and the scope the
-         * session is charged to.
+         * A session this host holds under this name, made again for the agent
+         * it is held under, is answered as made and kept as it is, recent in
+         * the residency, as VS Code's host runs a creation of a URI registered
+         * to the same provider over the state it keeps: a window whose
+         * subscription a reconnect reported missing creates the session again
+         * before it subscribes.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6166-L6174
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6323-L6328
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1239-L1246
          */
-        const refused = await admitted(connection.principal, charged.get(uri)?.scope, config, provider, uri, ownerFor(connection));
-        if (refused !== undefined) throw new RpcError(-32009, refused);
-        // A `disposable:<profile>` setting is a machine made for this
-        // session, with this harness's needs and this folder, before the
-        // backend is started with it.
-        await placedIn(uri, provider, config, running, ownerFor(connection));
-        // This connection's tokens and no other's. A client that pushed
-        // nothing gets a session on the daemon's own credentials, which is
-        // how every session worked before there was anything to push.
-        // Handed over, since `createProviderSession` refuses a name this still holds.
-        release();
-        /*
-         * The creator claiming its place in the session it is making.
-         *
-         * The protocol's own words: "equivalent to dispatching a
-         * `session/activeClientSet` immediately after creation". Answered
-         * here rather than left to that dispatch because it saves the round
-         * trip the field exists to save, and because a client that has to
-         * announce itself afterwards owns a session that is briefly empty
-         * of it.
-         *
-         * In before the backend is started, and not after: the tools a chat
-         * is handed and what the model is told beside them are both read
-         * once, when that chat starts, and a client announcing itself in the
-         * same breath as the session has to be there for either to reach it.
-         * The announcement is dispatched after, because a session nobody can
-         * subscribe to yet has nobody to tell.
-         *
-         * The entry is the one the creator sent, `tools` included or left
-         * out, as the reference host holds a creator's entry.
-         * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L6404
-         */
-        const activeClient: Bag | undefined = claimed;
-        let here: Map<unknown, Bag> | undefined;
-        if (activeClient !== undefined) {
-          here = presence.get(idOf(uri)) ?? new Map<unknown, Bag>();
-          presence.set(idOf(uri), here);
-          here.set(clientId, activeClient);
+        if ((sessions.get(uri)?.agent ?? owners.get(uri))?.provider === provider) {
+          ctx.touch(uri);
+          // Answered before anything is made: no step was taken, so the only
+          // line is the closing one.
+          return null;
         }
-        // Whose this is: this connection's person, kept beside the session
-        // so a scope change before the first turn is resolved against who
-        // owns the work rather than against whoever sent it.
+        unheld(uri);
+        /*
+         * The name, claimed before anything is made for the session, so a second
+         * creation of it while this one waits on a worktree or a machine is
+         * refused; let go again unless the session was made.
+         */
+        const pending: Claimed = { kind: 'session', of: uri };
+        claims.set(uri, pending);
+        const release = (): void => {
+          if (claims.get(uri) === pending) claims.delete(uri);
+        };
         try {
-          await createProviderSession(uri, provider, config, running, undefined, conn.tokensFor(provider), peers, undefined,
-            { ...forWhom(ownerFor(connection), connection.principal), sender: connection });
+          const config = configOf(params) as Record<string, string>;
+          /*
+           * Where the client asked the agent to work.
+           *
+           * A list on the wire and one directory to a session, so the first is
+           * the answer. `file://` comes off: everything below here deals in
+           * paths, and a backend handed a URI would open a directory called
+           * `file:`.
+           */
+          const wanted = (Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
+            .filter((entry): entry is string => typeof entry === 'string')
+            .map((entry) => localPath(entry));
+          const asked = wanted[0];
+          // None named, the daemon's `workspacelessFolder` says where it works.
+          const where = asked ?? await scratchFolder(uri);
+          // The peers of the first, which the protocol says are equal to each
+          // other and to it in everything but which one the process is rooted
+          // at. A backend that cannot take them is told none.
+          const peers = agents.get(provider)?.multipleDirectories === true ? wanted.slice(1) : [];
+          /*
+           * A worktree session runs in the folder the client picked until its
+           * first send, which makes the tree and starts the session again in
+           * it, as VS Code's host resolves a session's worktree on the first
+           * send: a tree git cannot make fails that send.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
+           */
+          const running = where;
+          await resolveCreatedSessionConfig(uri, where, config, connection.principal);
+          /*
+           * Checked before the machine is made, so a refused session makes
+           * none, against the computer the client asked for and the scope the
+           * session is charged to.
+           */
+          const refused = await admitted(connection.principal, charged.get(uri)?.scope, config, provider, uri, ownerFor(connection));
+          if (refused !== undefined) throw new RpcError(-32009, refused);
+          // A `disposable:<profile>` setting is a machine made for this
+          // session, with this harness's needs and this folder, before the
+          // backend is started with it.
+          await placedIn(uri, provider, config, running, ownerFor(connection), progress);
+          // This connection's tokens and no other's. A client that pushed
+          // nothing gets a session on the daemon's own credentials, which is
+          // how every session worked before there was anything to push.
+          // Handed over, since `createProviderSession` refuses a name this still holds.
+          release();
+          /*
+           * The creator claiming its place in the session it is making.
+           *
+           * The protocol's own words: "equivalent to dispatching a
+           * `session/activeClientSet` immediately after creation". Answered
+           * here rather than left to that dispatch because it saves the round
+           * trip the field exists to save, and because a client that has to
+           * announce itself afterwards owns a session that is briefly empty
+           * of it.
+           *
+           * In before the backend is started, and not after: the tools a chat
+           * is handed and what the model is told beside them are both read
+           * once, when that chat starts, and a client announcing itself in the
+           * same breath as the session has to be there for either to reach it.
+           * The announcement is dispatched after, because a session nobody can
+           * subscribe to yet has nobody to tell.
+           *
+           * The entry is the one the creator sent, `tools` included or left
+           * out, as the reference host holds a creator's entry.
+           * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L6404
+           */
+          const activeClient: Bag | undefined = claimed;
+          let here: Map<unknown, Bag> | undefined;
+          if (activeClient !== undefined) {
+            here = presence.get(idOf(uri)) ?? new Map<unknown, Bag>();
+            presence.set(idOf(uri), here);
+            here.set(clientId, activeClient);
+          }
+          // Whose this is: this connection's person, kept beside the session
+          // so a scope change before the first turn is resolved against who
+          // owns the work rather than against whoever sent it.
+          try {
+            await createProviderSession(uri, provider, config, running, undefined, conn.tokensFor(provider), peers, undefined,
+              { ...forWhom(ownerFor(connection), connection.principal), sender: connection }, undefined, progress);
+          }
+          catch (error) {
+            // Nothing came of it, so nothing is in it: the presence written
+            // above is this request's, and a client left in a session that was
+            // never opened is one for a row that is not there.
+            here?.delete(clientId);
+            if (here?.size === 0) presence.delete(idOf(uri));
+            throw error;
+          }
+          // The tree its first send makes, owed as the start again that send runs.
+          oweTree(uri, conn.tokensFor(provider), conn.tokensFor);
+          if (activeClient !== undefined) {
+            dispatch(uri, { type: 'session/activeClientSet', activeClient });
+            retool(uri);
+          }
+          return null;
         }
-        catch (error) {
-          // Nothing came of it, so nothing is in it: the presence written
-          // above is this request's, and a client left in a session that was
-          // never opened is one for a row that is not there.
-          here?.delete(clientId);
-          if (here?.size === 0) presence.delete(idOf(uri));
-          throw error;
-        }
-        // The tree its first send makes, owed as the start again that send runs.
-        oweTree(uri, conn.tokensFor(provider), conn.tokensFor);
-        if (activeClient !== undefined) {
-          dispatch(uri, { type: 'session/activeClientSet', activeClient });
-          retool(uri);
-        }
+        finally { release(); }
         return null;
       }
-      finally { release(); }
+      finally {
+        // The answer, or the error, is the end of the wait the client followed.
+        done();
+      }
     },
     /**
      * A second conversation in one session.

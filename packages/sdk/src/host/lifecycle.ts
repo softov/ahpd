@@ -242,6 +242,7 @@ export interface Lifecycle {
     title?: string,
     by?: { owner?: Owner; principal?: Principal; sender?: Connection; legacyChatUris?: boolean },
     asked?: { instructions?: string[]; tools?: string[]; userSettings?: boolean },
+    progress?: (message: string) => void,
   ): Promise<void>;
 }
 
@@ -2565,6 +2566,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     title?: string,
     by?: { owner?: Owner; principal?: Principal; sender?: Connection; legacyChatUris?: boolean },
     asked?: { instructions?: string[]; tools?: string[]; userSettings?: boolean },
+    progress?: (message: string) => void,
   ): Promise<void> => {
     named(uri, 'session');
     if (sessions.has(uri))
@@ -2695,6 +2697,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        */
       const legacy = by?.legacyChatUris ?? by?.sender?.legacyChatUris === true;
       const defaultChat = mintDefaultChatUri(legacy ? 'shaped' : 'opaque', uri, undefined);
+      // The last wait of a create, in the client's words for it, said before
+      // the backend is asked to start.
+      progress?.('Starting the agent');
       const lead = await spawn(agent, uri, defaultChat, undefined, backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
       // Written down for the same reason a rename is: a first name outlives a
       // restart too.

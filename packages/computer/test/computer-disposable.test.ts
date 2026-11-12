@@ -1539,6 +1539,74 @@ it('gives a worktree session a git directory of its own, and runs the machine as
   expect(flagValue(later?.args ?? [], '--user')).toBe(ME);
 });
 
+/*
+ * The steps of making a machine, said under the token a client follows.
+ *
+ * The waits a person notices: the image being pulled, the machine being made,
+ * the session's checkout being seeded, and the agent being started. Nothing is
+ * said of a pull when Docker already has the image, because there is no wait.
+ */
+const saidWhileMaking = (p: ReturnType<typeof peer>): Record<string, unknown>[] =>
+  p.notes
+    .filter((note) => note.method === 'root/progress')
+    .map((note) => note.params as Record<string, unknown>);
+
+it('says each step of a machine made for a session, and the pull for an image Docker has not got', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree } = repositoryIn(dir);
+
+  const loaded = await withRepository(state);
+  const { client, peer: p } = await room(loaded);
+  await client.handle({
+    method: 'createSession',
+    params: {
+      channel: 'ahp-session:/steps',
+      provider: 'echo',
+      config: { computer: 'disposable:claude' },
+      workingDirectories: [tree],
+      progressToken: 'p1',
+    },
+  });
+
+  const said = saidWhileMaking(p);
+  // The four waits, then the closing one with no words of its own, whose
+  // `progress` and `total` are the same number.
+  expect(said.map((one) => one.message)).toEqual([
+    'Pulling node:22',
+    'Making the machine',
+    'Seeding the checkout',
+    'Starting the agent',
+    undefined,
+  ]);
+  expect(said.map((one) => one.progress)).toEqual([1, 2, 3, 4, 4]);
+  expect(said.at(-1)).toEqual({ channel: 'ahp-root://', progressToken: 'p1', progress: 4, total: 4 });
+});
+
+it('says no pull for an image Docker already has', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree } = repositoryIn(dir);
+  writeFileSync(state, JSON.stringify({ machines: [], calls: [], images: ['node:22'] }));
+
+  const loaded = await withRepository(state);
+  const { client, peer: p } = await room(loaded);
+  await client.handle({
+    method: 'createSession',
+    params: {
+      channel: 'ahp-session:/steps',
+      provider: 'echo',
+      config: { computer: 'disposable:claude' },
+      workingDirectories: [tree],
+      progressToken: 'p1',
+    },
+  });
+
+  const said = saidWhileMaking(p);
+  expect(said.map((one) => one.message)).toEqual(['Making the machine', 'Seeding the checkout', 'Starting the agent', undefined]);
+  expect(said.at(-1)).toMatchObject({ progress: 3, total: 3 });
+});
+
 it('keeps the image\'s user for a machine with no git directory', async () => {
   const dir = realpathSync(temp());
   const state = join(dir, 'docker.json');

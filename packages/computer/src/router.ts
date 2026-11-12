@@ -241,13 +241,13 @@ export const routed = (
      * is refused at this one moment, where a name becomes an id, rather than
      * made into a machine no caller can address again.
      */
-    run: async (spec) => {
+    run: async (spec, progress) => {
       const value = options.makerFor?.(spec) ?? fallback;
       const held = maker(value);
       if (value === BARE && spec.name.includes('.')) {
         throw new Error(`${spec.name} is not a name for a machine on this host: a dot in it reads as another runtime's, and these machines are addressed by their name alone`);
       }
-      const made = await held.run(spec);
+      const made = await held.run(spec, progress);
       return { ...made, id: spellMachineId(value, made.id) };
     },
 

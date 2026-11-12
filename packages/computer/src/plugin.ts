@@ -1159,7 +1159,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   const made: Routed = {
     ...computerRouter,
     list: async () => meterRows(await computerRouter.list()),
-    run: async (asked: MachineSpec) => {
+    run: async (asked: MachineSpec, progress?: (message: string) => void) => {
       /*
        * A machine made on a box waits for the box to have what makes it, a
        * Docker or KVM with libvirt, that this account can reach, and is
@@ -1234,8 +1234,9 @@ export const apply: Plugin['apply'] = (host, options) => {
         };
       }
       // Through the router, which is what spells the id a machine on any
-      // runtime is listed and addressed by.
-      const machine = await computerRouter.run(spec);
+      // runtime is listed and addressed by. The progress goes with it: this
+      // wrapper is the one place between the port and the runtime.
+      const machine = await computerRouter.run(spec, progress);
       // What the vault gave, which the runtime left off the make: held for
       // every command into the machine from now on, and its references
       // recorded beside the configuration for a daemon started afterwards.
@@ -2184,7 +2185,7 @@ export const apply: Plugin['apply'] = (host, options) => {
           try {
             // The CLI decides the container's name, so the id is the one it made
             // rather than the one this host suggested.
-            return (await made.run({ ...spec, label, ...withGit(asked, answer), ...(asked.sandbox === true ? { sandbox: true } : {}) })).id;
+            return (await made.run({ ...spec, label, ...withGit(asked, answer), ...(asked.sandbox === true ? { sandbox: true } : {}) }, asked.progress)).id;
           }
           catch (error) {
             throw new Error(`The machine for ${asked.source} could not be made: ${error instanceof Error ? error.message : String(error)}`);
@@ -2302,7 +2303,7 @@ export const apply: Plugin['apply'] = (host, options) => {
           ...(host.hostId === undefined ? {} : { host: host.hostId }),
           // Made to host the sandbox runtime where the session's sandbox is on.
           ...(asked.sandbox === true ? { sandbox: true } : {}),
-        }));
+        }, asked.progress));
       });
       // Watched before the host says the session entered, so a session that
       // never starts still leaves a machine that goes.
