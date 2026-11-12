@@ -68,6 +68,6 @@ The chosen fix:
 
 Found on 2026-11-11, not chosen yet:
 
-- VS Code's CLI also sets the token on each tunnel request, but it takes the tunnel's streams in its own process and listens on no local port.
+- VS Code's CLI also sets the token on each tunnel request. It takes the tunnel's streams in its own process, and listens on no local port.
 - The tunnel SDK that ahpd uses can do the same: `forwardConnectionsToLocalPorts` off, and each stream from `forwardedPortConnecting`.
 - That removes the local process and the web page from the impact. A tunnel visitor still gets the token, so the person setting is still needed.
