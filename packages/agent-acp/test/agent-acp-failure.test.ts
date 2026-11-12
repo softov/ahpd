@@ -116,17 +116,23 @@ it('rejects the handshake with a sentence naming a missing command', async () =>
 });
 
 /*
- * A listing the server cannot make is the host's to ask again, so it rejects
- * rather than answering the watched sessions as the whole catalogue, as VS
- * Code's Codex agent answers a listing it cannot make.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8043-L8052
+ * A backend with no kept session lists on the host, and its command may exist
+ * only in a machine. One failure says nothing about the server, so the read
+ * answers from the watched rows with one line, and the record does not spawn
+ * and fail again at every listing until it changes.
  */
-it('rejects a listing whose command is missing, and logs it', async () => {
+it('answers the watched rows after a listing whose command is missing, with one line', async () => {
   watchSession({ provider: 'acp-missing-list', id: 'kept', cwd: '/tmp', additional: [], title: 'Kept' });
   const lines: string[] = [];
   const agent = acpAgent({ command: MISSING, provider: 'acp-missing-list', log: (line) => { lines.push(line); } });
-  await expect(agent.list?.()).rejects.toThrow(`${MISSING} was not found`);
-  expect(lines.some((line) => line.startsWith('acp-missing-list: session/list failed:'))).toBe(true);
+
+  await expect(agent.list?.()).resolves.toMatchObject([{ id: 'kept' }]);
+  const failed = (): string[] => lines.filter((line) => line.startsWith('acp-missing-list: session/list failed:'));
+  expect(failed()).toHaveLength(1);
+
+  // The same record answers from the same rows, and tries no second time.
+  await expect(agent.list?.()).resolves.toMatchObject([{ id: 'kept' }]);
+  expect(failed()).toHaveLength(1);
   await pause(20);
   expect(escaped).toEqual([]);
 });

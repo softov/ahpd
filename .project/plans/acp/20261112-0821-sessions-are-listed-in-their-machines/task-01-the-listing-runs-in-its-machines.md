@@ -1,6 +1,6 @@
 ---
 title: The listing runs in its machines
-status: todo
+status: implemented
 depends: []
 layer: "sdk, agent-acp"
 refs:
@@ -16,7 +16,9 @@ It lists on the host only when a kept session ran there, or none is kept.
 ## Files
 
 - `UPDATE: packages/sdk/src/types/host.ts` - the agent's `list` takes the machines of its kept sessions.
+- `UPDATE: packages/sdk/src/types/computers.ts:292` - the port's optional `state` read, asked before anything is spawned in a machine.
 - `UPDATE: packages/sdk/src/host/catalogue.ts:1266-1273` - pass each agent the machines from its kept rows, read as `ranIn` reads them.
+- `UPDATE: packages/computer/src/plugin.ts:1970` - serve `state` from the machine's own runtime, as `agents` is served.
 - `UPDATE: packages/agent-acp/src/agent.ts:180` - `list` passes the machines on.
 - `UPDATE: packages/agent-acp/src/catalog.ts:481-590` - `listingFor` and `catalogueOf` spawn per machine through `computers.how`, and merge the rows.
 - `UPDATE: packages/agent-acp/test/` - cases for machine-only, host-only and mixed agents.
@@ -39,3 +41,11 @@ It lists on the host only when a kept session ran there, or none is kept.
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Built 2026-11-12.
+
+The SDK gives `list` the machines of a backend's kept sessions and says whether one ran on the host.
+`catalogueOf` asks the port's optional `state` first, spawns only in a running machine, reads the host only when told to, and merges the rows.
+A stopped, suspended or gone machine is not spawned in, and its sessions come from the watched rows with one line per record.
+A record with no kept session answers from the watched rows after one host failure, until its record changes.
+The cases are in `packages/agent-acp/test/agent-acp-machines.test.ts`; the changed failure case is in `agent-acp-failure.test.ts`.

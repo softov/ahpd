@@ -2024,6 +2024,15 @@ export const apply: Plugin['apply'] = (host, options) => {
     sandboxSupport,
     sandboxed,
     /*
+     * What a machine is doing, asked before anything is spawned in it.
+     *
+     * The runtime's own answer, as `agents` below is: a stopped container is
+     * still found by the listing the runtime reads, so its state is
+     * `stopped` rather than a spawn that fails, and a machine that is gone is
+     * `undefined`, which is the answer `how` gives for one.
+     */
+    state: async (id) => made.state(id),
+    /*
      * The agents one was prepared for, read back from its own runtime.
      *
      * The host checks this before a session enters, so an agent is never run

@@ -13,7 +13,7 @@
  */
 
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session, SessionMachine } from '@ahpd/sdk';
-import { catalogueOf, deletes, findListed, forgetSession, forks, loadedSession, stateFile } from './catalog.js';
+import { catalogueOf, deletes, findListed, forgetSession, forks, loadedSession, machineFor, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
 import type { Choice } from './session/config.js';
 import { turnsOf } from './transcript.js';
@@ -175,9 +175,11 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
     /*
      * The server's own session list where it has one, and this process's record
      * where it does not. Both are read in `catalog.ts`, because the registry is
-     * process-wide and outlives any one session.
+     * process-wide and outlives any one session. A listing placed in machines
+     * is read in each of them, and on this host only when the host says a kept
+     * session ran here.
      */
-    list: (): Promise<Listed[]> => catalogueOf(options, provider),
+    list: (machines?: SessionMachine[], host?: boolean): Promise<Listed[]> => catalogueOf(options, provider, machines, host),
 
     /*
      * One session's row, by id: this process's own record for a session it
@@ -199,7 +201,7 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
      * saying the host has no such session rather than an empty one.
      */
     transcript: async (id, at) => {
-      const found = await loadedSession(options, provider, id, at?.workingDirectory);
+      const found = await loadedSession(options, provider, id, at?.workingDirectory, machineFor(provider, id));
       return found === undefined ? undefined : turnsOf(found);
     },
 

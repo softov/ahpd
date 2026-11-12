@@ -1,6 +1,6 @@
 ---
 title: Load and find use the machine
-status: todo
+status: implemented
 depends:
   - task-01-the-listing-runs-in-its-machines.md
 layer: "agent-acp"
@@ -33,3 +33,9 @@ refs:
 - `pnpm typecheck` and the agent-acp suite pass.
 
 ## Resume
+
+Built 2026-11-12.
+
+`loadedSession` takes the session's machine and spawns through it; `transcript` reads the machine the listing remembered.
+`rowsForFind` reads the machines and the host flag of the last `list` of its record.
+The cases are in `packages/agent-acp/test/agent-acp-machines.test.ts`.

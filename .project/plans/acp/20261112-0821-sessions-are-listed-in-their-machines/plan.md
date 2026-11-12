@@ -53,6 +53,7 @@ listSessions -> catalogue -> agent.list() -> catalogueOf -> listingFor -> server
 | `loadedSession` and `findListed` use the machine the session ran in | `(defaulted: the same rule as the listing)` | 02 |
 | An agent with no kept session lists on the host; after that listing fails, the agent answers from the watched rows until its record changes, with one log line | Softov, 2026-11-12: "Use watched rows until it changes" | 01 |
 | Rows from each machine merge with the rows the host watched, as today | [code://packages/agent-acp/src/catalog.ts#L566](../../../../packages/agent-acp/src/catalog.ts#L566) | 01 |
+| A listing asks a machine's state through an optional `state` read on the port, and spawns only in a running machine | Softov, 2026-11-12: "Add state to the port" | 01 |
 
 ## Proposed architecture
 
@@ -66,20 +67,22 @@ listSessions -> catalogue -> agent.list() -> catalogueOf -> listingFor -> server
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The listing runs in its machines](task-01-the-listing-runs-in-its-machines.md) | todo | - |
-| [02 - Load and find use the machine](task-02-load-and-find-use-the-machine.md) | todo | 01 |
+| [01 - The listing runs in its machines](task-01-the-listing-runs-in-its-machines.md) | implemented | - |
+| [02 - Load and find use the machine](task-02-load-and-find-use-the-machine.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
-- A machine that is not running cannot be asked - its sessions come from the watched rows only, as on a server with no listing.
+- A machine that is not running is not spawned in. The port's `state` is asked first, and its sessions come from the watched rows only, with one line per record and machine.
 - More machines mean more spawns per listing - the listing is cached as today.
+- Each listing asks every machine's state first, which is one more call per machine than before.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-listing-runs-in-its-machines.md](task-01-the-listing-runs-in-its-machines.md).
+- **Done so far:** both tasks are implemented, and the typecheck passes; no suite has been run.
+- **Next action:** review and merge the PR, then the [Windows check](../../../pending/windows-machine-paths-checks.md).
 - **Open questions:** none.
 - **Watch out for:** a disposable machine goes with its session, so its sessions are listed from the watched rows after that.
+- **Watch out for:** `implemented` is not one of the do-spec task statuses; the tasks are `done` only after the suites pass.
 
 ## Final verification checklist
 

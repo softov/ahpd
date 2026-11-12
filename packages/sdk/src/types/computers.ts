@@ -292,6 +292,20 @@ export interface BroughtBack {
 export interface ComputerPort {
   how(id: string, options: SpawnOptions): Promise<Spawn | undefined>;
   /**
+   * What a machine is doing, as its own runtime says.
+   *
+   * Read before anything is spawned in it: a stopped or suspended machine
+   * cannot run the command, and reaching it through `how` would start a
+   * process that fails. `undefined` is a machine the port no longer has, the
+   * same answer `how` gives, so a caller can say a machine is gone without
+   * asking it to start one.
+   *
+   * Absent on a port whose machines have no state to read, which is a check
+   * the caller cannot make rather than a machine that is not running. A
+   * runtime that cannot be reached throws, as `how` does.
+   */
+  state?(id: string): Promise<'running' | 'stopped' | 'suspended' | undefined>;
+  /**
    * Whether a machine is off this host, so that its session runs nested.
    *
    * A machine this host did not make - a box it reaches over ssh - cannot be
