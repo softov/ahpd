@@ -19,7 +19,9 @@ A machine that a create does not finish now leaves no container and no `ahpd-git
 ## Verified
 
 - `pnpm exec tsc -p tsconfig.json --noEmit` prints nothing at the worktree root.
-- The cases were written and not run: the build instruction leaves every vitest run to Softov.
+- The computer suite at review, 2026-11-12, merged with `main`: 604 passed, 1 skipped, 1 failed.
+- The failure was `computer-git-fetch.test.ts` "answers nothing to bring back" on real Docker. It passes alone and in its whole file, 26 of 26.
+- At review, the start removes only a machine whose `ahpd.host` names this daemon. A machine that names no daemon is left alone, with a line.
 - No manual Docker run was made. The cases use the scripted Docker in `packages/computer/test/fixtures/docker.mjs`.
 
 ## Departures from the plan

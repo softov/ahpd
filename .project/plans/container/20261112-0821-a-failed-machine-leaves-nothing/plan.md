@@ -75,7 +75,7 @@ start -> adopt -> "left the disposable machine alone"
 ## Resume state
 
 - **Done so far:** both tasks are implemented. The run guard and `cleanUpFailed` are in `runtime.ts`, and `adopt` removes this daemon's unkept disposable machine in `plugin.ts`. The tests are written in `computer-cleanup.test.ts` and `computer-disposable.test.ts`. `pnpm exec tsc -p tsconfig.json --noEmit` prints nothing and no vitest was run.
-- **Next action:** run the computer suite, check the three items in *Final verification checklist*, then set both tasks `done` and the plan `built`.
+- **Next action:** review and merge the PR, then the [Windows check](../../../pending/windows-machine-paths-checks.md). The plan closes as `built` on Softov's word.
 - **Open questions:** none.
 - **Watch out for:** a failed `docker run` can still have made the container, in the `Created` state. The dev container's `seedGit` is the seed's second caller, so it has its own cleanup. In `adopt`, `mine` is true when both the machine and the daemon have no host label.
 
