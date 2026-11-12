@@ -18,7 +18,7 @@ import type { GitGuard, GitMounts, SessionTree } from './gitdir.js';
 import { codeRouteOf } from './clone.js';
 import type { CodeRoute } from './clone.js';
 import { sandboxRunArgs, sandboxSecurityOptions } from './sandbox.js';
-import { bringBack, bundledInto, checkedOut, fetchedInto, followOfCopy, hostGit, keepUncommitted, movesOver } from './machinegit.js';
+import { bringBack, bundledInto, checkedOut, fetchedInto, followOfCopy, gitConfigOf, hostGit, keepUncommitted, movesOver } from './machinegit.js';
 import type { FarSeed, MachineGit, Ran } from './machinegit.js';
 import { absoluteOnHost, mountParts } from './manifest.js';
 import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, markerText, markerUsed, once, PART_VOLUME_KEPT_MS, PART_VOLUME_USE_REFRESH_MS, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
@@ -2246,16 +2246,18 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
 
   /**
    * The ids a machine's commands run as, read from its label where it names
-   * them and inside the machine where they are a name, or nothing.
+   * them and inside the machine in one `id` where they are a name, or nothing.
    */
   const idsOfMachine = async (spec: MachineSpec, container: string): Promise<{ uid: number; gid: number } | undefined> => {
     const named = idsOfUser(spec.user);
     if (named !== undefined) return named;
-    const read = async (flag: string): Promise<string> =>
-      (await must(['exec', ...(spec.user === undefined ? [] : ['-u', spec.user]), container, 'id', flag])).trim();
     try {
-      const [uid, gid] = [await read('-u'), await read('-g')];
-      return /^\d+$/.test(uid) && /^\d+$/.test(gid) ? { uid: Number(uid), gid: Number(gid) } : undefined;
+      // `id` with no flags prints `uid=1000 gid=1000` and the groups after,
+      // which is one command where `-u` and `-g` were two.
+      const said = (await must(['exec', ...(spec.user === undefined ? [] : ['-u', spec.user]), container, 'id'])).trim();
+      const uid = /\buid=(\d+)/.exec(said)?.[1];
+      const gid = /\bgid=(\d+)/.exec(said)?.[1];
+      return uid === undefined || gid === undefined ? undefined : { uid: Number(uid), gid: Number(gid) };
     }
     catch { return undefined; }
   };
@@ -2271,13 +2273,15 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
    * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
    *
    * What it writes is the tree's repository and nothing more: the host's
-   * objects reachable through `objects/info/alternates`, the branch the tree is
-   * on at the commit it is at, the index that commit names, the two config
-   * values a commit needs, and the two that say how the host's git reads the
-   * tree's files. The commit itself is never read into the working
-   * tree - a `reset --hard` would rewrite the host's own files, mounted at the
-   * same path - so a host change nobody committed shows up in the machine as
-   * the uncommitted change it is.
+   * objects reachable through `objects/info/alternates`, the `config` that
+   * carries the identity a commit needs and the two values that say how the
+   * host's git reads the tree's files, the `HEAD` naming the tree's branch,
+   * then the commit and the index that commit names. The files go in one
+   * `cp -a` archive, which needs no shell; the commit and the index are the
+   * two `git` commands after it. The commit itself is never read into the
+   * working tree - a `reset --hard` would rewrite the host's own files,
+   * mounted at the same path - so a host change nobody committed shows up in
+   * the machine as the uncommitted change it is.
    *
    * A machine whose repository could not be made is not a machine: it is removed
    * before git's own words are thrown, so nothing is left up with nothing to
@@ -2316,32 +2320,39 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       /*
        * A git directory at `at` itself, and not the `<at>/.git` a plain `init`
        * would make: the volume is mounted where git looks for the directory, so
-       * the layout has to be the directory's own. `--bare` writes it, and
-       * `core.bare` is then turned off, which is what tells the machine's git
-       * that this directory belongs to a working tree - the one the gitfile
-       * names it from, or the folder the volume is mounted over.
+       * the layout has to be the directory's own.
        */
       await asUser(['git', 'init', '--bare', '-q', at]);
-      await asUser(['git', `--git-dir=${at}`, 'config', 'core.bare', 'false']);
       /*
-       * Where the history is: the host's objects, read-only at the mount they
-       * were given, named as the machine's alternate. Written through `cp -a`
-       * rather than a shell, so an image whose git comes without one seeds the
-       * same way, and owned as the machine's own user, who is what its git runs
-       * as. `info/` is carried by the archive as well, since a git that does not
-       * make it on `init` would otherwise have nowhere to put the file.
+       * The two files git reads that say what the directory is, in the one
+       * `cp -a` that also carries `objects/info/`: the `config`, which turns
+       * `core.bare` off so the machine knows this directory belongs to a
+       * working tree - the one the gitfile names it from, or the folder the
+       * volume is mounted over - and the `HEAD`, naming the branch the tree is
+       * on, which `init` left at its default. A shell would do this with
+       * `git config` and `git symbolic-ref`; the archive does it for an image
+       * whose git comes without one, and costs one copy instead of five calls.
+       *
+       * The same archive holds where the history is: the host's objects,
+       * read-only at the mount they were given, named as the machine's
+       * alternate. Written through `cp -a` rather than a shell, and owned as
+       * the machine's own user, who is what its git runs as. `objects/info/`
+       * is carried by the archive as well, since a git that does not make it
+       * on `init` would otherwise have nowhere to put the file.
        */
       const owner = ids ?? { uid: 0, gid: 0 };
-      if (objects !== undefined) {
-        await must(
-          ['cp', '-a', '-', `${container}:${posix.join(at, 'objects')}`],
-          undefined,
-          archiveOf([
-            { name: 'info/', bytes: Buffer.alloc(0), directory: true, ...owner },
-            { name: 'info/alternates', bytes: Buffer.from(`${objects}\n`, 'utf8'), ...owner },
+      await must(
+        ['cp', '-a', '-', `${container}:${at}`],
+        undefined,
+        archiveOf([
+          { name: 'config', bytes: Buffer.from(gitConfigOf(seed), 'utf8'), ...owner },
+          ...(seed.branch === undefined ? [] : [{ name: 'HEAD', bytes: Buffer.from(`ref: refs/heads/${seed.branch}\n`, 'utf8'), ...owner }]),
+          ...(objects === undefined ? [] : [
+            { name: 'objects/info/', bytes: Buffer.alloc(0), directory: true, ...owner },
+            { name: 'objects/info/alternates', bytes: Buffer.from(`${objects}\n`, 'utf8'), ...owner },
           ]),
-        );
-      }
+        ]),
+      );
       /*
        * On another box's Docker, the history is a bundle of the tree's `HEAD`
        * instead, or the session's branch fetched from `origin` where the

@@ -113,6 +113,63 @@ export const bundledInto = async (far: FarSeed, root: string, at: string): Promi
   }
 };
 
+/** One value as git's config file spells it: quoted, with its escapes, where the format would read it as its own. */
+const configValueOf = (value: string): string =>
+  /[#;"\\\n\t]|^[ \t]|[ \t]$/.test(value)
+    ? `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t')}"`
+    : value;
+
+/**
+ * The `config` a machine's git directory is seeded with, as the file git reads.
+ *
+ * The three values `git init --bare` writes, with `core.bare` already off since
+ * the directory belongs to a working tree, and the values a seed used to write
+ * one `git config` at a time. A Docker machine gets the whole file in the
+ * archive that carries `objects/info/alternates`, so an image with no shell seeds the
+ * same way and Docker Desktop does not pay a second for each value.
+ */
+export const gitConfigOf = (seed: GitSeed): string => {
+  const core: [string, string][] = [
+    ['repositoryformatversion', '0'],
+    ['filemode', seed.filemode ?? 'true'],
+    ['bare', 'false'],
+  ];
+  if (seed.autocrlf !== undefined) core.push(['autocrlf', seed.autocrlf]);
+  const user: [string, string][] = [];
+  if (seed.name !== undefined) user.push(['name', seed.name]);
+  if (seed.email !== undefined) user.push(['email', seed.email]);
+  const section = (name: string, pairs: [string, string][]): string =>
+    pairs.length === 0 ? '' : `[${name}]\n${pairs.map(([key, value]) => `\t${key} = ${configValueOf(value)}`).join('\n')}\n`;
+  return section('core', core) + section('user', user);
+};
+
+/**
+ * The identity, the two values that say how the host's git reads the tree, and
+ * the branch the tree is on, written into a machine's git directory one command
+ * at a time.
+ *
+ * A machine reached through `docker cp` gets them in its seed's archive
+ * instead, and calls `checkedOut` alone; a virtual machine has no copy of its own
+ * to write, so its seed is these commands.
+ */
+export const configured = async (
+  must: (command: string[]) => Promise<string>,
+  own: string[],
+  seed: GitSeed,
+): Promise<void> => {
+  // The identity a commit needs, and nothing else of the host's config.
+  if (seed.name !== undefined) await must(['git', ...own, 'config', 'user.name', seed.name]);
+  if (seed.email !== undefined) await must(['git', ...own, 'config', 'user.email', seed.email]);
+  // How the host's git reads the tree's files, so the same files are clean
+  // in here too: a Windows folder is `0777` in the machine and CRLF on disk.
+  // Before the index is made, which reads the files the way these say.
+  if (seed.filemode !== undefined) await must(['git', ...own, 'config', 'core.filemode', seed.filemode]);
+  if (seed.autocrlf !== undefined) await must(['git', ...own, 'config', 'core.autocrlf', seed.autocrlf]);
+  // The branch the tree is on, at the commit it is at; a tree on no branch
+  // gives a machine on none, whose work is fetched to the hidden ref only.
+  if (seed.branch !== undefined) await must(['git', ...own, 'symbolic-ref', 'HEAD', `refs/heads/${seed.branch}`]);
+};
+
 /**
  * A seeded git directory set at the tree's commit, as the host's git reads it.
  *
@@ -127,17 +184,6 @@ export const checkedOut = async (
   commit: string | undefined,
   hard: boolean,
 ): Promise<void> => {
-  // The identity a commit needs, and nothing else of the host's config.
-  if (seed.name !== undefined) await must(['git', ...own, 'config', 'user.name', seed.name]);
-  if (seed.email !== undefined) await must(['git', ...own, 'config', 'user.email', seed.email]);
-  // How the host's git reads the tree's files, so the same files are clean
-  // in here too: a Windows folder is `0777` in the machine and CRLF on disk.
-  // Before the index is made, which reads the files the way these say.
-  if (seed.filemode !== undefined) await must(['git', ...own, 'config', 'core.filemode', seed.filemode]);
-  if (seed.autocrlf !== undefined) await must(['git', ...own, 'config', 'core.autocrlf', seed.autocrlf]);
-  // The branch the tree is on, at the commit it is at; a tree on no branch
-  // gives a machine on none, whose work is fetched to the hidden ref only.
-  if (seed.branch !== undefined) await must(['git', ...own, 'symbolic-ref', 'HEAD', `refs/heads/${seed.branch}`]);
   if (commit === undefined) return;
   await must(seed.branch === undefined
     ? ['git', ...own, 'update-ref', '--no-deref', 'HEAD', commit]

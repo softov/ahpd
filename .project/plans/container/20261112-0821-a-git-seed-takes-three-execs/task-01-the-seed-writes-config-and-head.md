@@ -1,6 +1,6 @@
 ---
 title: The seed writes config and HEAD
-status: todo
+status: implemented
 depends: []
 layer: "computer"
 refs:
@@ -35,3 +35,17 @@ The seed writes the git `config` and `HEAD` in one `docker cp -a` archive, and r
 - `pnpm typecheck` and the computer suite pass.
 
 ## Resume
+
+Done: `gitConfigOf` and `configured` are in `machinegit.ts`, and `checkedOut` keeps only `update-ref` and `reset`.
+`seedGit` writes one `cp -a` archive with `config`, `HEAD` and `objects/info/alternates`, and `idsOfMachine` reads both ids from one `id`.
+The fixture answers a bare `id`.
+The cases in `computer-disposable.test.ts` read the config back with `git config --file ... --get`, check `HEAD`, and count three git execs and one copy.
+
+Found: `checkedOut` is shared with the VM seed in `vm.ts`.
+So the identity and branch moved to an exported `configured`, which the VM seed calls first.
+A VM has no copy of this host's to write through.
+Dropping the commands alone would leave a VM on git's default `HEAD` with no identity.
+
+Found: `git init --bare` writes `repositoryformatversion`, `filemode` and `bare`, but not `logallrefupdates`; the written config keeps exactly those keys, so `git config --list` reads the same as before.
+
+Left: Softov runs the computer suite; the workspace typecheck is clean.

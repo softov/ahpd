@@ -1056,10 +1056,13 @@ if (verb === 'exec') {
     keep();
     process.exit(0);
   }
-  // `id -u` and `id -g` for the `-u` user, from `users`.
+  // `id` for the `-u` user, from `users`: with no flag, the `uid=` and `gid=`
+  // that `id` prints; `-u` and `-g` alone give the one number each.
   if (command[0] === 'id') {
     const ids = (held.users ?? {})[user ?? ''] ?? { uid: 0, gid: 0 };
-    process.stdout.write(`${command[1] === '-g' ? ids.gid : ids.uid}\n`);
+    process.stdout.write(command.length === 1
+      ? `uid=${ids.uid} gid=${ids.gid} groups=${ids.gid}\n`
+      : `${command[1] === '-g' ? ids.gid : ids.uid}\n`);
     keep();
     process.exit(0);
   }
