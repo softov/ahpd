@@ -841,7 +841,11 @@ host.registerTunnelKind({
   registration, and so are two operations with one id. `input` is a JSON Schema
   the host checks an invocation against. `grant` names the grant a caller
   holds: `tunnel:delete` for `remove`, `tunnel:put` for everything else, and a
-  kind's own operation may name another, such as `tunnel:restart`.
+  kind's own operation may name another, such as `tunnel:restart`. An
+  operation may also give `offered(record)`: the host calls it with the row as a
+  client reads it and never sends it, and a record lists that operation only
+  when the answer is true. An operation with no `offered` is offered on every
+  record of the kind.
 - `create(tunnel, report)` makes one. `tunnel` is the record with each secret
   resolved, `settings` and all. A throw removes the record the host just saved,
   so a tunnel that could not be made leaves nothing behind. `remove(tunnel)`
@@ -1789,6 +1793,8 @@ Eight commands serve a connector:
 | `x-ahpd/connectors/signin-finish` | `connector:put`, and the owner's | Takes `{ state, code }` for a pasted code and `{ state }` alone for a device code, asks the put's owner checks again, and answers the row. A pasted code is exchanged through the adapter and runs the put with the key; a device code waits for the approval the host has been polling, then answers the row or the error |
 | `x-ahpd/connectors/models` | `connector:list` for a connector the caller reads, or `connector:all` | Answers `{ models, at }` for the open provider connector `{ id }`: each model as the provider lists it, with `model`, the name a caller sends to the proxy, and `callable`, whether this caller may call it now. `at` is when the list was last read. It refuses a connector whose adapter serves no models |
 
+The channel lists three operations for `x-ahpd/invokeOperation`, and each row carries `operations`, the ids it offers now: `enable` on a record that is off, `disable` on one that is on, and `remove` on every one. Enable and Disable run the same code as their commands and ask for `connector:put` and the owner's rule; Remove asks for `connector:remove` and carries a confirmation. Sign in is not an operation: it stays `x-ahpd/connectors/signin`, with the form its adapter fills.
+
 A pasted-code sign-in is served for an adapter that declares `signIn` with no
 `flow`, and it fills the one field that adapter names. The start makes a PKCE
 verifier and a state, and keeps both the verifier and the put's params in memory
@@ -1858,7 +1864,7 @@ One row for each tunnel, keyed by the host's id for it. A row is the record, wit
 
 A setting the kind's schema marks `secret` is not on a row. A create or an update moves it to the vault under `host:tunnel/<id>/<field>`. The record keeps `{ "$secret": "<name>" }` in its place, so no snapshot, answer, problem line or log carries the value. A field sent empty keeps the stored one, because a client is never shown one to send back. A new tunnel is saved with its settings, `purpose: person` and `enabled: true`, and `owner` is empty: a tunnel belongs to the host.
 
-The state carries `operations` beside the records. Each operation has an `id` of `<kind>/<name>`, and names its `kind`. It carries a `label`, and a `description`, `icon` and `confirmation` when it has them. It also carries the `scopes` it takes (`list` or `tunnel`), the `grant` a caller needs, and the `input` JSON Schema it asks for. Its `status` and `error` are its state now. The host offers four for each kind. `create` is on the list, with the kind's schema as its input. `update` is on a tunnel when the kind gives an `update` handler, with the same schema. `remove` is on a tunnel, with `tunnel:delete` and a confirmation. `enable` and `disable` are on a tunnel. The kind's own operations are offered on a tunnel too, with the label, icon, input and grant it gave, and `tunnel:put` when it names none.
+The state carries `operations` beside the records. Each operation has an `id` of `<kind>/<name>`, and names its `kind`. It carries a `label`, and a `description`, `icon` and `confirmation` when it has them. It also carries the `scopes` it takes (`list` or `tunnel`), the `grant` a caller needs, and the `input` JSON Schema it asks for. Its `status` and `error` are its state now. The host offers four for each kind. `create` is on the list, with the kind's schema as its input. `update` is on a tunnel when the kind gives an `update` handler, with the same schema. `remove` is on a tunnel, with `tunnel:delete` and a confirmation. `enable` and `disable` are on a tunnel. The kind's own operations are offered on a tunnel too, with the label, icon, input and grant it gave, and `tunnel:put` when it names none. Every row also carries `operations`, the ids that tunnel offers now: `update` when the kind has one, `remove`, `enable` or `disable` by its `enabled`, and each of the kind's operations whose `offered` answers true or which has none.
 
 `tunnel:read` opens the channel. A subscribe to `?owner=me` lists no tunnel, because a tunnel's `owner` is empty and the host owns it.
 
@@ -1876,7 +1882,7 @@ A row exists while its socket is open. Reading the list needs `client:read`.
 
 The counters are sent at most once each 5 seconds, and only while someone reads the list. The timer starts at the first subscriber and stops when the last one unsubscribes or disconnects, so a list nobody watches costs nothing.
 
-The state carries `operations` beside the records, and the list offers one. `drop` has `kind: host`, takes `scopes: ['client']`, asks for `client:drop`, and carries a confirmation. It runs with `x-ahpd/invokeOperation` and `target: { id }`, where the id is the row's. It answers with the row and then closes that connection, so a client that drops its own socket is told what it dropped first.
+The state carries `operations` beside the records, and the list offers one. `drop` has `kind: host`, takes `scopes: ['client']`, asks for `client:drop`, and carries a confirmation. It runs with `x-ahpd/invokeOperation` and `target: { id }`, where the id is the row's. It answers with the row and then closes that connection, so a client that drops its own socket is told what it dropped first. Every row carries `operations`, which is `['drop']`.
 
 A drop is not a ban. The client may connect again at once, and is a new row: the id is the socket's number and not the client's id, so a reconnect is a different row with a new number.
 
@@ -1890,12 +1896,14 @@ One command runs an operation that a channel's state lists, and the same command
 | --- | --- |
 | `channel` | The channel URI whose state lists the operation, such as `x-ahpd-tunnels://` |
 | `operationId` | The operation's id, such as `devtunnel/create` |
-| `target` | `{ id }` for an operation on one record, such as a tunnel or a client, and absent for one on the list |
+| `target` | `{ id }` for an operation on one record, such as a tunnel, a client, an agent or a connector, and absent for one on the list |
 | `input` | The operation's input, checked against the schema it declares |
 
 It needs `operation:invoke`. It also admits a caller who holds the grant the operation itself names, such as `tunnel:delete` for a remove. So a person who may change the tunnels needs no second grant to run one.
 
-It refuses a channel it does not have, with `-32001`. It refuses an operation the channel's state does not list now. It refuses a target on a list operation, and an operation on one record with no `target.id`, naming the scope it runs on. It refuses an input the operation's schema refuses. It checks all of these before it calls the channel.
+Every channel with operations puts an `operations` list in its state, and every row carries `operations`, the ids that record offers now. The list holds the label, the description, the input schema and the grant; the row holds only the ids. A client draws a record's buttons from its ids and takes the words from the list. Four channels serve one: `x-ahpd-tunnels`, `x-ahpd-clients`, `x-ahpd-agents` and `x-ahpd-connectors`. A channel works the ids out from the record each time it sends the row.
+
+It refuses a channel it does not have, with `-32001`. It refuses an operation the channel's state does not list now, and one the target record does not offer now. It refuses a target on a list operation, and an operation on one record with no `target.id`, naming the scope it runs on. It refuses an input the operation's schema refuses. It checks all of these before it calls the channel.
 
 The operation's `status` is `running` while it runs, and then `idle`, or `error` with the message it threw. A list operation's status stays on the operations of the channel's state, and every subscriber is sent `x-ahpd-tunnels/operations` with the list. An operation on one tunnel sets the record's `operation` to `{ id, status, error? }`, and every subscriber is sent the changed row.
 
@@ -1983,6 +1991,12 @@ admitted without `agent:list`. A caller with neither grant reads no agent, its
 own included, and is refused the subscription. A subscribe also takes
 `?owner=me`, which narrows the listing to the caller's own agents: a `host`
 agent belongs to everyone and to nobody, so it is left out.
+
+The channel lists five operations for `x-ahpd/invokeOperation`, and each row
+carries `operations`, the ids it offers now: `enable` on a paused or disabled
+record, `pause` on an enabled one, `disable` on a record that is not disabled,
+`check` on an enabled one, and `remove` on every one. Each runs the same code
+as its fixed command below.
 
 Six commands serve an agent:
 

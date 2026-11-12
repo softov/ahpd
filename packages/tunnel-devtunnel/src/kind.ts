@@ -88,9 +88,27 @@ export const SCHEMA: Record<string, unknown> = {
  * the one that changes who may reach the port.
  */
 export const OPERATIONS: KindOperation[] = [
-  { id: 'start', label: 'Start', description: 'Puts the port on the Dev Tunnel and serves it.', icon: 'play' },
-  { id: 'stop', label: 'Stop', description: 'Takes the port off the Dev Tunnel.', icon: 'stop' },
-  { id: 'restart', label: 'Restart', description: 'Reconnects the relay without changing the Dev Tunnel.', icon: 'restart' },
+  {
+    id: 'start',
+    label: 'Start',
+    description: 'Puts the port on the Dev Tunnel and serves it.',
+    icon: 'play',
+    offered: (record) => record['status'] !== 'running',
+  },
+  {
+    id: 'stop',
+    label: 'Stop',
+    description: 'Takes the port off the Dev Tunnel.',
+    icon: 'stop',
+    offered: (record) => record['status'] === 'running',
+  },
+  {
+    id: 'restart',
+    label: 'Restart',
+    description: 'Reconnects the relay without changing the Dev Tunnel.',
+    icon: 'restart',
+    offered: (record) => record['status'] === 'running',
+  },
   {
     id: 'anonymous',
     label: 'Anonymous access',

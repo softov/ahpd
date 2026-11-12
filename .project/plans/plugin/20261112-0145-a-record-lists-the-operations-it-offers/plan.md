@@ -54,6 +54,7 @@ channel state -> record.operations (ids) + list operations (labels, grants) -> c
 | Each record carries the ids of the operations it offers now | Softov, 2026-11-11: "each record list its actions ids" | 01 |
 | A condition on each operation, such as a `when`, is a later idea, noted in code and in ideas | Softov, 2026-11-11: "idea for support when in a future. noted in code and ideas" | 01 |
 | Agents and connectors move to the operations list, and their fixed methods keep working until ahpw and ahpc move | Softov, 2026-11-11: "Move them to the operations list" | 02, 03 |
+| Sign in stays the fixed method `x-ahpd/connectors/signin` with its own form, and is not an operation | Softov, 2026-11-11: "Sign in stays a fixed method" | 03 |
 | `x-ahpd-clients` gets the same list, since it uses the same contract | (defaulted: one shape for every operations channel) | 01 |
 | Hiding or greying an operation a record does not offer is each client's choice | (defaulted: ahpd sends the list, a client draws it) | - |
 | `x-ahpd/invokeOperation` refuses an operation that the target record does not offer now | (defaulted: a call the list does not offer is refused today, and the record's list is the same check) | 01 |
@@ -69,10 +70,10 @@ channel state -> record.operations (ids) + list operations (labels, grants) -> c
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A record lists the operations it offers](task-01-a-record-lists-its-operations.md) | todo | - |
-| [02 - Agents serve an operations list](task-02-agents-serve-an-operations-list.md) | todo | 01 |
-| [03 - Connectors serve an operations list](task-03-connectors-serve-an-operations-list.md) | todo | 01 |
-| [04 - The docs say what a record offers](task-04-the-docs-say-what-a-record-offers.md) | todo | 02, 03 |
+| [01 - A record lists the operations it offers](task-01-a-record-lists-its-operations.md) | implemented | - |
+| [02 - Agents serve an operations list](task-02-agents-serve-an-operations-list.md) | implemented | 01 |
+| [03 - Connectors serve an operations list](task-03-connectors-serve-an-operations-list.md) | implemented | 01 |
+| [04 - The docs say what a record offers](task-04-the-docs-say-what-a-record-offers.md) | implemented | 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -81,8 +82,8 @@ channel state -> record.operations (ids) + list operations (labels, grants) -> c
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-record-lists-its-operations.md](task-01-a-record-lists-its-operations.md).
+- **Done so far:** all four tasks implemented. [implemented.md](implemented.md) says what exists, what was checked and where the work left the plan.
+- **Next action:** Softov reviews the PR. The plan closes as `built` on his word.
 - **Open questions:** none.
 - **Watch out for:** plugin/20261112-0145-a-tunnel-visitor-is-the-named-person changes `packages/tunnel-devtunnel/src/kind.ts` too. Merge `origin/main` after it merges.
 

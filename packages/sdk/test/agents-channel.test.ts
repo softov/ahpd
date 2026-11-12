@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { agentsChannel } from '../src/agents/channel.js';
+import { invokeOperation } from '../src/kinds/operations.js';
 import { createHost } from '../src/host.js';
 import { fileUsers } from '../src/access/users.js';
 import { fileResources } from '../src/resources/resources.js';
@@ -297,7 +298,16 @@ async function served(options: { register?: boolean; fold?: (agents: Agent[]) =>
     ...(options.connectors === undefined ? {} : { connectors: () => options.connectors as readonly ConnectorRef[] }),
     onProblem: (line) => { problems.push(line); },
   });
-  wire = servedRecords('ahpd', [lists.channel], lists.methods);
+  wire = servedRecords('ahpd', [lists.channel], {
+    ...lists.methods,
+    // The one command over the channel's own operations, so a case can run
+    // `pause` the way a client that draws the record's ids does.
+    'x-ahpd/invokeOperation': invokeOperation({
+      channels: () => ({ [URI]: lists.operations }),
+      check,
+      onProblem: (line) => { problems.push(line); },
+    }),
+  });
   host = createHost(hostOptions([]));
   await lists.openAll();
   return { host, users, collection, lists, engines, opened, ended, problems, handles, vault, close: async () => { await host?.close(); } };
@@ -903,6 +913,44 @@ it('keeps the alerts of a paused record', async () => {
   // alert, and the row still says it is paused.
   expect(row).toMatchObject({ state: 'paused', mode: 'paused' });
   expect(row?.['alerts']).toMatchObject([{ level: 'error', ref: 'env:AHPD_TEST_PAUSED_KEY' }]);
+  await close();
+});
+
+it('lists on an agent record only the operations its mode offers now', async () => {
+  const { host, users, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/agents/put', {
+    id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' },
+  });
+
+  expect((await cy.rows())['mine']?.['operations']).toEqual(['pause', 'disable', 'check', 'remove']);
+
+  await cy.call('x-ahpd/agents/pause', { id: 'mine' });
+  const paused = (await cy.rows())['mine'];
+  expect(paused?.['operations']).toEqual(['enable', 'disable', 'remove']);
+  expect(paused?.['operations']).not.toContain('pause');
+
+  await cy.call('x-ahpd/agents/disable', { id: 'mine' });
+  expect((await cy.rows())['mine']?.['operations']).toEqual(['enable', 'remove']);
+  await close();
+});
+
+it('pauses an agent through x-ahpd/invokeOperation, as the fixed command does', async () => {
+  const { host, users, collection, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/agents/put', {
+    id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' },
+  });
+
+  const answer = await cy.call('x-ahpd/invokeOperation', {
+    channel: URI, operationId: 'pause', target: { id: 'mine' },
+  }) as Bag;
+  expect(answer['result']).toMatchObject({ id: 'mine', mode: 'paused', state: 'paused' });
+  expect((await collection.get('mine'))?.['mode']).toBe('paused');
+
+  // It is paused now, so the record does not offer Pause again.
+  expect(await cy.call('x-ahpd/invokeOperation', { channel: URI, operationId: 'pause', target: { id: 'mine' } }))
+    .toMatchObject({ code: -32602, message: 'pause is not offered on mine now' });
   await close();
 });
 

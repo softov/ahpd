@@ -57,6 +57,10 @@
  * or a plugin already serves. A record of an engine no plugin registers stays on
  * disk and is served as `unavailable`: a disabled plugin keeps its agents. The
  * commands run one at a time, so two puts of one id cannot both find it free.
+ *
+ * Beside the commands, the channel lists the same five operations for
+ * `x-ahpd/invokeOperation`, and each row carries `operations`, the ids it
+ * offers in its mode now.
  */
 
 import { INVALID_PARAMS, INTERNAL_ERROR, RpcError } from '../rpc.js';
@@ -82,10 +86,12 @@ import { recordViews } from '../plugins/views.js';
 import { alertList, dropOpenAlerts, raiseOpenAlerts } from '../plugins/alerts.js';
 import { bag, isRecord, reason } from '../utils/values.js';
 import type { Icon } from '@microsoft/agent-host-protocol';
+import type { OperationChannel } from '../kinds/operations.js';
 import type { Agent } from '../types/agent.js';
 import type { AgentMode, AgentOwner, AgentState, AgentTemplate, ServedEngine } from '../types/agents.js';
 import type { HandedAgent } from '../types/computers.js';
 import type { ConnectorRef } from '../types/connectors.js';
+import type { Operation } from '../types/kinds.js';
 import type { PluginMethod, ViewHandle } from '../types/plugin.js';
 import type { AlertList } from '../plugins/alerts.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
@@ -94,6 +100,7 @@ import type { Vault } from '../types/vault.js';
 
 /** The channel's scheme, and the domain its commands are named under. */
 const SCHEME = 'x-ahpd-agents';
+const URI = `${SCHEME}://`;
 const DOMAIN = 'x-ahpd/agents';
 const PUT = `${DOMAIN}/put`;
 const REMOVE = `${DOMAIN}/remove`;
@@ -194,6 +201,8 @@ export interface AgentsChannel {
   channel: RecordsChannel;
   /** `x-ahpd/agents/put`, `remove`, `check`, `enable` and `disable`, by name. */
   methods: Record<string, PluginMethod>;
+  /** The `x-ahpd-agents://` side of `x-ahpd/invokeOperation`. */
+  operations: OperationChannel;
   /**
    * Every stored record as an agent, without taking a fold.
    *
@@ -394,6 +403,23 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
   const modeOf = (record: StoredRecord): AgentMode =>
     record.mode === 'paused' || record.mode === 'disabled' ? record.mode : 'enabled';
 
+  /**
+   * The ids of the operations one record offers now, in the list's own order.
+   *
+   * A record is turned on unless it is on, paused only while it is on, and
+   * turned off unless it is already off. Check is for a record the host serves,
+   * and Remove is on every record.
+   */
+  const offersOn = (mode: AgentMode): string[] => {
+    const ids: string[] = [];
+    if (mode !== 'enabled') ids.push('enable');
+    if (mode === 'enabled') ids.push('pause');
+    if (mode !== 'disabled') ids.push('disable');
+    if (mode === 'enabled') ids.push('check');
+    ids.push('remove');
+    return ids;
+  };
+
   /** The state a stored record is in now. */
   const stateOf = (record: StoredRecord): AgentState => {
     const mode = modeOf(record);
@@ -429,7 +455,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     return templateOf(record, engine)?.icons ?? [];
   };
 
-  /** One stored record as a client is shown it: its record, its state, and its alerts where it has some. */
+  /** One stored record as a client is shown it: its record, its state, its operations and its alerts where it has some. */
   const row = (record: StoredRecord): Record<string, unknown> => {
     const held = alerts.get(record.id)?.list() ?? [];
     const icons = iconsOf(record);
@@ -437,6 +463,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     return {
       ...record,
       state: stateOf(record),
+      operations: offersOn(modeOf(record)),
       ...(icons.length === 0 ? {} : { icons }),
       ...(shows === undefined ? {} : { views: shows }),
       ...(held.length === 0 ? {} : { alerts: held }),
@@ -994,6 +1021,68 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     return row(record);
   };
 
+  /**
+   * Take one record and its sessions out, once its turn comes.
+   *
+   * The fixed command and the record's own `remove` operation both run this.
+   */
+  const removeOne = async (params: Record<string, unknown>, reader: Principal | undefined): Promise<unknown> => {
+    const id = idParam(REMOVE, params);
+    const before = await options.collection.get(id);
+    if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
+    const owner = asOwner(before.owner);
+    /*
+     * A record naming no scope is one written by hand, and only a caller the
+     * gate let through with `agent:remove` reaches it; a record that names one
+     * is the owner's, and the gate's grant does not widen that. `agent:all`
+     * is the one grant that does: it reads and removes any agent, whoever
+     * owns it, which is what an operator's role is given.
+     */
+    if (owner !== undefined && reader?.can('agent:all' as Grant) !== true) {
+      refuseOwner('agent', 'remove', owner, reader, 'remove');
+    }
+    /*
+     * The id is refused to everyone from here on, its owner included: it is
+     * not an agent to start on while it is going out. A removal that stops
+     * before the record is taken out puts the agent back as it was; one whose
+     * record is out stays refused even if the fold fails, because the host
+     * still holds the backend and the store no longer says whose it was.
+     */
+    removing.add(id);
+    try {
+      /*
+       * The sessions go first: `host.replace` keeps a backend that still has
+       * a session open, and a record removed beside a live session would come
+       * back the moment the fold was taken.
+       */
+      await options.endSessionsOf(id);
+      await forgetRecordSecrets(configOf(before), owner, id, AGENT_SECRETS, options.vault(), problem);
+      await options.collection.remove(id);
+    } catch (error) {
+      removing.delete(id);
+      throw error;
+    }
+    open.delete(id);
+    alerts.delete(id);
+    openFailures.delete(id);
+    views.drop(id);
+    try {
+      await take(await sync());
+    } catch (error) {
+      await channel.refresh();
+      throw new RpcError(INTERNAL_ERROR, `${id} is removed, but the host did not take the new list: ${reason(error)}`);
+    }
+    /*
+     * The owner entry is dropped only once the fold has dropped the record:
+     * taken away sooner, a caller reading the map in between finds the id
+     * without an owner and takes it for a host agent.
+     */
+    owners.delete(id);
+    removing.delete(id);
+    await channel.refresh();
+    return {};
+  };
+
   const remove: PluginMethod = {
     grant: 'agent:remove' as Grant,
     describe: () => ({ title: 'Remove an agent', description: 'Ends the sessions on one agent and takes its record out.' }),
@@ -1004,62 +1093,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       const before = await options.collection.get(id);
       return before !== undefined && ownerAllows('agent', asOwner(before.owner), reader, 'remove');
     },
-    handle: (params, reader) => inTurn(async () => {
-      const id = idParam(REMOVE, params);
-      const before = await options.collection.get(id);
-      if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
-      const owner = asOwner(before.owner);
-      /*
-       * A record naming no scope is one written by hand, and only a caller the
-       * gate let through with `agent:remove` reaches it; a record that names one
-       * is the owner's, and the gate's grant does not widen that. `agent:all`
-       * is the one grant that does: it reads and removes any agent, whoever
-       * owns it, which is what an operator's role is given.
-       */
-      if (owner !== undefined && reader?.can('agent:all' as Grant) !== true) {
-        refuseOwner('agent', 'remove', owner, reader, 'remove');
-      }
-      /*
-       * The id is refused to everyone from here on, its owner included: it is
-       * not an agent to start on while it is going out. A removal that stops
-       * before the record is taken out puts the agent back as it was; one whose
-       * record is out stays refused even if the fold fails, because the host
-       * still holds the backend and the store no longer says whose it was.
-       */
-      removing.add(id);
-      try {
-        /*
-         * The sessions go first: `host.replace` keeps a backend that still has
-         * a session open, and a record removed beside a live session would come
-         * back the moment the fold was taken.
-         */
-        await options.endSessionsOf(id);
-        await forgetRecordSecrets(configOf(before), owner, id, AGENT_SECRETS, options.vault(), problem);
-        await options.collection.remove(id);
-      } catch (error) {
-        removing.delete(id);
-        throw error;
-      }
-      open.delete(id);
-      alerts.delete(id);
-      openFailures.delete(id);
-      views.drop(id);
-      try {
-        await take(await sync());
-      } catch (error) {
-        await channel.refresh();
-        throw new RpcError(INTERNAL_ERROR, `${id} is removed, but the host did not take the new list: ${reason(error)}`);
-      }
-      /*
-       * The owner entry is dropped only once the fold has dropped the record:
-       * taken away sooner, a caller reading the map in between finds the id
-       * without an owner and takes it for a host agent.
-       */
-      owners.delete(id);
-      removing.delete(id);
-      await channel.refresh();
-      return {};
-    }),
+    handle: (params, reader) => inTurn(() => removeOne(params, reader)),
   };
 
   /** One probe, or `unreachable` when it takes more than the limit to answer. */
@@ -1081,6 +1115,50 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
    * it. The owner's rule is asked here, as a put asks it, because a grant that
    * reads the channel says nothing about another person's agent.
    */
+  /**
+   * Build one record's backend again and ask its probe, once its turn comes.
+   *
+   * The fixed command and the record's own `check` operation both run this.
+   */
+  const checkOne = async (params: Record<string, unknown>, reader: Principal | undefined): Promise<unknown> => {
+    const id = idParam(CHECK, params);
+    const before = await options.collection.get(id);
+    if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
+    // A record that is off shows no alerts, so there is nothing to build or probe.
+    if (modeOf(before) === 'disabled') throw new RpcError(INVALID_PARAMS, `${id} is turned off.`);
+    const owner = asOwner(before.owner);
+    if (owner !== undefined) refuseOwner('agent', 'check', owner, reader, 'put');
+    const engine = engineOf(before);
+    if (engine === undefined) {
+      throw new RpcError(INVALID_PARAMS, `${id} is a ${String(before.engine)}, and this host serves no such engine`);
+    }
+    if (owner === undefined) {
+      throw new RpcError(INVALID_PARAMS, `${id} names no owner, so it cannot be opened`);
+    }
+    let built: Opened;
+    try {
+      built = await opened(before, owner, engine);
+    } catch (error) {
+      raiseOpen(id, error);
+      openFailures.add(id);
+      await channel.refresh();
+      return row(before);
+    }
+    clearOpen(id);
+    const probe = built.agent.probe;
+    if (typeof probe !== 'function') noteProbe(id, 'ok');
+    else {
+      try {
+        noteProbe(id, await within(probe.call(built.agent)));
+      } catch (error) {
+        const message = reason(error);
+        noteProbe(id, 'failed', message === '' ? undefined : message);
+      }
+    }
+    await channel.refresh();
+    return row(before);
+  };
+
   const check: PluginMethod = {
     grant: 'agent:put' as Grant,
     describe: () => ({ title: 'Check an agent', description: "Builds one agent's backend and asks its probe, then answers the row." }),
@@ -1090,44 +1168,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       const before = await options.collection.get(id);
       return before !== undefined && ownerAllows('agent', asOwner(before.owner), reader, 'put');
     },
-    handle: (params, reader) => inTurn(async () => {
-      const id = idParam(CHECK, params);
-      const before = await options.collection.get(id);
-      if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
-      // A record that is off shows no alerts, so there is nothing to build or probe.
-      if (modeOf(before) === 'disabled') throw new RpcError(INVALID_PARAMS, `${id} is turned off.`);
-      const owner = asOwner(before.owner);
-      if (owner !== undefined) refuseOwner('agent', 'check', owner, reader, 'put');
-      const engine = engineOf(before);
-      if (engine === undefined) {
-        throw new RpcError(INVALID_PARAMS, `${id} is a ${String(before.engine)}, and this host serves no such engine`);
-      }
-      if (owner === undefined) {
-        throw new RpcError(INVALID_PARAMS, `${id} names no owner, so it cannot be opened`);
-      }
-      let built: Opened;
-      try {
-        built = await opened(before, owner, engine);
-      } catch (error) {
-        raiseOpen(id, error);
-        openFailures.add(id);
-        await channel.refresh();
-        return row(before);
-      }
-      clearOpen(id);
-      const probe = built.agent.probe;
-      if (typeof probe !== 'function') noteProbe(id, 'ok');
-      else {
-        try {
-          noteProbe(id, await within(probe.call(built.agent)));
-        } catch (error) {
-          const message = reason(error);
-          noteProbe(id, 'failed', message === '' ? undefined : message);
-        }
-      }
-      await channel.refresh();
-      return row(before);
-    }),
+    handle: (params, reader) => inTurn(() => checkOne(params, reader)),
   };
 
   /**
@@ -1190,9 +1231,57 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     [DISABLE]: toggle(DISABLE, 'disabled'),
   };
 
+  /** The operations the list offers now: the five the fixed commands serve. */
+  const operationsOf = (): Operation[] => [
+    { id: 'enable', kind: 'host', label: 'Enable', description: 'Writes mode: enabled and opens the record again.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
+    { id: 'pause', kind: 'host', label: 'Pause', description: 'Writes mode: paused, so the record stays open and its sessions are kept.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
+    { id: 'disable', kind: 'host', label: 'Disable', description: 'Writes mode: disabled, so the record is not opened or served.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
+    { id: 'check', kind: 'host', label: 'Check', description: "Builds the record's backend and asks its probe.", scopes: ['agent'], grant: 'agent:put', status: 'idle' },
+    { id: 'remove', kind: 'host', label: 'Remove', description: 'Ends the sessions on the agent and takes its record out.', confirmation: 'Remove this agent? Its sessions end and its record goes.', scopes: ['agent'], grant: 'agent:remove', status: 'idle' },
+  ];
+
+  /** Whether one record offers an operation now. */
+  const offers = async (target: string, operationId: string): Promise<boolean> => {
+    const record = await options.collection.get(target);
+    return record !== undefined && offersOn(modeOf(record)).includes(operationId);
+  };
+
+  /**
+   * Run one operation through the same code as its fixed command.
+   *
+   * The target names the record, so the command's params are made from it and
+   * the work is queued in the same turn the fixed commands queue in.
+   */
+  const run = async (
+    operation: Operation,
+    target: string | undefined,
+    _input: Record<string, unknown> | undefined,
+    reader: Principal | undefined,
+  ): Promise<unknown> => {
+    if (target === undefined) throw new RpcError(INVALID_PARAMS, `${operation.id} runs on one agent, so it needs a target`);
+    const params = { id: target };
+    if (operation.id === 'enable') return await inTurn(() => toggleOne(ENABLE, 'enabled', params, reader));
+    if (operation.id === 'pause') return await inTurn(() => toggleOne(PAUSE, 'paused', params, reader));
+    if (operation.id === 'disable') return await inTurn(() => toggleOne(DISABLE, 'disabled', params, reader));
+    if (operation.id === 'check') return await inTurn(() => checkOne(params, reader));
+    if (operation.id === 'remove') return await inTurn(() => removeOne(params, reader));
+    throw new RpcError(INVALID_PARAMS, `${operation.id} is not an operation of ${URI}`);
+  };
+
+  const operations: OperationChannel = {
+    uri: URI,
+    operations: operationsOf,
+    // A row says its state; a call in flight is not a state a client draws.
+    begin: () => {},
+    settle: () => {},
+    offers,
+    run,
+  };
+
   return {
     channel,
     methods,
+    operations,
     agents: () => inTurn(() => sync()),
     openAll: () => inTurn(async () => {
       /*

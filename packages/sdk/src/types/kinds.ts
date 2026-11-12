@@ -19,11 +19,12 @@
  *
  * `list` is the channel as a whole, such as making a new record. `tunnel` is
  * one record of it, such as starting or removing that record. `client` is one
- * client the host serves, such as dropping its connection. A kind declares the
- * scopes an operation accepts, and the host refuses an invocation whose target
- * is not one of them.
+ * client the host serves, such as dropping its connection. `agent` is one
+ * agent record, such as pausing it. `connector` is one connector record, such
+ * as turning it off. A kind declares the scopes an operation accepts, and the
+ * host refuses an invocation whose target is not one of them.
  */
-export type OperationScope = 'list' | 'tunnel' | 'client';
+export type OperationScope = 'list' | 'tunnel' | 'client' | 'agent' | 'connector';
 
 /**
  * How an invocation of an operation is going.
@@ -78,6 +79,18 @@ export interface KindOperation {
    * `tunnel:delete` for `remove`, and `tunnel:put` for everything else.
    */
   grant?: string;
+  /**
+   * Whether one record offers this operation now.
+   *
+   * The host calls it with the record as a client reads it, its settings and
+   * its state, and keeps the answer to itself: the field is never sent, and a
+   * record lists only the ids it answered true for. A kind that leaves it out
+   * offers the operation on every record of the kind.
+   *
+   * A condition a client evaluates, rather than the host, is a later idea:
+   * `.project/ideas/an-operation-says-when-it-applies.md`.
+   */
+  offered?(record: Record<string, unknown>): boolean;
 }
 
 /**
