@@ -9,4 +9,4 @@ refs:
 An operation could carry a condition on a record's fields, such as `enabled == false`, as a VS Code menu item carries a `when` clause.
 A client would evaluate it, and a kind could declare an operation without code that decides where it applies.
 Softov asked on 2026-11-11 to keep it for later support, and chose for now that each record lists the operations it offers.
-That change is the brief [a record lists the operations it offers now](../briefs/a-record-lists-the-operations-it-offers-now.md).
+That change is the plan [plugin/20261112-0145-a-record-lists-the-operations-it-offers](../plans/plugin/20261112-0145-a-record-lists-the-operations-it-offers/plan.md).
