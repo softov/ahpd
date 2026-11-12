@@ -25,13 +25,11 @@ Current progress and pending items only, as of 2026-11-11. *Outside this reposit
 - On this machine, computer-spawn's "fails a turn on a session whose CLI is gone" fails on main too. CI passes it.
 - A test daemon for checks: `source .project/pending/test-daemon.sh`, on port 39200, with its token at `~/ahpd-check/token`. Check `ss -ltnp` before you start one, and stop it by pid.
 - `/github/ahpd` is a shared checkout, and the dev daemon runs from it. Work in a worktree from `origin/main` under `/github/ahpd.worktrees/`.
-- Worktrees in `/github/ahpd.worktrees/`, after Softov had 60 merged ones removed on 2026-11-11. Remove one only on his word:
-  - `audit-guards`, on `host/20261108-1222-the-audit-keeps-its-guards`: 11 audit problems from 2026-11-08 that were never committed, and 3 problem deletions.
-  - `brief-pr-details`: detached, with the brief `a-client-shows-what-github-says-of-a-pull-request.md` never committed.
-  - `build-agents-3795760c`, `build-agents-ae3197fe`, `build-agents-ed43acf5` and `usage-task-03`: branches not merged by hash. Their work reached main in other commits.
+- Worktrees in `/github/ahpd.worktrees/`, after Softov had the others removed on 2026-11-11. Remove one only on his word:
   - `base-main`: detached, in use by another session's test daemon.
   - `pending-check`: detached, built for checks on a test daemon.
-- Branches of the removed worktrees are kept. Delete them only on his word.
+- Branches of the removed worktrees are kept, except the four whose work reached main in other commits. Delete them only on his word.
+- The audit of 2026-11-08 left 11 problems that were never committed. They are on main since 2026-11-11, read again then, and one is a blocker: [the tunnel hop hands every caller the root token](../problems/the-tunnel-hop-hands-every-caller-the-root-token.md). The [problems report](problems-report-20261111.md#added-from-the-audit-of-2026-11-08) lists them.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334` (merged), `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`. Delete them only on his word.
 - Many ACP servers at once: each read of the session list starts one server per ACP preset that has `session/list`, 8 on his box. A proper fix would answer the list from the record and ask the servers only on a refresh; no brief yet.
 

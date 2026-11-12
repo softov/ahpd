@@ -14,4 +14,4 @@ This plan takes only what the published cofold packages already have; what needs
 | The listed `features` passed to `.model()` | a model listed without `tools` would refuse every turn that offers tools; not asked for | unplanned |
 | The listed price on an offered row as `SessionModelInfo._meta.pricing` | not asked for; the same gap is open for pi | [a-pi-model-row-carries-no-price](../../../problems/a-pi-model-row-carries-no-price.md) |
 | pi drops compaction and branch summaries when it replays a session | another backend | [pi-replay-drops-compaction-and-branch-summaries](../../../problems/pi-replay-drops-compaction-and-branch-summaries.md) |
-| Claude's transcript shows no sign of a compaction | another backend | [a-reopened-claude-session-shows-no-compaction](../../../problems/a-reopened-claude-session-shows-no-compaction.md) |
+| Claude's transcript shows no sign of a compaction | another backend | fixed by `git://eb341f0cd`, which replays the compaction boundary |

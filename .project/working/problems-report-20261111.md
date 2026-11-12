@@ -53,7 +53,7 @@ These hurt a user of machines and nodes, a smaller group than the ones above.
 | 22 | A plugin enabled later that fails says it failed when ahpd started, planned as [plugin/20261111-1507](../plans/plugin/20261111-1507-a-plugin-that-fails-to-start-says-so/plan.md) | minor | A wrong time in a failure line |
 | 23 | [a-plugin-that-does-not-resolve-has-an-id-with-a-slash.md](../problems/a-plugin-that-does-not-resolve-has-an-id-with-a-slash.md) | minor | A broken plugin a client cannot touch |
 | 24 | [the-served-plugin-config-does-not-know-a-plugin-by-its-id.md](../problems/the-served-plugin-config-does-not-know-a-plugin-by-its-id.md) | minor | A plugin listed twice |
-| 25 | [a-reopened-claude-session-shows-no-compaction.md](../problems/a-reopened-claude-session-shows-no-compaction.md) | minor | Live and reopened views differ |
+| 25 | A reopened Claude session shows no compaction, fixed by `git://eb341f0cd` and deleted | minor | Live and reopened views differ |
 | 26 | [pi-replay-drops-compaction-and-branch-summaries.md](../problems/pi-replay-drops-compaction-and-branch-summaries.md) | minor | The same gap for pi |
 | 27 | [a-pi-model-row-carries-no-price.md](../problems/a-pi-model-row-carries-no-price.md) | minor | No client draws `_meta.pricing` yet |
 | 28 | [a-bot-shows-in-the-session-picker-between-isolation-and-branch.md](../problems/a-bot-shows-in-the-session-picker-between-isolation-and-branch.md) | minor | Client and agent not recorded |
@@ -96,3 +96,21 @@ plugin/20261106-1058, *CI fails only for a real fault*, is the planned home for 
 
 - Gemini's default model `auto` answered 503 for 4 minutes on 2026-11-11, and the turn showed nothing while the CLI retried. `gemini -p` by hand got the same 503. It is Google's side; a named model such as `gemini-3-flash-preview` ran.
 - The OpenAI key has no credit, so Codex ends at "Quota exceeded". After that failed turn, codex-acp answered "Internal error" to the session's delete, and ahpd logged it.
+
+## Added from the audit of 2026-11-08
+
+The audit of 2026-11-08 wrote these 11 problems and never committed them. Each was read again against main on 2026-11-11 and is still true. They come after the ranks above, and the blocker goes before 0.15.0.
+
+| Problem | Severity |
+| --- | --- |
+| [the-tunnel-hop-hands-every-caller-the-root-token.md](../problems/the-tunnel-hop-hands-every-caller-the-root-token.md) | blocker |
+| [always-allow-writes-host-rules-without-config-change.md](../problems/always-allow-writes-host-rules-without-config-change.md) | major |
+| [auto-approval-and-trust-ignore-who-sent-the-turn.md](../problems/auto-approval-and-trust-ignore-who-sent-the-turn.md) | major |
+| [backends-skip-the-operators-always-ask-rule.md](../problems/backends-skip-the-operators-always-ask-rule.md) | major |
+| [part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md) | major |
+| [a-client-completes-a-call-it-does-not-run.md](../problems/a-client-completes-a-call-it-does-not-run.md) | minor |
+| [a-client-names-its-own-answer-host-policy.md](../problems/a-client-names-its-own-answer-host-policy.md) | minor |
+| [a-push-can-turn-off-the-auto-approval-restriction.md](../problems/a-push-can-turn-off-the-auto-approval-restriction.md) | minor |
+| [a-push-device-hears-sessions-by-client-id-alone.md](../problems/a-push-device-hears-sessions-by-client-id-alone.md) | minor |
+| [a-reader-of-a-bot-can-drive-its-trusted-session.md](../problems/a-reader-of-a-bot-can-drive-its-trusted-session.md) | minor |
+| [global-auto-approve-approves-every-tool-call.md](../problems/global-auto-approve-approves-every-tool-call.md) | minor |
