@@ -103,7 +103,7 @@ The audit of 2026-11-08 wrote these 11 problems and never committed them. Each w
 
 | Problem | Severity |
 | --- | --- |
-| The tunnel hop hands every caller the root token, planned as [plugin/20261112-0145](../plans/plugin/20261112-0145-a-tunnel-visitor-is-the-named-person/plan.md) | blocker |
+| The tunnel hop hands every caller the root token, fixed by #303 (`a87e399a7`) | blocker |
 | [always-allow-writes-host-rules-without-config-change.md](../problems/always-allow-writes-host-rules-without-config-change.md) | major |
 | [auto-approval-and-trust-ignore-who-sent-the-turn.md](../problems/auto-approval-and-trust-ignore-who-sent-the-turn.md) | major |
 | [backends-skip-the-operators-always-ask-rule.md](../problems/backends-skip-the-operators-always-ask-rule.md) | major |
