@@ -6,7 +6,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { isWorkspaceless } from './lifecycle.js';
 import type { Summary, SummaryChat } from '../types/catalog.js';
 import type { ChangesSummary } from '../types/changes.js';
-import type { Agent, Listed } from '../types/agent.js';
+import { computerId, computersFor } from '../machines/computers.js';
+import type { Agent, Listed, SessionMachine } from '../types/agent.js';
 import type { Account } from '../types/probe.js';
 import type { Bag } from '../types/common.js';
 import type { Session } from '../types/session.js';
@@ -1252,6 +1253,41 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     /** Every agent's row for an id, in the order the agents were loaded. */
     const offered = new Map<string, { agent: Agent; row: Listed }[]>();
     /*
+     * Where this backend's kept sessions ran, for one listing.
+     *
+     * Read as `ranIn` reads a session's machine: the one its config names, and
+     * this host for a session that names none. One entry per machine, with the
+     * port the backend is handed to reach it. A machine this host has no
+     * plugin for is left out: nothing can ask it, and the session did not run
+     * here, so the backend lists no host rows over it either.
+     *
+     * A nested session is not counted: it runs in a host inside a machine and
+     * that host's own store lists it, so no backend here has a row for it.
+     *
+     * A backend with no kept session lists on the host, as it always has; one
+     * whose kept sessions all name machines lists in those machines alone.
+     */
+    const machinesOf = (agent: Agent): { machines: SessionMachine[]; host: boolean; kept: number } => {
+      const machines = new Map<string, SessionMachine>();
+      let host = false;
+      let count = 0;
+      for (const session of kept.sessions()) {
+        if (kept.provider(session) !== agent.provider) continue;
+        if (kept.nested?.(session) !== undefined) continue;
+        count += 1;
+        const uri = kept.uri?.(session) ?? uriFor(session);
+        const named = computerId((kept.config(session) ?? ctx.decided.get(uri))?.computer);
+        if (named === undefined) {
+          host = true;
+          continue;
+        }
+        if (machines.has(named)) continue;
+        if (options.computers === undefined) continue;
+        machines.set(named, { id: named, computers: computersFor(options.computers, agent.provider, uri, kept.owner(session)) });
+      }
+      return { machines: [...machines.values()], host: host || count === 0, kept: count };
+    };
+    /*
      * Every backend at once, and folded in the order they were loaded.
      *
      * Asked in turn this listing costs the sum of every store on the machine:
@@ -1270,7 +1306,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       // have rows, and a list that failed because a second harness is not
       // signed in is a client that can open nothing.
       answered += 1;
-      const rows = await agent.list().catch(() => { silent.add(agent.provider); return undefined; });
+      const { machines, host, kept: held } = machinesOf(agent);
+      const rows = await agent.list(held === 0 ? undefined : machines, host).catch(() => { silent.add(agent.provider); return undefined; });
       return { agent, rows };
     }));
     for (const one of answers) {

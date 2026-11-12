@@ -44,6 +44,63 @@ const watched = new Map<string, WatchedSession>();
  */
 const placeOf = new Map<string, string>();
 
+/**
+ * Where each session the server listed ran, by provider and the server's id.
+ *
+ * A listing reads one server per machine, and a session that ran in a machine
+ * is loaded and deleted there too: a `session/load` that reached this host
+ * would find nothing, because the conversation is the store of the server
+ * inside the machine. What a listing learned is kept until a delete forgets
+ * it, so a replay or a find of a listed row reaches the machine the same way
+ * the listing did.
+ */
+const machineOf = new Map<string, SessionMachine>();
+
+/**
+ * The machines and host the last listing of one record was asked for.
+ *
+ * A find is the same listing a call to `list` is, and it is not handed the
+ * machines itself. Kept here by the record that asked, so a find reads where
+ * the listing read, and answers the row that listing would have answered.
+ */
+const locations = new WeakMap<AcpOptions, { machines?: SessionMachine[]; host?: boolean }>();
+
+/**
+ * The records whose host listing failed while they kept no session.
+ *
+ * The command may exist only in a machine, so a host listing of one is a
+ * failure that says nothing about the server. Asked again at every read it
+ * would spawn and fail a subprocess each time, with a line each: kept here
+ * instead, so the record answers from the watched rows until it changes,
+ * which a new record changes by being a new object.
+ */
+const failedOnHost = new WeakSet<AcpOptions>();
+
+/**
+ * The machine lines one record has already said.
+ *
+ * A listing runs at every client connect, while a machine that is stopped,
+ * suspended or gone stays so for as long as the record lives. Kept per record
+ * and machine, as the host failure above is, so each line is said once rather
+ * than at every listing. A new record is a new object and says it again, which
+ * is what a machine started or made since the last record needs.
+ *
+ * `saidOnMachine` holds the line about a machine that cannot be listed, and
+ * `failedOnMachine` the line about a listing that failed. Two sets, so a
+ * machine that starts later still says why its listing fails.
+ */
+const saidOnMachine = new WeakMap<AcpOptions, Set<string>>();
+const failedOnMachine = new WeakMap<AcpOptions, Set<string>>();
+
+/** Whether this record has not yet said a line of this kind about this machine. */
+const firstWordOn = (said: WeakMap<AcpOptions, Set<string>>, options: AcpOptions, machine: string): boolean => {
+  const machines = said.get(options) ?? new Set<string>();
+  said.set(options, machines);
+  if (machines.has(machine)) return false;
+  machines.add(machine);
+  return true;
+};
+
 const keyOf = (provider: string, id: string): string => `${provider}\n${id}`;
 
 /**
@@ -333,33 +390,48 @@ export async function forgetSession(options: AcpOptions, provider: string, id: s
  * delete.
  */
 async function forgetInMachine(options: AcpOptions, provider: string, id: string, machine: SessionMachine): Promise<void> {
-  const spawn = await machine.computers.how(machine.id, {
-    command: options.command,
-    ...(options.args === undefined ? {} : { args: options.args }),
-    ...(options.env === undefined ? {} : { env: options.env }),
-  });
-  if (spawn === undefined) {
+  const connection = await serverIn(options, machine, { update: () => {} });
+  if (connection === undefined) {
     options.log?.(`${provider}: computer://${machine.id} is gone, and ${id} with it`);
     forgotten(options, provider, id);
     return;
   }
-  const connection = connectAcp({
-    command: spawn.command,
-    args: spawn.args,
-    ...(spawn.env === undefined ? {} : { env: spawn.env }),
-    ...(spawn.cwd === undefined ? {} : { cwd: spawn.cwd }),
-    handlers: { update: () => {} },
-    ...(options.log === undefined ? {} : { log: options.log }),
-    ...(options.exitGraceMs === undefined ? {} : { exitGraceMs: options.exitGraceMs }),
-    ...(options.stderrBytes === undefined ? {} : { stderrBytes: options.stderrBytes }),
-    ...(options.killGraceMs === undefined ? {} : { killGraceMs: options.killGraceMs }),
-  });
   try {
     await deleteThrough(connection, options, provider, id);
   }
   finally {
     await connection.close();
   }
+}
+
+/**
+ * One server spawned inside a machine, or nothing when the port no longer has
+ * that machine.
+ *
+ * The spawn is spelled as a session's own is, in `session/opening.ts`: the
+ * record's command and its environment, and no `cwd`, because the session's
+ * folder is this host's and the port uses the machine's own when none is
+ * named. Every read that reaches a machine goes through here, so a listing, a
+ * replay and a delete reach the same program the same way.
+ */
+async function serverIn(options: AcpOptions, machine: SessionMachine, handlers: AcpHandlers): Promise<AcpConnection | undefined> {
+  const spawn = await machine.computers.how(machine.id, {
+    command: options.command,
+    ...(options.args === undefined ? {} : { args: options.args }),
+    ...(options.env === undefined ? {} : { env: options.env }),
+  });
+  if (spawn === undefined) return undefined;
+  return connectAcp({
+    command: spawn.command,
+    args: spawn.args,
+    ...(spawn.env === undefined ? {} : { env: spawn.env }),
+    ...(spawn.cwd === undefined ? {} : { cwd: spawn.cwd }),
+    handlers,
+    ...(options.log === undefined ? {} : { log: options.log }),
+    ...(options.exitGraceMs === undefined ? {} : { exitGraceMs: options.exitGraceMs }),
+    ...(options.stderrBytes === undefined ? {} : { stderrBytes: options.stderrBytes }),
+    ...(options.killGraceMs === undefined ? {} : { killGraceMs: options.killGraceMs }),
+  });
 }
 
 /** The handshake, then `session/delete` where the server advertises it, over one connection. */
@@ -393,6 +465,7 @@ const forgotten = (options: AcpOptions, provider: string, id: string): void => {
   finds.delete(options);
   watched.delete(keyOf(provider, id));
   placeOf.delete(keyOf(provider, id));
+  machineOf.delete(keyOf(provider, id));
 };
 
 /**
@@ -431,6 +504,12 @@ const server = (options: AcpOptions, handlers: AcpHandlers): AcpConnection => co
  * the host recorded for the session comes next, then the configuration's own
  * folder, and the daemon's is the last one.
  *
+ * `machine` is where the session ran, when the listing that named it said so:
+ * the conversation is that machine's server's store, so the load is asked
+ * there. A machine the port no longer has is a session no server holds, the
+ * same answer as a load that found nothing; a port that cannot reach its
+ * runtime throws, as the session's own spawn did.
+ *
  * Undefined where the handshake did not advertise `loadSession` or the server
  * answers that it holds no such conversation, ACP's resource not found, the
  * same answer as for a session no server has. A server that does not start and
@@ -443,13 +522,17 @@ export async function loadedSession(
   provider: string,
   id: string,
   recorded?: string,
+  machine?: SessionMachine,
 ): Promise<WatchedSession | undefined> {
   const held = watchedSession(provider, id);
   if (held !== undefined) return held;
   const replay: SessionUpdate[] = [];
   let connection: AcpConnection | undefined;
   try {
-    connection = server(options, { update: (_sessionId, update) => { replay.push(update); } });
+    connection = machine === undefined
+      ? server(options, { update: (_sessionId, update) => { replay.push(update); } })
+      : await serverIn(options, machine, { update: (_sessionId, update) => { replay.push(update); } });
+    if (connection === undefined) return undefined;
     const handshake = await connection.initialize();
     if (handshake.agentCapabilities?.loadSession !== true) return undefined;
     const cwd = placeOf.get(keyOf(provider, id)) ?? recorded ?? options.cwd ?? process.cwd();
@@ -550,50 +633,170 @@ const idleClose = (options: AcpOptions, held: Listing): void => {
  * A server that cannot be reached, or one whose listing fails, rejects with the
  * failure, logged, as VS Code's Codex agent answers a listing it cannot make so
  * the orchestrator asks again rather than reading an empty catalogue; the host
- * keeps the rows it last had for this agent and asks at its next read.
+ * keeps the rows it last had for this agent and asks at its next read. The one
+ * exception is the record that keeps no session at all: its command may exist
+ * only in a machine, so a host listing of it says nothing about the server.
+ * After that failure it answers from the watched rows until its record
+ * changes, with one line, as the same answer for every read.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8043-L8052
+ *
+ * `machines` is where the caller kept this backend's sessions, and `host`
+ * whether one of them ran here. Absent `machines` is no kept session, and the
+ * listing is the host's alone, as it always was. A machine is one spawn of the
+ * record's command through the port the caller built; a machine the port no
+ * longer has, or one whose listing fails, contributes nothing and the rest are
+ * still read. The port's `state` is asked before a machine is spawned in: only
+ * a running machine is read, and a stopped, suspended or gone one answers the
+ * watched rows with one line for as long as the record lives. The rows every
+ * machine lists are this answer, and a watched row answers when no server
+ * listed at all.
  */
-export async function catalogueOf(options: AcpOptions, provider: string): Promise<Listed[]> {
-  const held = listingFor(options);
-  try {
-    const handshake = await held.connection.initialize();
-    /*
-     * What the server said it can do, kept for the agent's `delete` and
-     * `chats.fork` rather than for this read: the handshake is the only place
-     * `session/delete` and `session/fork` are ever advertised.
-     */
-    heardCapabilities(options, handshake.agentCapabilities);
-    if (!listsSessions(handshake.agentCapabilities)) return watchedRows(provider);
-    const sessions: SessionInfo[] = [];
-    const seenCursors = new Set<string>();
-    const pagesMost = options.sessionListMaxPages ?? SESSION_LIST_MAX_PAGES;
-    let cursor: string | undefined;
-    for (let pages = 1; ; pages += 1) {
-      const page = await held.connection.listSessions(cursor === undefined ? {} : { cursor });
-      sessions.push(...page.sessions);
-      const nextCursor = page.nextCursor ?? undefined;
-      if (nextCursor === undefined) break;
-      if (seenCursors.has(nextCursor) || pages >= pagesMost) {
-        options.log?.(`${provider}: session/list stopped before the end of the catalogue after ${sessions.length} sessions (at most ${pagesMost} pages); some sessions may be missing`, 'warn');
-        break;
+export async function catalogueOf(
+  options: AcpOptions,
+  provider: string,
+  machines?: SessionMachine[],
+  host?: boolean,
+): Promise<Listed[]> {
+  if (machines !== undefined || host !== undefined) {
+    locations.set(options, {
+      ...(machines === undefined ? {} : { machines }),
+      ...(host === undefined ? {} : { host }),
+    });
+  }
+  const rows = new Map<string, Listed>();
+  let listed = false;
+  for (const machine of machines ?? []) {
+    let connection: AcpConnection | undefined;
+    try {
+      /*
+       * Asked before the spawn: a machine that is stopped or suspended cannot
+       * run the command, and one that is gone has nothing to reach. A port
+       * with no state to read is spawned in as it always was.
+       */
+      let state: 'running' | 'stopped' | 'suspended' | undefined;
+      if (machine.computers.state === undefined) state = 'running';
+      else {
+        try {
+          state = await machine.computers.state(machine.id);
+        }
+        catch (error) {
+          if (firstWordOn(saidOnMachine, options, machine.id)) {
+            options.log?.(`${provider}: computer://${machine.id}: its state could not be read, so its sessions come from the watched rows: ${error instanceof Error ? error.message : String(error)}`, 'error');
+          }
+          continue;
+        }
       }
-      seenCursors.add(nextCursor);
-      cursor = nextCursor;
+      if (state !== 'running') {
+        if (firstWordOn(saidOnMachine, options, machine.id)) {
+          options.log?.(`${provider}: computer://${machine.id} is ${state ?? 'gone'}, so its sessions come from the watched rows`);
+        }
+        continue;
+      }
+      connection = await serverIn(options, machine, { update: () => {} });
+      if (connection === undefined) {
+        if (firstWordOn(saidOnMachine, options, machine.id)) {
+          options.log?.(`${provider}: computer://${machine.id} is gone, so its sessions come from the watched rows`);
+        }
+        continue;
+      }
+      const read = await listedBy(options, provider, connection, machine);
+      if (read === undefined) continue;
+      listed = true;
+      for (const row of read) if (!rows.has(row.id)) rows.set(row.id, row);
     }
-    for (const info of sessions) {
-      placeOf.set(keyOf(provider, info.sessionId), info.cwd);
+    catch (error) {
+      if (firstWordOn(failedOnMachine, options, machine.id)) {
+        options.log?.(`${provider}: computer://${machine.id}: session/list failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      }
     }
-    return sessions.map(listedFrom);
+    finally {
+      await connection?.close();
+    }
   }
-  catch (error) {
-    dropListing(options, held);
-    options.log?.(`${provider}: session/list failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
-    throw error;
+  const onHost = host ?? true;
+  if (onHost && !failedOnHost.has(options)) {
+    const held = listingFor(options);
+    try {
+      const read = await listedBy(options, provider, held.connection);
+      if (read !== undefined) {
+        listed = true;
+        for (const row of read) if (!rows.has(row.id)) rows.set(row.id, row);
+      }
+    }
+    catch (error) {
+      dropListing(options, held);
+      options.log?.(`${provider}: session/list failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      if (machines !== undefined) throw error;
+      failedOnHost.add(options);
+    }
+    finally {
+      idleClose(options, held);
+    }
   }
-  finally {
-    idleClose(options, held);
-  }
+  return listed ? [...rows.values()] : watchedRows(provider);
 }
+
+/**
+ * The rows one server lists, or nothing when its handshake advertises no
+ * catalogue.
+ *
+ * The pages are followed to the end, because `session/list` is paged and a
+ * server holding more than one page of conversations is otherwise a bridge
+ * that reports a list of only the ones it happened to be shown. The cursors
+ * handed back are kept, and a cursor handed back a second time, or a page past
+ * the record's `sessionListMaxPages`, ends the listing with what it read and a
+ * line in the log, as VS Code's Codex agent stops its own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L42-L69
+ *
+ * `machine` is where the server ran, when it ran in one: every session it
+ * lists is remembered as that machine's, so a replay reaches the store that
+ * holds the conversation rather than this host's store, which never did.
+ */
+const listedBy = async (
+  options: AcpOptions,
+  provider: string,
+  connection: AcpConnection,
+  machine?: SessionMachine,
+): Promise<Listed[] | undefined> => {
+  const handshake = await connection.initialize();
+  /*
+   * What the server said it can do, kept for the agent's `delete` and
+   * `chats.fork` rather than for this read: the handshake is the only place
+   * `session/delete` and `session/fork` are ever advertised.
+   */
+  heardCapabilities(options, handshake.agentCapabilities);
+  if (!listsSessions(handshake.agentCapabilities)) return undefined;
+  const sessions: SessionInfo[] = [];
+  const seenCursors = new Set<string>();
+  const pagesMost = options.sessionListMaxPages ?? SESSION_LIST_MAX_PAGES;
+  let cursor: string | undefined;
+  for (let pages = 1; ; pages += 1) {
+    const page = await connection.listSessions(cursor === undefined ? {} : { cursor });
+    sessions.push(...page.sessions);
+    const nextCursor = page.nextCursor ?? undefined;
+    if (nextCursor === undefined) break;
+    if (seenCursors.has(nextCursor) || pages >= pagesMost) {
+      options.log?.(`${provider}: session/list stopped before the end of the catalogue after ${sessions.length} sessions (at most ${pagesMost} pages); some sessions may be missing`, 'warn');
+      break;
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  for (const info of sessions) {
+    placeOf.set(keyOf(provider, info.sessionId), info.cwd);
+    if (machine !== undefined) machineOf.set(keyOf(provider, info.sessionId), machine);
+  }
+  return sessions.map(listedFrom);
+};
+
+/**
+ * The machine a session the listing named ran in, or nothing where none did.
+ *
+ * What the caller that replays a session and the find that asks for its row
+ * read to reach the store that holds it. Undefined is a session no listing has
+ * named yet, which is read on this host as it always was.
+ */
+export const machineFor = (provider: string, id: string): SessionMachine | undefined => machineOf.get(keyOf(provider, id));
 
 /**
  * The rows a find reads, shared with the finds asking at the same time.
@@ -613,7 +816,8 @@ const rowsForFind = (options: AcpOptions, provider: string): Promise<Listed[]> =
     if (Date.now() - known.at < (options.findFreshMs ?? FIND_FRESH)) return Promise.resolve(known.rows);
   }
   const held: Finds = { running: undefined, at: 0, rows: [] };
-  const running = catalogueOf(options, provider).catch(() => watchedRows(provider)).then((rows) => {
+  const where = locations.get(options);
+  const running = catalogueOf(options, provider, where?.machines, where?.host).catch(() => watchedRows(provider)).then((rows) => {
     held.rows = rows;
     held.at = Date.now();
     return rows;
