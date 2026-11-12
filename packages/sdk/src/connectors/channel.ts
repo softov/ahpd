@@ -11,6 +11,12 @@
  * pass, or a `call` that failed. The adapters themselves are listed on
  * `x-ahpd-adapters`.
  *
+ * Each row carries `operations`, the ids its record offers now: Enable on a
+ * record that is off, Disable on one that is on, and Remove on every one. The
+ * channel lists those three for `x-ahpd/invokeOperation`, beside the commands
+ * below. Sign in is not one of them: it stays `x-ahpd/connectors/signin`, with
+ * the form its adapter fills.
+ *
  * A row carries `views`, by surface, when the plugin that opened the connector
  * showed one: each a view with its data model, as a plugin's own row carries
  * its page. The views are in memory only, as the alerts are, and a close, a
@@ -110,15 +116,19 @@ import { alertList, dropOpenAlerts, raiseOpenAlerts } from '../plugins/alerts.js
 import { bag, isRecord, reason } from '../utils/values.js';
 import type { ActionCall, CheckResult, Connector, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, ServedAdapter } from '../types/connectors.js';
 import type { AlertList } from '../plugins/alerts.js';
+import type { OperationChannel } from '../kinds/operations.js';
 import type { PluginMethod, ViewHandle } from '../types/plugin.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
 import type { Grant, Principal } from '../types/users.js';
+import type { Operation } from '../types/kinds.js';
 import type { Owner } from '../types/usage.js';
 import type { Vault } from '../types/vault.js';
 
 /** The channel's scheme, and the domain its commands are named under. */
 const SCHEME = 'x-ahpd-connectors';
 const DOMAIN = 'x-ahpd/connectors';
+/** The URI a client reads the list at, and the one `x-ahpd/invokeOperation` names. */
+const URI = `${SCHEME}://`;
 const PUT = `${DOMAIN}/put`;
 const REMOVE = `${DOMAIN}/remove`;
 const CHECK = `${DOMAIN}/check`;
@@ -281,6 +291,13 @@ export interface ConnectorsChannel {
   channel: RecordsChannel;
   /** `x-ahpd/connectors/put`, `remove`, `check`, `note`, `signin`, `signin-finish` and `models`, by name. */
   methods: Record<string, PluginMethod>;
+  /**
+   * The operations `x-ahpd/invokeOperation` reads: Enable, Disable and Remove.
+   *
+   * Each row's `operations` names the ones it offers now, and `run` carries
+   * each through the same code as its fixed command.
+   */
+  operations: OperationChannel;
   /**
    * Run one action on one open connector for one reader.
    *
@@ -482,6 +499,9 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   const ownPlugin = (record: StoredRecord, reader: Principal | undefined): boolean =>
     reader?.plugin !== undefined && options.adapters()[String(record.adapter)]?.by === reader.plugin;
 
+  /** The ids one record offers now: the toggle its state calls for, and Remove. */
+  const offersOn = (state: ConnectorState): string[] => [state === 'disabled' ? 'enable' : 'disable', 'remove'];
+
   /**
    * One stored connector as a client is shown it: its record, its state, and
    * its alerts where it has some.
@@ -495,9 +515,11 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     const shown = adapter === undefined || record.config === undefined
       ? record
       : { ...record, config: writeOnlyHeld(adapter.schema, configOf(record)) };
+    const state = stateOf(record);
     return {
       ...shown,
-      state: stateOf(record),
+      state,
+      operations: offersOn(state),
       ...(shows === undefined ? {} : { views: shows }),
       ...(held.length === 0 ? {} : { alerts: held }),
     };
@@ -1382,6 +1404,28 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     },
   };
 
+  /** Close one connector, forget its secrets and take its record out. */
+  const removeOne = async (params: Record<string, unknown>, reader: Principal | undefined): Promise<unknown> => {
+    const id = idParam(REMOVE, params);
+    const before = await options.collection.get(id);
+    if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
+    const owner = asOwner(before.owner);
+    /*
+     * A record naming no scope is one written by hand, and only a caller the
+     * gate let through with `connector:remove` reaches it; a record that
+     * names one is the owner's, and the gate's grant does not widen that.
+     */
+    if (owner !== undefined) refuseOwner('connector', 'remove', owner, reader, 'remove');
+    await close(id);
+    await forgetRecordSecrets(configOf(before), owner, id, CONNECTOR_SECRETS, options.vault(), problem);
+    await options.collection.remove(id);
+    owners.delete(id);
+    known.delete(id);
+    options.onRefs?.();
+    await channel.refresh();
+    return {};
+  };
+
   const remove: PluginMethod = {
     grant: 'connector:remove' as Grant,
     describe: () => ({ title: 'Remove a connector', description: 'Closes one connector and takes it out.' }),
@@ -1391,26 +1435,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       const before = await options.collection.get(id);
       return before !== undefined && ownerAllows('connector', asOwner(before.owner), reader, 'remove');
     },
-    handle: async (params, reader) => {
-      const id = idParam(REMOVE, params);
-      const before = await options.collection.get(id);
-      if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
-      const owner = asOwner(before.owner);
-      /*
-       * A record naming no scope is one written by hand, and only a caller the
-       * gate let through with `connector:remove` reaches it; a record that
-       * names one is the owner's, and the gate's grant does not widen that.
-       */
-      if (owner !== undefined) refuseOwner('connector', 'remove', owner, reader, 'remove');
-      await close(id);
-      await forgetRecordSecrets(configOf(before), owner, id, CONNECTOR_SECRETS, options.vault(), problem);
-      await options.collection.remove(id);
-      owners.delete(id);
-      known.delete(id);
-      options.onRefs?.();
-      await channel.refresh();
-      return {};
-    },
+    handle: (params, reader) => removeOne(params, reader),
   };
 
   /*
@@ -1703,9 +1728,77 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     ...(options.models === undefined ? {} : { [MODELS]: models }),
   };
 
+  /*
+   * The operations a connector record offers, beside the fixed commands above.
+   * Enable and Disable run `toggleOne` as their commands do, and Remove runs
+   * `removeOne`. Sign in stays `x-ahpd/connectors/signin`, with the form its
+   * adapter fills, so no record lists it.
+   */
+  const operationsOf = (): Operation[] => [
+    {
+      id: 'enable',
+      kind: 'host',
+      label: 'Enable',
+      description: 'Writes enabled: true, opens and checks the connector again, and answers its row.',
+      scopes: ['connector'],
+      grant: 'connector:put',
+      status: 'idle',
+    },
+    {
+      id: 'disable',
+      kind: 'host',
+      label: 'Disable',
+      description: 'Closes the connector and writes enabled: false, so it answers no call and lists no model, and answers its row.',
+      scopes: ['connector'],
+      grant: 'connector:put',
+      status: 'idle',
+    },
+    {
+      id: 'remove',
+      kind: 'host',
+      label: 'Remove',
+      description: 'Closes one connector and takes it out.',
+      confirmation: 'Remove this connector? Its secrets are taken out of the vault and its record goes.',
+      scopes: ['connector'],
+      grant: 'connector:remove',
+      status: 'idle',
+    },
+  ];
+
+  /** Whether one record offers an operation now. */
+  const offers = async (target: string, operationId: string): Promise<boolean> => {
+    const record = await options.collection.get(target);
+    return record !== undefined && offersOn(stateOf(record)).includes(operationId);
+  };
+
+  /** Do what one operation says, through the code its fixed command runs. */
+  const runOperation = async (
+    operation: Operation,
+    target: string | undefined,
+    _input: Record<string, unknown> | undefined,
+    reader: Principal | undefined,
+  ): Promise<unknown> => {
+    if (target === undefined) throw new RpcError(INVALID_PARAMS, `${operation.id} runs on one connector, so it needs a target`);
+    const params = { id: target };
+    if (operation.id === 'enable') return await toggleOne(ENABLE, true, params, reader);
+    if (operation.id === 'disable') return await toggleOne(DISABLE, false, params, reader);
+    if (operation.id === 'remove') return await removeOne(params, reader);
+    throw new RpcError(INVALID_PARAMS, `${operation.id} is not an operation of ${URI}`);
+  };
+
+  const operations: OperationChannel = {
+    uri: URI,
+    operations: operationsOf,
+    begin: () => {},
+    settle: () => {},
+    offers,
+    run: runOperation,
+  };
+
   return {
     channel,
     methods,
+    operations,
     run,
     note,
     providers,

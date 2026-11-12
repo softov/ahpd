@@ -51,6 +51,13 @@ export interface OperationChannel {
   begin(operationId: string, target: string | undefined): void;
   /** Say one operation is done, or failed with its error. */
   settle(operationId: string, target: string | undefined, error?: string): void;
+  /**
+   * Whether one record offers an operation now, as its `operations` says.
+   *
+   * Asked after the target is read and before the input is checked or the call
+   * begins. Absent, a channel takes every operation it lists on any target.
+   */
+  offers?(target: string, operationId: string): boolean | Promise<boolean>;
   /** Do what the operation says, and answer the caller with the record or `{}`. */
   run(
     operation: Operation,
@@ -154,6 +161,9 @@ export const invokeOperation = (options: InvokeOperationOptions): PluginMethod =
     const grant = operation.grant as Grant;
     if (reader !== undefined && !reader.can(grant)) throw new RpcError(-32009, refusalReason(reader.id, grant), {});
     const target = targetOf(operation, params.target);
+    if (target !== undefined && channel.offers !== undefined && !(await channel.offers(target, operationId))) {
+      throw new RpcError(INVALID_PARAMS, `${operationId} is not offered on ${target} now`);
+    }
     const input = inputOf(operation, params.input, options.check);
     channel.begin(operationId, target);
     try {

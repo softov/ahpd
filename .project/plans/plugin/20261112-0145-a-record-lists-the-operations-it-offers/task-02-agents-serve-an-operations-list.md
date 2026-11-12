@@ -1,6 +1,6 @@
 ---
 title: Agents serve an operations list
-status: todo
+status: implemented
 depends: [task-01-a-record-lists-its-operations.md]
 layer: "sdk"
 refs:
@@ -35,4 +35,13 @@ refs:
 - The sdk suite passes.
 
 ## Resume
+
+Implemented 2026-11-11 in the worktree; the reviewer commits. Files changed:
+
+- `packages/sdk/src/types/kinds.ts` - `OperationScope` gains `agent`, with the comment.
+- `packages/sdk/src/agents/channel.ts` - the five operations, each row's `operations`, `offers`, `run`, and `removeOne` and `checkOne` shared with the fixed commands.
+- `packages/server/src/commands/run.ts` - the agents channel joins `channels` in `run.ts`.
+- `packages/sdk/test/agents-channel.test.ts` - the ids by mode, Pause through `x-ahpd/invokeOperation`, and the refusal of a second Pause.
+
+Checked: `pnpm exec tsc -p tsconfig.json --noEmit` at the root passes.
 

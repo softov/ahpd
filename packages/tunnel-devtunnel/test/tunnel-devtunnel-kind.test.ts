@@ -1,4 +1,4 @@
-import { loggerOf } from '@ahpd/sdk';
+import { invokeOperation, loggerOf, memoryRecords, tunnelsChannel } from '@ahpd/sdk';
 import { expect, it } from 'vitest';
 import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { checkTunnelKind } from '../../sdk/src/plugins/validate.js';
@@ -140,6 +140,18 @@ it('lists start, stop, restart and anonymous, and anonymous takes on', () => {
   });
 });
 
+/** A service that puts a port up and takes it down, with no network behind it. */
+const puttingUp = (): Service => ({
+  add: async (_connector, port) => ({ remote: { id: 't1', labels: [] }, url: `https://port-${port}.example.com/` }),
+  access: async () => {},
+  replace: async () => undefined,
+  carry: () => {},
+  remove: async () => {},
+  restart: async () => {},
+  show: async () => undefined,
+  close: async () => {},
+});
+
 it('answers the system tunnel with its connector and the well-known port', async () => {
   const { kind } = kindOf({ connector: 'mine', anonymous: true });
 
@@ -159,6 +171,43 @@ it('answers the system tunnel with its person when one is set', async () => {
     anonymous: true,
     person: 'user:ada',
   });
+});
+
+it('lists on a devtunnel record only the operations its status offers now', async () => {
+  const URI = 'x-ahpd-tunnels://';
+  const collection = await memoryRecords().collection('tunnels', { format: 'json' });
+  const tunnels = tunnelsChannel({
+    collection,
+    kinds: () => ({ devtunnel: { ...kindOf({ service: puttingUp() }).kind, by: 'tunnel-devtunnel' } }),
+    vault: () => undefined,
+    check: () => {},
+  });
+  const command = invokeOperation({ channels: () => ({ [URI]: tunnels.operations }), check: () => {} });
+
+  // A create starts the tunnel, so it is running from its first row.
+  const made = await command.handle({
+    channel: URI,
+    operationId: 'devtunnel/create',
+    input: { connector: 'mine', port: 8080 },
+  }, undefined, 'c1') as Record<string, unknown>;
+  const id = String(made['id']);
+
+  const idsOf = async (): Promise<string[]> => {
+    const state = await tunnels.channel.channel.snapshot(URI, undefined, 'c1') as Record<string, unknown>;
+    const entry = (state['records'] as Record<string, unknown>[]).find((one) => one['id'] === id)!;
+    return (entry['record'] as Record<string, unknown>)['operations'] as string[];
+  };
+
+  expect(await idsOf()).toEqual([
+    'devtunnel/update', 'devtunnel/remove', 'devtunnel/disable', 'devtunnel/stop', 'devtunnel/restart', 'devtunnel/anonymous',
+  ]);
+
+  await command.handle({ channel: URI, operationId: 'devtunnel/stop', target: { id } }, undefined, 'c1');
+  const stopped = await idsOf();
+  expect(stopped).toContain('devtunnel/start');
+  expect(stopped).not.toContain('devtunnel/stop');
+  expect(stopped).not.toContain('devtunnel/restart');
+  expect(stopped).toContain('devtunnel/anonymous');
 });
 
 it('adds no system tunnel without a connector, and says what to set', async () => {

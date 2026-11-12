@@ -95,6 +95,8 @@ export function clientsChannel(options: ClientsChannelOptions): ClientsChannel {
       id: String(client.socket),
       ...(client.principal === undefined ? {} : { principal: client.principal.id }),
       ...(counts === undefined ? {} : counts),
+      // A live connection offers its one operation, and the list offers no other.
+      operations: ['drop'],
     };
   };
 

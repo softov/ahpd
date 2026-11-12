@@ -80,7 +80,7 @@ const fakeKind = (options: { failCreate?: boolean } = {}) => {
     by: 'fake-plugin',
     schema: SCHEMA,
     operations: [
-      { id: 'restart' },
+      { id: 'restart', offered: (record) => record['status'] === 'running' },
       { id: 'open' },
       { id: 'peek', input: { type: 'object', properties: { text: { type: 'string' } } } },
     ],
@@ -270,4 +270,43 @@ it('answers its operations beside the records, and a record operation on its row
   ]);
   expect((state['operations'] as Bag[]).find((operation) => operation['id'] === 'fake/remove'))
     .toMatchObject({ scopes: ['tunnel'], grant: 'tunnel:delete' });
+});
+
+it('lists on each record only the operations it offers now', async () => {
+  const one = await setup();
+  const created = await one.invoke('fake/create', { port: 8080 }) as Bag;
+  const id = String(created['id']);
+  one.reports.get(id)!({ status: 'running', url: 'https://fake-8080.example/' });
+  await one.tunnels.refresh();
+
+  const rowOf = async (): Promise<Bag> => {
+    const state = await stateOf(one.tunnels);
+    return (state['records'] as Bag[]).find((entry) => entry['id'] === id)!['record'];
+  };
+
+  // Enabled and running: it is edited, removed and disabled, and its own verbs
+  // are the ones whose condition holds.
+  const running = await rowOf();
+  expect(running['operations']).toEqual([
+    'fake/update', 'fake/remove', 'fake/disable', 'fake/restart', 'fake/open', 'fake/peek',
+  ]);
+  expect(running['operations']).not.toContain('fake/enable');
+
+  // Disabled: Enable comes back, Disable goes, and `restart` goes with the
+  // status its condition reads.
+  await one.invoke('fake/disable', {}, id);
+  const stopped = await rowOf();
+  expect(stopped['operations']).toEqual(['fake/update', 'fake/remove', 'fake/enable', 'fake/open', 'fake/peek']);
+  expect(stopped['operations']).not.toContain('fake/disable');
+  expect(stopped['operations']).not.toContain('fake/restart');
+});
+
+it('refuses an operation the record does not offer now, naming it', async () => {
+  const one = await setup();
+  const created = await one.invoke('fake/create', { port: 8080 }) as Bag;
+  const id = String(created['id']);
+
+  // The record was just made, so it is enabled: Enable is not one of its ids.
+  await expect(one.invoke('fake/enable', {}, id)).rejects.toThrow('fake/enable is not offered');
+  expect(one.called.filter((call) => call.what === 'enable')).toHaveLength(0);
 });
