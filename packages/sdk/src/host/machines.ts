@@ -40,6 +40,7 @@ export interface Machines {
     config: Record<string, unknown>,
     where: string | undefined,
     owner?: Owner,
+    progress?: (message: string) => void,
   ): Promise<void>;
 }
 
@@ -475,6 +476,10 @@ export function createMachines(ctx: HostContext): Machines {
    * `owner` is whose the machine is - whoever asked for it, which is what the
    * time it spends up is later charged to - and the session's own scope rides
    * along so the machine carries it too.
+   *
+   * `progress` is what the machine maker says its steps with, and travels to
+   * the port as it was handed here: the host gives it only to a create a
+   * client follows under a progress token.
    */
   const placedIn = async (
     uri: string,
@@ -482,6 +487,7 @@ export function createMachines(ctx: HostContext): Machines {
     config: Record<string, unknown>,
     where: string | undefined,
     owner?: Owner,
+    progress?: (message: string) => void,
   ): Promise<void> => {
     const said = computerSource(config.computer);
     if (said === undefined) return;
@@ -516,6 +522,7 @@ export function createMachines(ctx: HostContext): Machines {
       ...tree,
       ...(agent?.machine === undefined ? {} : { needs: agent.machine() }),
       ...(sandbox ? { sandbox } : {}),
+      ...(progress === undefined ? {} : { progress }),
     });
     sessionMachines.set(uri, { source: said, machine });
     config.computer = machine;

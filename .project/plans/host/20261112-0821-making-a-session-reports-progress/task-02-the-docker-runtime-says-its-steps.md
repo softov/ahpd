@@ -1,6 +1,6 @@
 ---
 title: The docker runtime says its steps
-status: todo
+status: implemented
 depends:
   - task-01-the-host-says-each-step-of-a-create.md
 layer: "computer"

@@ -225,6 +225,17 @@ export interface MachineSource {
   team?: string;
   /** The project the asking session's work is charged under. */
   project?: string;
+  /**
+   * Say one step of making the machine, for a client that follows the create.
+   *
+   * A step is a wait a person would notice, in the words the client shows:
+   * `Pulling <image>`, `Making the machine`, `Seeding the checkout`. The host
+   * gives this only for a `createSession` that carried a `progressToken`, and
+   * it turns each call into one `root/progress` under that token, so a plugin
+   * that says nothing sends nothing. There is no total: the machine maker does
+   * not know how many steps a plugin will take.
+   */
+  progress?(message: string): void;
 }
 
 /** The session asking about a machine, and whoever is behind it. */

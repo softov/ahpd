@@ -633,7 +633,14 @@ export interface ComputerRuntime {
    * `host`, or what the runtime starts a host with by default.
    */
   hostCommand(id: string): Promise<string[] | undefined>;
-  run(spec: MachineSpec): Promise<Machine>;
+  /**
+   * Make one machine, saying each step of it through `progress` where given.
+   *
+   * The steps are the waits a person notices: an image Docker has to pull
+   * first, the machine itself, and the seed of the session's checkout. A
+   * caller that follows none passes nothing and is told nothing.
+   */
+  run(spec: MachineSpec, progress?: (message: string) => void): Promise<Machine>;
   stop(id: string): Promise<void>;
   remove(id: string): Promise<void>;
   /**
@@ -2979,7 +2986,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * copy, then `start`. A machine without one stays a single `run`, which is
      * what every machine was before copy-ins existed.
      */
-    run: async (asked) => {
+    run: async (asked, progress) => {
       /*
        * A profile's own Docker labels each machine with its profile, and a
        * remote one with this daemon's id too, because those labels are what
@@ -3206,6 +3213,15 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         throw new Error(`${spec.name} names neither an image nor a folder's devcontainer.json, so there is nothing to make it from`);
       }
       /*
+       * The first step, said only to a caller that follows it and only for an
+       * image Docker does not hold: `docker run` pulls a missing image itself,
+       * so the wait is Docker's and not another `pull` this host makes. An
+       * image that is here is no wait at all, and is not mentioned.
+       */
+      if (progress !== undefined && (await ran(options, ['image', 'inspect', image])).code !== 0) {
+        progress(`Pulling ${image}`);
+      }
+      /*
        * The tree the machine is given, and the guard its git directory is made
        * with. Under `copy` the machine's volume is mounted at the tree's own
        * path in place of it, so the folder is not bound at all - the volume
@@ -3369,6 +3385,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        * volume mounted into it, or both. The first error is the one thrown,
        * after what was left is removed.
        */
+      progress?.('Making the machine');
       try {
         if (copies.length === 0) {
           await must(['run', '-d', ...flags, ...keeps], given.env);
@@ -3380,7 +3397,10 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         }
         // The machine's own git directory, seeded from the tree now that there
         // is a machine to seed it in.
-        if (git !== undefined) await seedGit(spec.name, spec, git, spec.name);
+        if (git !== undefined) {
+          progress?.('Seeding the checkout');
+          await seedGit(spec.name, spec, git, spec.name);
+        }
       }
       catch (error) {
         await cleanUpFailed(spec.name, git !== undefined && guard === 'fetch' ? gitVolumeOf(spec.name) : undefined);

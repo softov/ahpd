@@ -51,6 +51,7 @@ createSession(progressToken) -> lifecycle create -> computers.create(MachineSour
 | What | Source | Task |
 | --- | --- | --- |
 | ahpd sends `root/progress` against the `createSession` token at each step of making a machine, and ahpc waits while progress comes | Softov, 2026-11-12: "ahpd reports, ahpc waits" | 01, 02 |
+| Progress is sent only for a create that makes a machine; a create with no machine sends none, as VS Code's host | Softov, 2026-11-12: "Only while making a machine" | 01 |
 | The steps said are `Pulling <image>`, `Making the machine`, `Seeding the checkout` and `Starting the agent` | `(defaulted: the four waits seen in the Windows check)` | 01, 02 |
 | No total is sent, so a client shows the words and no share | `(defaulted: the host cannot know the steps ahead)` | 01 |
 
@@ -64,8 +65,8 @@ createSession(progressToken) -> lifecycle create -> computers.create(MachineSour
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host says each step of a create](task-01-the-host-says-each-step-of-a-create.md) | todo | - |
-| [02 - The docker runtime says its steps](task-02-the-docker-runtime-says-its-steps.md) | todo | 01 |
+| [01 - The host says each step of a create](task-01-the-host-says-each-step-of-a-create.md) | implemented | - |
+| [02 - The docker runtime says its steps](task-02-the-docker-runtime-says-its-steps.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -74,10 +75,10 @@ createSession(progressToken) -> lifecycle create -> computers.create(MachineSour
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-host-says-each-step-of-a-create.md](task-01-the-host-says-each-step-of-a-create.md).
+- **Done so far:** both tasks implemented, 2026-11-12. A `createSession` with a `progressToken` and a machine source says each step through `root/progress`. It closes with `progress` equal to `total` on every path, a refusal before the claim included. A create with no token, or with no machine, says nothing. The docker runtime says `Pulling <image>` when the image is absent, then `Making the machine` and `Seeding the checkout`. The host says `Starting the agent`. The plugin's `run` wrapper carries `progress` to the router, which is where it was lost. The tests are written, and `pnpm exec tsc -p tsconfig.json --noEmit` passes. The vitest suites are left to Softov, per the session's rules.
+- **Next action:** review and merge the PR, then ahpc's `cli/20261112-0821-create-session-waits-on-progress`, which must keep its timeout for a create with no machine.
 - **Open questions:** none.
-- **Watch out for:** a `createSession` for a session the host already holds answers at once, before anything is made.
+- **Watch out for:** a `createSession` for a session the host already holds answers at once, before anything is made. When it names a machine source, it closes the progress at once, with no step before it. The devcontainer route reports only `Starting the agent`, because a devcontainer build has no image, run or seed step of its own.
 
 ## Final verification checklist
 
