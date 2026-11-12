@@ -10,11 +10,11 @@ export {
   LABELS, LAUNCHER_LABEL, MAX_TUNNEL_NAME_LENGTH, PROTOCOL_LABEL, PROTOCOL_LABEL_PREFIX,
   PROTOCOL_VERSION, TUNNEL_PORT,
 } from './discovery.js';
-export { forward } from './forward.js';
-export type { Forward } from './forward.js';
+export { carry, pipeTo } from './forward.js';
+export type { Admission, Admit, Log } from './forward.js';
 export {
   DESCRIPTION, devtunnelKind, NAME as KIND, OPERATIONS, SCHEMA, TITLE as KIND_TITLE,
 } from './kind.js';
 export type { KindOptions } from './kind.js';
 export { labelsOf, sdkService } from './service.js';
-export type { Cloud, Host, Kept, Remote, Served, Service, ServiceOptions, Shown } from './service.js';
+export type { Carried, Cloud, Host, Kept, Remote, Served, Service, ServiceOptions, Shown } from './service.js';

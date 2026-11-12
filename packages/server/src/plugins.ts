@@ -23,6 +23,7 @@
  * no backend at all.
  */
 
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -935,6 +936,14 @@ export interface LoadOneOptions {
    */
   vault?: () => Vault | undefined;
   /**
+   * Where a plugin's `personKey` is minted, read when the plugin asks.
+   *
+   * The set holds the keys and drops them when the plugin unloads; this is the
+   * other end, so the plugin gets one and the daemon's door can name the
+   * person it stands for. Absent on a host with no users directory.
+   */
+  personKey?: (person: string) => Promise<string | undefined>;
+  /**
    * The hosts that joined this daemon, handed to every plugin as `host.nodes`.
    *
    * A value rather than a function: the registry belongs to the daemon and is
@@ -1547,6 +1556,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions, impor
     ...(options.agentOwners === undefined ? {} : { agentOwners: options.agentOwners }),
     ...(options.usage === undefined ? {} : { usage: options.usage }),
     ...(options.vault === undefined ? {} : { vault: options.vault }),
+    ...(options.personKey === undefined ? {} : { personKey: options.personKey }),
     ...(options.nodes === undefined ? {} : { nodes: options.nodes }),
     ...(options.alert === undefined ? {} : { alert: options.alert }),
     ...(options.clearAlert === undefined ? {} : { clearAlert: options.clearAlert }),
@@ -1868,6 +1878,16 @@ export interface PluginSet {
    * nothing else: a plugin that cannot close still costs only itself.
    */
   unload(id: string): Promise<string[]>;
+  /**
+   * The person a key one of this set's plugins minted stands for, or nothing
+   * when no plugin holds it.
+   *
+   * The daemon's door asks this before the users directory sees a presented
+   * token: the key is the daemon's own secret and the directory keeps no hash
+   * of it. A key whose plugin unloaded answers nothing, so unloading a plugin
+   * takes its visitors' way in with it.
+   */
+  personOf(key: string): string | undefined;
   /** One plugin this set holds, by its id. */
   held(id: string): HeldPlugin | undefined;
   /** Every plugin that loaded, in load order. */
@@ -2064,6 +2084,56 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
   // Which plugin opened each collection, one map for every plugin in this set.
   const collections = new Map<string, string>();
 
+  /**
+   * The person each key this set minted stands for, by plugin id and then by key.
+   *
+   * A key is a bearer secret a plugin sets on a connection it carries to the
+   * daemon, and this map is the only place it is kept: nothing writes one out,
+   * and a plugin's keys go when the plugin unloads.
+   */
+  const personKeys = new Map<string, Map<string, string>>();
+
+  /**
+   * Mint a key for one plugin, or answer nothing when no key may stand for the person.
+   *
+   * Nothing is answered on a host with no users, and nothing is answered for a
+   * person whose record requires the issuer: a key is a local token, and that
+   * record says a local token does not sign them in.
+   *
+   * A person the directory does not have at all is refused, naming the id,
+   * because the setting that named them was written by somebody who has to be
+   * told which name is wrong. Nothing here is logged: the key is answered to
+   * the plugin and to nobody else.
+   */
+  const mintPersonKey = async (plugin: string, person: string): Promise<string | undefined> => {
+    const users = options.base.users;
+    if (users === undefined) return undefined;
+    const record = (await users.list()).find((one) => one.id === person);
+    if (record === undefined) {
+      throw new Error(`a key cannot be minted for ${person}: this host has no such person`);
+    }
+    /*
+     * `trusted` is false where the record requires the issuer. A key takes the
+     * place of a sign-in, so minting one for such a person would undo the
+     * setting that asked for the issuer.
+     */
+    if (!record.trusted) return undefined;
+    const key = randomBytes(32).toString('hex');
+    const held = personKeys.get(plugin) ?? new Map<string, string>();
+    held.set(key, person);
+    personKeys.set(plugin, held);
+    return key;
+  };
+
+  /** The person a key minted by one of this set's plugins stands for, if any. */
+  const personOf = (key: string): string | undefined => {
+    for (const held of personKeys.values()) {
+      const person = held.get(key);
+      if (person !== undefined) return person;
+    }
+    return undefined;
+  };
+
   const plan = async (specs: PluginSpec[]): Promise<{ entries: Planned[]; problems: string[] }> => {
     const found: Planned[] = [];
     for (const spec of specs) {
@@ -2107,10 +2177,12 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
 
   const load = async (entry: Planned): Promise<StagedPlugin> => {
     const { spec, id, resolved, named, unresolved } = entry;
-    // A load starts a clean row: a reload replaces what the last one said.
+    // A load starts a clean row: a reload replaces what the last one said, and
+    // keys the last run minted name nobody now.
     alerted.delete(id);
     viewed.delete(id);
     answered.delete(id);
+    personKeys.delete(id);
     if (resolved === undefined || named === undefined) {
       const line = unresolved ?? `plugin ${id} did not resolve`;
       addAlert(id, { level: 'error', text: line });
@@ -2141,6 +2213,7 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
       ...(options.base.users === undefined ? {} : { users: true }),
       usage: () => reached?.usage,
       vault: vaultInForce,
+      personKey: (person) => mintPersonKey(id, person),
       ...(options.base.nodes === undefined ? {} : { nodes: options.base.nodes }),
       sessions: () => hosted.then((host) => host.sessions),
       records: () => hosted.then((host) => host.records),
@@ -2183,7 +2256,12 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
       addAlert(id, { level: refused && at === one.problems.length - 1 ? 'error' : 'warning', text: line });
     }
     answered.add(id);
-    if (one.loaded === undefined || one.contribution === undefined) return { id, problems: one.problems };
+    if (one.loaded === undefined || one.contribution === undefined) {
+      // A plugin that did not load holds no key: anything minted before it
+      // threw names nobody.
+      personKeys.delete(id);
+      return { id, problems: one.problems };
+    }
     kept.set(id, { loaded: one.loaded, contribution: one.contribution, resolved, named });
     known.push(...one.contribution.agents);
     // A copy: the schema answers for a key a client edits, so it is the host's
@@ -2226,6 +2304,9 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
       }
     }
     kept.delete(id);
+    // A key this plugin minted names nobody once the plugin is gone, so the
+    // door refuses it from here on.
+    personKeys.delete(id);
     // A plugin that is gone has nothing left to say: its row carries no alerts.
     alerted.delete(id);
     viewed.delete(id);
@@ -2259,6 +2340,7 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
     load,
     reload,
     unload,
+    personOf,
     held: (id) => kept.get(id),
     loaded: () => [...kept.values()].map((one) => one.loaded),
     contributions,

@@ -1461,6 +1461,22 @@ export function fileUsers(options: FileUserOptions): Users {
     },
 
     /*
+     * The person a host-minted key names, answered from the same record
+     * `verify` would answer a token of theirs with.
+     *
+     * Read on the call rather than kept: the file is the directory, and a
+     * record added or removed while a connection is open is the same answer
+     * here as it is at the door. The record is matched by id alone, because
+     * the key is the host's own and was minted for a person the operator
+     * named, not presented by that person.
+     */
+    principalOf: async (id) => {
+      const { file } = read();
+      const record = (file.users ?? []).find((one) => one.id === id);
+      return record === undefined ? undefined : principalOf(record, [], undefined, undefined, true);
+    },
+
+    /*
      * A team key, checked the same way and answered only when it is one.
      *
      * Every hash is compared, as `verify` compares them, and a key that names a

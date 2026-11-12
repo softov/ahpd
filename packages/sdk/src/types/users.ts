@@ -491,6 +491,20 @@ export interface Users {
    */
   verify(token: string): Promise<Principal | undefined>;
   /**
+   * One person as the directory knows them, or nothing when nobody has that id.
+   *
+   * The principal a connection is admitted as when something this host itself
+   * minted names the person rather than their token: a key a plugin was given
+   * is not a record of theirs, so no hash matches it, and the directory is
+   * asked here for the person it names. It answers the record's roles and
+   * re-reads the file as `verify` does, so a role change reaches the
+   * connection at the next command.
+   *
+   * Optional because a directory that is not a file may have no record to
+   * answer from; a host given one that does not names nobody this way.
+   */
+  principalOf?(id: string): Promise<Principal | undefined>;
+  /**
    * The team a team key belongs to, or nothing when the token is no team key.
    *
    * The proxy's own check, asked only after `verify` answers nothing. Optional

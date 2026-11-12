@@ -40,6 +40,7 @@ export { POLL_MS } from './kind.js';
 export const defaults = {
   keep: true,
   anonymous: false,
+  requireToken: false,
   allowAccountChange: false,
 } as const;
 
@@ -76,6 +77,25 @@ export interface Options {
    * the thing actually deciding who may connect.
    */
   anonymous?: boolean;
+  /**
+   * Who a visitor to the host's own tunnel is, as `user:` and the id the
+   * users directory holds them under.
+   *
+   * A visitor who presents the tunnel's derived token gets this person's
+   * grants. On a host with users and no person set, that token is refused:
+   * nobody named the visitor, so nobody can be given. A host with no users has
+   * nobody to name, and its tunnel gets the daemon's own token as before.
+   */
+  person?: string;
+  /**
+   * Whether a visitor to the host's own tunnel must bring a token the daemon
+   * accepts.
+   *
+   * Off by default. On, the plugin maps nothing: the token a client derived
+   * from the tunnel id is carried as it came, so VS Code over the tunnel
+   * cannot connect and a visitor signs in some other way.
+   */
+  requireToken?: boolean;
   /**
    * Whether a second sign-in may replace a connector's GitHub account.
    *
@@ -197,6 +217,7 @@ export const apply: Plugin['apply'] = (plugin, options) => {
   const service = seams.service ?? sdkService({
     token: (id) => tunnels.ready(id),
     name: wanted,
+    log: (line, level) => { plugin.log(line, level); },
     kept: {
       read: async (id) => {
         const row = await kept.get(id);
@@ -214,6 +235,8 @@ export const apply: Plugin['apply'] = (plugin, options) => {
     service,
     ...(connector === undefined ? {} : { connector }),
     anonymous,
+    ...(asked.person === undefined ? {} : { person: asked.person }),
+    ...(asked.requireToken === true ? { requireToken: true } : {}),
     keep,
     open: (id) => tunnels.held(id) !== undefined,
     daemonPort: () => daemonPort,

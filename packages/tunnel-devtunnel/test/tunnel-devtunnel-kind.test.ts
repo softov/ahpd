@@ -3,28 +3,66 @@ import { expect, it } from 'vitest';
 import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { checkTunnelKind } from '../../sdk/src/plugins/validate.js';
 import type { Alert, LoaderContext } from '../../sdk/src/types/plugin.js';
+import type { Tunnel, TunnelReport } from '../../sdk/src/types/tunnels.js';
 import { TUNNEL_PORT } from '../src/discovery.js';
 import { devtunnelKind, NAME, OPERATIONS, SCHEMA } from '../src/kind.js';
 import type { KindOptions } from '../src/kind.js';
 import type { Service } from '../src/service.js';
 
 /*
- * The kind as the host registers it: the form, the verbs and the system tunnel.
+ * The kind as the host registers it: the form, the verbs, the system tunnel and
+ * the settings a start reads from a record.
  *
- * Nothing here starts a tunnel, so the service is a set of methods that refuse
- * to be called. What a start does is in `tunnel-devtunnel.test.ts`, over a fake
- * SDK; this file is the declaration a client reads and the host checks.
+ * A start here runs over a service that is a few arrays, so the settings are
+ * checked where the kind reads them. What a start reaches of the SDK is in
+ * `tunnel-devtunnel.test.ts`; this file is the declaration a client reads and
+ * the host checks.
  */
 
-/** A service no case here reaches. */
+/** The service of a case that starts nothing. */
 const unreached = (): Service => ({
   add: async () => { throw new Error('this test starts no tunnel'); },
   access: async () => { throw new Error('this test starts no tunnel'); },
   replace: async () => { throw new Error('this test starts no tunnel'); },
+  carry: () => { throw new Error('this test starts no tunnel'); },
   remove: async () => { throw new Error('this test starts no tunnel'); },
   restart: async () => { throw new Error('this test starts no tunnel'); },
   show: async () => { throw new Error('this test starts no tunnel'); },
   close: async () => { throw new Error('this test starts no tunnel'); },
+});
+
+/** A service that serves the port it is given, and says what it was asked. */
+const serving = (): {
+  service: Service;
+  added: { connector: string; port: number; anonymous: boolean }[];
+} => {
+  const added: { connector: string; port: number; anonymous: boolean }[] = [];
+  return {
+    service: {
+      add: async (connector, port, anonymous) => {
+        added.push({ connector, port, anonymous });
+        return { remote: { id: 'tunnel-id', labels: [] } };
+      },
+      access: async () => {},
+      replace: async () => undefined,
+      carry: () => {},
+      remove: async () => {},
+      restart: async () => {},
+      show: async () => undefined,
+      close: async () => {},
+    },
+    added,
+  };
+};
+
+/** One record of the kind, as the host hands it over. */
+const recordOf = (settings: Record<string, unknown>): Tunnel => ({
+  id: 't1',
+  kind: NAME,
+  plugin: 'tunnel-devtunnel',
+  purpose: 'person',
+  enabled: true,
+  settings,
 });
 
 /** The kind, the plugin host it is registered through, and the alerts it raised. */
@@ -59,6 +97,39 @@ it('passes the registration check, with the connector mark, the port and anonymo
   expect(SCHEMA['required']).toEqual(['connector', 'port']);
 });
 
+it('declares the person setting as `user:` and an id, which a bare id is not', () => {
+  const properties = SCHEMA['properties'] as Record<string, Record<string, unknown>>;
+  const person = properties['person'];
+  expect(person).toMatchObject({ type: 'string', pattern: '^user:.+$', title: 'Person' });
+  const pattern = new RegExp(String(person?.['pattern']), 'u');
+  expect(pattern.test('user:ada')).toBe(true);
+  expect(pattern.test('ada')).toBe(false);
+  expect(pattern.test('user:')).toBe(false);
+});
+
+it('starts a record that names a person, and serves its port', async () => {
+  const { service, added } = serving();
+  const { kind } = kindOf({ service });
+  const reports: TunnelReport[] = [];
+
+  await kind.create(recordOf({ connector: 'mine', port: 9187, person: 'user:ada' }), (report) => { reports.push(report); });
+
+  expect(added).toEqual([{ connector: 'mine', port: 9187, anonymous: false }]);
+  expect(reports.at(-1)).toMatchObject({ status: 'running' });
+});
+
+it('refuses a record whose person is not `user:` and an id, and starts nothing', async () => {
+  const { service, added } = serving();
+  const { kind } = kindOf({ service });
+  const reports: TunnelReport[] = [];
+
+  await kind.create(recordOf({ connector: 'mine', port: 9187, person: 'ada' }), (report) => { reports.push(report); });
+
+  expect(added).toEqual([]);
+  expect(reports.at(-1)?.status).toBe('error');
+  expect(reports.at(-1)?.error).toContain('person');
+});
+
 it('lists start, stop, restart and anonymous, and anonymous takes on', () => {
   expect(OPERATIONS.map((one) => one.id)).toEqual(['start', 'stop', 'restart', 'anonymous']);
   const anonymous = OPERATIONS.find((one) => one.id === 'anonymous');
@@ -76,6 +147,17 @@ it('answers the system tunnel with its connector and the well-known port', async
     connector: 'mine',
     port: TUNNEL_PORT,
     anonymous: true,
+  });
+});
+
+it('answers the system tunnel with its person when one is set', async () => {
+  const { kind } = kindOf({ connector: 'mine', anonymous: true, person: 'user:ada' });
+
+  expect(await kind.system?.({ port: 9187 })).toEqual({
+    connector: 'mine',
+    port: TUNNEL_PORT,
+    anonymous: true,
+    person: 'user:ada',
   });
 });
 

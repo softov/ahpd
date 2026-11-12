@@ -1065,6 +1065,15 @@ export interface HostRecordingOptions {
    */
   vault?: () => Vault | undefined;
   /**
+   * Where a plugin's `personKey` is minted, read when it is called.
+   *
+   * The daemon keeps the key in its own memory and answers it at the door as
+   * the person it names; this is the one place that makes and holds one. A
+   * host with no users directory gives none, and the call answers nothing, as
+   * it does for a person whose record requires the issuer.
+   */
+  personKey?: (person: string) => Promise<string | undefined>;
+  /**
    * Where an `alert` goes, for the daemon to serve on the plugin's row.
    *
    * Collected rather than written, because the person who has to read it is the
@@ -1472,6 +1481,12 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
       if (vault === undefined) throw new Error(`${name} cannot be read: this host has no vault`);
       return readSecret(vault, name, work);
     },
+    /*
+     * Dropped rather than thrown when the host mints no keys, the way
+     * `recordUsage` is: a loader in a test has no users directory, so there is
+     * nobody for a key to name and nothing a plugin can do with one.
+     */
+    personKey: async (person) => await options.personKey?.(person),
     /*
      * The store is keyed by id and keeps the name the host holds the session
      * under, so a machine's recorded URI is compared with that name. `false`

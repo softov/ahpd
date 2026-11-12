@@ -65,11 +65,14 @@ tunnel relay -> forwardedPortConnecting stream -> request rewrite (derived token
 | On a host with users and no person set, the derived token is refused | Softov, 2026-11-08, in the problem file | 03 |
 | On a host with no users, the derived token gets the daemon's token, as today and as VS Code's CLI | (defaulted: the operator is the host's one person) | 03 |
 | A port on the tunnel other than 31546 is piped to its local port unchanged | (defaulted: only the agent host port carries tokens) | 03 |
+| A person whose record requires the issuer cannot be a tunnel's person; the tunnel does not start | Softov, 2026-11-12: "Refuse such a person" | 01, 03 |
+| A tunnel setting `requireToken`, off by default: when on, the derived token is never swapped, and a visitor brings a token the daemon accepts | Softov, 2026-11-12: "Yes: keep plan B", with a setting for a host that wants no token, no access | 05 |
+| The docs teach one tunnel, on 31546, with `person` or `requireToken` | Softov, 2026-11-12: "Docs: one tunnel is enough" | 04 |
 | No `Origin` check on the WebSocket upgrade | Softov, 2026-11-08: "skip this one for now" | - |
 
 ## Proposed architecture
 
-- **Data flow** - the relay host runs with `forwardConnectionsToLocalPorts` off. Each `forwardedPortConnecting` stream on 31546 is read as HTTP. The request's `tkn` is swapped when it equals the derived token, and the request goes to the daemon over a loopback dial.
+- **Data flow** - the relay host runs with `forwardConnectionsToLocalPorts` off. Each `forwardedPortConnecting` stream on 31546 is read as HTTP. The request's `tkn` is swapped when it equals the derived token - unless the record sets `requireToken`, which maps nothing - and the request goes to the daemon over a loopback dial.
 - **State flow** - the person key lives in the daemon's memory for the plugin's lifetime. It is never written, logged or sent anywhere but the loopback dial. An unload drops it.
 - **Layer responsibilities** - sdk: a `PluginHost` call that answers a person's key. · server: the key map in `identify`. · tunnel-devtunnel: the person setting, the stream handler, and no listener.
 - **Source-of-truth files** - [`code://packages/sdk/src/listen.ts`](../../../../packages/sdk/src/listen.ts), [`code://packages/tunnel-devtunnel/src/forward.ts`](../../../../packages/tunnel-devtunnel/src/forward.ts)
@@ -78,10 +81,11 @@ tunnel relay -> forwardedPortConnecting stream -> request rewrite (derived token
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin admits a person by a key in memory](task-01-a-plugin-admits-a-person-by-a-key.md) | todo | - |
-| [02 - A tunnel record names a person](task-02-a-tunnel-record-names-a-person.md) | todo | - |
-| [03 - Tunnel streams come into the process](task-03-tunnel-streams-come-into-the-process.md) | todo | 01, 02 |
-| [04 - The docs say who a visitor is](task-04-the-docs-say-who-a-visitor-is.md) | todo | 03 |
+| [01 - A plugin admits a person by a key in memory](task-01-a-plugin-admits-a-person-by-a-key.md) | implemented | - |
+| [02 - A tunnel record names a person](task-02-a-tunnel-record-names-a-person.md) | implemented | - |
+| [03 - Tunnel streams come into the process](task-03-tunnel-streams-come-into-the-process.md) | implemented | 01, 02 |
+| [04 - The docs say who a visitor is](task-04-the-docs-say-who-a-visitor-is.md) | implemented | 03 |
+| [05 - A tunnel can require a real token](task-05-a-tunnel-can-require-a-token.md) | implemented | 03 |
 
 ## Risks and tradeoffs
 
@@ -92,8 +96,8 @@ tunnel relay -> forwardedPortConnecting stream -> request rewrite (derived token
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-plugin-admits-a-person-by-a-key.md](task-01-a-plugin-admits-a-person-by-a-key.md), on a branch from plugin/20261112-0145-a-port-with-another-protocol-is-replaced.
+- **Done so far:** [task-01](task-01-a-plugin-admits-a-person-by-a-key.md), [task-02](task-02-a-tunnel-record-names-a-person.md), [task-03](task-03-tunnel-streams-come-into-the-process.md), [task-04](task-04-the-docs-say-who-a-visitor-is.md) and [task-05](task-05-a-tunnel-can-require-a-token.md), implemented 2026-11-11 and 2026-11-12 in the worktree; [implemented.md](implemented.md) says what exists and where the work departed. Task-01: the SDK answers `personKey`, the daemon mints and holds the keys and answers `personOf`, and `identify` reads them before the directory. Task-02: the kind's schema and `start` read `person` as `user:<id>`, and the system tunnel takes it from the plugin's options. Task-03: the relay host hands each stream to the kind with no local listener, a `tkn` equal to the derived token becomes the named person's key, and a host with users and no person answers 401 with an alert. A person whose record requires the issuer is refused at the start, before the port is added, with an alert naming them (Softov, 2026-11-12: "Refuse such a person"). Task-04: the plugin's page and the release notes say all of it, and the guide teaches one tunnel on 31546 with `person` or `requireToken` (Softov, 2026-11-12: "Docs: one tunnel is enough"). Task-05, added by Softov on 2026-11-12: the record's `requireToken` (off by default) makes the tunnel map no token at all, the system tunnel takes the option, and a saved change applies to the next request on the running port.
+- **Next action:** review the worktree: the suites, and `ss -ltnp` on a running system tunnel.
 - **Open questions:** none.
 - **Watch out for:** the daemon runs on Node, Bun and Deno. The loopback dial works on all three; a stream handed to the server itself works on Node alone.
 

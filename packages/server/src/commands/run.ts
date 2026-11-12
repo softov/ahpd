@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { canonicalFromCli, check, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, JsonSchema, Registry } from '@cofold/commands';
-import type { Agent, Alert, LogLevel, AutomationStore, AutomationsOptions, ClientCounts, ClientRegistry, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, PluginContext, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, Alert, LogLevel, AutomationStore, AutomationsOptions, ClientCounts, ClientRegistry, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, PluginContext, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Users, Vault } from '@ahpd/sdk';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import {
   adaptersChannel,
@@ -84,7 +84,7 @@ import { updateMethod } from './update.js';
 import { connectorModels, proxyHandler, type ProxyOptions } from '../proxy/listener.js';
 import { modelCatalog } from '../proxy/catalog.js';
 import { hostAdapters } from '../proxy/adapters.js';
-import { loadPlugins, pluginSet, type LoadOptions } from '../plugins.js';
+import { loadPlugins, pluginSet, type LoadOptions, type PluginSet } from '../plugins.js';
 import { applyPlugins, eventFailed, type Applied } from '../applyplugins.js';
 import { pluginsChannel } from '../pluginschannel.js';
 import { fileRecords } from '../records.js';
@@ -279,6 +279,34 @@ export const parserConflict = (named: boolean, contributions: readonly Contribut
   const other = contributions.find((one) => one.ports.commandParser !== undefined && one.ports.commandParser.replace !== true);
   if (other === undefined) return undefined;
   return `plugin ${other.by} also sets commandParser, which "commandParser" in the configuration already set; pass 'replace' to take it over`;
+};
+
+/**
+ * How the daemon's door names a connection, a key a plugin minted first.
+ *
+ * A key a plugin holds is the daemon's own secret and is written nowhere, so
+ * the users directory can no more match it than it could match the
+ * deployment's token. It is asked about here before the directory sees the
+ * presented secret: the plugin set says which person the key stands for, and
+ * the directory answers their principal, so a visitor carrying a tunnel's key
+ * holds the grants of the person the tunnel named rather than the daemon's.
+ *
+ * Anything else is the directory's own question, as it was before keys: a
+ * person's own token names them at the door unless their record requires the
+ * issuer, and one that requires it opens the socket and names nobody.
+ */
+export const identifyWith = (
+  users: Users,
+  keys: () => Pick<PluginSet, 'personOf'>,
+): NonNullable<DoorOptions['identify']> => async (presented) => {
+  const person = keys().personOf(presented);
+  if (person !== undefined) {
+    const principal = await users.principalOf?.(person);
+    return principal === undefined ? undefined : { principal };
+  }
+  const who = await users.verify(presented);
+  if (who === undefined) return undefined;
+  return who.trusted === true ? { principal: who } : {};
 };
 
 /**
@@ -753,11 +781,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     ...(users === undefined
       ? {}
       : {
-        identify: async (presented: string) => {
-          const who = await users.verify(presented);
-          if (who === undefined) return undefined;
-          return who.trusted === true ? { principal: who } : {};
-        },
+        identify: identifyWith(users, () => pluginHoldings),
         root: true,
       }),
   };

@@ -1124,6 +1124,31 @@ export interface PluginHost extends PluginContext {
    */
   secret(name: string, work?: SecretWork): Promise<string>;
   /**
+   * A key that admits a connection as one person, or nothing on a host with no
+   * users.
+   *
+   * The daemon mints the key and keeps it in its memory for as long as the
+   * plugin is loaded: a connection that presents it at the door is admitted as
+   * the person, with the grants their record gives them. It is a bearer secret
+   * and nothing else writes it - not the log, not a record, not an answer - so
+   * a plugin hands it only to a connection it carries to the daemon.
+   *
+   * `person` is the id the users directory holds them under, which is the
+   * part after `user:` in a setting that names them. The id is refused when
+   * the directory has no such person, so a mistyped name fails where it is
+   * written rather than at a visitor's connection.
+   *
+   * Unlike `secret`, a host with no users directory answers `undefined` rather
+   * than throwing: there is nobody to name, and a plugin asking has a host
+   * with one person on it rather than a mistake.
+   *
+   * A person whose record requires the issuer answers nothing either. A key is
+   * a local token, and that record says a local token does not sign the person
+   * in; a plugin that is handed nothing is meant to refuse that person rather
+   * than fall back to somebody else.
+   */
+  personKey(person: string): Promise<string | undefined>;
+  /**
    * Whether this daemon keeps one session, read when called.
    *
    * The computer plugin asks at startup about a disposable machine it found,

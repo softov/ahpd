@@ -25,6 +25,7 @@
 
 import { reason } from '@ahpd/sdk';
 import { TunnelRelayTunnelHost } from '@microsoft/dev-tunnels-connections';
+import type { Duplex } from 'node:stream';
 import {
   TunnelAccessControlEntryType, TunnelAccessScopes, TunnelEndpoint, TunnelProtocol,
 } from '@microsoft/dev-tunnels-contracts';
@@ -32,6 +33,8 @@ import type { Tunnel as DevTunnel, TunnelAccessControl, TunnelPort } from '@micr
 import { ManagementApiVersions, TunnelManagementHttpClient } from '@microsoft/dev-tunnels-management';
 import type { TunnelManagementClient } from '@microsoft/dev-tunnels-management';
 import { LABELS, LAUNCHER_LABEL } from './discovery.js';
+import { pipeTo } from './forward.js';
+import type { Log } from './forward.js';
 
 /** One Dev Tunnel, as much of it as the service and the kind read. */
 export interface Remote {
@@ -115,6 +118,15 @@ export interface Host {
   close(): Promise<void>;
 }
 
+/**
+ * Where one connection the relay accepted on a port goes.
+ *
+ * The service takes the stream as the relay hands it over; what reads it, and
+ * what answers it, is the kind's. A port with no handler is piped to the same
+ * number on this machine, which is what the tunnel's own access decides.
+ */
+export type Carried = (stream: Duplex) => void;
+
 /** The ports on one connector's tunnel, as the daemon holds them. */
 export interface Service {
   /** Put a port on the connector's Dev Tunnel, making and hosting it if needed. */
@@ -123,6 +135,14 @@ export interface Service {
   access(connector: string, port: number, anonymous: boolean): Promise<void>;
   /** Move a port to another number without closing the host. */
   replace(connector: string, from: number, to: number, anonymous: boolean): Promise<string | undefined>;
+  /**
+   * Take one connection on a port, or give the port back on `undefined`.
+   *
+   * The handler is registered before the port goes on the tunnel, because a
+   * visitor may be connected the moment it is there; it is read when a
+   * connection arrives, so one registered later serves the next visitor.
+   */
+  carry(connector: string, port: number, handler: Carried | undefined): void;
   /**
    * Take a port off the connector's Dev Tunnel.
    *
@@ -161,6 +181,8 @@ export interface ServiceOptions {
    * makes goes through this, so a fake is the whole of what a test stands in.
    */
   cloud?: (connector: string) => Cloud;
+  /** Where a connection that could not be carried is logged. */
+  log?: Log;
 }
 
 /** The labels a tunnel carries, as the CLI's `get_labels` gives them: its name, the protocol and the launcher. */
@@ -231,9 +253,21 @@ export function sdkService(options: ServiceOptions): Service {
   /** One entry for each connector the daemon is using. */
   const served = new Map<string, Entry>();
 
+  /**
+   * The way each of a connector's ports is carried, as the kind registered it.
+   *
+   * Held apart from `Entry`, because a handler is registered before the port
+   * is on the tunnel and the entry does not exist until it is.
+   */
+  const carried = new Map<string, Map<number, Carried>>();
+
+  /** What a connector's port is carried by now, if anything. */
+  const carriedFor = (connector: string): ((port: number) => Carried | undefined) =>
+    (port) => carried.get(connector)?.get(port);
+
   /** The cloud of one connector, which is the SDK unless a test stands in. */
   const cloudOf = (connector: string): Cloud =>
-    options.cloud?.(connector) ?? sdkCloud(connector, options);
+    options.cloud?.(connector) ?? sdkCloud(connector, options, carriedFor(connector));
 
   /**
    * The connector's tunnel, found or made on first use, as the CLI finds the
@@ -310,6 +344,21 @@ export function sdkService(options: ServiceOptions): Service {
       return written.url;
     },
 
+    carry: (connector, port, handler) => {
+      if (handler === undefined) {
+        const mine = carried.get(connector);
+        mine?.delete(port);
+        if (mine !== undefined && mine.size === 0) carried.delete(connector);
+        return;
+      }
+      let mine = carried.get(connector);
+      if (mine === undefined) {
+        mine = new Map();
+        carried.set(connector, mine);
+      }
+      mine.set(port, handler);
+    },
+
     remove: async (connector, port, keep) => {
       const one = served.get(connector);
       if (one === undefined) return;
@@ -359,7 +408,11 @@ export function sdkService(options: ServiceOptions): Service {
  * one that works. The service reads a GitHub token under its own `github`
  * scheme, not `Bearer`, and nothing else.
  */
-function sdkCloud(connector: string, options: ServiceOptions): Cloud {
+function sdkCloud(
+  connector: string,
+  options: ServiceOptions,
+  carried: (port: number) => Carried | undefined,
+): Cloud {
   const management = new TunnelManagementHttpClient(
     'ahpd-tunnel-devtunnel (https://github.com/ahpio/ahpd)',
     ManagementApiVersions.Version20230927preview,
@@ -387,6 +440,13 @@ function sdkCloud(connector: string, options: ServiceOptions): Cloud {
   /*
    * A relay host for this account, connected to `tunnel`.
    *
+   * The host is told not to forward connections to local ports: every port on
+   * this tunnel has nothing listening for it on this machine, and the port the
+   * daemon is on is not the one the client dials. Each connection the relay
+   * accepts is handed to the kind instead, which answers it in this process and
+   * dials the daemon on loopback; a port the kind knows nothing about is piped
+   * to the same number here, as the SDK would have done.
+   *
    * The cast is a gap in the SDK's declarations, not a difference at run time:
    * the HTTP client's optional `httpsAgent` is typed `Agent | undefined`, which
    * `exactOptionalPropertyTypes` will not hand to `TunnelManagementClient`'s
@@ -394,6 +454,15 @@ function sdkCloud(connector: string, options: ServiceOptions): Cloud {
    */
   const relay = async (tunnel: DevTunnel): Promise<TunnelRelayTunnelHost> => {
     const host = new TunnelRelayTunnelHost(management as unknown as TunnelManagementClient);
+    host.forwardConnectionsToLocalPorts = false;
+    host.forwardedPortConnecting((event) => {
+      const handler = carried(event.port);
+      if (handler !== undefined) {
+        handler(event.stream);
+        return;
+      }
+      pipeTo(event.stream, event.port, options.log ?? (() => {}));
+    });
     await host.connect(tunnel);
     return host;
   };

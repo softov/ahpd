@@ -21,8 +21,7 @@ import type {
   KindOperation, PluginHost, ReportTunnel, Tunnel, TunnelKind,
 } from '@ahpd/sdk';
 import { deriveConnectionToken, displayLabel, TUNNEL_PORT } from './discovery.js';
-import { forward } from './forward.js';
-import type { Forward } from './forward.js';
+import { carry } from './forward.js';
 import type { Service, Shown } from './service.js';
 import { sameState, tunnelView } from './view.js';
 import type { TunnelState } from './view.js';
@@ -51,6 +50,26 @@ const REF = 'tunnel';
 /** What a record says when its connector is not open. */
 const NOT_OPEN = 'The connector is not open. Sign in to this connector again, then enable this tunnel.';
 
+/**
+ * What a visitor who presents the tunnel's derived token is answered on a host
+ * with users and no person named.
+ *
+ * Nobody named the visitor, so there is nobody to admit them as, and admitting
+ * them as the daemon's own operator is the thing this plugin no longer does.
+ */
+const REFUSED = 'This tunnel refused a visitor: the host has users and the tunnel names nobody. Set its person to `user:` and an id the users directory holds.';
+
+/**
+ * What a tunnel that names a person no key can stand for is answered with.
+ *
+ * A visitor is carried to the daemon as the person the record names by a key
+ * the daemon minted. A record that requires the issuer admits no such key, so
+ * there is nobody this tunnel could carry a visitor as; it is not started
+ * rather than started and refusing every visitor.
+ */
+const NO_ISSUER_KEY = (person: string): string =>
+  `This tunnel names user:${person}, who must sign in through the issuer, so a key cannot stand in for that sign-in. The tunnel needs another person.`;
+
 /** What a tunnel of this kind is made of, as a client draws the form. */
 export const SCHEMA: Record<string, unknown> = {
   type: 'object',
@@ -73,6 +92,18 @@ export const SCHEMA: Record<string, unknown> = {
       type: 'boolean',
       title: 'Anonymous',
       description: 'Whether somebody who is not signed in to this account may reach the tunnel.',
+      default: false,
+    },
+    person: {
+      type: 'string',
+      pattern: '^user:.+$',
+      title: 'Person',
+      description: 'Who a visitor to this tunnel is, as `user:` and the id the users directory holds them under.',
+    },
+    requireToken: {
+      type: 'boolean',
+      title: 'Require a token',
+      description: 'Visitors must bring a token this host accepts. VS Code over the tunnel cannot connect.',
       default: false,
     },
   },
@@ -105,14 +136,29 @@ export const OPERATIONS: KindOperation[] = [
 
 /** What the kind is built with. */
 export interface KindOptions {
-  /** The plugin's host: the lines, alerts and page the kind keeps there. */
-  plugin: Pick<PluginHost, 'say' | 'log' | 'alert' | 'clearAlert' | 'showView' | 'clearView'>;
+  /** The plugin's host: the lines, alerts, page and people the kind keeps there. */
+  plugin: Pick<
+    PluginHost,
+    'say' | 'log' | 'alert' | 'clearAlert' | 'showView' | 'clearView' | 'hasUsers' | 'personKey'
+  >;
   /** The service its ports are put on. */
   service: Service;
   /** The connector the system tunnel uses, from the plugin's `connector` option. */
   connector?: string;
   /** Whether the system tunnel is reachable without signing in. */
   anonymous: boolean;
+  /** The person the system tunnel names, from the plugin's `person` option, as `user:<id>`. */
+  person?: string;
+  /**
+   * Whether the system tunnel requires a token of its own, from the plugin's
+   * `requireToken` option.
+   *
+   * Off, the tunnel maps the token a client derived from its id to the person
+   * it names. On, nothing is mapped: a visitor brings a token the daemon
+   * accepts, and one that presents the derived token is answered as one with
+   * any other token.
+   */
+  requireToken?: boolean;
   /** Whether a Dev Tunnel is deleted when its last port stops. */
   keep: boolean;
   /** Whether a connector is open now. */
@@ -121,20 +167,59 @@ export interface KindOptions {
   daemonPort(): number | undefined;
   /** Whether the daemon requires a connection token of its own. */
   guarded(): boolean;
-  /** The daemon's connection token, when it requires one, which the hop sets on each request. */
+  /** The daemon's connection token, when it requires one, which a host with no users carries in place of the derived token. */
   connectionToken?(): string | undefined;
+}
+
+/**
+ * The well-known port this process carries for one tunnel.
+ *
+ * The handler is registered before the port goes on the tunnel, because a
+ * visitor can connect the moment it is there. The token its clients derive is
+ * not known until the service answers with the tunnel, so it is filled in
+ * after the add; a connection that arrives in between is carried as it came,
+ * which is what a visitor with no token gets anyway.
+ */
+interface Hop {
+  /** The token a client over this tunnel presents, once the service has said the tunnel. */
+  derived?: string;
+  /** The person the record names, as the users directory holds them; absent names nobody. */
+  person?: string;
+  /** The key that person is admitted by, once minted; absent, nobody can be admitted as them. */
+  key?: string;
+  /** Whether every request's token is carried as the visitor wrote it. */
+  requireToken: boolean;
+  /** Stop carrying the port, so the next visitor is carried as the tunnel's access alone says. */
+  close(): Promise<void>;
 }
 
 /** One tunnel this daemon has up, so a stop knows what to take down. */
 interface Running {
   connector: string;
   port: number;
-  hop?: Forward;
+  /** The person it names, as the id the users directory holds them under. */
+  person?: string;
+  /** The token a client over this tunnel presents, whatever port it is on. */
+  derived?: string;
+  hop?: Hop;
 }
 
 /** A non-empty string, or nothing. */
 const textOf = (value: unknown): string | undefined =>
   (typeof value === 'string' && value !== '' ? value : undefined);
+
+/**
+ * The person a record names, as the id the users directory holds them under.
+ *
+ * The setting is `user:` and the id, as the schema says. Anything else names
+ * nobody, and a record carrying it is refused at its start rather than at a
+ * visitor's connection, where the daemon would admit nobody and say only that
+ * the token was refused.
+ */
+const personOf = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  return /^user:(.+)$/u.exec(value)?.[1];
+};
 
 /** A port number, or nothing. */
 const numberOf = (value: unknown): number | undefined =>
@@ -215,12 +300,68 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
     poll = setInterval(() => { void read(); }, POLL_MS);
   };
 
-  /** The hop from the well-known port to the daemon's, when the two differ. */
-  const hopFor = async (port: number): Promise<Forward | undefined> => {
+  /**
+   * The handler that carries a tunnel's well-known port into this process.
+   *
+   * A visitor who presents the token derived from the tunnel's id is asking to
+   * be let in as somebody, and who that is comes from the record: the person it
+   * names, else - on a host with nobody to name - the daemon's own token, as the
+   * hop always did. A host with users and no person has nobody to admit them as
+   * and refuses the request here, before it reaches the daemon.
+   *
+   * Any other token, and any `Authorization` header, is carried as the client
+   * wrote it, so a person signed in with their own token stays that person.
+   *
+   * On a host with users, a person no key can be minted for - one whose record
+   * requires the issuer - is refused here: no handler is registered and the
+   * start is told why, so the tunnel does not run and refuse every visitor.
+   *
+   * A tunnel that requires a token maps nothing. Every request is carried with
+   * the token the visitor wrote, so a visitor needs a token the daemon accepts
+   * and the derived token is answered as any other token is.
+   *
+   * A connection is dialled to the daemon's port on loopback, whichever port
+   * that is; nothing on this machine listens for the tunnel otherwise.
+   */
+  const hopFor = async (
+    connector: string,
+    port: number,
+    person: string | undefined,
+    requireToken: boolean,
+  ): Promise<Hop | undefined> => {
     if (port !== TUNNEL_PORT) return undefined;
     const daemon = options.daemonPort();
-    if (daemon === undefined || daemon === TUNNEL_PORT) return undefined;
-    return await forward(TUNNEL_PORT, daemon, plugin.log, options.connectionToken?.());
+    if (daemon === undefined) return undefined;
+    const key = person === undefined ? undefined : await plugin.personKey(person);
+    if (person !== undefined && plugin.hasUsers === true && key === undefined) {
+      throw new Error(NO_ISSUER_KEY(person));
+    }
+    const hop: Hop = {
+      ...(person === undefined ? {} : { person }),
+      ...(key === undefined ? {} : { key }),
+      requireToken,
+      close: async () => { options.service.carry(connector, port, undefined); },
+    };
+    options.service.carry(connector, port, (stream) => {
+      void carry(stream, daemon, (tkn) => {
+        if (hop.requireToken) return { keep: true };
+        if (tkn === undefined || tkn !== hop.derived) return { keep: true };
+        if (plugin.hasUsers === true) {
+          if (hop.key !== undefined) return { set: hop.key };
+          // No key stands for the person the record names, which a saved
+          // change to a person who requires the issuer leaves: the visitor is
+          // refused with what that person's record means for this tunnel.
+          const why = hop.person === undefined ? REFUSED : NO_ISSUER_KEY(hop.person);
+          plugin.alert({ level: 'error', ref: REF, text: why });
+          return { refuse: why };
+        }
+        const token = options.connectionToken?.();
+        return token === undefined ? { keep: true } : { set: token };
+      }, plugin.log).catch((error: unknown) => {
+        plugin.log.warn(`${NAME}: a tunnel connection was not carried: ${reason(error)}`);
+      });
+    });
+    return hop;
   };
 
   /** Put one tunnel up, or say why it is not up. */
@@ -228,9 +369,19 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
     const connector = textOf(tunnel.settings['connector']);
     const port = numberOf(tunnel.settings['port']);
     const anonymous = tunnel.settings['anonymous'] === true;
+    const requireToken = tunnel.settings['requireToken'] === true;
+    const named = tunnel.settings['person'];
+    const person = personOf(named);
 
     if (connector === undefined || port === undefined) {
       report({ status: 'error', error: 'This tunnel needs a connector and a port.' });
+      return;
+    }
+    if (named !== undefined && person === undefined) {
+      report({
+        status: 'error',
+        error: 'This tunnel\'s person must be `user:` and the id the users directory holds them under.',
+      });
       return;
     }
     // A record already up is left alone, so a second start starts nothing twice.
@@ -244,29 +395,34 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
       return;
     }
 
-    let hop: Forward | undefined;
+    let hop: Hop | undefined;
     try {
-      if (tunnel.purpose === 'system') hop = await hopFor(port);
+      hop = await hopFor(connector, port, person, requireToken);
       const served = await options.service.add(connector, port, anonymous);
-      running.set(tunnel.id, { connector, port, ...(hop === undefined ? {} : { hop }) });
+      const derived = await deriveConnectionToken(served.remote.id);
+      if (hop !== undefined) hop.derived = derived;
+      running.set(tunnel.id, {
+        connector,
+        port,
+        ...(person === undefined ? {} : { person }),
+        derived,
+        ...(hop === undefined ? {} : { hop }),
+      });
       plugin.clearAlert(REF);
 
       if (tunnel.purpose === 'system') {
         const shown = displayLabel(served.remote.labels);
         plugin.say(`tunnel ${served.remote.id}${shown === undefined ? '' : ` (${shown})`}, port ${port}`);
         /*
-         * A guarded daemon the tunnel reaches with no hop between them.
+         * A guarded daemon the plugin was not handed a token to set.
          *
-         * A client connecting over a tunnel presents a token it derived from
-         * the tunnel id. The hop sets the daemon's own token on every request
-         * it carries, as VS Code's CLI injects its agent host's token into each
-         * request arriving over a tunnel; a daemon bound to the tunnel's own
-         * port has no hop, so it is reached by the derived token alone, and
-         * the line says that token.
+         * A client over a tunnel presents a token it derived from the tunnel
+         * id. Nothing here replaces it, so that is what the daemon sees, and
+         * the line says it so the two can be made to agree.
          */
-        if (options.guarded() && hop === undefined) {
+        if (options.guarded() && options.connectionToken?.() === undefined) {
           plugin.say(
-            `tunnel token ${await deriveConnectionToken(served.remote.id)}`
+            `tunnel token ${derived}`
             + ' - what a client presents over the tunnel; this daemon requires its own',
           );
         }
@@ -386,6 +542,8 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
       const connector = textOf(input['connector']) ?? one.connector;
       const port = numberOf(input['port']) ?? one.port;
       const anonymous = input['anonymous'] === true;
+      const requireToken = tunnel.settings['requireToken'] === true;
+      const person = personOf(tunnel.settings['person']);
 
       if (connector !== one.connector) {
         // Another account: the old port goes with the old connector, and the
@@ -404,17 +562,78 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
       }
 
       if (port !== one.port) {
-        let hop: Forward | undefined;
+        let hop: Hop | undefined;
         try {
+          // The new port's handler goes in before the port moves, because a
+          // visitor can connect the moment the service answers it, and the
+          // token stays the same: the Dev Tunnel's id does not change.
+          hop = await hopFor(connector, port, person, requireToken);
+          if (hop !== undefined && one.derived !== undefined) hop.derived = one.derived;
           const url = await options.service.replace(connector, one.port, port, anonymous);
           await one.hop?.close();
-          if (tunnel.purpose === 'system') hop = await hopFor(port);
-          running.set(tunnel.id, { connector, port, ...(hop === undefined ? {} : { hop }) });
+          running.set(tunnel.id, {
+            connector,
+            port,
+            ...(person === undefined ? {} : { person }),
+            ...(one.derived === undefined ? {} : { derived: one.derived }),
+            ...(hop === undefined ? {} : { hop }),
+          });
           report({ status: 'running', ...(url === undefined ? {} : { url }) });
           if (tunnel.purpose === 'system') await watch(connector, port);
         } catch (error) {
+          await hop?.close();
           report({ status: 'error', error: reason(error) });
         }
+        return;
+      }
+
+      /*
+       * A `requireToken` named or changed on the running port is read by the
+       * handler at the next request, so it applies without moving the port and
+       * without a new key: the setting only decides whether a token is mapped.
+       */
+      if (one.hop !== undefined) one.hop.requireToken = requireToken;
+
+      // A person named or changed on the running port is who the next visitor
+      // is admitted as. The handler reads the hop, so the key changes in place
+      // and no visitor is carried by a tunnel whose record names somebody else.
+      if (person !== one.person) {
+        if (one.hop !== undefined) {
+          let key: string | undefined;
+          if (person !== undefined && plugin.hasUsers === true) {
+            try { key = await plugin.personKey(person); }
+            catch (error) {
+              // The directory has no such person, so nobody is admitted as
+              // them: the port stops admitting on the derived token rather
+              // than keep the person the record no longer names.
+              delete one.hop.key;
+              one.hop.person = person;
+              report({ status: 'error', error: reason(error) });
+              return;
+            }
+            if (key === undefined) {
+              // The person signs in through the issuer, so no key stands for
+              // them. Nobody is admitted as them either, and the record says
+              // why rather than admitting the person it no longer names.
+              delete one.hop.key;
+              one.hop.person = person;
+              report({ status: 'error', error: NO_ISSUER_KEY(person) });
+              return;
+            }
+          }
+          if (key === undefined) delete one.hop.key;
+          else one.hop.key = key;
+          if (person === undefined) delete one.hop.person;
+          else one.hop.person = person;
+        }
+        running.set(tunnel.id, {
+          connector,
+          port,
+          ...(person === undefined ? {} : { person }),
+          ...(one.derived === undefined ? {} : { derived: one.derived }),
+          ...(one.hop === undefined ? {} : { hop: one.hop }),
+        });
+        report({ status: 'running' });
         return;
       }
 
@@ -437,7 +656,13 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
         });
         return undefined;
       }
-      return { connector, port: TUNNEL_PORT, anonymous: options.anonymous };
+      return {
+        connector,
+        port: TUNNEL_PORT,
+        anonymous: options.anonymous,
+        ...(options.person === undefined ? {} : { person: options.person }),
+        ...(options.requireToken === true ? { requireToken: true } : {}),
+      };
     },
   };
 }
