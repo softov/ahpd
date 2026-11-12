@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { fileSessions, memorySessions } from '../../sdk/src/sessions/sessions.js';
@@ -45,6 +45,9 @@ const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000
 /** Temporary directories, removed after the test that made them. */
 const loose: string[] = [];
 afterEach(async () => {
+  // Real timers first: a close waits for work that a faked clock would never
+  // let finish.
+  vi.useRealTimers();
   await closeAll();
   for (const one of loose.splice(0)) rmSync(one, { recursive: true, force: true });
 });
@@ -85,13 +88,37 @@ const devHeld = (state: string): DevHeld => (existsSync(state)
   ? JSON.parse(readFileSync(state, 'utf8')) as DevHeld
   : { calls: [] });
 
+/** Real milliseconds, even under a faked clock, which the removal case moves. */
+const realSetTimeout = setTimeout;
+
+/** Yield for real milliseconds until the check holds, counted rather than timed. */
 const until = async (check: () => boolean, ms = WAIT_MS): Promise<void> => {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
+  const times = Math.ceil(ms / 5);
+  for (let i = 0; i < times; i++) {
     if (check()) return;
-    await new Promise((r) => { setTimeout(r, 5); });
+    await new Promise((r) => { realSetTimeout(r, 5); });
   }
   throw new Error(`still waiting after ${ms} ms`);
+};
+
+/** Let everything waiting on the event loop run, for work a clock has no say over. */
+const settle = async (times = 30): Promise<void> => {
+  for (let i = 0; i < times; i++) await new Promise((resolve) => { setImmediate(resolve); });
+};
+
+/**
+ * Move the faked clock until a check holds, giving real work its time in between.
+ *
+ * The removal of a disposable machine is a timer this file has faked, and the
+ * machine it removes was reached by a real subprocess. One turn of the clock can
+ * land before the timer it is meant to fire exists, so the two are spent
+ * together: real milliseconds for the work, then the clock.
+ */
+const advanceUntil = async (check: () => boolean, times = 400): Promise<void> => {
+  for (let i = 0; i < times && !check(); i++) {
+    await new Promise((resolve) => { realSetTimeout(resolve, 5); });
+    await vi.advanceTimersByTimeAsync(1000);
+  }
 };
 
 /** The one a case waited for, which nothing hands back without one. */
@@ -324,7 +351,48 @@ it('writes it into a dev container the same way', async () => {
   expect(JSON.stringify(config)).not.toContain('/attachments/');
 });
 
-it('takes the folder back out of the machine when the session goes', async () => {
+it('removes a disposable machine without taking its copies out first', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const dockerState = join(dir, 'docker.json');
+  const sessions = join(dir, 'sessions');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+  const lines: string[] = [];
+
+  const { options: loaded } = await load(
+    optionsOf({ docker: dockerState }, { profiles: DISPOSABLE }),
+    fileSessions({ dir: sessions }),
+    [agent()],
+    lines,
+  );
+  const { client, open, send } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, folder);
+  const made = await machine(dockerState);
+  await send('ahp-session:/one');
+  await written(dockerState);
+
+  await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
+  await settle();
+  /*
+   * The last session in a disposable machine leaves, so the machine goes with
+   * it: what was copied into the machine goes with the machine, and nothing is
+   * taken back out before it. The plugin's own line is what says the removal is
+   * finished, since the `rm` below is the machine and not a command run in it.
+   */
+  await advanceUntil(() => lines.some((one) => one.includes('removed the disposable machine')));
+  await settle();
+
+  // The line names the machine by its `computer://` id; the container is
+  // named in the `rm` below.
+  expect(lines.filter((one) => one.includes('removed the disposable machine'))).toHaveLength(1);
+  expect(held(dockerState).machines).toEqual([]);
+  expect(held(dockerState).calls.some((one) => one[0] === 'rm' && one[2] === made.name)).toBe(true);
+  // And no `rm -rf` ran in it: the copy went with the machine.
+  expect(removals(dockerState)).toEqual([]);
+});
+
+it('takes back out only the paths it copied into a machine that stays', async () => {
   const dir = temp();
   const dockerState = join(dir, 'docker.json');
   const sessions = join(dir, 'sessions');
@@ -334,17 +402,29 @@ it('takes the folder back out of the machine when the session goes', async () =>
   const { options: loaded } = await load(optionsOf({ docker: dockerState }, { profiles: DISPOSABLE }), fileSessions({ dir: sessions }));
   const { client, open, send } = await room(loaded);
   await open('ahp-session:/one', { computer: 'disposable:claude' }, folder);
-  await machine(dockerState);
+  const made = await machine(dockerState);
+  // A second session in the same machine, which is the one that keeps it when
+  // the first goes.
+  await open('ahp-session:/two', { computer: `computer://${made.name}` }, folder);
   await send('ahp-session:/one');
-  await written(dockerState);
+  const copy = await written(dockerState);
+  const copied = copy.command[copy.command.length - 1] as string;
+  await send('ahp-session:/two');
+  await until(() => writes(dockerState).length === 2);
+  await settle();
 
   await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
   await until(() => removals(dockerState).length > 0);
-  // The folder this one session's files are under, removed with whatever is
-  // in it: the machine outlives the session and keeps nothing of it.
+  /*
+   * The path the machine was handed, and not the session's whole folder: the
+   * machine outlives the session for the other one, and keeps nothing of the
+   * one that went.
+   */
   expect(removals(dockerState).map((one) => ({ user: one.user, command: one.command }))).toEqual([
-    { user: '0', command: ['rm', '-rf', machinePathOf(folderOf(sessions, 'one'))] },
+    { user: '0', command: ['rm', '-rf', copied] },
   ]);
+  // And the machine is still there for the session that stayed.
+  expect(held(dockerState).machines.map((one) => one.name)).toEqual([made.name]);
 });
 
 it('refuses a path that is no session\'s attachments, before a copy and before a removal', async () => {

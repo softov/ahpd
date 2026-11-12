@@ -29,6 +29,7 @@ A session that sent no attachment makes no `rm` in any machine.
 
 - The *Watch out for* says the check reads the machine's disposable label and its session set. The `ComputerPort` has no question that reads the label. The plan keeps the work in the sdk, so `machines.ts` records each machine it makes from a `disposable:` source. Teardown reads the session set from `enteredIn`.
 - `takeOut` no longer reads the session's attachments folder from the store, so the `idOf` import and the `kept` binding leave `machines.ts`.
+- The answer also reached `packages/computer/test/computer-attachments.test.ts`, whose case asserted the old folder removal. That case now proves the disposable machine goes with no `rm -rf`. A second case proves a machine that stays removes only the copied paths.
 
 ## Left for later
 
