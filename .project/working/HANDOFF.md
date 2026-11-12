@@ -28,10 +28,16 @@ Current progress and pending items only, as of 2026-11-12. *Outside this reposit
 - Run one vitest suite at a time: `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run <package>`. A fresh worktree needs `pnpm schema` first.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every run. Restore it with `git checkout --` and never print it.
 - An sdk host change is gated by the computer suite too.
-- Flaky, each passed on a rerun. No problem file yet:
-  - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read", on Linux CI, `main` included.
-  - `host-attachments.test.ts` "hands a queued and a steering message their attachments", once on Windows.
-  - `computer-spawn.test.ts` "fails a turn on a session whose CLI is gone" times out on this box, `main` included. CI passes it.
+- CI on main is green at `2a04b7472` (run 43315911168), `check` and `check-windows` both.
+- `release.yml` runs the whole `pnpm test` before it publishes, so a flaky case can fail a tag run.
+- Flaky on main in the 100 CI runs since 2026-11-11 08:10 UTC, each passed on a rerun:
+  - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read": 5 runs, on Linux and Windows, last 43229860508. It fails at line 237, after the 50 event-loop turns of line 236. No problem file, no plan.
+  - `agent-cofold-fork.test.ts` "keeps the chat going when the store cannot truncate the conversation": 3 runs on Linux. No problem file, no plan.
+  - `computer-spawn.test.ts` "fails a turn on a session whose CLI is gone": once on CI (43162247025), and it times out on this box.
+  - `nested-process.test.ts` "a daemon that stops leaves the session inside the machine for the next one": once (43132937874).
+  - `computer-devcontainer.test.ts` "omits the dev container row for a URI it cannot read a folder from": once on Windows (43114109287).
+  - `computer-servercheck.test.ts` "runs its own script under sh": once (43115235109). Task 02 of plugin/20261106-1058 fixes it.
+  - `host-attachments.test.ts` "hands a queued and a steering message their attachments", once on Windows: in [problems/two-attachment-cases-time-out-on-windows.md](../problems/two-attachment-cases-time-out-on-windows.md).
 
 ## Builders
 
@@ -56,7 +62,8 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
 
 - The Windows check of 2026-11-12, [results](../pending/windows-machine-paths-checks.md#results-on-windows-2026-11-12): the seven plans of #304 to #310. They close after the Windows check runs again.
 - plugin/20261112-0145, three plans: #301, #302 and #303.
-- The release run of 2026-11-11: its five plans, acp/20261110-0813, cofold/20261110-0813 (two), host/20261110-0813 (six), host/20261111-0609 (two), host/20261111-1203 and pi/20261110-0813.
+- The release run of 2026-11-11: thirteen plans, from #273 to #281, #286 and #293 to #295. They are acp/20261110-0813, cofold/20261110-0813 (two), host/20261110-0813 (six), host/20261111-0609 (two), host/20261111-1203 and pi/20261110-0813.
+- The five fixes of the release run's problems, #296 to #300: pi/20261111-1444, cofold/20261111-1445, daemon/20261111-1447, container/20261111-1507 and plugin/20261111-1507.
 
 ## Next
 
@@ -87,8 +94,8 @@ Its notepad is [release-run.md](release-run.md), its agent tests are in [release
 ## Waiting for Softov
 
 - The 13 `npm trust` commands in [pending/release.md](../pending/release.md) come before the next release. The first release from `ahpio/ahpd` is `0.15.0-rc.2`.
-- The GHCR package `ghcr.io/ahpio/ahpd` is private until he makes it public once, after the first edge image lands. No machine part is on `ghcr.io/ahpio` until `0.15.0-rc.2`.
-- `edge.yml` has no paths filter, so a plan-only push to main builds the edge image. A `paths-ignore` is suggested.
+- `0.15.0-rc.2` is tagged with the machine parts pulled by tag. The digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md) comes before 0.15.0 (Softov, 2026-11-12).
+- The GHCR package `ghcr.io/ahpio/ahpd` is private until he makes it public once. The edge image is on it: run 43315911087 pushed `sha-2a04b74`. Its visibility was not read: the `gh` token has no `read:packages`. No machine part is on `ghcr.io/ahpio` until `0.15.0-rc.2`.- `edge.yml` has no paths filter, so a plan-only push to main builds the edge image. A `paths-ignore` is suggested.
 - The API keys in his private env file were shown in a chat on 2026-11-11. He rotates them.
 - The grant role editor in ahpw shows the new subjects of #205. Nobody has opened it in a browser.
 - [problems/a-refused-back-turn-stays-working-in-another-window.md](../problems/a-refused-back-turn-stays-working-in-another-window.md): check after the daemon restart.
