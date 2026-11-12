@@ -3,6 +3,7 @@ title: Host tools
 status: current
 covers:
   - packages/sdk/src/tools/**
+  - packages/sdk/src/types/computers.ts
   - packages/sdk/src/utils/timing.ts
   - packages/sdk/src/host/tooling.ts
   - packages/sdk/src/connectors/actions.ts
@@ -24,6 +25,7 @@ refs:
   - "[code://packages/sdk/src/utils/timing.ts#L1-L58](../../packages/sdk/src/utils/timing.ts#L1-L58) - `callTimes`, `withCallTimes` and `startOf`"
   - "[code://packages/sdk/src/tools/server.ts#L33-L50](../../packages/sdk/src/tools/server.ts#L33-L50) - `TOOLS_PREFIX`, the protocol version and `ToolsChanged`"
   - "[code://packages/agent-acp/src/session/opening.ts#L136](../../packages/agent-acp/src/session/opening.ts#L136) - the ACP session asks for `toolsServer`"
+  - "[code://packages/sdk/src/types/computers.ts#L319-L334](../../packages/sdk/src/types/computers.ts#L319-L334) - `ComputerPort.reach`, the URL a machine uses for an address of this host's"
   - "[code://packages/agent-acp/src/plugin.ts#L269-L290](../../packages/agent-acp/src/plugin.ts#L269-L290) - `hostTools`, per preset over the plugin setting"
   - git://d9d4f950^ - the deleted decisions this spec was written from: a-tool-calls-times-are-stamped-as-ahpd-keys, a-tool-calls-times-are-stamped-by-its-plugin, a-tool-says-when-it-needs-advanced-permission, artifact-answers-match-the-reference, host-tool-declares-what-it-does, pull-request-artifact-on-both-paths, the-hosts-tools-are-an-mcp-server-each-backend-may-take
 ---
@@ -129,6 +131,19 @@ AND the endpoint has a bearer token of its own and closes when the session ends
 AND it speaks the MCP transport of `2025-06-18`.
 WHEN the host has no listener, as a daemon over stdio
 THEN `toolsServer` gives nothing.
+
+### A machine says where the host is
+
+WHEN a session opens in a machine and the backend can take the host tools
+THEN the machine's computer port is asked for the URL the machine uses for the daemon's address
+AND an answer is the URL the session offers, in place of the one the endpoint was opened at.
+WHEN the port answers nothing
+THEN an endpoint on a loopback or wildcard address is out of reach, and the host tools are left out
+AND any other address is offered as it is.
+Docker Desktop answers `host.docker.internal` for a loopback or a wildcard endpoint.
+Other Docker answers that name for a wildcard bind, and makes its machines with `--add-host host.docker.internal:host-gateway`.
+A dev container is answered on Docker Desktop alone, because the Dev Container CLI is given no `--add-host`.
+A machine on another box's Docker, or a box over ssh, answers nothing.
 
 ### A tool list change on the MCP server
 

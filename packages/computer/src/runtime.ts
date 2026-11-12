@@ -626,6 +626,20 @@ export interface ComputerRuntime {
    */
   how(id: string, asked: SpawnOptions): Promise<Spawn | undefined>;
   /**
+   * The URL a machine uses for an address of this host's, or nothing when this
+   * runtime has no such address for it.
+   *
+   * A runtime that made its machines on this host's Docker can answer: Docker
+   * Desktop publishes the host as `host.docker.internal`, and other Docker
+   * publishes it the same way where the machine was made with
+   * `--add-host host.docker.internal:host-gateway`, which is the runtime's own
+   * flag. A runtime whose machines are on another box answers nothing, because
+   * this host's loopback is not that box's.
+   *
+   * Absent on a runtime that cannot map one, which is the same answer.
+   */
+  reach?(id: string, url: string): Promise<string | undefined>;
+  /**
    * The command that starts a nested host inside one of this runtime's
    * machines, or nothing when there is no such machine.
    *
@@ -1973,6 +1987,29 @@ export const adoptedDevContainer = async (
  */
 const DEFAULT_HOST: string[] = ['ahpd'];
 
+/** The name Docker Desktop publishes the host under, and other Docker is given at `run`. */
+const HOST_ALIAS = 'host.docker.internal';
+
+/**
+ * The hosts that name the machine reading them rather than this host.
+ *
+ * A loopback address is the reader's own, and a wildcard bind is the address a
+ * daemon listens on rather than one anything connects to: inside a container
+ * either one is the container.
+ */
+const WILDCARD_HOSTS = new Set(['0.0.0.0', '[::]']);
+const LOOPBACK_HOSTS = new Set(['localhost', '[::1]']);
+
+/** Whether `host` is a loopback address, as `toolsReachable` reads one. */
+const loopbackHost = (host: string): boolean => LOOPBACK_HOSTS.has(host) || /^127\./u.test(host);
+
+/** The same URL at `HOST_ALIAS`, with its port, path and credentials kept. */
+const atHostAlias = (url: URL): string => {
+  const moved = new URL(url.href);
+  moved.hostname = HOST_ALIAS;
+  return moved.href;
+};
+
 export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   /**
    * Run the program and answer what it printed, or throw; `env` gives each `-e
@@ -1991,6 +2028,37 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   };
 
   /**
+   * What `docker info --format {{json .}}` says about this daemon, once.
+   *
+   * The image store and the operating system are both in that record, and one
+   * `docker info` can take a second on Docker Desktop, so both questions share
+   * the one answer. A daemon that does not answer is asked again when the next
+   * make or reach begins, and not once more within the same one.
+   */
+  let info: Record<string, unknown> | undefined;
+  let infoFailed = false;
+  const infoOf = async (): Promise<Record<string, unknown> | undefined> => {
+    if (info !== undefined) return info;
+    if (infoFailed) return undefined;
+    const held = await ran(options, ['info', '--format', '{{json .}}']);
+    if (held.code !== 0) {
+      infoFailed = true;
+      return undefined;
+    }
+    let read: Record<string, unknown>;
+    try { read = rows(held.stdout)[0] ?? {}; }
+    catch {
+      infoFailed = true;
+      return undefined;
+    }
+    info = read;
+    return info;
+  };
+
+  /** Let the next make or reach ask a daemon that did not answer before. */
+  const askInfoAgain = (): void => { infoFailed = false; };
+
+  /**
    * Whether this Docker takes an image mount, by the condition Docker
    * documents, asked of the daemon itself: the containerd image store, which
    * `docker info` reports as the `io.containerd.snapshotter.v1` driver type, on
@@ -2005,16 +2073,32 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   let imagesMount: boolean | undefined = options.imageMounts === false ? false : undefined;
   const canMountImages = async (): Promise<boolean> => {
     if (imagesMount !== undefined) return imagesMount;
-    const held = await ran(options, ['info', '--format', '{{json .}}']);
-    if (held.code !== 0) return false;
-    let info: Record<string, unknown>;
-    try { info = rows(held.stdout)[0] ?? {}; }
-    catch { return false; }
-    const store = Array.isArray(info.DriverStatus) ? info.DriverStatus as unknown[] : [];
+    const said = await infoOf();
+    if (said === undefined) return false;
+    const store = Array.isArray(said.DriverStatus) ? said.DriverStatus as unknown[] : [];
     const containerd = store.some((pair) => Array.isArray(pair) && pair[0] === 'driver-type' && pair[1] === 'io.containerd.snapshotter.v1');
-    const major = Number.parseInt(text(info.ServerVersion).split('.')[0] ?? '', 10);
+    const major = Number.parseInt(text(said.ServerVersion).split('.')[0] ?? '', 10);
     imagesMount = containerd && major >= 28;
     return imagesMount;
+  };
+
+  /**
+   * Whether this Docker is Docker Desktop, which publishes the host at a name
+   * of its own.
+   *
+   * `docker info` names its operating system, and `Docker Desktop` is what a
+   * Docker Desktop install answers. The answer is kept for this runtime's life;
+   * a daemon that does not answer is asked again for the next machine, and is
+   * read as one that is not Docker Desktop.
+   * https://docs.docker.com/desktop/features/networking/#connect-a-container-to-a-service-on-the-host
+   */
+  let desktopIs: boolean | undefined;
+  const onDockerDesktop = async (): Promise<boolean> => {
+    if (desktopIs !== undefined) return desktopIs;
+    const said = await infoOf();
+    if (said === undefined) return false;
+    desktopIs = text(said.OperatingSystem).trim().toLowerCase().includes('docker desktop');
+    return desktopIs;
   };
 
   /**
@@ -2977,6 +3061,44 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     },
 
     /*
+     * The URL a machine uses for an address of this host's.
+     *
+     * Docker Desktop publishes the host's loopback at `host.docker.internal`
+     * by itself. Other Docker is given the same name by the `--add-host` flag
+     * the image run carries, so a wildcard bind is reachable there, and a
+     * loopback bind is not: the name reaches the host, and the daemon there
+     * listens on its own loopback alone. Another box's Docker is no answer at
+     * all, because this host's loopback is not that box's.
+     *
+     * A dev container is made by the Dev Container CLI instead, which carries
+     * no `--add-host`: on other Docker the name is not in its hosts file, so
+     * the runtime answers nothing there. Docker Desktop resolves the name for
+     * every container, so a dev container is answered there.
+     *
+     * The answer is the runtime's, and the same for every machine it made
+     * except a dev container on other Docker.
+     */
+    reach: async (id, url) => {
+      askInfoAgain();
+      if (options.remote === true) return undefined;
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      }
+      catch {
+        return undefined;
+      }
+      const host = parsed.hostname.toLowerCase();
+      if (WILDCARD_HOSTS.has(host)) {
+        const desktop = await onDockerDesktop();
+        if (!desktop && devcontainerFolder(await recordOf(id)) !== undefined) return undefined;
+        return atHostAlias(parsed);
+      }
+      if (!loopbackHost(host)) return undefined;
+      return await onDockerDesktop() ? atHostAlias(parsed) : undefined;
+    },
+
+    /*
      * Make one.
      *
      * The flags are built once, because a create and a run take the same ones:
@@ -2987,6 +3109,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * what every machine was before copy-ins existed.
      */
     run: async (asked, progress) => {
+      askInfoAgain();
       /*
        * A profile's own Docker labels each machine with its profile, and a
        * remote one with this daemon's id too, because those labels are what
@@ -3293,6 +3416,14 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       if (spec.ociRuntime !== undefined) flags.push(`--runtime=${spec.ociRuntime}`);
       // Made to host the sandbox runtime, where the session's sandbox is on.
       if (spec.sandbox === true) flags.push(...sandboxRunArgs);
+      /*
+       * The name the host is reached under from a machine, which Docker Desktop
+       * publishes by itself and other Docker must be told: `host-gateway` is
+       * this host as a machine on its Docker sees it.
+       */
+      if (options.remote !== true && !await onDockerDesktop()) {
+        flags.push('--add-host', `${HOST_ALIAS}:host-gateway`);
+      }
       /*
        * One `-v` per entry, however many said the same one.
        *

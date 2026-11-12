@@ -179,7 +179,9 @@ it('makes the machine without a part whose volume cannot be filled, and without 
 it('takes the volumes without asking where the option switches image mounts off', async () => {
   const path = state();
   await make(runtime(path, { imageMounts: false }), 'one');
-  expect(asked(path)).toEqual([]);
+  // The one call is the Docker Desktop check behind `--add-host`, not the
+  // image store: `imageMounts: false` answers the volume route first.
+  expect(asked(path)).toEqual([['info', '--format', '{{json .}}']]);
   expect(held(path).calls.find((one) => one[0] === 'run')).toContain('ahpd-part-codex-2.1.1:/opt/ahpd/codex:ro');
 });
 

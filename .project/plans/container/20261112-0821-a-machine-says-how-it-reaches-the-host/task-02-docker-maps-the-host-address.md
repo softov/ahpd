@@ -1,6 +1,6 @@
 ---
 title: Docker maps the host address
-status: todo
+status: implemented
 depends:
   - task-01-the-port-answers-a-host-url.md
 layer: "computer, docs"
@@ -40,3 +40,13 @@ The docker runtime answers `reach` with a `host.docker.internal` URL on Docker D
 - `pnpm typecheck` and the computer suite pass.
 
 ## Resume
+
+Implemented 2026-11-12.
+The docker runtime answers `reach` from the one `docker info --format {{json .}}` that also decides image mounts.
+`docker run` carries `--add-host` on other Docker, and the router and plugin forward the answer.
+The cases are in `packages/computer/test/computer-reach.test.ts`, with the scripted `docker info` answering an operating system.
+Typecheck passes at the worktree root; no vitest was run.
+Departed from *Files*: `--add-host` is left off for a remote Docker, whose gateway is not this host.
+A dev container is made by the Dev Container CLI rather than `docker run`, so on other Docker `reach` answers nothing for it.
+Docker Desktop still answers, because the name resolves for every container there.
+See [implemented.md](implemented.md).

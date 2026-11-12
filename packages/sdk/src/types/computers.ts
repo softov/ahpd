@@ -317,6 +317,22 @@ export interface ComputerPort {
    */
   state?(id: string): Promise<'running' | 'stopped' | 'suspended' | undefined>;
   /**
+   * The URL a machine uses for an address of this host's, or nothing when it
+   * has none.
+   *
+   * A daemon on a loopback address is one a machine cannot reach: inside a
+   * container `127.0.0.1` is the container itself. Docker Desktop publishes the
+   * host as `host.docker.internal`, and a container on other Docker is given
+   * that name where the machine was made with it, so a port that knows its
+   * machines answers the URL the machine would use. An answer replaces the URL
+   * the endpoint was opened at; `undefined` is a machine with no such address,
+   * and the caller falls back to its own reading.
+   *
+   * Absent on a port whose machines have no mapped address, which is a machine
+   * off this host: a box over ssh, or another host's Docker.
+   */
+  reach?(id: string, url: string): Promise<string | undefined>;
+  /**
    * Whether a machine is off this host, so that its session runs nested.
    *
    * A machine this host did not make - a box it reaches over ssh - cannot be

@@ -2504,10 +2504,15 @@ and is passed by name on each command rather than given when the machine is
 made; one the vault cannot answer refuses that machine alone.
 
 A session in a machine is offered the host's tools only where the machine can
-reach the daemon: for now, where the endpoint's address is neither loopback nor
-a wildcard bind such as `0.0.0.0` or `::`. Otherwise they are left out and the
-log says `host tools: computer://box cannot reach the daemon at 127.0.0.1:8080,
-so they were left out`.
+reach the daemon, and the machine's own runtime is asked which URL it would
+use: Docker Desktop answers `host.docker.internal` for a loopback or a wildcard
+endpoint, and other Docker answers that name for a wildcard bind alone, since
+the machine was made with `--add-host host.docker.internal:host-gateway`. A dev
+container is answered on Docker Desktop alone, because the Dev Container CLI is
+given no such flag. A runtime with no answer leaves the endpoint's address to
+be read as before, so a loopback or wildcard endpoint is judged unreachable,
+and the log says `host tools: computer://box cannot reach the daemon at
+127.0.0.1:8080, so they were left out`.
 
 The shipped rows are `codex`, `gemini`, `copilot`, `opencode`, `kilo`, `goose`,
 `pi`, `dsh`, `devin`, `cursor`, `amp`, `qwen`, `cline` and `omp`, so

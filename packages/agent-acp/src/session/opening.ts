@@ -116,18 +116,18 @@ const addressOf = (url: string): string => {
  *
  * The host's own map, less whatever the handshake says this server cannot take,
  * plus the host's tools as one HTTP server when `hostTools` is on and the
- * session can reach them from `where` it runs. A server left out is said rather
- * than dropped, because a deployment that configured a server and watches a
- * session not reach it has no other way to find out.
+ * session can reach them from the machine it runs in. A server left out is said
+ * rather than dropped, because a deployment that configured a server and
+ * watches a session not reach it has no other way to find out.
  */
-const serversFor = (
+const serversFor = async (
   start: Start,
   own: () => ToolsEndpoint | undefined,
   capabilities: AgentCapabilities | undefined,
   hostTools: boolean,
-  where: string | undefined,
+  machine: string | undefined,
   say: (line: string) => void,
-): AcpMcpServer[] => {
+): Promise<AcpMcpServer[]> => {
   const taken: AcpMcpServer[] = [];
   const mcp = capabilities?.mcpCapabilities;
   for (const [name, one] of Object.entries(start.mcpServers ?? {})) {
@@ -168,8 +168,18 @@ const serversFor = (
   }
   const endpoint = own();
   if (endpoint === undefined) return taken;
-  if (!toolsReachable(endpoint.url, where)) {
-    say(`host tools: ${String(where)} cannot reach the daemon at ${addressOf(endpoint.url)}, so they were left out`);
+  /*
+   * The URL the machine uses for the daemon, where its port answers one.
+   *
+   * A daemon on a loopback address is out of reach from a container, and the
+   * machine's runtime is the one that knows the name it publishes the host
+   * under. An answer replaces the endpoint's own address; no answer keeps the
+   * reading below.
+   */
+  const reached = machine === undefined ? undefined : await start.computers?.reach?.(machine, endpoint.url);
+  const url = reached ?? endpoint.url;
+  if (reached === undefined && !toolsReachable(url, machine === undefined ? undefined : `computer://${machine}`)) {
+    say(`host tools: computer://${String(machine)} cannot reach the daemon at ${addressOf(endpoint.url)}, so they were left out`);
     return taken;
   }
   // ACP spells an HTTP server as a URL and a list of headers, so the token goes
@@ -177,7 +187,7 @@ const serversFor = (
   taken.push({
     type: 'http',
     name: HOST_TOOLS,
-    url: endpoint.url,
+    url,
     headers: [{ name: 'authorization', value: `Bearer ${endpoint.token}` }],
   });
   return taken;
@@ -482,12 +492,12 @@ export function createOpening(ctx: SessionContext): Opening {
        * HTTP server unless the deployment turned that off or the machine the
        * session runs in cannot reach them.
        */
-      const servers = serversFor(
+      const servers = await serversFor(
         start,
         toolsServer,
         agentCapabilities,
         options.hostTools !== false,
-        moved === undefined ? undefined : machineAsked(start),
+        moved === undefined ? undefined : machineIdOf(start),
         (line: string, level?: LogLevel) => options.log?.(line, level),
       );
       /*

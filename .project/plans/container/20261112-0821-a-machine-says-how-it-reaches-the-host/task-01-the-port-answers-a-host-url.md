@@ -1,6 +1,6 @@
 ---
 title: The port answers a host URL
-status: todo
+status: implemented
 depends: []
 layer: "sdk, agent-acp"
 refs:
@@ -33,3 +33,9 @@ refs:
 - `pnpm typecheck` and the agent-acp suite pass.
 
 ## Resume
+
+Implemented 2026-11-12.
+`reach` is on `ComputerPort`, `serversFor` asks it for a machine session and falls back to `toolsReachable`, and the two cases are in `agent-acp-catalog.test.ts`.
+Typecheck passes at the worktree root; no vitest was run.
+Departed from *Files*: `packages/sdk/src/machines/computers.ts` is not edited, because `computersFor` spreads the port and `reach` already passes through.
+See [implemented.md](implemented.md).
