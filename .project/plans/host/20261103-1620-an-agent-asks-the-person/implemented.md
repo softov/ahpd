@@ -25,4 +25,4 @@ An agent asks the person questions in the chat with the host's `ask_user` tool, 
 
 ## Left for later
 
-- The same check on Windows and macOS, in `host-1620-terminal-tool-checks.md`.
+- The same check passed on Windows on 2026-11-12. macOS was not run, and the check closed on 2026-11-12 on Softov's word.

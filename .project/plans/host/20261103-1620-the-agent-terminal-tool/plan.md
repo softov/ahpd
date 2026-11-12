@@ -118,7 +118,7 @@ model calls bash -> backend runs the bound tool with { toolCallId, opened } -> s
 ## Resume state
 
 - **Done so far:** built in #211, and Softov checked it by hand on Linux on 2026-11-04. See [implemented.md](implemented.md).
-- **Next action:** the check on Windows and macOS in [host-1620-terminal-tool-checks.md](../../../pending/host-1620-terminal-tool-checks.md).
+- **Next action:** none. The check by hand does not apply on Windows, where the host never offers the tool, as VS Code does not; macOS was not run, and the check closed on Softov's word.
 
 ## Final verification checklist
 

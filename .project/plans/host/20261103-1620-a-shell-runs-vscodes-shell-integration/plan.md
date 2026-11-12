@@ -107,7 +107,7 @@ pty data -> screen port (alternate screen, paste mode, cursor answer) -> read: O
 ## Resume state
 
 - **Done so far:** built in #209, and Softov checked it by hand on Linux on 2026-11-04. See [implemented.md](implemented.md).
-- **Next action:** the check on Windows and macOS in [host-1620-terminal-tool-checks.md](../../../pending/host-1620-terminal-tool-checks.md).
+- **Next action:** none. The check by hand passed on Windows on 2026-11-12, in PowerShell; macOS was not run, and the check closed on Softov's word.
 
 ## Final verification checklist
 

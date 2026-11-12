@@ -54,7 +54,6 @@ Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 - [windows-machine-paths-checks.md](windows-machine-paths-checks.md) - the Windows 10 VM with Docker Desktop, 30 min.
 - [daemon-41-windows-checks.md](daemon-41-windows-checks.md) - Windows with Bun 1.3.14 and 1.3.13, 45 min.
 - [devcontainer-checks.md](devcontainer-checks.md) - VS Code on Windows, your daemon on main with the `devtunnel` connector signed in to that VS Code's GitHub account, 45 min.
-- [host-1620-terminal-tool-checks.md](host-1620-terminal-tool-checks.md) - a Mac, 20 min. It passed on Linux, and on Windows on 2026-11-12.
 - [macos-service-checks.md](macos-service-checks.md) - a Mac, the launchd sections, 25 min.
 - [macos-checks.md](macos-checks.md) - a Mac with VS Code, 90 min. Its Safari push section needs ahpw over https, such as the system tunnel.
 - [vm-01-dev02-libvirt.md](vm-01-dev02-libvirt.md) - dev02 with sudo, and a choice on the iptables rules, 15 min.

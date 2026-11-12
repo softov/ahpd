@@ -25,4 +25,4 @@ A shell that a person or an agent opens runs VS Code's shell integration. A clie
 
 ## Left for later
 
-- The same check on Windows and macOS, in `host-1620-terminal-tool-checks.md`.
+- The same check passed on Windows on 2026-11-12, in PowerShell. macOS was not run, and the check closed on 2026-11-12 on Softov's word.

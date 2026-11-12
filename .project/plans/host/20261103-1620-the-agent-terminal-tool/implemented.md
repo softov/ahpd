@@ -25,4 +25,4 @@ An agent runs its shell commands in terminals the session holds, behind the root
 
 ## Left for later
 
-- The same check on Windows and macOS, in `host-1620-terminal-tool-checks.md`.
+- The same check does not apply on Windows, where the host never offers the tool, as VS Code does not. macOS was not run, and the check closed on 2026-11-12 on Softov's word.
