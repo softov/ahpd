@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { MACHINE_OBJECTS } from '../src/gitdir.js';
+import { dockerRuntime } from '../src/runtime.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
@@ -78,6 +79,10 @@ interface Held {
   commands?: { id: string; user?: string; workdir?: string; env: Record<string, string>; command: string[] }[];
   /** What one command is answered with, by the word it contains. */
   answers?: { when: string; out?: string; file?: string; err?: string; code?: number }[];
+  /** Each volume's files, their text and their owners, as a `cp -a` left them. */
+  volumes?: Record<string, { files: string[]; contents?: Record<string, string>; owners?: Record<string, string> }>;
+  /** The paths of each `cp -a` archive that landed in a volume. */
+  copiedIn?: string[][];
   failRun?: boolean;
 }
 
@@ -2494,15 +2499,85 @@ it('gives a machine a copy of the tree where the profile says sessionTree copy',
   expect(box.labels?.['ahpd.git']).toBe('fetch');
 
   // The seed makes that git directory inside the volume, at the tree's own
-  // `.git`, with the tree's own branch, commit and identity - and checks the
-  // working tree out with `reset --hard`, since the tree in there is the
-  // volume's own and holds nothing yet.
+  // `.git`, and checks the working tree out with `reset --hard`, since the tree
+  // in there is the volume's own and holds nothing yet.
+  const at = `${machinePathOf(repo)}/.git`;
   const seeded = (held(state).commands ?? []).map((one) => one.command.join(' '));
-  expect(seeded).toContain(`git --git-dir=${machinePathOf(repo)}/.git --work-tree=${machinePathOf(repo)} reset --hard -q`);
-  expect(seeded).toContain(`git --git-dir=${machinePathOf(repo)}/.git --work-tree=${machinePathOf(repo)} config user.email test@example.com`);
+  expect(seeded).toContain(`git --git-dir=${at} --work-tree=${machinePathOf(repo)} reset --hard -q`);
+  /*
+   * Its identity, its reading of the tree and its branch are not commands at
+   * all: they are the `config` and `HEAD` files, in the one archive that also
+   * carries `objects/info/alternates`. So the seed is three `git` commands and one
+   * `cp -a`, where it was six commands and a copy.
+   */
+  const seedCommands = seeded.filter((one) => one === `git init --bare -q ${at}` || one.startsWith(`git --git-dir=${at} `));
+  expect(seedCommands).toHaveLength(3);
+  expect(seedCommands.some((one) => one.includes(' config '))).toBe(false);
+  expect(seedCommands.some((one) => one.includes(' symbolic-ref '))).toBe(false);
+  expect(held(state).calls.filter((one) => one.join(' ') === `cp -a - ${box.name}:${at}`)).toHaveLength(1);
+
+  // The file git reads in the machine answers what the host's own `config`
+  // answers, for every key the seed writes.
+  const volume = held(state).volumes?.[`ahpd-git-${box.name}`];
+  const file = join(dir, 'seeded-config');
+  writeFileSync(file, volume?.contents?.['.git/config'] ?? '');
+  const inMachine = (key: string): string => execFileSync('git', ['config', '--file', file, '--get', key], { encoding: 'utf8' });
+  const onHost = (key: string): string => execFileSync('git', ['-C', repo, 'config', '--get', key], { encoding: 'utf8' });
+  for (const key of ['core.repositoryformatversion', 'core.filemode', 'core.bare', 'user.name', 'user.email']) {
+    expect(inMachine(key)).toBe(onHost(key));
+  }
+  // The branch is the tree's, named in `HEAD` as git names it.
+  expect(volume?.contents?.['.git/HEAD']).toBe('ref: refs/heads/main\n');
+  // And every entry is the machine user's, since that is who its git runs as.
+  if (ME !== undefined) expect(volume?.owners?.['.git/config']).toBe(ME);
   // Which `shared` never does: the tree there is the host's own folder.
   const boundSeeded = (held(boundState).commands ?? []).map((one) => one.command.join(' '));
   expect(boundSeeded.some((one) => one.includes('reset --hard'))).toBe(false);
+});
+
+/*
+ * The ids a machine's user has, read from the machine in one `id`.
+ *
+ * The disposable profile runs its machine as the host user, spelled
+ * `<uid>:<gid>`, so the ids come from the spec and the machine is never asked.
+ * This machine names a user instead, which is the route `idsOfMachine` has to
+ * ask about: one `id` prints both numbers, where `id -u` and `id -g` were two
+ * calls. Its answer is what the seed's volume is handed to.
+ */
+it('reads a named user\'s ids in one `id`, and owns the seed by them', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  writeFileSync(state, JSON.stringify({ machines: [], calls: [], users: { node: { uid: 1000, gid: 1000 } } }));
+  const { repo, gitDir } = repositoryUnder(join(dir, 'project'));
+  const runtime = dockerRuntime({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    label: 'ahpd.computer=1',
+  });
+
+  await runtime.run({
+    name: 'named',
+    image: 'node:22',
+    label: 'ahpd.computer=1',
+    folder: repo,
+    repository: repo,
+    gitDir,
+    user: 'node',
+  });
+
+  const record = held(state);
+  const asked = (record.commands ?? []).filter((one) => one.command[0] === 'id');
+  expect(asked.map((one) => one.command)).toEqual([['id']]);
+  expect(asked[0]?.user).toBe('node');
+  // What it answered is where the volume is handed: one `chown`, as root.
+  expect((record.commands ?? []).find((one) => one.command[0] === 'chown')?.command)
+    .toEqual(['chown', '1000:1000', machinePathOf(gitDir)]);
+  // And the archive's files are owned by those ids, not by root.
+  const volume = record.volumes?.['ahpd-git-named'];
+  expect(volume?.owners?.config).toBe('1000:1000');
+  expect(volume?.owners?.HEAD).toBe('1000:1000');
+  expect(volume?.owners?.['objects/info/alternates']).toBe('1000:1000');
 });
 
 /*

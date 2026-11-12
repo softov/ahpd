@@ -58,7 +58,7 @@ run -> seedGit -> chown, init --bare, config core.bare, cp -a alternates -> chec
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The seed writes config and HEAD](task-01-the-seed-writes-config-and-head.md) | todo | - |
+| [01 - The seed writes config and HEAD](task-01-the-seed-writes-config-and-head.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -67,10 +67,10 @@ run -> seedGit -> chown, init --bare, config core.bare, cp -a alternates -> chec
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-seed-writes-config-and-head.md](task-01-the-seed-writes-config-and-head.md).
+- **Done so far:** task-01 is implemented: the seed writes `config` and `HEAD` in the `docker cp -a` archive, and `idsOfMachine` reads uid and gid from one `id`.
+- **Next action:** review and merge the PR, then the [Windows check](../../../pending/windows-machine-paths-checks.md).
 - **Open questions:** none.
-- **Watch out for:** `core.bare false` must be in the written `config`, since its own exec goes.
+- **Watch out for:** the written `config` holds the three keys `git init --bare` writes, with `core.bare` false and no `logallrefupdates`.
 
 ## Final verification checklist
 

@@ -23,7 +23,7 @@ import { codeRouteOf } from './clone.js';
 import { MACHINE_GIT, seedOf } from './gitdir.js';
 import { forgetHost, machineKey, runKeygen } from './keys.js';
 import type { Keygen, MachineKey } from './keys.js';
-import { bringBack, bundledInto, checkedOut, fetchedInto, followOfCopy, keepUncommitted } from './machinegit.js';
+import { bringBack, bundledInto, checkedOut, configured, fetchedInto, followOfCopy, keepUncommitted } from './machinegit.js';
 import type { FarSeed, MachineGit } from './machinegit.js';
 import {
   bytesOf,
@@ -416,13 +416,20 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
     };
     // `root` is the tree's path in the VM, and `seedOf` reads the host's tree at the same path.
     const seed = seedOf(hostPathOf(root));
+    const own = [`--git-dir=${at}`, `--work-tree=${root}`];
     await must(['sudo', 'install', '-d', '-o', user, '-g', user, root]);
     await must(['git', 'init', '--bare', '-q', at]);
     await must(['git', `--git-dir=${at}`, 'config', 'core.bare', 'false']);
     const commit = codeRouteOf(spec) === 'clone'
       ? await fetchedInto(far, root, at, seed.branch)
       : await bundledInto(far, root, at);
-    await checkedOut(must, [`--git-dir=${at}`, `--work-tree=${root}`], seed, commit, true);
+    /*
+     * The identity and the branch, one command each. A Docker machine gets
+     * them in its seed's archive; a VM has no copy of this host's to write
+     * through, so its seed is the commands they were.
+     */
+    await configured(must, own, seed);
+    await checkedOut(must, own, seed, commit, true);
   };
 
   /** Wait for a booted VM's address, then its ssh, then its cloud-init, and answer its reach. */
