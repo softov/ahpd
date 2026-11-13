@@ -10,7 +10,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 ## Left
 
-1. *0.15.0-rc.2*: Softov makes `ghcr.io/ahpio/ahpd` public once, as [docker-image-first-push.md](docker-image-first-push.md) says.
+1. *0.15.0-rc.2*: Softov makes the 17 part packages public, as [docker-image-first-push.md](docker-image-first-push.md) says. The `ahpd` image is public.
 2. *Before 0.15.0*:
    - A working day on the daemon, and the checks by hand.
    - The digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md).

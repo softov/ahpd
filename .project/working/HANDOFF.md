@@ -101,7 +101,7 @@ Its notepad is [release-run.md](release-run.md), its agent tests are in [release
 
 - What 0.15.0 needs is in [pending/release.md](../pending/release.md#left).
 - `0.15.0-rc.2` is tagged with the machine parts pulled by tag. The digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md) comes before 0.15.0 (Softov, 2026-11-12).
-- The GHCR package `ghcr.io/ahpio/ahpd` is private until he makes it public once. It holds `edge`, `0.15.0-rc.2` and `next` now. Its visibility was not read: the `gh` token has no `read:packages`.
+- `ghcr.io/ahpio/ahpd` is public since 2026-11-12. The 17 part packages of the release are private, and a host cannot pull them: [pending/docker-image-first-push.md](../pending/docker-image-first-push.md) lists them. An anonymous token from `https://ghcr.io/token?scope=repository:<name>:pull&service=ghcr.io` reads a manifest to check one.
 - `edge.yml` has no paths filter, so a plan-only push to main builds the edge image. A `paths-ignore` is suggested.
 - The API keys in his private env file were shown in a chat on 2026-11-11. He rotates them.
 - The grant role editor in ahpw shows the new subjects of #205. Nobody has opened it in a browser.

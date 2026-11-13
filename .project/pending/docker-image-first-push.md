@@ -1,20 +1,25 @@
 ---
-title: Make the ahpd image public after its first push
+title: Make the ahpd image and the parts public after their first push
 plans:
   - plans/daemon/20261110-0947-a-release-pushes-the-image/plan.md
 ---
 
-# Make the ahpd image public after its first push
+# Make the ahpd image and the parts public after their first push
 
-`release.yml` pushes `ghcr.io/<owner>/ahpd` for `linux/amd64` and `linux/arm64` once the release checks pass, and `edge.yml` pushes `edge` from each push to `main`. A new package is private the first time, which is GitHub's default. Nobody else can pull the image until it is made public once on its package page: https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility
+`release.yml` pushes `ghcr.io/<owner>/ahpd` for `linux/amd64` and `linux/arm64` once the release checks pass, and `edge.yml` pushes `edge` from each push to `main`. Its `parts` job pushes each machine part to `ghcr.io/<owner>/ahpd-part/<id>`, and the joined image to `ghcr.io/<owner>/ahpd-agents`. A new package is private the first time, which is GitHub's default. Nobody else can pull it until it is made public once on its package page: https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility
 
-The package exists now: Edge run 43315911087 pushed `ghcr.io/ahpio/ahpd:edge` and `sha-2a04b74` on 2026-11-12. Its visibility was not read, because the `gh` token here has no `read:packages`.
+A host pulls a part with no sign-in, in `packages/computer/src/parts.ts`. When the pull fails, it uses an earlier image of the part that it holds. A host with no earlier image cannot make a machine that needs the part.
+
+## Status on 2026-11-12
+
+- `ghcr.io/ahpio/ahpd` is public. Softov made it public after release run 43354150219, and an anonymous read of `0.15.0-rc.2`, `next` and `edge` answers 200.
+- The 17 packages of the `parts` job answer 403 to an anonymous read. They are `ahpd-agents` and these 16 under `ahpd-part/`: `ahpd`, `node`, `claude`, `codex`, `copilot`, `gemini`, `cursor`, `devin`, `amp`, `goose`, `opencode`, `qwen`, `kilo`, `pi`, `copapo` and `dsh`.
 
 ## Steps
 
-1. Open the `ahpd` package page under the `ahpio` organization's packages.
-2. Set the package's visibility to public.
-3. Pull the image from a machine that is not signed in to GHCR: `docker pull ghcr.io/ahpio/ahpd:edge`.
+1. Open the `ahpio` organization's packages.
+2. For each of the 17 packages above, open its page and set its visibility to public.
+3. Tell Claude. Claude reads each one with no sign-in, and a 200 for each passes the check.
 
 ## When npm rejects the release
 
