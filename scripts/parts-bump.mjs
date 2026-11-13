@@ -136,9 +136,20 @@ const orderOf = (one, two) => {
     if (a.pre.length === b.pre.length) return 0;
     return a.pre.length === 0 ? 1 : -1;
   }
-  for (let at = 0; at < Math.max(a.pre.length, b.pre.length); at++) {
-    const x = a.pre[at];
-    const y = b.pre[at];
+  return tagOrder(a.pre, b.pre);
+};
+
+/**
+ * How two prerelease tags of the same core order, as semver orders them, each
+ * given as its dot-separated identifiers: `1` when `one` is the higher, `-1`
+ * when `two` is, `0` when they are the same. A number is lower than a word, and
+ * a tag that is a prefix of the other is the lower one (`rc` before `rc.1`).
+ * https://semver.org/#spec-item-11
+ */
+const tagOrder = (one, two) => {
+  for (let at = 0; at < Math.max(one.length, two.length); at++) {
+    const x = one[at];
+    const y = two[at];
     if (x === undefined) return -1;
     if (y === undefined) return 1;
     if (x === y) continue;
@@ -172,15 +183,18 @@ const shaOf = async (url) => {
  * compares as a string, which is why the version is put to `EXACT` before it is
  * written: a feed that answers `latest` compares as newer than any version.
  *
- * A prerelease is never what a part moves to. It is a version somebody is still
- * working on, and moving to one would make every host that took the bump build
- * an agent that may still change under the same version - the release it is a
- * candidate for proposes itself a while later.
+ * A part on a release never moves to a prerelease. A prerelease is a version
+ * somebody is still working on, and moving to one would make every host that
+ * took the bump build an agent that may still change under the same version -
+ * the release it is a candidate for proposes itself a while later. A part that
+ * is already on a prerelease was put there by hand, so it follows that line: to
+ * a newer prerelease, or to a release. Two prereleases of one core compare by
+ * their tags (`0.2.0-rc.3` follows `0.2.0-rc.2`).
  */
 const newerThan = (next, held) => {
-  const [one, tagOne = ''] = String(next).replace(/^v/, '').split('-');
-  const [two, tagTwo = ''] = String(held).replace(/^v/, '').split('-');
-  if (tagOne !== '') return false;
+  const [one, tagOne] = halvesOf(next);
+  const [two, tagTwo] = halvesOf(held);
+  if (prereleaseRefused(next, held)) return false;
   if (one !== two) {
     const left = one.split('.');
     const right = two.split('.');
@@ -194,8 +208,19 @@ const newerThan = (next, held) => {
       return Number(a) > Number(b);
     }
   }
-  return tagTwo !== '';
+  if (tagOne === '') return tagTwo !== '';
+  return tagOrder(tagOne.split('.'), tagTwo.split('.')) > 0;
 };
+
+/** A version's core and its prerelease tag, the tag empty for a release. */
+const halvesOf = (version) => {
+  const plain = String(version).replace(/^v/, '');
+  const at = plain.indexOf('-');
+  return at < 0 ? [plain, ''] : [plain.slice(0, at), plain.slice(at + 1)];
+};
+
+/** Whether `next` is a prerelease offered to a part on a release, which never moves to one. */
+const prereleaseRefused = (next, held) => halvesOf(next)[1] !== '' && halvesOf(held)[1] === '';
 
 /** What one part moves to, or the line that says why it does not. */
 const bumpOf = async (part, entries) => {
@@ -221,6 +246,9 @@ const bumpOf = async (part, entries) => {
   if (part.kind === 'npm') {
     const version = entry?.version ?? npmVersion(part.packages[0]);
     if (version === undefined) return { skipped: `npm says nothing about ${part.packages[0]}` };
+    if (prereleaseRefused(version, part.version)) {
+      return { skipped: `the feed has ${version}, a prerelease, and ${part.id} is on a release` };
+    }
     if (!newerThan(version, part.version)) {
       return { skipped: `the feed has ${version}, which is not newer than ${part.version}` };
     }
@@ -230,6 +258,9 @@ const bumpOf = async (part, entries) => {
 
   if (part.kind !== 'archive') return { skipped: `a ${part.kind} part is fed by nothing here` };
   if (entry === undefined) return { skipped: 'not in the registry, and its url is a template rather than a feed' };
+  if (prereleaseRefused(entry.version, part.version)) {
+    return { skipped: `the registry has ${entry.version}, a prerelease, and ${part.id} is on a release` };
+  }
   if (!newerThan(entry.version, part.version)) {
     return { skipped: `the registry has ${entry.version}, which is not newer than ${part.version}` };
   }
