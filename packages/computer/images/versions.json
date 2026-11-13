@@ -20,7 +20,7 @@
     "id": "ahpd",
     "name": "ahpd",
     "kind": "ahpd",
-    "version": "0.15.0-rc.2",
+    "version": "0.15.0-rc.3",
     "requires": ["node"],
     "plugins": ["@ahpd/agent-cofold", "@ahpd/agent-pi"],
     "bin": ["ahpd"]
@@ -29,7 +29,7 @@
     "id": "claude",
     "name": "Claude",
     "kind": "npm",
-    "version": "0.106.0",
+    "version": "0.107.0",
     "requires": ["node"],
     "packages": [
       "@agentclientprotocol/claude-agent-acp",
@@ -59,7 +59,7 @@
     "id": "copilot",
     "name": "Copilot",
     "kind": "npm",
-    "version": "1.0.110",
+    "version": "1.0.111",
     "requires": ["node"],
     "packages": ["@github/copilot"],
     "updates": { "COPILOT_AUTO_UPDATE": "false" },
@@ -69,15 +69,15 @@
     "id": "opencode",
     "name": "OpenCode",
     "kind": "archive",
-    "version": "2.2.7",
+    "version": "2.3.0",
     "archives": {
       "linux-x64": {
-        "url": "https://github.com/anomalyco/opencode/releases/download/v2.2.7/opencode-linux-x64.tar.gz",
-        "sha256": "89a6cee227b54bc011179c528a5e63176032462b1a5e21723b616801cddc2ca7"
+        "url": "https://github.com/anomalyco/opencode/releases/download/v2.3.0/opencode-linux-x64.tar.gz",
+        "sha256": "fc0f81522aceeabac47693d88389efa2bc517ce74c2c38fd6967819fcc6e4d3b"
       },
       "linux-arm64": {
-        "url": "https://github.com/anomalyco/opencode/releases/download/v2.2.7/opencode-linux-arm64.tar.gz",
-        "sha256": "c1682057f0815cb2abdd6e00305f1146ebaf1c167f0335cdb74ddc80008120e7"
+        "url": "https://github.com/anomalyco/opencode/releases/download/v2.3.0/opencode-linux-arm64.tar.gz",
+        "sha256": "3207fb5cdec448d479242c0f1a14f4f7bdfcad3a79209b5eb8f9003725e93711"
       }
     },
     "updates": { "OPENCODE_DISABLE_AUTOUPDATE": "1" },
@@ -125,7 +125,7 @@
     "id": "dsh",
     "name": "dsh",
     "kind": "npm",
-    "version": "0.2.0-rc.2",
+    "version": "0.2.2-rc.1",
     "requires": ["node"],
     "packages": ["@deepseek-ai/dsh"],
     "bin": ["dsh"]
