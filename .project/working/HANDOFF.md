@@ -10,8 +10,8 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## Main
 
 - The last stable release is 0.14.0 (`v0.14.0`). `v0.15.0-rc.3` is tagged on `28dd315e0` (#320). Its release run 43394827388 passed `parts`, `release` and `image` on 2026-11-13, and staged the 13 packages under `next`. Softov approved them on 2026-11-13, and npm serves `0.15.0-rc.3` under `next` since 14:36 UTC. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
-- Main's last merge is #320 (`28dd315e0`), the bump to `0.15.0-rc.3`. No PR is open. The last plan commit is `b04536ce8`, the three bot plans.
-- The steps after the rc.3 release run are in *rc.3, after its release run* of [pending/release.md](../pending/release.md#left). The run, the digest check and the approval are done. Main's CI run 43442023450 passed `image` on its second rerun after the approval, with `check` and `check-windows` green. The first rerun, a minute after npm served rc.3, still found no `@ahpd/sdk@0.15.0-rc.3`. The next step is the ghcr check of the parts of #318.
+- Main's last merge is #323 (`271c212d9`). #321 to #324 merged on 2026-11-13, after the rc.3 release. No PR is open.
+- The steps after the rc.3 release run are in *rc.3, after its release run* of [pending/release.md](../pending/release.md#left). The run, the digest check, the approval and the ghcr check of the parts of #318 are done: 17 of 17 digests match. Softov makes `compclau` again, and the parts bump PR waits for his word.
 - The staged `@ahpd/computer@0.15.0-rc.3` holds `images/digests.json` with 17 entries, `ahpd-agents` and 16 parts, the first tag run of #315. Its step logs `tar: stdout: write error`, from `grep -q` closing the pipe. That is harmless now, and it turns the check over if the step ever runs under `pipefail`.
 - #318 (`de1924b99`) is the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushes the branch and the PR is opened by hand.
 - #317 (`e338a1c98`): a piece shows its host mark again. Softov accepted the icons and marks on 2026-11-13, the Postgres mark among them.
@@ -27,7 +27,8 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## The dev daemon
 
 - Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`, on ports 5180 and 37537. It runs from `src`, so a restart is all a merge needs. It needs `DEEPSEEK_API_KEY` in its environment. Never restart it or use its ports yourself.
-- Softov restarted it on 2026-11-13 after #317, from `/github/ahpd` at main. #319 and #320 change no daemon code, so they need no restart.
+- Softov restarted it on 2026-11-13 after #317. #321, #322 and #323 change the daemon, and #324 changes tests only.
+- A restart brings the bot talk, bots on a host with no users, and the operations in the client's language.
 - `/github/ahpd` is a shared checkout. Work in a worktree from `origin/main` under `/github/ahpd.worktrees/`.
 - A test daemon for checks: `source .project/pending/test-daemon.sh`, on port 39200, with its token at `~/ahpd-check/token`. Check `ss -ltnp` before you start one, and stop it by pid.
 
@@ -72,7 +73,8 @@ Remove each only on Softov's word.
 - `pr302-check`: detached at #302's head, merged.
 - Ten `build-agents-*` worktrees, each on a branch that is on main: the plans of #301 to #310. Their daemon sessions stay.
 - `release-report`: detached, for plan-only commits of the release check.
-- `bot-talk`: branch `bots/20261113-0817-a-bot-talk-is-one-session`, from `b04536ce8`, where the three bot plans are built.
+- `bot-talk`, `bot-no-users`, `op-text` and `dc-listing`: the branches of #321, #322, #323 and #324, each merged.
+- `parts-bump`: branch `parts-bump-20261113-2`, pushed, with no PR yet.
 - `ahpd-part-bump`: the branch of #316, merged.
 - `piece-marks`: the branch of #317, merged.
 - `prerelease-part` and `release-rc3`: the branches of #319 and #320, merged.
@@ -91,24 +93,19 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
 - plugin/20261113-0534, a piece shows its host mark again: #317.
 - container/20261113-0721, a part on a prerelease takes a newer prerelease: #319.
 - container/20261113-0507, the ahpd part follows the last release: #316.
+- #321: bots/20261113-0817-a-bot-talk-is-one-session-with-back-chats, host/20261113-0817-an-agent-sets-a-new-sessions-folder and host/20261113-0817-a-plugin-chat-has-an-origin-and-tools. They close after [pending/bot-talk-checks.md](../pending/bot-talk-checks.md).
+- bots/20261113-1959, a bot answers on a host with no users: #322.
+- host/20261113-2009, an operation reads plain in the client's language: #323.
+- container/20261113-2134, dev container cases wait for the first listing: #324.
 - container/20261113-0408, a part is pulled by its digest: #315. Dry run 43367407253 on its branch passed on 2026-11-13, with `parts`, `release` and `image` each after the one before. Its first tag run checks the artifact steps, which a dry run skips.
 
 ## Next
 
-- The three bot plans of `b04536ce8` are `planned`, and this session builds them in `bot-talk` (Softov, 2026-11-13): host/20261113-0817-an-agent-sets-a-new-sessions-folder, host/20261113-0817-a-plugin-chat-has-an-origin-and-tools, then bots/20261113-0817-a-bot-talk-is-one-session-with-back-chats. One PR at the end.
-  - All nine tasks of the three plans are `implemented` in `bot-talk`, not committed, on 2026-11-13. The sdk, computer, bot, webhook and server suites pass, and `pnpm typecheck` passes. The PR text waits for Softov.
-  - A computer that the agent names skipped the door's `computer:write`, because the door reads only the client's config. The branch checks it after the hook.
-  - The checks by hand after the merge are [pending/bot-talk-checks.md](../pending/bot-talk-checks.md), on the branch: a real restart, ahpw, VS Code and the webhook.
-  - Softov's first run made about 45 Back chats in one session. First, the Back went to `bot-chat` itself, the first agent in load order. Then `bot-chat` reopened the open Front turn in every new chat. Both are fixed in the branch, and a record that names `bot-chat` is refused. The test daemon showed one Back on `claude` after the fix.
-  - A talk is now kept by the session's owner, through the new `Start.owner`. Every root owner is one talker, `root` (Softov, 2026-11-13, "Count by owner").
-  - Found on main: [the chats of a bot talk share one log](../problems/the-chats-of-a-bot-talk-share-one-log.md). A bot never answered on a host with no users, and [bots/20261113-1959](../plans/bots/20261113-1959-a-bot-answers-on-a-host-with-no-users/plan.md) fixes it.
-  - Gumbo and ember in Softov's `~/.config/ahpd/bots` now name `provider: claude`, at his request.
-  - With `policies.check` on, Telly's Back turn was refused as `plugin:bot`. The branch now checks a plugin's turn in a session it does not own as the session owner's (Softov, 2026-11-13).
-  - A Back chat is titled `@main/<bot>/<person>`, with `main` fixed for now (Softov, 2026-11-13). The host name in `root:<host>` is `os.hostname()`, and nothing sets it yet.
-  - Ember's timer hung: a subagent of the Back asked to run `Bash`, and the host sent the approval to the session's lead, `bot-chat`. The branch now sends it to the backend of the chat that started the worker, `workerLead`. The test daemon ran the subagent's `Bash` after the fix.
-  - The Back now reaches its Front at any time (Softov, 2026-11-13, "In bot-talk now"). A post, a question or a Back turn of its own opens a bot turn with origin `agent` where no Front turn waits. A subagent messages its Back with `send_message`. The test daemon showed ticks, an approval and the Back's reply in the Front after the Front turn ended.
-  - The branch is pushed at `5daf5d01e` (`da032cc1f` and the fix after it). No PR is open yet; its text waits for Softov.
-  - A subagent's question was not copied to the Front, because the wake knows only Back chats. `ask.ts` now walks the worker's origin up to its Back. The test daemon showed the question in the Front, and the approval there ran the command.
+- The bot talk is merged: #321, then #322 for a host with no users. What was fixed and why is in the plans' Resume states and implemented records.
+  - Found on main: [the chats of a bot talk share one log](../problems/the-chats-of-a-bot-talk-share-one-log.md).
+  - A Back chat is titled `@main/<bot>/<person>`, with `main` fixed for now (Softov, 2026-11-13). The host name in `root:<host>` is `os.hostname()`, and nothing sets it yet; see [briefs/the-root-owner-has-a-fixed-host-name.md](../briefs/the-root-owner-has-a-fixed-host-name.md).
+  - Gumbo and ember in Softov's `~/.config/ahpd/bots` name `provider: claude`, at his request.
+- #323, the operations in the client's language, is merged on 2026-11-13, as `271c212d9`, after #324 fixed three dev container cases that fail at random. The plans close on Softov's word.
 - AHP 1.1.0 is on npm since 2026-11-13, and goes in 0.16 (Softov, 2026-11-13). 0.15.0 stays on AHP 1.0.0. The first 0.16 work is a new read of host/117 against 1.1.0, as [pending/release.md](../pending/release.md#not-in-this-release) says.
 - ahpc's `cli/20261112-0821-create-session-waits-on-progress`, in the ahpc repository, can be built. A create that makes no machine sends no progress, so ahpc keeps its timeout for it.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`. Softov chose deletion as VS Code does. Its Resume state holds the research and two questions before task 01 is rewritten.

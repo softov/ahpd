@@ -12,14 +12,17 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 1. *rc.3, after its release run*:
    - The parts of #318 are on ghcr at their new tags. Softov makes `compclau` again and runs a Claude session in it.
-   - Run `parts-bump.yml` by hand. It proposes the ahpd part at `0.15.0-rc.3` and dsh at `0.2.2-rc.1`. Actions may not open a PR here, so open it from the pushed branch.
+   - The parts bump is pushed as branch `parts-bump-20261113-2` (`1e071b521`): the ahpd part at `0.15.0-rc.3`, claude 0.107.0, copilot 1.0.111, opencode 2.3.0 and dsh 0.2.2-rc.1. Its PR, "parts: a bump is available", is opened by hand on Softov's word. The merged branch `parts-bump-20261113` of #318 is still on the remote and blocks a run of `parts-bump.yml` on the same day.
 2. *Before 0.15.0*:
    - A working day on the daemon, and the checks by hand.
-   - The host's own version for the ahpd part is [briefs/the-ahpd-part-is-the-releases-own-build.md](../briefs/the-ahpd-part-is-the-releases-own-build.md), for 0.16.
-   - Plain text for each operation, sent in the client's language: *Operations* in [briefs/the-text-a-person-reads-is-plain.md](../briefs/the-text-a-person-reads-is-plain.md#operations).
 
 ## Done
 
+- **After rc.3.** Four PRs merged on 2026-11-13:
+  - PR #321 makes a bot talk one session, with a Back chat for each bot and person.
+  - PR #322 lets a bot answer on a host with no users.
+  - PR #323 sends each operation's text plain, in the client's language.
+  - PR #324 fixes three dev container cases that failed at random on Windows.
 - **The rc.3 approval.** Softov approved the 13 staged packages on 2026-11-13, and npm serves `0.15.0-rc.3` under `next`. Main's CI run 43442023450 passed `image` on its second rerun after that.
 - **The rc.3 release run.** Run 43394827388 passed `parts`, `release` and `image` on 2026-11-13. It passed 9697 tests and staged the 13 packages under `next`. The staged `@ahpd/computer` holds `images/digests.json` with 17 entries, the first tag run of the digest pin of #315 ([container/20261113-0408](../plans/container/20261113-0408-a-part-is-pulled-by-its-digest/plan.md)).
 - **The rc.3 bump.** #320 sets `0.15.0-rc.3` and holds the notes for #315 to #319. Dry run 43389493385 passed `parts`, `release` and `image`. Its PR's `image` job failed only on `@ahpd/sdk@0.15.0-rc.3`, which npm does not serve yet.
@@ -52,7 +55,6 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 ## Before 0.15.0
 
 - **A working day.** Softov uses the daemon on main for one working day: ahpw, VS Code, ahpc, bots, sessions and the tunnel. A fault is a problem file or a fix before 0.15.0.
-  - The canvas example in a VS Code built on AHP 1.1.0. AHP 1.1.0 renames the experimental `CanvasState.url` to `uri`, and ahpd's canvases still send `url`.
 - **The Compose tag.** The bump sets the default `AHPD_TAG` in [docker/compose.yaml](../../docker/compose.yaml). A stable version takes its `X.Y`, such as `0.15`, and a pre-release takes the full version. The tag check in `release.yml` refuses a tag that the file does not name. The image and the parts on `ghcr.io/ahpio` are public since 2026-11-12.
 - **The checks by hand.** [triage.md](triage.md) orders them. The ones for features a user meets first:
   - [cofold-resume-checks.md](cofold-resume-checks.md). The Claude resume passed on 2026-11-09, and the pi resume on 2026-11-10.
@@ -64,6 +66,8 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 ## Not in this release
 
 - **AHP 1.1.0.** 0.15.0 speaks AHP 1.0.0, as rc.2 does, and AHP 1.1.0 goes in 0.16 (Softov, 2026-11-13). `@microsoft/agent-host-protocol@1.1.0` is on npm since 2026-11-13. Plan host/117 covers four of its changes and was read against the protocol on 2026-10-22, so 0.16 starts with a new read of it.
+- **The canvas `url`.** AHP 1.1.0 renames the experimental `CanvasState.url` to `uri`, and ahpd's canvases still send `url`. It goes in 0.16 with AHP 1.1.0 (Softov, 2026-11-13).
+- **The ahpd part as the release's own build.** [briefs/the-ahpd-part-is-the-releases-own-build.md](../briefs/the-ahpd-part-is-the-releases-own-build.md) goes in 0.16 (Softov, 2026-11-13).
 - MayCXC's `host/124-an-agents-shell-is-a-terminal-the-person-sees` is not merged. Main has its features from the four host/20261103-1620 plans.
 - `plans.mjs` lists the `active` and `draft` plans. None is needed for the release.
 
