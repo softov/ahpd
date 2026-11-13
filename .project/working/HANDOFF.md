@@ -10,8 +10,9 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## Main
 
 - The last stable release is 0.14.0 (`v0.14.0`). `0.15.0-rc.2` is on npm `next` (`v0.15.0-rc.2`, on `8db0b85b5`), the first release from `ahpio/ahpd`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
-- Main's last code merge is #317 (`e338a1c98`): a piece shows its host mark again, plan plugin/20261113-0534. Softov curates the new Postgres mark in [pending/plugin-58-icon-curation.md](../pending/plugin-58-icon-curation.md). No PR is open.
-- #316 (`58d8e6e68`) moves the ahpd part to the last release on npm. Run `parts-bump.yml` by hand to propose `0.15.0-rc.2` for it.
+- Main's last code merge is #317 (`e338a1c98`): a piece shows its host mark again, plan plugin/20261113-0534. Softov curates the new Postgres mark in [pending/plugin-58-icon-curation.md](../pending/plugin-58-icon-curation.md).
+- #318 is open: the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushed the branch and the PR was opened by hand. Its `image` job needs `0.15.0-rc.2` on npm, which it is.
+- The bump calls a newer prerelease not newer: [problems/the-bump-calls-a-newer-prerelease-not-newer.md](../problems/the-bump-calls-a-newer-prerelease-not-newer.md).
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
 - `check` and `check-windows` must both be green before a merge; no ruleset requires them now. A rerun is not the fix for a case that fails at random: each one gets a problem file, to be fixed. `gh run rerun <id> -R ahpio/ahpd --failed` reruns a job.
