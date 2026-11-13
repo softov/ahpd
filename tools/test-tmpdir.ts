@@ -60,7 +60,21 @@ export default function setup(): () => void {
    */
   process.env.AHPD_TEST_WORK = join(run, 'work');
   return () => {
-    rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    /*
+     * The run's folder goes, and a folder Windows will not let go of is said,
+     * not thrown. Every test has passed or failed by now, and a file a process
+     * still holds open fails the removal with `EBUSY` or `EPERM`; a throw here
+     * failed a job whose tests had all passed. The line names the folder, so a
+     * process a test left running is still seen.
+     */
+    try {
+      rmSync(run, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'EBUSY' && code !== 'EPERM' && code !== 'ENOTEMPTY') throw error;
+      console.warn(`test-tmpdir: ${run} was left behind: ${code ?? 'unknown'}, a file in it is still open`);
+    }
     /*
      * And the checkout is not a place a run writes in.
      *
