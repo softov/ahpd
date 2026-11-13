@@ -7,6 +7,7 @@ import { localPath } from '../resources/fileuri.js';
 import { bag, ownerFilter } from '../utils/values.js';
 import { configOf } from '../sessions/remotesession.js';
 import { agentRefusal, CLOSING, noProvider } from './common.js';
+import { refusalReason } from './gate.js';
 import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
 import { getAgentHostChatId } from '../vscode/chatid.js';
@@ -1341,6 +1342,33 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         try {
           const config = configOf(params) as Record<string, string>;
           /*
+           * Where the agent itself puts the session, for an agent that decides
+           * it: a bot's talk runs in the bot's folder whatever folder the
+           * client sent. Asked before the folder is picked and the config is
+           * checked, so the computer it names is admitted as a client's is. A
+           * trusted folder is the plugin's word, so it needs the plugin's own
+           * `session:trust`, refused in the words a plugin's start gets.
+           */
+          const placed = await agents.get(provider)?.placeSession?.(config, connection.principal);
+          if (placed?.trusted === true) {
+            const plugin = options.agentStarts?.[provider];
+            if (plugin?.can?.('session:trust') !== true)
+              throw new RpcError(-32009, refusalReason(`plugin:${plugin?.by ?? 'unknown'}`, 'session:trust'), {});
+          }
+          if (placed?.computer !== undefined) {
+            /*
+             * A source the agent named is a machine made for this person, so
+             * it needs their `computer:write` as a source the client named
+             * does. The door read only the client's config, so it is asked
+             * here, in the door's words.
+             */
+            const who = connection.principal;
+            if (options.users !== undefined && connection.root !== true && computerSource(placed.computer) !== undefined
+              && who !== undefined && !who.can('computer:write'))
+              throw new RpcError(-32009, refusalReason(who.id, 'computer:write'), {});
+            config.computer = placed.computer;
+          }
+          /*
            * Where the client asked the agent to work.
            *
            * A list on the wire and one directory to a session, so the first is
@@ -1351,13 +1379,17 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           const wanted = (Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
             .filter((entry): entry is string => typeof entry === 'string')
             .map((entry) => localPath(entry));
-          const asked = wanted[0];
+          const asked = placed?.workingDirectory !== undefined ? localPath(placed.workingDirectory) : wanted[0];
           // None named, the daemon's `workspacelessFolder` says where it works.
           const where = asked ?? await scratchFolder(uri);
           // The peers of the first, which the protocol says are equal to each
           // other and to it in everything but which one the process is rooted
-          // at. A backend that cannot take them is told none.
-          const peers = agents.get(provider)?.multipleDirectories === true ? wanted.slice(1) : [];
+          // at. A backend that cannot take them is told none, and neither is
+          // one whose agent put the session in a folder of its own.
+          const peers = agents.get(provider)?.multipleDirectories === true && placed?.workingDirectory === undefined ? wanted.slice(1) : [];
+          // The folder an agent trusted, kept before the backend starts, as a
+          // plugin's trusted start keeps it, so a restart trusts it again.
+          if (placed?.trusted === true) kept.setTrustedFolder?.(idOf(uri), where);
           /*
            * A worktree session runs in the folder the client picked until its
            * first send, which makes the tree and starts the session again in
@@ -1416,7 +1448,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           // owns the work rather than against whoever sent it.
           try {
             await createProviderSession(uri, provider, config, running, undefined, conn.tokensFor(provider), peers, undefined,
-              { ...forWhom(ownerFor(connection), connection.principal), sender: connection }, undefined, progress);
+              { ...forWhom(ownerFor(connection), connection.principal), sender: connection },
+              // Whether it loads the person's settings, where its agent said.
+              placed?.userSettings === undefined ? undefined : { userSettings: placed.userSettings }, progress);
           }
           catch (error) {
             // Nothing came of it, so nothing is in it: the presence written
@@ -1802,6 +1836,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       byChat.delete(chatUri);
       ctx.chatRelaunches.delete(chatUri);
       madeFrom.delete(chatUri);
+      ctx.chatInteractivity.delete(chatUri);
+      ctx.chatTools.delete(chatUri);
       ctx.links.forgetChat(chatUri);
       // After `byChat` has let the chat go, so the store says nothing on a
       // channel nobody can reach any more.

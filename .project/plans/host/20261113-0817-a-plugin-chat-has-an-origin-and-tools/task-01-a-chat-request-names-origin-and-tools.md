@@ -1,6 +1,6 @@
 ---
 title: A chat request names its origin, interactivity and tools
-status: todo
+status: implemented
 depends: []
 layer: "sdk host"
 refs:
@@ -48,4 +48,10 @@ refs:
 - `pnpm typecheck` passes, and `pnpm vitest run packages/sdk` passes.
 
 ## Resume
+
+- Built on 2026-11-13, with five cases in `packages/sdk/test/plugin-chat-shape.test.ts`.
+- The host keeps the interactivity and the tools in two maps beside `madeFrom`, `chatInteractivity` and `chatTools`, and in the chat row.
+- The check that a tool is the plugin's own is in the plugin's `startChat` in `plugins.ts`, where the plugin's tool names are.
+- The restart case reads the chat row back. It does not start a second host.
+- A worker of a chat that is not the lead sent its approvals to the lead's backend. So a bot Back's subagent waited for ever (Softov's Ember timer, 2026-11-13). `workerLead` in `spawn.ts` now finds the backend of the chat whose call started the worker. Two cases in `subagent-chat.test.ts`, and the test daemon ran the subagent's `Bash`.
 

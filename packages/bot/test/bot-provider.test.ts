@@ -18,6 +18,7 @@ import { echo } from '../../../examples/echo/agent.js';
 import { apply } from '../src/plugin.js';
 import { BOT_BODIES, BOT_COLORS } from '../src/record.js';
 import { botStore } from '../src/store.js';
+import { talkerOf } from '../src/talks.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { AgentOwner } from '../../sdk/src/types/agents.js';
 import type { Bag } from '../../sdk/src/types/common.js';
@@ -164,10 +165,11 @@ function made(
     // case can say who the agents are.
     ...(over.agentOwners === undefined ? {} : { agentOwners: over.agentOwners }),
     alert: (alert) => { reported.push(alert.text); },
-    // The grant a wake's start of a back session asks for, which the daemon's
-    // entry for this plugin holds: a bot's work runs in the bot's own folder,
-    // and a folder is trusted only where the plugin may ask for that.
-    grants: ['session:trust'],
+    // The grants the daemon's entry for this plugin holds, as BOTS.md prints
+    // it: a talk runs in the bot's own folder, trusted, which the write group's
+    // `session:trust` allows, and the wake reads a session's state and sends a
+    // message on the plugin's own connection.
+    grants: ['session:read', 'session:write'],
   });
   prepare?.(configDir, bots);
   apply(plugin, { root: bots, ...pluginOptions });
@@ -182,7 +184,11 @@ function made(
     ...over,
   };
   const { options, problems } = foldHostOptions(base, [contribution]);
-  return { host: createHost(options), bots, root, configDir, problems, reported, sessions, records };
+  const host = createHost(options);
+  // The plugin's own connection, which the daemon binds once the host is
+  // built: a wake sends a person's message over it.
+  contribution.connects.host = host;
+  return { host, bots, root, configDir, problems, reported, sessions, records };
 }
 
 type Client = ReturnType<ReturnType<typeof createHost>['accept']>;
@@ -438,7 +444,7 @@ it('writes a bot\'s persona into its AGENTS.md, and keeps none of it in the reco
   expect(kept).not.toHaveProperty('description');
   expect(kept).not.toHaveProperty('instructions');
   expect(kept).toMatchObject({
-    id: 'motion', labels: [], owner: 'user:soft', session: 'work', workspace: join(bots, 'motion'),
+    id: 'motion', labels: [], owner: 'user:soft', workspace: join(bots, 'motion'),
   });
 
   // An edit in the UI writes the parts it owns and leaves the rest of the file
@@ -752,6 +758,15 @@ it('refuses a bot naming an agent its owner may not use, on a make and on an edi
   const edited = await write(soft, 'bot://mine', { name: 'Mine', preset: 'theirs' });
   expect(edited).toMatchObject({ code: -32009 });
   expect((await record(soft, 'bot://mine'))['preset']).toBe('base');
+});
+
+it('refuses a bot naming bot-chat as its agent, which is its own Front', async () => {
+  const { host } = made({ soft: ['bot:*', 'session:create'] });
+  const soft = await as(host, 'soft');
+
+  const refused = await write(soft, 'bot://loop', { name: 'Loop', provider: 'bot-chat' }, { createOnly: true });
+  expect(refused).toMatchObject({ code: -32602 });
+  expect('code' in refused ? refused.message : '').toBe('A bot cannot run on bot-chat, the agent people talk to it through.');
 });
 
 it('answers a bot unavailable when the agent it names is not one this host serves', async () => {
@@ -1104,9 +1119,8 @@ it('starts no session on a make', async () => {
   await write(soft, 'bot://quiet', { name: 'Quiet' }, { createOnly: true });
 
   expect(await allSessions(soft)).toEqual([]);
-  // The name is on the record, and a name is not a session: the one a bot that
-  // names none has is `work`.
-  expect((await record(soft, 'bot://motion'))['session']).toBe('work');
+  // A read answers the reader's own session with the bot, and soft has none.
+  expect(await record(soft, 'bot://motion')).not.toHaveProperty('session');
 });
 
 it('edits a bot whose template was removed, and refuses an edit that names a missing one', async () => {
@@ -1132,39 +1146,30 @@ it('refuses a make that names a template that does not exist', async () => {
   expect(await write(soft, 'bot://motion', { name: 'Motion' }, { createOnly: true })).toMatchObject({ result: {} });
 });
 
-it('takes the name of a back session, and fills one a bot named none of', async () => {
+it('keeps no back session name, and drops the one an older file holds', async () => {
   const { host, bots, records } = made({ soft: ['bot:*', 'session:create'] });
   const soft = await as(host, 'soft');
 
+  // A body that still names one, as a client that read a bot and wrote it back
+  // sends, is taken, and the name is not kept.
   await write(soft, 'bot://motion', { name: 'Motion', session: 'reviews' }, { createOnly: true });
-  expect((await record(soft, 'bot://motion'))['session']).toBe('reviews');
+  expect(await record(soft, 'bot://motion')).not.toHaveProperty('session');
 
-  // A name a session can have is a slug, and `{turn}` is the one word it may
-  // hold: a body that names anything else is refused, so a name read back off a
-  // bot is always a name a message can wake.
-  expect(await write(soft, 'bot://other', { name: 'Other', session: 'claude:/one' }, { createOnly: true }))
-    .toMatchObject({
-      code: -32602,
-      message: 'claude:/one is not a name a back session can have: lowercase letters, digits, a dash and {turn}, starting with a letter',
-    });
-  expect(await write(soft, 'bot://job', { name: 'Job', session: 'job-{turn}' }, { createOnly: true }))
-    .toMatchObject({ result: {} });
-
-  // A file written before a bot named one is read as a bot that named none: the
-  // store fills the name in, so nothing that reads a bot has to know the default.
+  // A file an older daemon wrote names its back session, and the word is dropped.
   await (await records.collection('bots')).put({
     id: 'older',
     name: 'Older',
     labels: [],
     body: 'robot',
     color: 'red',
+    session: 'work',
     workspace: join(bots, 'older'),
     owner: 'user:soft',
     createdAt: '2026-10-11T00:00:00.000Z',
     updatedAt: '2026-10-11T00:00:00.000Z',
   });
 
-  expect((await record(soft, 'bot://older'))['session']).toBe('work');
+  expect(await record(soft, 'bot://older')).not.toHaveProperty('session');
 });
 
 /*
@@ -1332,7 +1337,7 @@ it('answers a read with the record alone, and opens nothing for the reader', asy
 it('opens a chat with a bot by a create, the person\'s own, titled and placed as the bot', async () => {
   const { host, bots, sessions } = made({
     soft: ['bot:*', 'session:create'],
-    ana: ['bot:get', 'chat:*', 'session:create', 'session:read', 'session:write'],
+    ana: ['bot:get', 'bot:chat', 'chat:*', 'session:create', 'session:read', 'session:write'],
   });
   const soft = await as(host, 'soft');
   await write(soft, 'bot://motion', { name: 'Motion' }, { createOnly: true });
@@ -1354,16 +1359,138 @@ it('opens a chat with a bot by a create, the person\'s own, titled and placed as
   expect(sessions.owner(idIn(chat))).toBe('user:ana');
 });
 
+/** A create of ana's talk with Motion under `uri`, and its answer. */
+const talk = (client: Client, uri: string) =>
+  call(client, 'createSession', { channel: uri, provider: 'bot-chat', config: { bot: 'motion' } });
+
+/** One message in the talk at `uri`, which is what makes it the one used last. */
+const say = async (client: Client, uri: string, turnId: string): Promise<void> => {
+  const opened = got(await call(client, 'subscribe', { channel: uri })) as { snapshot: { state: Bag } };
+  got(await call(client, 'dispatchAction', {
+    channel: String(opened.snapshot.state['defaultChat']),
+    action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } },
+  }));
+};
+
+const TALKER: Grant[] = ['bot:get', 'bot:chat', 'chat:*', 'session:create', 'session:read', 'session:write'];
+
+it('keeps one talk for each bot and person: a second is refused naming the first, and a read answers it', async () => {
+  const { host } = made({ soft: ['bot:*', 'session:create'], ana: TALKER });
+  const soft = await as(host, 'soft');
+  await write(soft, 'bot://motion', { name: 'Motion' }, { createOnly: true });
+  const ana = await as(host, 'ana');
+
+  got(await talk(ana, 'ahp-session:/one'));
+  await say(ana, 'ahp-session:/one', 't1');
+  expect(await talk(ana, 'ahp-session:/two')).toMatchObject({ message: 'You already have a session with Motion: ahp-session:/one.' });
+
+  // The read answers the reader's own talk, and the owner, who has none, is
+  // answered the record alone.
+  await vi.waitFor(async () => { expect((await record(ana, 'bot://motion'))['session']).toBe('ahp-session:/one'); }, { timeout: WAIT_MS });
+  expect(await record(soft, 'bot://motion')).not.toHaveProperty('session');
+});
+
+it('keeps one talk for the root, whose connection has no principal, and a read with no reader answers it', async () => {
+  const { host } = made({ soft: ['bot:*', 'session:create'] });
+  const soft = await as(host, 'soft');
+  await write(soft, 'bot://motion', { name: 'Motion' }, { createOnly: true });
+  const root = await door(host);
+
+  got(await talk(root, 'ahp-session:/one'));
+  expect(await talk(root, 'ahp-session:/two')).toMatchObject({ message: 'You already have a session with Motion: ahp-session:/one.' });
+  expect((await record(root, 'bot://motion'))['session']).toBe('ahp-session:/one');
+  // A person's talk is their own: soft has none.
+  expect(await record(soft, 'bot://motion')).not.toHaveProperty('session');
+});
+
+it('keeps every root owner under one talker, whatever machine it names, and no owner as the root', () => {
+  expect(talkerOf('root:soft-sandbox')).toBe('root');
+  expect(talkerOf('root:backup')).toBe('root');
+  expect(talkerOf(undefined)).toBe('root');
+  expect(talkerOf('user:soft-sandbox')).toBe('user:soft-sandbox');
+});
+
+it('opens a second talk where secondSession is allow, and a read answers the one used last', async () => {
+  const { host } = made({ soft: ['bot:*', 'session:create'], ana: TALKER }, {}, {}, true, [], false, undefined, { secondSession: 'allow' });
+  const soft = await as(host, 'soft');
+  await write(soft, 'bot://motion', { name: 'Motion' }, { createOnly: true });
+  const ana = await as(host, 'ana');
+
+  got(await talk(ana, 'ahp-session:/one'));
+  await say(ana, 'ahp-session:/one', 't1');
+  got(await talk(ana, 'ahp-session:/two'));
+  await say(ana, 'ahp-session:/two', 't2');
+  await vi.waitFor(async () => { expect((await record(ana, 'bot://motion'))['session']).toBe('ahp-session:/two'); }, { timeout: WAIT_MS });
+
+  await say(ana, 'ahp-session:/one', 't3');
+  await vi.waitFor(async () => { expect((await record(ana, 'bot://motion'))['session']).toBe('ahp-session:/one'); }, { timeout: WAIT_MS });
+});
+
+it('wakes a Back chat of the talk\'s own session, made by the Front turn\'s subagent call and offered post_message', async () => {
+  const { host, bots, reported } = made({ soft: ['bot:*', 'chat:*', 'session:create', 'session:read', 'session:write'] });
+  const soft = await as(host, 'soft');
+  await write(soft, 'bot://motion', { name: 'Motion', provider: 'base' }, { createOnly: true });
+  const uri = 'ahp-session:/soft-and-motion';
+  got(await talk(soft, uri));
+  await say(soft, uri, 't1');
+
+  // The Back is a chat of the same session, whose origin names the Front and
+  // the call its turn shows, and it runs in the bot's folder.
+  let back: Bag | undefined;
+  await vi.waitFor(async () => {
+    const state = (got(await call(soft, 'subscribe', { channel: uri })) as { snapshot: { state: Bag } }).snapshot.state;
+    back = (state['chats'] as Bag[]).find((one) => (one['origin'] as Bag | undefined)?.['kind'] === 'tool');
+    expect(back).toBeDefined();
+  }, { timeout: WAIT_MS });
+  const front = String((got(await call(soft, 'subscribe', { channel: uri })) as { snapshot: { state: Bag } }).snapshot.state['defaultChat']);
+  expect(back?.['origin']).toMatchObject({ kind: 'tool', chat: front });
+  expect(reported).toEqual([]);
+
+  // The Front turn shows the subagent call the origin names, linking the Back.
+  const frontState = (got(await call(soft, 'subscribe', { channel: front })) as { snapshot: { state: Bag } }).snapshot.state;
+  const parts = ((frontState['activeTurn'] as Bag | undefined)?.['responseParts'] ?? (frontState['turns'] as Bag[]).at(-1)?.['responseParts']) as Bag[];
+  const callPart = parts.find((one) => (one['toolCall'] as Bag | undefined)?.['toolName'] === 'subagent');
+  expect((callPart?.['toolCall'] as Bag)['toolCallId']).toBe((back?.['origin'] as Bag)['toolCallId']);
+
+  // A second message continues the same Back chat.
+  await vi.waitFor(async () => {
+    const state = (got(await call(soft, 'subscribe', { channel: front })) as { snapshot: { state: Bag } }).snapshot.state;
+    expect(state['activeTurn']).toBeUndefined();
+  }, { timeout: WAIT_MS });
+  await say(soft, uri, 't2');
+  await vi.waitFor(async () => {
+    const state = (got(await call(soft, 'subscribe', { channel: uri })) as { snapshot: { state: Bag } }).snapshot.state;
+    expect((state['chats'] as Bag[]).filter((one) => (one['origin'] as Bag | undefined)?.['kind'] === 'tool')).toHaveLength(1);
+  }, { timeout: WAIT_MS });
+  // The talk itself runs in the bot's folder, whatever the client sent.
+  expect(await row(soft, uri)).toMatchObject({ workingDirectories: [uriOf(join(bots, 'motion'))] });
+});
+
+it('opens a talk only for a reader who holds bot:chat or owns the bot', async () => {
+  const { host } = made({
+    soft: ['bot:*', 'session:create'],
+    maria: ['bot:get', 'chat:*', 'session:create', 'session:read', 'session:write'],
+    ana: TALKER,
+  });
+  const soft = await as(host, 'soft');
+  await write(soft, 'bot://motion', { name: 'Motion' }, { createOnly: true });
+
+  // Maria may read the bot and not talk to it, and is told no more than that
+  // there is no such bot to talk to.
+  const maria = await as(host, 'maria');
+  expect(await talk(maria, 'ahp-session:/maria')).toMatchObject({ message: 'There is no bot motion.' });
+  got(await talk(await as(host, 'ana'), 'ahp-session:/ana'));
+});
+
 /*
  * One bot, one folder.
  *
  * All the data of one bot is `<configDir>/bots/<slug>/`: its record is
- * `bot.md`, its back session rows are in `sessions/` and its chat logs in
- * `logs/`. A delete removes that folder, and the bot's work folder under the
+ * `bot.md`, its Front rows are in `fronts/` and its chat logs in `logs/`. A delete removes that folder, and the bot's work folder under the
  * plugin root is not part of it and stays.
  */
 
-it('keeps a bot, its back session rows and its logs in bots/<slug>/', async () => {
+it('keeps a bot, its Front rows and its logs in bots/<slug>/', async () => {
   const { host, bots, configDir, reported } = made(
     { soft: ['bot:*', 'chat:*', 'session:create', 'session:state', 'session:write'] }, {}, {}, true, [], true,
   );
@@ -1374,9 +1501,8 @@ it('keeps a bot, its back session rows and its logs in bots/<slug>/', async () =
   const folder = join(configDir, 'bots', 'motion');
   expect(readFileSync(join(folder, 'bot.md'), 'utf8')).toContain('id: motion');
 
-  // A chat with the bot, made by a create; a message wakes the back session
-  // behind it, and the row that names that session and the log of the chat are
-  // in the same folder.
+  // A talk with the bot, made by a create, whose row and log are in the same
+  // folder.
   const session = 'ahp-session:/soft-and-motion';
   got(await call(soft, 'createSession', { channel: session, provider: 'bot-chat', config: { bot: 'motion' } }));
   const opened = got(await call(soft, 'subscribe', { channel: session })) as { snapshot: { state: Bag } };
@@ -1388,7 +1514,7 @@ it('keeps a bot, its back session rows and its logs in bots/<slug>/', async () =
   await vi.waitFor(() => {
     expect(reported).toEqual([]);
     expect(readdirSync(join(folder, 'logs'))).toHaveLength(1);
-    expect(readdirSync(join(folder, 'sessions'))).toHaveLength(1);
+    expect(readdirSync(join(folder, 'fronts'))).toHaveLength(1);
   }, { timeout: WAIT_MS });
 
   // The work folder is not data of the daemon's, and is untouched.
@@ -1577,7 +1703,7 @@ it('deletes a bot by removing bots/<slug>/, and keeps its work folder', async ()
   const soft = await as(host, 'soft');
   await write(soft, 'bot://motion', { name: 'Motion' }, { createOnly: true });
   // A chat with it and a message, so the folder holds the chat's log and its
-  // back session's row beside the record.
+  // talk's row beside the record.
   const session = 'ahp-session:/motion-chat';
   got(await call(soft, 'createSession', { channel: session, provider: 'bot-chat', config: { bot: 'motion' } }));
   const opened = got(await call(soft, 'subscribe', { channel: session })) as { snapshot: { state: Bag } };
@@ -1587,7 +1713,7 @@ it('deletes a bot by removing bots/<slug>/, and keeps its work folder', async ()
   }));
 
   const folder = join(configDir, 'bots', 'motion');
-  await vi.waitFor(() => { expect(readdirSync(folder).sort()).toEqual(['bot.md', 'logs', 'sessions']); }, { timeout: WAIT_MS });
+  await vi.waitFor(() => { expect(readdirSync(folder).sort()).toEqual(['bot.md', 'fronts', 'logs']); }, { timeout: WAIT_MS });
   const work = join(bots, 'motion', 'AGENTS.md');
   expect(existsSync(work)).toBe(true);
 

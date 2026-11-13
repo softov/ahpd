@@ -1,6 +1,6 @@
 ---
 title: The Back is a chat of the Front's session
-status: todo
+status: implemented
 depends:
   - task-01-one-session-for-each-bot-and-person.md
   - task-02-the-front-runs-in-the-bots-folder.md
@@ -59,4 +59,17 @@ A message in the Front wakes the one Back chat of that Front, found by its origi
 - `pnpm typecheck` passes, and `pnpm vitest run packages/bot` passes.
 
 ## Resume
+
+- Built on 2026-11-13. The wake keys its state by the Back chat, and `backOf` reads the session's chats over the client connection.
+- `post_message` finds its Front turn by `at.chat` in the wake's own map, not by reading the origin back. A call from any other chat finds nothing, as step 8 asks.
+- The map from a session to its bot stays, for the connectors. The wake fills it from the Front rows, the older Back rows and each message.
+- A Back chat with no `provider` runs on the host's default agent (Softov, 2026-11-13). That agent is the first one that is not the plugin's own, because the agents are in the order the plugins loaded. A record that names `bot-chat` is refused. The host does it in `openChat` for a chat a plugin asks for in a session of its own agent.
+- A Back chat is titled `@main/<bot>/<person>` by `backTitle`. The root, and a talk with no owner, is `root`.
+- With `policies.check` on, a Back turn was refused as `plugin:bot`. The host now checks a plugin's turn in a session it does not own as the session owner's, in `lifecycle.ts`.
+- A subagent of the Back asks in its worker chat. `ask.ts` walks the `tool` origins up to the Back chat, so the question shows in the Front, and the answer goes to the worker chat.
+- The Back reached the Front only through the `answering` map, which holds one Front turn while it waits. A post or a question after that turn was refused or lost. `reach` in the wake now walks the origins to the Front and opens a bot turn with `speak` where none waits.
+- A Back turn with no sender, such as one the harness starts after a background task, says its last words in the Front through `spoke`.
+- `ToolCall.from` names a subagent's worker chat, so `send_message` lets a subagent message its Back.
+- With `askIn` at `own`, a Back chat of the Front's own session is not listed again, since the session lists it already.
+- Cases: `bot-wake.test.ts`, `bot-post.test.ts`, `bot-ask.test.ts`, `bot-context.test.ts`, and an end-to-end case in `bot-provider.test.ts`.
 

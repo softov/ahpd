@@ -167,6 +167,10 @@ export interface StoredChat {
   title?: string;
   /** What it was made from, as `session/chatAdded` carried it. */
   origin?: Record<string, unknown>;
+  /** How a person may use it, where its maker said: `read-only` or `hidden`. Absent is `full`. */
+  interactivity?: 'full' | 'read-only' | 'hidden';
+  /** The opt-in host tools its maker asked for this chat alone, beside the session's. */
+  tools?: string[];
   /** Whether this is the chat a client gets when it names none. */
   default?: boolean;
   /**

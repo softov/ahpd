@@ -389,6 +389,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       byChat.delete(chatUri);
       ctx.chatRelaunches.delete(chatUri);
       madeFrom.delete(chatUri);
+      ctx.chatInteractivity.delete(chatUri);
+      ctx.chatTools.delete(chatUri);
       ctx.links.forgetChat(chatUri);
       // The chat is gone with the session, so its canvases are too. Said
       // nothing, because nothing can reach the channel any more.
@@ -2293,8 +2295,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      *
      * The three ways there is nothing to ask are asked here rather than left to
      * `checked`, so a turn they cover is begun in the same tick it arrived in.
+     *
+     * A plugin that sends a turn into a session it does not own sends it for
+     * that session's owner, such as a bot's message into the Back chat of a
+     * person's talk, so the turn is checked and charged as the owner's.
      */
-    const principal = principalFor(who ?? kept.owner(idOf(session.uri)));
+    const owner = kept.owner(idOf(session.uri));
+    const forOwner = who?.startsWith('plugin:') === true && owner !== undefined && owner !== who;
+    const principal = principalFor(forOwner ? owner : who ?? owner);
     const store = options.policies;
     if (options.policiesCheck !== true || store === undefined || principal === undefined) return turn();
     const held = sessions.get(session.uri);

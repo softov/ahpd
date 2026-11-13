@@ -327,7 +327,7 @@ describe('a first-party plugin', () => {
       'resource', 'autoCompactTokens', 'autoCompactAt', 'catalogueTimeoutMs', 'hostTools',
     ]],
     ['agent-pi', ['model', 'baseUrl', 'apiKey', 'projectTrust', 'sessionDir', 'hostTools']],
-    ['bot', ['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn']],
+    ['bot', ['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn', 'secondSession']],
     ['computer', [
       'runtime', 'command', 'args', 'ssh', 'libvirt', 'proxmox', 'env', 'image', 'cpus', 'memory', 'max', 'label',
       'prefix', 'sessionSetting', 'sessionDefault', 'needs', 'mounts', 'profiles', 'bodyMounts', 'imageMounts',
@@ -336,7 +336,7 @@ describe('a first-party plugin', () => {
     ['push', ['accessToken', 'webPushHosts', 'contact']],
     ['tasks', ['requireApproval', 'sweepAfterDays']],
     ['tunnel-devtunnel', ['connector', 'name', 'keep', 'anonymous', 'person', 'requireToken', 'allowAccountChange']],
-    ['webhook', ['syncTimeoutSeconds', 'maxBodyBytes']],
+    ['webhook', ['syncTimeoutSeconds', 'maxBodyBytes', 'threadSessions']],
   ];
 
   it.each<[string, string[]]>(schemas)('loads %s with the options schema in its package.json', async (name, keys) => {

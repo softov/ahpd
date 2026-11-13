@@ -201,6 +201,24 @@ export interface ChatRequest {
    * empty session prompt is.
    */
   prompt?: string;
+  /**
+   * What the chat was made from, as the protocol's `ChatOrigin` says it.
+   *
+   * `user` where absent. A `tool` origin names a chat of the same session and
+   * the call that made this one, as a subagent's chat does, and a client draws
+   * the chat under that call. The other kinds are a client's to make.
+   */
+  origin?: { kind: 'user' } | { kind: 'tool'; chat: string; toolCallId: string };
+  /**
+   * How a person may use the chat, as the protocol's `ChatInteractivity`:
+   * `full` where absent, `read-only` to watch and send nothing, or `hidden`.
+   */
+  interactivity?: 'full' | 'read-only' | 'hidden';
+  /**
+   * Opt-in host tools this chat is offered, beside the session's. Only tools
+   * this plugin registered, kept with the chat so a restart offers them again.
+   */
+  tools?: string[];
 }
 
 /**

@@ -14,7 +14,7 @@ import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { sdkVersion } from '../../sdk/src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { botChatAgent, CHAT_PROVIDER } from '../src/chat.js';
+import { botChatAgent, CHAT_PROVIDER, openTalks } from '../src/chat.js';
 import { BOTS_DIR, rowId, sessionsOf } from '../src/names.js';
 import { apply } from '../src/plugin.js';
 import { botStore } from '../src/store.js';
@@ -22,6 +22,8 @@ import type { ChatMessage, TurnHandle } from '../src/chat.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { Agent, Start } from '../../sdk/src/types/agent.js';
 import type { Session } from '../../sdk/src/types/session.js';
+import type { Owner } from '../../sdk/src/types/usage.js';
+import type { Talks } from '../src/talks.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
@@ -110,15 +112,15 @@ const actions = (notes: Notes, channel: string): Bag[] => notes
  *
  * `more` is what a case adds to the host, such as the shells a command runs in.
  * `grants` is what the plugin's own entry holds, as the daemon's entry does: a
- * wake starts its back session in the bot's folder, which takes
- * `session:trust`.
+ * talk runs in the bot's folder, trusted, which takes `session:trust`, so that
+ * is the one it holds unless a case says otherwise.
  *
  * `listener` is what hears the chat in the wake's place, for a case about the
  * chat rather than the work behind it: the chat agent is built with it, as the
  * plugin builds it with the wake, over a store of the same bots. `null` is a
  * chat nobody listens to.
  */
-function made(more: Partial<HostOptions> = {}, grants: `${string}:${string}`[] = [], listener?: Listener | null) {
+function made(more: Partial<HostOptions> = {}, grants: `${string}:${string}`[] = ['session:trust'], listener?: Listener | null) {
   const root = mkdtempSync(join(tmpdir(), 'ahpd-bot-chat-'));
   loose.push(root);
   /** Where a bot's own folder goes, which is the plugin's `root` option. */
@@ -206,6 +208,8 @@ const SESSION = 'ahp-session:/one';
  * backend is started with and a message names its chat's session by.
  */
 const HELD = SESSION;
+/** A chat of its own for the case of a turn the bot opens. */
+const CHAT_OWN = 'ahp-chat:/own';
 /** The chat with the bot, which the host mints for the session: read off its state by `talkTo`. */
 let CHAT = '';
 
@@ -298,7 +302,7 @@ it('keeps a chat in a log, and answers it again after a restart', async () => {
    * the listener ends each turn as it hears it. That is the state this test is
    * about - it checks the log a chat leaves, not what a message wakes.
    */
-  const { host, configDir, records } = made({}, [], { heard: (_message, handle) => { handle.complete(); } });
+  const { host, configDir, records } = made({}, ['session:trust'], { heard: (_message, handle) => { handle.complete(); } });
   const client = await anyone(host);
 
   await talkTo(client);
@@ -346,7 +350,7 @@ it('keeps a chat in a log, and answers it again after a restart', async () => {
 
 it('holds a turn open until the handle answers it', async () => {
   const { heard, listener, chat } = hearing();
-  const { host, configDir, records } = made({}, [], listener);
+  const { host, configDir, records } = made({}, ['session:trust'], listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -407,7 +411,7 @@ it('holds a turn open until the handle answers it', async () => {
  */
 it('tells whoever answers the chat the words and the chat they were said in, and keeps the rest on the turn', async () => {
   const { heard, listener } = hearing();
-  const { host } = made({}, [], listener);
+  const { host } = made({}, ['session:trust'], listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -436,7 +440,7 @@ it('tells whoever answers the chat the words and the chat they were said in, and
  */
 it('ends a turn nothing answers in chat/error, as VS Code ends a turn it has no agent for', async () => {
   // A chat with nobody behind it.
-  const { host, configDir } = made({}, [], null);
+  const { host, configDir } = made({}, ['session:trust'], null);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -451,7 +455,7 @@ it('ends a turn nothing answers in chat/error, as VS Code ends a turn it has no 
 
 it('ends a turn as failed, in the words of what failed, typed as VS Code types a failed send', async () => {
   const { listener, chat } = hearing();
-  const { host, configDir } = made({}, [], listener);
+  const { host, configDir } = made({}, ['session:trust'], listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -474,7 +478,7 @@ it('ends a turn as failed, in the words of what failed, typed as VS Code types a
  */
 it('tells the chat\'s holder which turn a client stopped', async () => {
   const { stops, listener } = hearing();
-  const { host } = made({}, [], listener);
+  const { host } = made({}, ['session:trust'], listener);
   const client = await anyone(host, []);
   await talkTo(client);
 
@@ -495,7 +499,7 @@ it('tells the chat\'s holder which turn a client stopped', async () => {
  */
 it('runs a command typed into the chat in a terminal, and tells nobody who answers it', async () => {
   const { heard, listener } = hearing();
-  const { host } = made({ terminals: shellTerminals() }, [], listener);
+  const { host } = made({ terminals: shellTerminals() }, ['session:trust'], listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -516,7 +520,7 @@ it('ends a turn with a notice, and with a cancellation', async () => {
   // Somebody answers this chat, and says nothing here: a turn with a listener
   // stays open, which is what leaves the endings below something to end.
   const { listener, chat } = hearing();
-  const { host, configDir } = made({}, [], listener);
+  const { host, configDir } = made({}, ['session:trust'], listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -562,7 +566,7 @@ it('ends a turn with a notice, and with a cancellation', async () => {
 it('steers a message into the open turn, which goes on, and keeps it pending until the work takes it in', async () => {
   const listened = hearing();
   const { heard } = listened;
-  const { host, configDir, records } = made({}, [], listened.listener);
+  const { host, configDir, records } = made({}, ['session:trust'], listened.listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -628,7 +632,7 @@ it('steers a message into the open turn, which goes on, and keeps it pending unt
 it('hands a steer back unsent when its turn ended on its way, and runs it next', async () => {
   const listened = hearing();
   const { heard } = listened;
-  const { host, configDir } = made({}, [], listened.listener);
+  const { host, configDir } = made({}, ['session:trust'], listened.listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -660,7 +664,7 @@ it('hands a steer back unsent when its turn ended on its way, and runs it next',
  */
 it('takes out a steer the work behind its turn still holds when the turn ends', async () => {
   const listened = hearing();
-  const { host } = made({}, [], listened.listener);
+  const { host } = made({}, ['session:trust'], listened.listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -689,7 +693,7 @@ it('takes out a steer the work behind its turn still holds when the turn ends', 
 it('takes out a steer still on its way when its turn is stopped, and sends it nowhere', async () => {
   const listened = hearing();
   const { heard } = listened;
-  const { host } = made({}, [], listened.listener);
+  const { host } = made({}, ['session:trust'], listened.listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -724,14 +728,14 @@ it('leaves the chat\'s modified time where a steer finds it', async () => {
   });
   const agent = await backend(configDir, records, () => {});
   // The session a later subscriber is seeded from, read directly.
-  const session = agent.create({
+  const session = await agent.create({
     uri: 'bot-chat:/steered',
     chatUri: 'ahp-chat:/steered',
     settings: { bot: 'backer' },
     schema: () => ({}),
     emit: () => {},
     clientToolTimeoutMs: 0,
-  } as Start) as Session;
+  } as Start);
   session.sendMessage('t1', 'hello');
   const before = session.modifiedAt();
   // Long enough that a moved time would read as another one.
@@ -764,7 +768,7 @@ it('answers a steer to the client that sent it', async () => {
 });
 
 it('keeps the sender of a steered message on the message', async () => {
-  const { host } = made({}, [], hearing().listener);
+  const { host } = made({}, ['session:trust'], hearing().listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -790,7 +794,7 @@ const drained = async (): Promise<void> => {
 it('keeps a queued message behind the steered turn', async () => {
   const listened = hearing();
   const { heard } = listened;
-  const { host } = made({}, [], listened.listener);
+  const { host } = made({}, ['session:trust'], listened.listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -831,7 +835,7 @@ it('keeps a queued message behind the steered turn', async () => {
  */
 it('starts nothing behind a stopped turn, and its queue\'s head once a message is queued after it', async () => {
   const { heard, listener } = hearing();
-  const { host } = made({}, [], listener);
+  const { host } = made({}, ['session:trust'], listener);
   const client = await anyone(host, []);
   await talkTo(client);
 
@@ -858,7 +862,7 @@ it('starts nothing behind a stopped turn, and its queue\'s head once a message i
  */
 it('starts the head once a client reorders a stopped turn\'s queue', async () => {
   const { heard, listener } = hearing();
-  const { host } = made({}, [], listener);
+  const { host } = made({}, ['session:trust'], listener);
   const client = await anyone(host, []);
   await talkTo(client);
 
@@ -889,7 +893,7 @@ it('starts the head once a client reorders a stopped turn\'s queue', async () =>
  */
 it('starts nothing behind a failed turn, and the head once a client takes a message back', async () => {
   const { heard, listener, chat } = hearing();
-  const { host } = made({}, [], listener);
+  const { host } = made({}, ['session:trust'], listener);
   const client = await anyone(host, []);
   await talkTo(client);
 
@@ -915,7 +919,7 @@ it('starts nothing behind a failed turn, and the head once a client takes a mess
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L171-L208
  */
 it('reads a steering line back in the turn it went into', async () => {
-  const { host, configDir, records } = made({}, [], { heard: (_message, handle) => { handle.complete('done'); } });
+  const { host, configDir, records } = made({}, ['session:trust'], { heard: (_message, handle) => { handle.complete('done'); } });
   const client = await anyone(host);
   await talkTo(client);
   await said(client, 't1', 'hello');
@@ -939,7 +943,7 @@ it('reads a steering line back in the turn it went into', async () => {
 
 it('reads a turn that ended with a steer quoted as markdown back as it was', async () => {
   const { listener, chat } = hearing();
-  const { host, configDir, records } = made({}, [], listener);
+  const { host, configDir, records } = made({}, ['session:trust'], listener);
   const client = await anyone(host);
   await talkTo(client);
   await said(client, 't1', 'hello');
@@ -960,7 +964,7 @@ it('reads a turn that ended with a steer quoted as markdown back as it was', asy
 
 it('reads a turn its log shows begun and never ended back interrupted, as VS Code\'s Copilot reads one', async () => {
   const { listener, chat } = hearing();
-  const { host, configDir, records } = made({}, [], listener);
+  const { host, configDir, records } = made({}, ['session:trust'], listener);
   const client = await anyone(host);
   await talkTo(client);
   await said(client, 't1', 'hello');
@@ -976,10 +980,142 @@ it('reads a turn its log shows begun and never ended back interrupted, as VS Cod
   ]);
 });
 
+/**
+ * A chat opened again from its log, after a restart, with a listener that
+ * keeps what it heard: the session's default chat, or the chat `chatId` names.
+ */
+const reopened = async (configDir: string, records: ReturnType<typeof memoryRecords>, chatId?: string) => {
+  const heard: { message: ChatMessage; handle: TurnHandle }[] = [];
+  const fresh = await backend(configDir, records, (message, handle) => { heard.push({ message, handle }); });
+  const session = await fresh.create({
+    uri: HELD, chatUri: CHAT, settings: { bot: 'backer' }, resume: 'one', ...(chatId === undefined ? {} : { chatId }),
+    schema: () => ({}), emit: () => {}, clientToolTimeoutMs: 0,
+  } as Start);
+  // The turn is handed on once the create has answered.
+  await new Promise((done) => { setTimeout(done, 5); });
+  return { session, heard };
+};
+
+it('opens a turn a restart left open again, wakes the listener, and the reply lands in it', async () => {
+  const { listener, chat } = hearing();
+  const { host, configDir, records } = made({}, ['session:trust'], listener);
+  const client = await anyone(host);
+  await talkTo(client);
+  await said(client, 't1', 'hello');
+  chat().complete('done');
+  // Begun, and the daemon went before it ended: the log holds its first line alone.
+  await said(client, 't2', 'and then');
+
+  const { session, heard } = await reopened(configDir, records);
+  expect((session.chatState().activeTurn as Bag | undefined)?.['id']).toBe('t2');
+  expect(heard.map((one) => [one.message.turnId, one.message.text])).toEqual([['t2', 'and then']]);
+
+  heard[0]?.handle.complete('the answer');
+  const turns = session.chatState().turns as Bag[];
+  expect(turns.map((one) => [one['id'], one['state']])).toEqual([['t1', 'complete'], ['t2', 'complete']]);
+  expect(session.chatState().activeTurn).toBeUndefined();
+});
+
+it('opens no turn again in a chat of the talk other than its default chat, which would answer a turn it never had', async () => {
+  const { listener, chat } = hearing();
+  const { host, configDir, records } = made({}, ['session:trust'], listener);
+  const client = await anyone(host);
+  await talkTo(client);
+  await said(client, 't1', 'hello');
+  chat().complete('done');
+  await said(client, 't2', 'and then');
+
+  const { session, heard } = await reopened(configDir, records, 'peer');
+  expect(session.chatState().activeTurn).toBeUndefined();
+  expect(heard).toEqual([]);
+});
+
+it('keeps a talk under the owner the host recorded where the start has no reader, and keeps none for a plugin\'s session', async () => {
+  const { host, configDir, records } = made({}, ['session:trust']);
+  const client = await anyone(host);
+  await client.handle({ method: 'resourceWrite', params: { uri: 'bot://backer', data: JSON.stringify({ name: 'Backer' }), createOnly: true } });
+  const store = botStore(await records.collection('bots'), await records.collection('bots-gone'), () => {}, { yaml: { parseYaml, stringifyYaml } });
+  await store.ready();
+  const kept: unknown[][] = [];
+  const talks: Talks = {
+    second: 'refuse',
+    of: async () => undefined,
+    keep: async (bot, owner, session) => { kept.push([bot, owner, session]); },
+  };
+  const agent = botChatAgent(configDir, store, undefined, undefined, talks);
+  const start = (id: string, owner?: Owner): Start => ({
+    uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}`, settings: { bot: 'backer' }, resume: id,
+    ...(owner === undefined ? {} : { owner }), schema: () => ({}), emit: () => {}, clientToolTimeoutMs: 0,
+  } as Start);
+
+  // A restart of ana's talk is hers, not the root's.
+  await agent.create(start('ana', 'user:ana'));
+  await agent.create(start('hook', 'plugin:webhook'));
+  await agent.create(start('alone'));
+  expect(kept).toEqual([['backer', 'user:ana', 'ahp-session:/ana'], ['backer', undefined, 'ahp-session:/alone']]);
+});
+
+it('opens a turn of the bot\'s own with speak, whose message is the agent\'s, and reads it back after a restart', async () => {
+  const { host, configDir, records } = made({}, ['session:trust']);
+  const client = await anyone(host);
+  await client.handle({ method: 'resourceWrite', params: { uri: 'bot://backer', data: JSON.stringify({ name: 'Backer' }), createOnly: true } });
+  const store = botStore(await records.collection('bots'), await records.collection('bots-gone'), () => {}, { yaml: { parseYaml, stringifyYaml } });
+  await store.ready();
+  const fronts = new Map<string, TurnHandle>();
+  const emitted: Bag[] = [];
+  const start = (): Start => ({
+    uri: HELD, chatUri: CHAT_OWN, settings: { bot: 'backer' }, resume: 'own',
+    schema: () => ({}), emit: (_channel: string, action: Bag) => { emitted.push(action); }, clientToolTimeoutMs: 0,
+  } as Start);
+  const session = await botChatAgent(configDir, store, () => {}, undefined, undefined, fronts).create(start());
+  const front = fronts.get(CHAT_OWN);
+  expect(front).toBeDefined();
+
+  const turnId = front?.speak?.() ?? '';
+  expect(turnId).toMatch(/^bot-/);
+  // A second speak while the turn is open is that same turn.
+  expect(front?.speak?.()).toBe(turnId);
+  expect(emitted[0]).toMatchObject({ type: 'chat/turnStarted', turnId, message: { origin: { kind: 'agent' } } });
+  front?.responsePart('tick 1');
+  front?.complete();
+  expect((session.chatState().turns as Bag[]).map((one) => [one['id'], one['state'], (one['message'] as Bag)['origin']])).toEqual([[turnId, 'complete', { kind: 'agent' }]]);
+
+  const again = await botChatAgent(configDir, store, () => {}).create(start());
+  expect((again.chatState().turns as Bag[]).map((one) => one['id'])).toEqual([turnId]);
+  session.close();
+  expect(fronts.has(CHAT_OWN)).toBe(false);
+});
+
+it('lists the talks whose log ends in a turn a restart left open, and no other', async () => {
+  const { listener, chat } = hearing();
+  const { host, configDir } = made({}, ['session:trust'], listener);
+  const client = await anyone(host);
+  await talkTo(client);
+  await said(client, 't1', 'hello');
+  chat().complete('done');
+  expect(openTalks(configDir)).toEqual([]);
+
+  await said(client, 't2', 'and then');
+  expect(openTalks(configDir)).toEqual(['one']);
+});
+
+it('opens no turn for a log whose last turn ended', async () => {
+  const { listener, chat } = hearing();
+  const { host, configDir, records } = made({}, ['session:trust'], listener);
+  const client = await anyone(host);
+  await talkTo(client);
+  await said(client, 't1', 'hello');
+  chat().complete('done');
+
+  const { session, heard } = await reopened(configDir, records);
+  expect(session.chatState().activeTurn).toBeUndefined();
+  expect(heard).toEqual([]);
+});
+
 it('waits a queued message out, and starts it when the turn in front ends', async () => {
   const listened = hearing();
   const { heard } = listened;
-  const { host, configDir } = made({}, [], listened.listener);
+  const { host, configDir } = made({}, ['session:trust'], listened.listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -1031,7 +1167,7 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
 
 it('starts what waited in the order the queue was left in', async () => {
   const listened = hearing();
-  const { host, configDir } = made({}, [], listened.listener);
+  const { host, configDir } = made({}, ['session:trust'], listened.listener);
   const client = await anyone(host);
   await talkTo(client);
 
@@ -1067,7 +1203,7 @@ it('starts what waited in the order the queue was left in', async () => {
 
 it('takes a queued message back, and it is never a turn', async () => {
   const { listener, chat } = hearing();
-  const { host, configDir } = made({}, [], listener);
+  const { host, configDir } = made({}, ['session:trust'], listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -1097,7 +1233,7 @@ it('takes a queued message back, and it is never a turn', async () => {
 it('takes a second message while the answer is still coming, said in the first one\'s place and handed on after it', async () => {
   const listened = hearing();
   const heard = (): string[] => listened.heard.map((message) => message.turnId);
-  const { host } = made({}, [], listened.listener);
+  const { host } = made({}, ['session:trust'], listened.listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -1158,7 +1294,7 @@ it('hands a turn sent while another is open on once the open turn is answered, s
     emit: (_channel: string, action: Bag) => { sent.push(action); },
     clientToolTimeoutMs: 0,
   };
-  const session = agent.create(start);
+  const session = await agent.create(start);
   session.sendMessage('t1', 'hello');
   session.sendMessage('t2', 'and then this');
 
@@ -1193,7 +1329,7 @@ it('hands a turn sent while another is open on once the open turn is answered, s
  */
 it('completes the back session\'s call when its turn ends with a notice, as VS Code completes a subagent\'s call with its work', async () => {
   const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
-  const { host } = made({}, [], { heard: (_message, handle) => { handle.subagent?.(back, 'Backer'); handle.notice('Backer finished without a reply'); } });
+  const { host } = made({}, ['session:trust'], { heard: (_message, handle) => { handle.subagent?.(back, 'Backer'); handle.notice('Backer finished without a reply'); } });
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -1208,7 +1344,7 @@ it('completes the back session\'s call when its turn ends with a notice, as VS C
 
 it('leaves the back session\'s call to be cancelled when its turn fails', async () => {
   const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
-  const { host } = made({}, [], {
+  const { host } = made({}, ['session:trust'], {
     heard: (_message, handle) => { handle.subagent?.(back, 'Backer'); handle.fail?.('Backer was not woken: the host refused it'); },
   });
   const notes: Notes = [];
@@ -1233,7 +1369,7 @@ it('leaves the back session\'s call to be cancelled when its turn fails', async 
 it('adds each answer to the open turn, and completes the call when the turn ends', async () => {
   const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
   const listened = hearing();
-  const { host } = made({}, [], { heard: (message, handle) => { listened.listener.heard?.(message, handle); handle.subagent?.(back, 'Backer'); } });
+  const { host } = made({}, ['session:trust'], { heard: (message, handle) => { listened.listener.heard?.(message, handle); handle.subagent?.(back, 'Backer'); } });
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -1290,7 +1426,7 @@ it('adds each answer to the open turn, and completes the call when the turn ends
  */
 it('takes a withdrawn call out of the open turn, which the reducer cancels', async () => {
   const listened = hearing();
-  const { host } = made({}, [], listened.listener);
+  const { host } = made({}, ['session:trust'], listened.listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -1339,7 +1475,7 @@ it('takes a withdrawn call out of the open turn, which the reducer cancels', asy
  */
 it('takes a withdrawn question out of the open turn, which the reducer cancels', async () => {
   const listened = hearing();
-  const { host } = made({}, [], listened.listener);
+  const { host } = made({}, ['session:trust'], listened.listener);
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -1379,7 +1515,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
    * the turn keeps the one call it shows.
    */
   const listened = hearing();
-  const { host, configDir } = made({}, [], { heard: (message, handle) => { listened.listener.heard?.(message, handle); handle.subagent?.(back, 'Backer'); } });
+  const { host, configDir } = made({}, ['session:trust'], { heard: (message, handle) => { listened.listener.heard?.(message, handle); handle.subagent?.(back, 'Backer'); } });
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -1494,7 +1630,7 @@ it('leaves a turn somebody began in a back session in that session\'s own chat',
 
 it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {
   const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
-  const { host } = made({}, [], { heard: (_message, handle) => { handle.subagent?.(back, 'Backer'); handle.complete('done'); } });
+  const { host } = made({}, ['session:trust'], { heard: (_message, handle) => { handle.subagent?.(back, 'Backer'); handle.complete('done'); } });
   const notes: Notes = [];
   const client = await anyone(host, notes);
   await talkTo(client);
@@ -1573,7 +1709,7 @@ it('tells a resumed chat\'s messages to the agent\'s listener, as it does a new 
   const heard: ChatMessage[] = [];
   const agent = await backend(configDir, records, (message) => { heard.push(message); });
   // A chat the host resumes after a restart: no `session_start` is fired for it.
-  const session = agent.create({
+  const session = await agent.create({
     uri: 'bot-chat:/again',
     chatUri: 'ahp-chat:/again',
     settings: { bot: 'backer' },
@@ -1646,8 +1782,8 @@ it('offers a person only the bots they may read, and refuses a chat with another
     uri: `bot-chat:/${bot}-chat`, chatUri: `ahp-chat:/${bot}-chat`, settings: { bot },
     schema: () => ({}), emit: () => {}, clientToolTimeoutMs: 0, reader: ana,
   } as Start);
-  expect(() => agent.create(start('bobs'))).toThrow('There is no bot bobs.');
-  expect(agent.create(start('anas'))).toBeDefined();
+  await expect(agent.create(start('bobs'))).rejects.toThrow('There is no bot bobs.');
+  expect(await agent.create(start('anas'))).toBeDefined();
 });
 
 it('keeps the bots a query matches, by name or by slug', async () => {

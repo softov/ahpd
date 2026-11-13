@@ -645,13 +645,35 @@ export const checkChatRequest = (value: unknown, by: string): ChatRequest => {
   if (title !== undefined && !right(title, 'string')) {
     throw new Error(miss(by, 'startChat', 'title', 'a string, or nothing'));
   }
+  // A plugin makes a chat a person opened or one a call made; a fork and a
+  // side chat are a client's to make, from a turn it holds.
+  const origin = object.origin;
+  const from = typeof origin === 'object' && origin !== null ? origin as Record<string, unknown> : undefined;
+  const isUser = from?.kind === 'user';
+  const isTool = from?.kind === 'tool' && typeof from.chat === 'string' && from.chat !== ''
+    && typeof from.toolCallId === 'string' && from.toolCallId !== '';
+  if (origin !== undefined && !isUser && !isTool) {
+    throw new Error(miss(by, 'startChat', 'origin', "{ kind: 'user' }, or { kind: 'tool', chat, toolCallId } naming a chat of the session and its call"));
+  }
+  const interactivity = object.interactivity;
+  if (interactivity !== undefined && interactivity !== 'full' && interactivity !== 'read-only' && interactivity !== 'hidden') {
+    throw new Error(miss(by, 'startChat', 'interactivity', "'full', 'read-only' or 'hidden', or nothing for 'full'"));
+  }
+  const tools = object.tools;
+  if (tools !== undefined && (!Array.isArray(tools) || tools.some((one) => typeof one !== 'string'))) {
+    throw new Error(miss(by, 'startChat', 'tools', 'an array of tool names, or nothing'));
+  }
   return {
     ...(provider === undefined ? {} : { provider: provider as string }),
     ...(model === undefined ? {} : { model: model as string }),
     ...(config === undefined ? {} : { config: config as Record<string, unknown> }),
     ...(title === undefined ? {} : { title: title as string }),
     ...(said === undefined ? {} : { prompt: (said as string).trim() }),
-  };
+    ...(isUser ? { origin: { kind: 'user' } } : {}),
+    ...(isTool ? { origin: { kind: 'tool', chat: from.chat as string, toolCallId: from.toolCallId as string } } : {}),
+    ...(interactivity === undefined ? {} : { interactivity }),
+    ...(tools === undefined ? {} : { tools: [...tools] as string[] }),
+  } as ChatRequest;
 };
 
 /**

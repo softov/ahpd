@@ -1,6 +1,6 @@
 ---
 title: A restart wakes the bot again
-status: todo
+status: implemented
 depends:
   - task-03-the-back-is-a-chat-of-the-front.md
 layer: "bot"
@@ -36,4 +36,7 @@ The bot wakes its Back again, and the reply lands in that turn.
 - `pnpm typecheck` passes, and `pnpm vitest run packages/bot` passes.
 
 ## Resume
+
+- Built on 2026-11-13. `logAt` answers the open last turn, and `chat()` opens it again where it has a listener, in the default chat only. The plugin opens such talks on `listening` through `openTalks`.
+- Cases in `bot-chat.test.ts`. A restart of a real daemon is not tested: it is a check by hand on the test daemon.
 

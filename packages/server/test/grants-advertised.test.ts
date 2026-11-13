@@ -110,9 +110,10 @@ it('advertises the grants the daemon and the bot require, with the groups the ta
   // serves itself beside them.
   expect(grants['operation']).toMatchObject({ title: 'Operations', operations: ['invoke'] });
   // The bot plugin's scheme, whose entry's title comes from its provider's
-  // `describe`; a chat with a bot is a session, which `session` grants cover.
+  // `describe`, and `bot:chat`, the grant a talk with a bot needs apart from
+  // reading it.
   expect(grants['bot']).toMatchObject({ title: 'Bot' });
-  expect(grants['bot']?.operations ?? []).not.toContain('chat');
+  expect(grants['bot']?.operations ?? []).toContain('chat');
 
   // `apply` and `reload` are table operations now, and `plugin:write` is the
   // group that holds them.

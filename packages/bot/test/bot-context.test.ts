@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { botChatAgent } from '../src/chat.js';
 import { contextBlock, timeWithOffset } from '../src/context.js';
-import { backSessions, sessionsOf } from '../src/names.js';
+import { backSessions, frontSessions, frontsOf, sessionsOf } from '../src/names.js';
 import { botStore } from '../src/store.js';
 import { botWake } from '../src/wake.js';
 import type { ChatMessage, TurnHandle } from '../src/chat.js';
@@ -13,7 +13,6 @@ import type { BotSessions, ContextIn } from '../src/wake.js';
 import type { BotRecord } from '../src/record.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { Start } from '../../sdk/src/types/agent.js';
-import type { SessionRequest } from '../../sdk/src/types/plugin.js';
 import type { Owner } from '../../sdk/src/types/usage.js';
 
 /*
@@ -47,7 +46,6 @@ const bot = (over: Partial<BotRecord> = {}): BotRecord => ({
   body: 'robot',
   color: 'red',
   provider: 'base',
-  session: 'work',
   workspace: WORKSPACE,
   owner: 'user:soft',
   createdAt: '2026-10-16T00:00:00.000Z',
@@ -93,10 +91,9 @@ const textOf = (action: Bag): string => {
 /**
  * A wake over one host, with everything the host owns stubbed.
  *
- * The collections and the store are real, because a row that was not written is
- * exactly what a second message would start a second session over. The sessions
- * are a map that mints a URI per start, `look` reads a chat off the same map,
- * and `send` records what it was asked to carry rather than carrying it.
+ * The collections and the store are real. A start mints a Back chat and keeps
+ * it by the Front it was started for, `backChat` reads it back from there, and
+ * `send` records what it was asked to carry rather than carrying it.
  */
 async function sitting(record: BotRecord = bot(), contextIn: ContextIn = 'text') {
   const configDir = mkdtempSync(join(tmpdir(), 'ahpd-bot-context-chat-'));
@@ -108,38 +105,33 @@ async function sitting(record: BotRecord = bot(), contextIn: ContextIn = 'text')
   );
   await store.put(record);
   const backsRows = await records.collection(sessionsOf(record.id));
-  const backs = backSessions(() => backsRows);
+  const frontsRows = await records.collection(frontsOf(record.id));
 
-  /** The default chat of each back session, by the session's URI. */
-  const at = new Map<string, string>();
-  /** Whose each session is, the main chat the person's: a URI absent here is one this host no longer has. */
+  /** Whose each session is: a URI absent here is one this host no longer has. */
   const owners = new Map<string, Owner>([[CHAT, PERSON]]);
+  /** The Back chats started, by the Front each was started for. */
+  const backs = new Map<string, string>();
   const sent: { channel: string; action: Bag }[] = [];
   let minted = 0;
 
-  const sessions: BotSessions = {
-    owner: async (uri) => owners.get(uri),
-    start: async (wanted: SessionRequest) => {
-      minted += 1;
-      const uri = `ahp-session:/${minted}`;
-      owners.set(uri, wanted.owner);
-      at.set(uri, `ahp-chat:/${minted}`);
-      return uri;
-    },
-  };
+  const sessions: BotSessions = { owner: async (uri) => owners.get(uri) };
 
   const wake = botWake({
     store,
-    backs,
+    fronts: frontSessions(() => frontsRows),
+    backs: backSessions(() => backsRows),
     sessions,
     // What a first wake writes into the folder: the real plugin fills the
     // template, and these cases are about the message rather than the file.
     agents: async (one) => `# ${one.name}\n`,
-    look: async (session) => {
-      const chat = at.get(session);
-      if (chat === undefined) throw new Error(`${session} names no chat to say a message in`);
-      return { chat };
+    backChat: async (_session, front) => backs.get(front),
+    startChat: async (_session, wanted) => {
+      minted += 1;
+      const uri = `ahp-chat:/${minted}`;
+      backs.set((wanted.origin as { chat: string }).chat, uri);
+      return uri;
     },
+    look: async (chat) => ({ chat }),
     send: async (channel, action) => {
       sent.push({ channel, action });
       return undefined;
@@ -204,7 +196,7 @@ it('puts the context block in front of a turn that wakes a session', async () =>
   // the three lines the wake knows about the message.
   expect(rest).toEqual([]);
   expect(words).toBe('hello');
-  expect(block).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nfrom: ana\ntime: [^\n]+\n<\/context>$/);
+  expect(block).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nthis chat: agent-host-session:\/\/bot-chat\/[^\n]+\nfrom: ana\ntime: [^\n]+\n<\/context>$/);
   expect(block).toMatch(/time: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/m);
 });
 
@@ -235,7 +227,7 @@ it('puts the context block in front of a message the main chat steers into its o
   const action = one.sent[1]?.action ?? {};
   expect(action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'queued' });
   const text = textOf(action);
-  expect(text).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nfrom: ana\ntime: [^\n]+\n<\/context>\n\nstop that$/);
+  expect(text).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nthis chat: agent-host-session:\/\/bot-chat\/[^\n]+\nfrom: ana\ntime: [^\n]+\n<\/context>\n\nstop that$/);
 });
 
 it('keeps the block out of the text the main chat shows', async () => {
@@ -244,7 +236,7 @@ it('keeps the block out of the text the main chat shows', async () => {
   const chat = botChatAgent(one.configDir, one.store, (said, handle) => {
     woken = one.wake.woken(said, handle);
   });
-  const session = chat.create({
+  const session = await chat.create({
     uri: CHAT,
     chatUri: 'ahp-chat:/one',
     settings: { bot: 'backer' },

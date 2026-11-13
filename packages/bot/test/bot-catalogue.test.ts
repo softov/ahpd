@@ -392,7 +392,7 @@ const logged = (configDir: string, slug: string, id: string, meta?: Bag): void =
 /** One bot as the store keeps it, with the folder left alone. */
 const kept = (patch: Partial<BotRecord> = {}): BotRecord => ({
   id: 'motion', name: 'Motion', labels: [], body: 'robot', color: 'red',
-  session: 'work', workspace: join('/', 'tmp', 'work'), owner: 'user:ana',
+  workspace: join('/', 'tmp', 'work'), owner: 'user:ana',
   createdAt: STAMP, updatedAt: STAMP, ...patch,
 });
 

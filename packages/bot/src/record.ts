@@ -46,27 +46,6 @@ export const BOT_COLORS = [
   'purple', 'pink', 'brown', 'grey', 'black',
 ] as const;
 
-/**
- * The name a bot's back session has when its record names none.
- *
- * One name and one session, so a person who says something to a bot a second
- * time is continuing the work of the first time rather than starting a
- * conversation that knows nothing about it.
- */
-export const DEFAULT_SESSION = 'work';
-
-/**
- * The word a back session's name may carry, which the turn id takes the place
- * of.
- *
- * A name that holds it is a name for every message: what is said the second
- * time is said in a session of its own, because that is what a person asks for
- * by naming this - the difference between a bot that continues one session and
- * one that starts a new one each time. The plan's Answers table has it as
- * `{turn}`, beside the default `work`.
- */
-export const TURN_WORD = '{turn}';
-
 /** A bot's body: one of `BOT_BODIES`, or any other word a person chose. */
 export type BotBody = string;
 /** One of `BOT_COLORS`, or a hex colour kept as `#rrggbb` in lowercase. */
@@ -79,8 +58,7 @@ export type BotColor = (typeof BOT_COLORS)[number] | `#${string}`;
  * parts of the bot's `AGENTS.md` (see `agents.ts`), and the file is their one
  * copy: a record that carried them would be a second copy, out of step the
  * first time the bot rewrote its own file. What is left is what the file
- * cannot say - the folder, the owner, the body it is drawn with, the session a
- * message wakes.
+ * cannot say - the folder, the owner, the body it is drawn with.
  *
  * A bot on a computer is the one exception, and only until an edit can reach
  * that computer: its folder is not on this host, so its record keeps the parts
@@ -103,14 +81,6 @@ export interface BotKept {
   model?: string;
   /** The session preset it starts from. */
   preset?: string;
-  /**
-   * The name of the back session a message to it wakes.
-   *
-   * The session itself is not here: a name is what a person writes, and the
-   * session a name is on is a row in the bot's own `sessions` collection,
-   * because a session URI is the host's to mint and is not the same one twice.
-   */
-  session: string;
   /** The folder it works in, which is its own and never moves. */
   workspace: string;
   /** The machine it runs in, where it names one. */
@@ -193,8 +163,6 @@ export interface BotDraft {
   labels: string[];
   body: BotBody;
   color: BotColor;
-  /** The back session's name, which is `work` unless the body names another. */
-  session: string;
   owner?: Owner | undefined;
   workspace?: string | undefined;
   description?: string | undefined;
@@ -210,7 +178,7 @@ export interface BotDraft {
 /** The keys a body may carry: a bot's own fields, and nothing else. */
 const FIELDS = [
   'id', 'name', 'labels', 'description', 'body', 'color', 'instructions', 'template',
-  'provider', 'model', 'preset', 'session', 'workspace', 'computer', 'connectors', 'owner',
+  'provider', 'model', 'preset', 'workspace', 'computer', 'connectors', 'owner',
   // The two times are here rather than refused, because a client that read a
   // bot and wrote the whole record back is writing what it was given. Neither
   // is read: what they hold is the host's.
@@ -219,6 +187,9 @@ const FIELDS = [
   // never a record the host keeps, so a body that carries it back changes
   // nothing and a bot that names a missing agent is still a bot someone made.
   'state',
+  // The reader's own session with the bot, which a read answers beside the
+  // record, and the back session's name an older record held. Neither is kept.
+  'session',
 ];
 
 /** An owner, as the four kinds the usage rules spell. */
@@ -236,27 +207,6 @@ export const sameOwner = (one: Owner, other: Owner): boolean =>
  * are safer with one spelling.
  */
 export const isSlug = (slug: string): boolean => /^[a-z][a-z0-9-]{0,39}$/.test(slug);
-
-/**
- * Whether this is a name a back session may have.
- *
- * A slug with `{turn}` allowed in it, which is asked of a name a body wrote
- * rather than of one a message filled: `x` stands in for the word, because a
- * turn id takes its place and a name is a name only once it has one. Whether
- * the *filled* name is a slug is a different question with a different answer -
- * a turn id is somebody else's to choose, so a name that cannot hold one is
- * refused where the message arrives rather than here.
- */
-export const isBackName = (name: string): boolean => isSlug(name.replaceAll(TURN_WORD, 'x'));
-
-/**
- * Whether a name a message filled is one a back session may have.
- *
- * Looser than a slug, because a turn id is a uuid: it may start with a digit,
- * and `work-` and a uuid are more than forty characters. The name is a path
- * segment and a row key, so lowercase letters, digits and a dash are enough.
- */
-export const isFilledName = (name: string): boolean => /^[a-z0-9][a-z0-9-]{0,79}$/.test(name);
 
 /** A name or a line, trimmed, where the body named one. */
 const line = (key: string, said: unknown): string | undefined => {
@@ -377,19 +327,11 @@ export function checkRecord(slug: string, said: unknown, existing?: BotRecord): 
     throw new RpcError(INVALID_PARAMS, `${workspace} is not where this bot works; it is ${existing.workspace}`);
   }
 
-  // A name a message fills, so what is checked here is what a name may be
-  // before there is a message to fill it: see `isBackName`.
-  const session = line('session', body['session']) ?? existing?.session ?? DEFAULT_SESSION;
-  if (!isBackName(session)) {
-    throw new RpcError(INVALID_PARAMS, `${session} is not a name a back session can have: lowercase letters, digits, a dash and ${TURN_WORD}, starting with a letter`);
-  }
-
   return {
     name,
     labels: words(body['labels'], existing?.labels ?? []),
     body: tag(body['body'], 'body', existing?.body ?? drawn()),
     color: colour(body['color'], existing?.color ?? BOT_COLORS[0]),
-    session,
     owner: said_ as Owner | undefined,
     workspace,
     description: line('description', body['description']) ?? existing?.description,

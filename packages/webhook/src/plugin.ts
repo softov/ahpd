@@ -42,6 +42,7 @@ export const title = 'Webhook';
 export const defaults = {
   syncTimeoutSeconds: 10,
   maxBodyBytes: DEFAULT_MAX_BODY_BYTES,
+  threadSessions: false,
 } as const;
 
 /** What the plugin's connection calls itself. */
@@ -198,7 +199,7 @@ const textOf = (state: unknown, turn: string): string => {
 };
 
 /** The bot seams over the plugin's connection, which `peer` gives once it is open. */
-export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number): BotSeams {
+export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number, threadSessions: boolean = defaults.threadSessions): BotSeams {
   const peer = async (): Promise<PluginPeer> => (await open()).conn;
   const ends = turnEnds();
   host.on('turn_start', (event: TurnStartEvent) => { ends.started(event); });
@@ -233,6 +234,30 @@ export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout:
   };
   /** The plugin's session with each bot, by the bot's URI, once one is asked for. */
   const withBot = new Map<string, Promise<string | undefined>>();
+  /**
+   * A session with the bot, made as a client makes a chat with one:
+   * `createSession` on the bot's chat provider, the bot named in its config.
+   */
+  const makeSession = async (bot: string): Promise<string | undefined> => {
+    let slug: string;
+    try {
+      slug = new URL(bot).host;
+    }
+    catch {
+      problem(`${bot} is not a bot's URI`);
+      return undefined;
+    }
+    const conn = await peer();
+    const session = `ahp-session:/${randomUUID()}`;
+    try {
+      await conn.request('createSession', { channel: session, provider: BOT_CHAT, config: { bot: slug } });
+    }
+    catch (error) {
+      problem(`could not open a session with ${bot}, which needs the grant session:create: ${reason(error)}`);
+      return undefined;
+    }
+    return session;
+  };
   // Each callback's wait for its next attempt, ended when the plugin closes.
   const waits = new Map<NodeJS.Timeout, (error: Error) => void>();
   host.registerClose(() => {
@@ -256,29 +281,34 @@ export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout:
         const session = await kept;
         if (session !== undefined && await host.sessionOwner(session) !== undefined) return session;
       }
-      const made = (async (): Promise<string | undefined> => {
-        let slug: string;
-        try {
-          slug = new URL(bot).host;
-        }
-        catch {
-          problem(`${bot} is not a bot's URI`);
-          return undefined;
-        }
-        const conn = await peer();
-        const session = `ahp-session:/${randomUUID()}`;
-        try {
-          await conn.request('createSession', { channel: session, provider: BOT_CHAT, config: { bot: slug } });
-        }
-        catch (error) {
-          problem(`could not open a session with ${bot}, which needs the grant session:create: ${reason(error)}`);
-          return undefined;
-        }
-        return session;
-      })();
+      const made = makeSession(bot);
       withBot.set(bot, made);
       return await made;
     },
+    threadSessions,
+    threadSession: async (bot) => {
+      const session = await makeSession(bot);
+      if (session === undefined) return undefined;
+      // The thread talks in the session's own default chat, read off its state.
+      const conn = await peer();
+      try {
+        const opened = await conn.request('subscribe', { channel: session }) as { snapshot?: { state?: { defaultChat?: unknown } } };
+        const chat = opened.snapshot?.state?.defaultChat;
+        if (typeof chat !== 'string' || chat === '') {
+          problem(`${session} names no chat for the thread to talk in`);
+          return undefined;
+        }
+        return { session, chat };
+      }
+      catch (error) {
+        problem(`could not read ${session}, which needs the grant session:read: ${reason(error)}`);
+        return undefined;
+      }
+      finally {
+        conn.notify('unsubscribe', { channel: session });
+      }
+    },
+    holds: async (session) => await host.sessionOwner(session) !== undefined,
     /**
      * A chat of one caller thread's own, opened as a client opens one: a
      * `createChat` naming a chat URI of the plugin's choosing, which the host
@@ -349,6 +379,15 @@ export const apply: Plugin['apply'] = (host, options) => {
   const maxBodyBytes = typeof askedBytes === 'number' && askedBytes > 0
     ? Math.floor(askedBytes)
     : defaults.maxBodyBytes;
+  /*
+   * Whether each caller thread of a bot endpoint has a session of its own. A
+   * value that is not a boolean is reported, and the default is used.
+   */
+  const askedThreads = options.threadSessions;
+  const threadSessions = typeof askedThreads === 'boolean' ? askedThreads : defaults.threadSessions;
+  if (askedThreads !== undefined && typeof askedThreads !== 'boolean') {
+    host.problem(`${name}: threadSessions is ${JSON.stringify(askedThreads)}, which is not true or false; using false`);
+  }
 
   /**
    * The connection, once the daemon listens and the host has answered `initialize`.
@@ -379,7 +418,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   host.registerAdapter(webhookAdapter(endpoints));
   host.registerRoute(webhookRoute({
     endpoint: (id) => endpoints.get(id),
-    bot: botTarget(botSeams(host, open, timeout)),
+    bot: botTarget(botSeams(host, open, timeout, threadSessions)),
     run: (automation, data, owner) => { host.runAutomation(automation, data, owner); },
     fire: (data, owner) => { host.fireTrigger(WEBHOOK_TRIGGER.type, 'call', data, owner); },
     maxBodyBytes,

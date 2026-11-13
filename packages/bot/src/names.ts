@@ -21,8 +21,27 @@ import type { Owner, RecordCollection } from '@ahpd/sdk';
 /** The folder a bot's own data is under, inside the daemon's configuration folder. */
 export const BOTS_DIR = 'bots';
 
+/** The provider id a chat is registered and named under. */
+export const CHAT_PROVIDER = 'bot-chat';
+
+/** The name of this host in a Back chat's title, one fixed word for now. */
+export const HOST_TITLE = 'main';
+
+/**
+ * A Back chat's title: `@main/<bot>/<person>`, with the root, and a talk with
+ * no owner, as `root`.
+ */
+export const backTitle = (bot: string, owner: Owner | undefined): string =>
+  `@${HOST_TITLE}/${bot}/${owner === undefined || owner.startsWith('root:') ? 'root' : userOf(owner)}`;
+
+/** Why a bot may not run its Back on `bot-chat`: that is the Front, which runs no model. */
+export const NOT_ITS_OWN_FRONT = `A bot cannot run on ${CHAT_PROVIDER}, the agent people talk to it through.`;
+
 /** The collection one bot's back session rows are kept in, which this file reads. */
 export const sessionsOf = (slug: string): string => `${BOTS_DIR}/${slug}/sessions`;
+
+/** The collection one bot's Front rows are kept in: the session each person talks to it in. */
+export const frontsOf = (slug: string): string => `${BOTS_DIR}/${slug}/fronts`;
 
 /** The folder one bot's chat logs are kept in. */
 export const logsOf = (configDir: string, slug: string): string => join(configDir, BOTS_DIR, slug, 'logs');
@@ -115,6 +134,55 @@ export const backSessions = (rows: (bot: string) => RecordCollection): BackSessi
 
   put: async (bot, user, name, session) => {
     const row: BackSession = { id: rowId([bot, user, name]), bot, user, name, session };
+    await rows(bot).put(row);
+  },
+
+  sessions: async (bot) => {
+    const found = await rows(bot).find({ bot });
+    return found
+      .map((row) => row['session'])
+      .filter((session): session is string => typeof session === 'string' && session !== '');
+  },
+});
+
+/** One person's talk with one bot, as it is kept: the session they talk to it in. */
+export type FrontSession = {
+  /** The row's id, which `rowId` makes of the bot and the person. */
+  id: string;
+  /** The bot, by slug. */
+  bot: string;
+  /** Whose talk it is, as `talkerOf` names the session's owner. */
+  user: string;
+  /** The `bot-chat` session the person talks to the bot in. */
+  session: string;
+};
+
+/**
+ * The Front rows of the bots, one for each bot and person.
+ *
+ * A plugin cannot list the host's sessions, so the session a person talks to a
+ * bot in is written down here when it is made: a read of the bot answers it,
+ * and a second create for the same person is refused naming it.
+ */
+export interface FrontSessions {
+  /** The session one person talks to one bot in, or nothing where no row is kept. */
+  get(bot: string, user: string): Promise<string | undefined>;
+  /** Write down the session one person talks to one bot in, over the row there was. */
+  put(bot: string, user: string, session: string): Promise<void>;
+  /** Every session one bot's rows name. */
+  sessions(bot: string): Promise<string[]>;
+}
+
+/** The Front rows over one collection a bot. */
+export const frontSessions = (rows: (bot: string) => RecordCollection): FrontSessions => ({
+  get: async (bot, user) => {
+    const row = await rows(bot).get(rowId([bot, user]));
+    const held = row?.['session'];
+    return typeof held === 'string' && held !== '' ? held : undefined;
+  },
+
+  put: async (bot, user, session) => {
+    const row: FrontSession = { id: rowId([bot, user]), bot, user, session };
     await rows(bot).put(row);
   },
 

@@ -9,6 +9,9 @@
     },
     "maxBodyBytes": {
       "description": "Tamaño máximo del cuerpo de una solicitud, en bytes. Por defecto, 5242880 (5 MiB). Un cuerpo mayor recibe 413."
+    },
+    "threadSessions": {
+      "description": "Cómo hablan con el bot las conversaciones de quienes llaman a un endpoint de bot. false (por defecto) es una sesión con el bot, y un chat de ella para cada conversación; true es una sesión propia para cada conversación."
     }
   }
 }

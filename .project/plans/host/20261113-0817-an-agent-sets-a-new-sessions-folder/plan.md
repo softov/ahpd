@@ -68,7 +68,7 @@ client createSession(provider: bot-chat, config) -> agent.placeSession(config, r
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an-agent-places-a-created-session](task-01-an-agent-places-a-created-session.md) | todo | - |
+| [01 - an-agent-places-a-created-session](task-01-an-agent-places-a-created-session.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -78,8 +78,8 @@ client createSession(provider: bot-chat, config) -> agent.placeSession(config, r
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-agent-places-a-created-session.md](task-01-an-agent-places-a-created-session.md).
+- **Done so far:** task 01 is `implemented`, waiting for review.
+- **Next action:** Softov's review.
 - **Open questions:** none.
 - **Watch out for:** find how `createSession` reaches the grants of the agent's plugin. `beginPluginSession` gets them from `PluginStarts`, and a client's create has none today.
 

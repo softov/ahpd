@@ -105,6 +105,11 @@
           "type": "string",
           "enum": ["main", "own"],
           "description": "Where the work session's questions and approvals appear. 'main' (default) copies them into the main chat to answer there; 'own' leaves them in the work session's chat and lists them on the main chat's inputNeeded."
+        },
+        "secondSession": {
+          "type": "string",
+          "enum": ["refuse", "allow"],
+          "description": "What a second session with the same bot gets. 'refuse' (default) refuses it and names the person's session; 'allow' opens it, and the bot answers the last used one."
         }
       }
     }

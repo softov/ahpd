@@ -69,7 +69,6 @@ it('reads the default template filled with a bot as that bot words', () => {
     labels: [],
     body: 'robot',
     color: 'red',
-    session: 'work',
     workspace: '/bots/motion',
     owner: 'user:soft',
     createdAt: '2026-10-14T00:00:00.000Z',

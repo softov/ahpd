@@ -26,7 +26,7 @@ import { memoryAutomations } from '../src/automations/automations.js';
 import { computersFor } from '../src/machines/computers.js';
 import { createHost, ROOT } from '../src/host.js';
 import { checkKeyLimits, memoryPolicies } from '../src/access/policies.js';
-import { fileUsers } from '../src/access/users.js';
+import { fileUsers, holds } from '../src/access/users.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { ComputerPort } from '../src/types/computers.js';
@@ -34,7 +34,7 @@ import type { HostOptions } from '../src/types/host.js';
 import type { Policies, Policy } from '../src/types/policies.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { ModelUse, Usage, UsageTotal } from '../src/types/usage.js';
-import type { Users } from '../src/types/users.js';
+import type { Grant, Principal, Users } from '../src/types/users.js';
 
 /** The draft's store, as far as the cases below reach it. */
 const ROWS: Policy[] = [
@@ -621,5 +621,35 @@ describe('a key\'s limits', () => {
 
   it('refuses a body that is not a list of limits', () => {
     expect(() => checkKeyLimits({ amount: 5 })).toThrow('A policy\'s limits is a list of limits, and that body has {"amount":5}');
+  });
+});
+describe('a turn a plugin sends into a session it does not own', () => {
+  /** A plugin's connection, as the host builds its principal: its entry's grants and no person behind it. */
+  const pluginOn = async (made: Awaited<ReturnType<typeof host>>) => {
+    const grants: Grant[] = ['session:read', 'session:write', 'chat:*'];
+    const principal: Principal = { id: 'plugin:bots', plugin: 'bots', roles: [], grants, can: (grant) => holds(new Set(grants), grant) };
+    const said = noted();
+    const client = made.made.accept(said, principal);
+    await client.handle({ method: 'initialize', params: { clientId: 'bots', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
+    return { said, client };
+  };
+
+  it('is checked as the session\'s owner: a root session\'s turn is nobody\'s to refuse', async () => {
+    // No agent row at all, which is what refuses the plugin's own turn.
+    const made = await host(true, true, memoryPolicies());
+    const { client: root } = await signedIn(made, 'root', true);
+    await makeSession(root, 'talk', 'claude');
+    const chat = await mintedChat(root, 'ahp-session:/talk');
+
+    const { said, client } = await pluginOn(made);
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+    });
+    await settle();
+
+    expect(rejection(said)).toBeUndefined();
+    expect(endedWith(said)).toBeUndefined();
   });
 });

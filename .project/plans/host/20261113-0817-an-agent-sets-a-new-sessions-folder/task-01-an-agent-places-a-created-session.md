@@ -1,6 +1,6 @@
 ---
 title: An agent places a session a client creates
-status: todo
+status: implemented
 depends: []
 layer: "sdk host"
 refs:
@@ -44,4 +44,8 @@ An agent with `placeSession` decides the folder, the trust, the user settings an
 - `pnpm typecheck` passes, and `pnpm vitest run packages/sdk` passes.
 
 ## Resume
+
+- Built on 2026-11-13 in `packages/sdk/test/session-place.test.ts`, five cases.
+- The door reads `computer:write` from the client's config only. A source that the hook names is checked after the hook, in the door's words.
+- A placed machine sends no progress lines, because the progress token is read before the hook runs.
 

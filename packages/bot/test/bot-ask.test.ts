@@ -100,18 +100,22 @@ async function sitting(): Promise<Sitting> {
     emit: (_channel: string, action: Bag) => { sent.push(action); },
     clientToolTimeoutMs: 0,
   };
-  const session = agent.create(start);
+  const session = await agent.create(start);
   session.sendMessage('t1', 'hello');
   if (handle === undefined) throw new Error('the message reached no listener');
   return { session, sent, handle };
 }
 
-/** The asking over one main turn, with the back session's chat recording what it is sent. */
-function asking(handle: TurnHandle, entries: Map<string, Bag>, toBack: Bag[], askIn: AskIn = 'main'): ReturnType<typeof botAsk> {
-  const held: Answering = { session: MAIN, turnId: 't1', handle, bot: 'Backer', chat: 'ahp-chat:/back', waiting: new Map() };
+/**
+ * The asking over one Front turn, with the Back chat recording what it is
+ * sent. The Back is a chat of the Front's own session, or of `back` for a Back
+ * session an older daemon started.
+ */
+function asking(handle: TurnHandle, entries: Map<string, Bag>, toBack: Bag[], askIn: AskIn = 'main', back = MAIN): ReturnType<typeof botAsk> {
+  const held: Answering = { session: MAIN, turnId: 't1', handle, bot: 'Backer', chat: BACK_CHAT, waiting: new Map() };
   return botAsk({
-    main: (back) => (back === 'bot:/backer/ana/work' ? held : undefined),
-    request: async (back, id) => (back === 'bot:/backer/ana/work' ? entries.get(id) : undefined),
+    main: (chat) => (chat === BACK_CHAT ? held : undefined),
+    request: async (session, id) => (session === back ? entries.get(id) : undefined),
     send: async (chat, action) => { toBack.push({ chat, action }); return undefined; },
     problem: () => {},
   }, askIn);
@@ -155,7 +159,7 @@ it('sends an approval from the main chat to the back session', async () => {
   const { session, sent, handle } = await sitting();
   const toBack: Bag[] = [];
   const ask = asking(handle, new Map([['toolu_run', approval()]]), toBack);
-  await ask.asked('bot:/backer/ana/work', 'toolu_run');
+  await ask.asked(MAIN, BACK_CHAT, 'toolu_run');
 
   // The open main turn shows the back session's approval, with its own title.
   const active = session.chatState().activeTurn as Bag;
@@ -194,11 +198,50 @@ it('sends an approval from the main chat to the back session', async () => {
   expect(call[0]?.['toolCall']).toMatchObject({ status: 'running', confirmed: 'user-action', selectedOptionId: 'allow-once' });
 });
 
+it('copies a question a subagent of the Back asks in its worker chat, and sends the approval to that chat', async () => {
+  const { session, handle } = await sitting();
+  const toBack: Bag[] = [];
+  const held: Answering = { session: MAIN, turnId: 't1', handle, bot: 'Backer', chat: BACK_CHAT, waiting: new Map() };
+  const worker = 'ahp-chat:/worker';
+  const ask = botAsk({
+    main: (chat) => (chat === BACK_CHAT ? held : undefined),
+    request: async (at, id) => (at === MAIN && id === 'toolu_run' ? { ...approval(), chat: worker } : undefined),
+    send: async (chat, action) => { toBack.push({ chat, action }); return undefined; },
+    reach: async (_at, chat) => (chat === worker ? { back: BACK_CHAT, held } : undefined),
+    problem: () => {},
+  });
+  await ask.asked(MAIN, worker, 'toolu_run');
+
+  const active = session.chatState().activeTurn as Bag;
+  expect(active['responseParts']).toMatchObject([{ kind: 'toolCall', toolCall: { toolCallId: 'toolu_run', status: 'pending-confirmation' } }]);
+  session.confirm('toolu_run', true, 'allow-once');
+  await settle();
+  expect(toBack).toMatchObject([{ chat: worker, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_run', approved: true } }]);
+});
+
+it('takes a subagent\'s question out of the main chat when the worker withdraws it', async () => {
+  const { session, handle } = await sitting();
+  const held: Answering = { session: MAIN, turnId: 't1', handle, bot: 'Backer', chat: BACK_CHAT, waiting: new Map() };
+  const worker = 'ahp-chat:/worker';
+  const ask = botAsk({
+    main: (chat) => (chat === BACK_CHAT ? held : undefined),
+    request: async (at, id) => (at === MAIN && id === 'toolu_run' ? { ...approval(), chat: worker } : undefined),
+    send: async () => undefined,
+    reach: async (_at, chat) => (chat === worker ? { back: BACK_CHAT, held } : undefined),
+    problem: () => {},
+  });
+  await ask.asked(MAIN, worker, 'toolu_run');
+  ask.withdrawn(MAIN, 'toolu_run');
+
+  const call = ((session.chatState().activeTurn as Bag)['responseParts'] as Bag[])[0]?.['toolCall'] as Bag | undefined;
+  expect(call?.['status']).not.toBe('pending-confirmation');
+});
+
 it('sends a question answered in the main chat to the back session', async () => {
   const { session, sent, handle } = await sitting();
   const toBack: Bag[] = [];
   const ask = asking(handle, new Map([['ask-1', question()]]), toBack);
-  await ask.asked('bot:/backer/ana/work', 'ask-1');
+  await ask.asked(MAIN, BACK_CHAT, 'ask-1');
 
   // The question is a part of the open turn, with the back session's fields.
   const active = session.chatState().activeTurn as Bag;
@@ -231,10 +274,10 @@ it('takes the copy out of the main chat when the back session withdraws its ques
   const toBack: Bag[] = [];
   const entries = new Map([['ask-1', question()]]);
   const ask = asking(handle, entries, toBack);
-  await ask.asked('bot:/backer/ana/work', 'ask-1');
+  await ask.asked(MAIN, BACK_CHAT, 'ask-1');
 
   // The back session settled the request some other way and no longer asks.
-  ask.withdrawn('bot:/backer/ana/work', 'ask-1');
+  ask.withdrawn(MAIN, 'ask-1');
 
   const active = session.chatState().activeTurn as Bag;
   expect(active['responseParts']).toEqual([]);
@@ -254,11 +297,12 @@ it('takes the copy out of the main chat when the back session withdraws its ques
  * turn shows no copy, and the listing comes off when the back session lets the
  * request go.
  */
-it('lists a back session\'s request on the main chat\'s session where askIn is own, and copies nothing', async () => {
+it('lists an older Back session\'s request on the Front\'s session where askIn is own, and copies nothing', async () => {
+  const OLDER = 'ahp-session:/back-before';
   const { session, sent, handle } = await sitting();
   const toBack: Bag[] = [];
-  const ask = asking(handle, new Map([['toolu_run', approval()]]), toBack, 'own');
-  await ask.asked('bot:/backer/ana/work', 'toolu_run');
+  const ask = asking(handle, new Map([['toolu_run', approval()]]), toBack, 'own', OLDER);
+  await ask.asked(OLDER, BACK_CHAT, 'toolu_run');
 
   expect((session.chatState().activeTurn as Bag)['responseParts']).toEqual([]);
   expect(sent.filter((one) => String(one['type']).startsWith('session/inputNeeded'))).toEqual([
@@ -267,11 +311,22 @@ it('lists a back session\'s request on the main chat\'s session where askIn is o
   expect(session.sessionState()['inputNeeded']).toEqual([approval()]);
   expect(session.status()).toBe(Status.InputNeeded);
 
-  ask.withdrawn('bot:/backer/ana/work', 'toolu_run');
+  ask.withdrawn(OLDER, 'toolu_run');
   expect(sent.filter((one) => one['type'] === 'session/inputNeededRemoved')).toEqual([
     { type: 'session/inputNeededRemoved', id: 'toolu_run' },
   ]);
   expect(session.sessionState()['inputNeeded']).toBeUndefined();
   expect(session.status()).toBe(Status.InProgress);
+  expect(toBack).toEqual([]);
+});
+
+it('lists nothing for a Back chat of the Front\'s own session where askIn is own, which that session lists already', async () => {
+  const { session, sent, handle } = await sitting();
+  const toBack: Bag[] = [];
+  const ask = asking(handle, new Map([['toolu_run', approval()]]), toBack, 'own');
+  await ask.asked(MAIN, BACK_CHAT, 'toolu_run');
+
+  expect((session.chatState().activeTurn as Bag)['responseParts']).toEqual([]);
+  expect(sent.filter((one) => String(one['type']).startsWith('session/inputNeeded'))).toEqual([]);
   expect(toBack).toEqual([]);
 });

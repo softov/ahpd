@@ -1,6 +1,6 @@
 ---
 title: One session for each bot and person
-status: todo
+status: implemented
 depends: []
 layer: "bot"
 refs:
@@ -52,4 +52,11 @@ A person with `bot:chat` has one `bot-chat` session with each bot. The read of t
 - `pnpm typecheck` passes, and `pnpm vitest run packages/bot` passes.
 
 ## Resume
+
+- Built on 2026-11-13. The Front rows and the one-talk rule are in `packages/bot/src/talks.ts`, and the check is in the `create` of `chat.ts`, which is now async.
+- A reader whose principal names a `plugin` is a plugin's session, such as the webhook's: no `bot:chat`, no row and no refusal.
+- A body may still carry `session`, as a read answers it: the field is accepted and not kept.
+- Cases: `bot-provider.test.ts` (one talk, `allow`, `bot:chat`), `bot-record.test.ts` and the dropped word of an older file.
+- The host now gives a backend the session's owner as `Start.owner`. A talk is kept by `talkerOf` of that owner. Every `root:<host>` owner, and no owner, is `root`, so the root has one talk on any machine.
+- A start with `resume` is never refused, and it writes no row over the row that is there.
 

@@ -9,6 +9,9 @@
     },
     "maxBodyBytes": {
       "description": "Tamanho máximo do corpo de uma requisição, em bytes. Por padrão, 5242880 (5 MiB). Um corpo maior recebe 413."
+    },
+    "threadSessions": {
+      "description": "Como as conversas dos chamadores de um endpoint de bot falam com o bot. false (padrão) é uma sessão com o bot, e um chat dela para cada conversa; true é uma sessão própria para cada conversa."
     }
   }
 }

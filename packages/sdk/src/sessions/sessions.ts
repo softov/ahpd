@@ -474,6 +474,12 @@ const chatsOf = (value: unknown): StoredChat[] | undefined => {
       ...(typeof origin === 'object' && origin !== null && !Array.isArray(origin)
         ? { origin: origin as Record<string, unknown> }
         : {}),
+      ...(held.interactivity === 'full' || held.interactivity === 'read-only' || held.interactivity === 'hidden'
+        ? { interactivity: held.interactivity }
+        : {}),
+      ...(Array.isArray(held.tools) && held.tools.every((name) => typeof name === 'string') && held.tools.length > 0
+        ? { tools: [...held.tools] as string[] }
+        : {}),
       ...(held.default === true ? { default: true } : {}),
       ...(held.closed === true ? { closed: true } : {}),
       ...(wakeOf(held.wake) ?? {}),
