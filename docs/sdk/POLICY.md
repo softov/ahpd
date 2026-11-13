@@ -128,6 +128,8 @@ A request that names no team and no project is held by `all` and by `user:` rows
 
 **Never checked:** the root connection, an automation with no person behind it, and a host with no users directory. The first is the host rather than a person, the second is nobody's work, and the third has nobody to ask.
 
+A turn is checked as whoever sent it, except a turn a plugin sends into a session it does not own: that turn is the session owner's work, so it is checked and charged as the owner's. A bot's message into the Back chat of a talk is one, and in a root's talk it is never checked.
+
 A turn that names no model is checked on the harness and the machine alone. The host never learns which model a harness picked for itself, so a check that guessed would be checking nothing.
 
 ### What a refusal says

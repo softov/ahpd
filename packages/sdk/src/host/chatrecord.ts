@@ -114,6 +114,8 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
       if (chat.closed === true) continue;
       chatHome.set(chat.uri, id);
       if (chat.origin !== undefined && !ctx.madeFrom.has(chat.uri)) ctx.madeFrom.set(chat.uri, chat.origin);
+      if (chat.interactivity !== undefined && !ctx.chatInteractivity.has(chat.uri)) ctx.chatInteractivity.set(chat.uri, chat.interactivity);
+      if (chat.tools !== undefined && !ctx.chatTools.has(chat.uri)) ctx.chatTools.set(chat.uri, chat.tools);
     }
     return list;
   };
@@ -163,6 +165,10 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
     // before its origin is written down, so the record takes it from the one
     // place both a live session and a browsed one are told it from.
     const origin = ctx.madeFrom.get(chatUri) ?? was?.origin;
+    // How a person may use it and the tools it alone is offered, read from the
+    // same place for the same reason.
+    const interactivity = ctx.chatInteractivity.get(chatUri) ?? was?.interactivity;
+    const tools = ctx.chatTools.get(chatUri) ?? was?.tools;
     // The backend of its own this chat runs on, if it is not the session's,
     // and the config it runs on there. A call that names neither is one about
     // a chat that has not changed backend, so the row keeps what it had.
@@ -180,6 +186,8 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
       ...(was?.configValues === undefined ? {} : { configValues: was.configValues }),
       ...(title === undefined ? {} : { title }),
       ...(origin === undefined ? {} : { origin }),
+      ...(interactivity === undefined ? {} : { interactivity }),
+      ...(tools === undefined ? {} : { tools }),
       ...(isDefault || was?.default === true ? { default: true } : {}),
       ...(was?.wake === undefined ? {} : { wake: was.wake }),
     };

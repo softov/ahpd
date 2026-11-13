@@ -399,6 +399,8 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
    * base's record, and an agent the base was handed directly has none.
    */
   const plugins: Record<string, string> = { ...base.agentPlugins };
+  /** The start entry of the plugin each added agent came from, by provider, for the grants it holds. */
+  const agentStarts: Record<string, PluginStarts> = { ...base.agentStarts };
   /** The catalogs of the plugin each added agent came from, by provider. */
   const agentCatalogs: Record<string, Catalogs> = { ...base.catalogs?.agents };
 
@@ -497,6 +499,7 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
       harnesses.set(agent.provider.toLowerCase(), contribution.by);
       added.push(keptAgent(agent));
       plugins[agent.provider] = contribution.spec ?? contribution.by;
+      agentStarts[agent.provider] = contribution.starts;
       if (contribution.i18n !== undefined) agentCatalogs[agent.provider] = contribution.i18n;
     }
 
@@ -709,6 +712,7 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
 
   if (added.length > 0) options.agents = [...options.agents, ...added];
   if (Object.keys(plugins).length > 0) options.agentPlugins = plugins;
+  if (Object.keys(agentStarts).length > 0) options.agentStarts = agentStarts;
 
   const tools = [
     ...(base.tools ?? []),
@@ -1610,6 +1614,12 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
      */
     startChat(session, wanted) {
       const asked = checkChatRequest(wanted, by);
+      // A chat is offered only this plugin's own tools: another plugin's tool
+      // is that plugin's to offer.
+      const foreign = asked.tools?.find((name) => !tools.has(name));
+      if (foreign !== undefined) {
+        throw new Error(miss(by, 'startChat', `tools ${foreign}`, 'the name of a tool this plugin registered'));
+      }
       const start = starts.startChat;
       if (start === undefined) {
         throw new Error(miss(by, 'startChat', 'the chat', 'asked for once a host is built over this plugin'));

@@ -269,6 +269,10 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   sessionEvents: SessionEvents;
   /** The chats made out of another, by URI, naming the source chat as this host holds it. */
   madeFrom: Map<string, Bag>;
+  /** How a person may use each chat whose maker said, by URI. A chat with no entry is `full`. */
+  chatInteractivity: Map<string, 'full' | 'read-only' | 'hidden'>;
+  /** The opt-in host tools each chat was asked to be offered beside its session's, by URI. */
+  chatTools: Map<string, string[]>;
   /** What started each session, for the ones nothing did. */
   origins: Map<string, { kind: 'automation'; automation: string; run: string }>;
   /** The automation runs starting a session now, which a close waits for. */

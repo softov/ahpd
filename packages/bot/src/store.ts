@@ -1,5 +1,5 @@
 import { AGENTS_FILE, makeFolder, partsOf, readAgentsFile, withAgents, writeAgentsFile } from './folder.js';
-import { BOT_BODIES, DEFAULT_SESSION, isBotColor, isSlug, withoutParts } from './record.js';
+import { BOT_BODIES, isBotColor, isSlug, withoutParts } from './record.js';
 import type { AgentsParts, InstructionsIn, Yaml } from './agents.js';
 import type { BotRecord, KeptBot } from './record.js';
 import type { RecordChange, RecordCollection, StoredRecord } from '@ahpd/sdk';
@@ -9,7 +9,7 @@ import type { RecordChange, RecordCollection, StoredRecord } from '@ahpd/sdk';
  *
  * The `bots` collection holds one record per bot, and the record is what its
  * `AGENTS.md` cannot say: the folder it works in, its owner, the body and
- * colour it is drawn with, the session a message wakes. Its persona - `name`,
+ * colour it is drawn with. Its persona - `name`,
  * `description`, `instructions` - is the file's, and the file is the one copy.
  *
  * A record made before that was true still has the persona in it. It is moved
@@ -71,9 +71,9 @@ export interface BotStore {
  * record a person edited by hand can say anything, and a store that answered
  * something else is caught by the same check.
  *
- * Two keys are filled in rather than checked, because a bot with no word for
- * them and a bot whose word nobody has read are the same bot: the body it is
- * drawn with, and the name of the back session a message wakes.
+ * One key is filled in rather than checked, because a bot with no word for it
+ * and a bot whose word nobody has read are the same bot: the body it is drawn
+ * with. The name of a back session, which an older daemon kept, is dropped.
  *
  * The persona is optional here: a record this host wrote has none, because the
  * file is its one copy, and one an older daemon wrote still carries it. What to
@@ -93,15 +93,11 @@ const kept = (said: unknown): KeptBot | undefined => {
   // A body is a tag, so any word is kept, and a file with none is drawn with
   // the first suggestion rather than left out of the listing.
   const body = typeof one['body'] === 'string' && one['body'].trim() !== '' ? one['body'] : BOT_BODIES[0];
-  /*
-   * And a back session's name, which a file that names none has as `work`: a
-   * bot this host answers always names the session a message wakes, so nothing
-   * that reads one has to know what the default is. Whether the name is one a
-   * session can have is not asked here - a hand-written name that is no name is
-   * refused where the message arrives, by the wake.
-   */
-  const session = typeof one['session'] === 'string' && one['session'].trim() !== '' ? one['session'].trim() : DEFAULT_SESSION;
-  const rest: Record<string, unknown> = { ...one, body, session };
+  // A file an older daemon wrote names its back session; a bot has none now,
+  // since its Back is a chat of each person's own session, so the word is
+  // dropped rather than refused.
+  const { session: _session, ...kept } = one;
+  const rest: Record<string, unknown> = { ...kept, body };
   return rest as unknown as KeptBot;
 };
 

@@ -34,7 +34,7 @@ interface Sent { chat: string; message: string; text: string; turn: string }
  * ends when the case says so with `finish`, or at once when `auto` is set,
  * with the text `echo: <what was sent>`.
  */
-async function made(options: { auto?: boolean; sessions?: Record<string, string>; chatRefused?: boolean; timeout?: number; messageRefused?: string; unconfirmed?: boolean; waits?: boolean } = {}) {
+async function made(options: { auto?: boolean; sessions?: Record<string, string>; chatRefused?: boolean; timeout?: number; messageRefused?: string; unconfirmed?: boolean; waits?: boolean; threadSessions?: boolean } = {}) {
   const threads = await memoryRecords().collection('webhook-threads');
   const sent: Sent[] = [];
   const posted: { url: string; id: string; body: Record<string, unknown> }[] = [];
@@ -45,7 +45,18 @@ async function made(options: { auto?: boolean; sessions?: Record<string, string>
   /** The turn the host started for each message, by the message's id. */
   const begun = new Map<string, string>();
   const sessions = options.sessions ?? { 'bot://motion': 'bot-chat:/motion' };
+  /** The sessions made for a thread each, in order, and the ones the host still holds. */
+  const made: string[] = [];
+  const held = new Set<string>();
   const seams: BotSeams = {
+    threadSessions: options.threadSessions === true,
+    threadSession: async () => {
+      made.push(`ahp-session:/thread-${String(made.length + 1)}`);
+      const session = made.at(-1)!;
+      held.add(session);
+      return { session, chat: `${session}/chat` };
+    },
+    holds: async (session) => held.has(session),
     threads,
     session: async (bot) => {
       // A yield, so two first calls of one thread overlap here.
@@ -81,7 +92,7 @@ async function made(options: { auto?: boolean; sessions?: Record<string, string>
     if (one === undefined) return;
     waiting.get(one.message)?.({ turn: one.turn, status, text, ...(error === undefined ? {} : { error }) });
   };
-  return { target, threads, sent, posted, problems, finish, waiting, opened };
+  return { target, threads, sent, posted, problems, finish, waiting, opened, made, held };
 }
 
 /** An endpoint as the route hands it over: checked. */
@@ -112,6 +123,32 @@ describe('the thread map', () => {
     expect(kept).toHaveLength(1);
     expect(kept[0]).toMatchObject({ endpoint: 'ci', thread: 'pr-12', session: 'bot-chat:/motion', chat: 'ahp-chat:/1' });
     expect(String(kept[0]?.id)).toMatch(/^t-[0-9a-f-]{36}$/);
+  });
+
+  it('keeps two threads as chats of one session where threadSessions is false', async () => {
+    const { target, sent, opened, made: started } = await made();
+    await target(endpoint(), call({ thread: 'pr-12', text: 'one' }));
+    await target(endpoint(), call({ thread: 'pr-13', text: 'two' }));
+    expect(opened).toEqual(['bot-chat:/motion', 'bot-chat:/motion']);
+    expect(sent.map((one) => one.chat)).toEqual(['ahp-chat:/1', 'ahp-chat:/2']);
+    expect(started).toEqual([]);
+  });
+
+  it('gives each thread a session of its own where threadSessions is true, and makes it again once the host has none', async () => {
+    const { target, sent, opened, made: started, held, threads } = await made({ threadSessions: true });
+    await target(endpoint(), call({ thread: 'pr-12', text: 'one' }));
+    await target(endpoint(), call({ thread: 'pr-13', text: 'two' }));
+    await target(endpoint(), call({ thread: 'pr-12', text: 'three' }));
+    // Each thread talks in its own session's default chat, and no chat is
+    // opened in a shared one.
+    expect(opened).toEqual([]);
+    expect(started).toEqual(['ahp-session:/thread-1', 'ahp-session:/thread-2']);
+    expect(sent.map((one) => one.chat)).toEqual(['ahp-session:/thread-1/chat', 'ahp-session:/thread-2/chat', 'ahp-session:/thread-1/chat']);
+
+    held.delete('ahp-session:/thread-1');
+    await target(endpoint(), call({ thread: 'pr-12', text: 'four' }));
+    expect(started.at(-1)).toBe('ahp-session:/thread-3');
+    expect((await threads.find({ thread: 'pr-12' })).map((one) => one['session'])).toEqual(['ahp-session:/thread-3']);
   });
 
   it('sends a second call on the same thread in the same chat', async () => {
@@ -425,9 +462,10 @@ it('hears the end of the turn a message became, by the turn that named it', asyn
 
 it('gives the plugin option syncTimeoutSeconds GitHub\'s ten seconds by default, and maxBodyBytes 25 MiB', () => {
   const optionsSchema = manifest.ahpd.optionsSchema;
-  expect(defaults).toEqual({ syncTimeoutSeconds: 10, maxBodyBytes: 25 * 1024 * 1024 });
+  expect(defaults).toEqual({ syncTimeoutSeconds: 10, maxBodyBytes: 25 * 1024 * 1024, threadSessions: false });
   expect(optionsSchema.properties).toHaveProperty('syncTimeoutSeconds');
   expect(optionsSchema.properties).toHaveProperty('maxBodyBytes');
+  expect(optionsSchema.properties).toHaveProperty('threadSessions');
 });
 
 describe('the plugin connection', () => {

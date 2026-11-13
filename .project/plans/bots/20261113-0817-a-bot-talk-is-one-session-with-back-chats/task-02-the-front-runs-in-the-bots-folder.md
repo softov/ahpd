@@ -1,6 +1,6 @@
 ---
 title: The Front runs in the bot's folder
-status: todo
+status: implemented
 depends: []
 layer: "bot"
 refs:
@@ -32,4 +32,7 @@ A `bot-chat` session runs in the bot's folder, trusted, with no user settings, o
 - `pnpm typecheck` passes, and `pnpm vitest run packages/bot` passes.
 
 ## Resume
+
+- Built on 2026-11-13 as `placeSession` on the `bot-chat` agent. `bot-provider.test.ts` checks that a talk runs in the bot's folder.
+- The bot's plugin entry needs `session:trust` for every talk, so the test fixtures give it the grants BOTS.md prints.
 

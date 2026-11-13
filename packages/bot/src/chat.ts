@@ -1,11 +1,12 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Status, bag, idOf, steerOf, steerPart, str, uriOf } from '@ahpd/sdk';
-import type { Agent, Bag, Chosen, Listed, MessageAttachment, MessageFrom, Session, Start } from '@ahpd/sdk';
-import { BOTS_DIR, logsOf } from './names.js';
-import { mayRead } from './provider.js';
+import type { Agent, Bag, Chosen, Listed, MessageAttachment, MessageFrom, Owner, Session, Start } from '@ahpd/sdk';
+import { BOTS_DIR, CHAT_PROVIDER, logsOf } from './names.js';
+import { mayChat, mayRead } from './provider.js';
 import type { BotRecord } from './record.js';
 import type { BotStore } from './store.js';
+import type { Talks } from './talks.js';
 
 /**
  * A chat with a bot: a session of its own that runs no model.
@@ -168,15 +169,17 @@ export interface TurnHandle {
   /** End the open turn as failed, in the words of what failed. */
   fail?(message: string): void;
   /**
-   * Say the open turn is waiting on a chat of another session, and link it.
+   * Say the open turn is waiting on another chat, and link it.
    *
    * The turn shows one tool call of kind `subagent`, VS Code's word for a call
    * running another chat, whose content names that chat, which is how a
-   * client opens it: the back session is not a worker this chat's backend
-   * opened, so nothing else would draw it. Optional because a handle over a
-   * chat with nothing behind it has nothing to show.
+   * client opens it: the Back chat is not a worker this chat's backend
+   * opened, so nothing else would draw it. `toolCallId` is the call's id where
+   * the caller made it first, as the wake does so a Back chat's origin can name
+   * it. Optional because a handle over a chat with nothing behind it has
+   * nothing to show.
    */
-  subagent?(chat: string, title: string): void;
+  subagent?(chat: string, title: string, toolCallId?: string): void;
   /**
    * Show a request another session is waiting on, in the open turn.
    *
@@ -241,8 +244,7 @@ export interface TurnHandle {
   onCancel?: (session: string, turnId: string) => void;
 }
 
-/** The provider id a chat is registered and named under. */
-export const CHAT_PROVIDER = 'bot-chat';
+export { CHAT_PROVIDER };
 
 /** What a chat's log file is named with. */
 const LOG = '.jsonl';
@@ -387,12 +389,13 @@ const turnOf = (said: Bag): ChatTurn | undefined => {
  * finished. A turn whose daemon died before it ended has only the first of the
  * two, and reads back interrupted, as VS Code's Copilot reads back a turn its
  * record shows started and never ended: an error, with the error part last.
- * The part is not marked resumable, because nothing runs a bot chat's turn
- * again.
+ * The last turn of the log, where it is one of those, is also answered as
+ * `open`, before it is marked: a chat with a listener opens it again, so the
+ * bot answers the person after a restart.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L6962-L6967
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1152-L1155
  */
-const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | undefined => {
+const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined; open?: ChatTurn } | undefined => {
   let text: string;
   try { text = readFileSync(path, 'utf8'); }
   catch { return undefined; }
@@ -452,12 +455,35 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
     if (turn.responseParts.some((part) => steerOf(part) === one.id || part['id'] === `steer:${one.id}`)) continue;
     turn.responseParts.push(steerPart(one.id, one.words));
   }
+  // The last turn, where the log began it and never ended it: what a restart
+  // left open, which a chat with a listener opens again.
+  const last = turns.at(-1);
   return {
     turns: turns.map((turn) => (unended.has(turn.id)
       ? { ...turn, state: 'error' as const, responseParts: [...turn.responseParts, INTERRUPTED] }
       : turn)),
     mark,
+    ...(last !== undefined && unended.has(last.id) ? { open: last } : {}),
   };
+};
+
+/**
+ * The session ids of every talk whose log ends in a turn it began and never
+ * ended: what a restart left open, which the plugin opens again when the
+ * daemon listens, so the bot answers it without anybody opening the talk.
+ */
+export const openTalks = (configDir: string): string[] => {
+  const found: string[] = [];
+  for (const dir of logDirs(configDir)) {
+    let names: string[];
+    try { names = readdirSync(dir); }
+    catch { continue; }
+    for (const name of names) {
+      const id = idOfFile(name);
+      if (id !== undefined && logAt(join(dir, name))?.open !== undefined) found.push(id);
+    }
+  }
+  return found;
 };
 
 /** Add one turn to a chat's log, making the folder the first time. */
@@ -504,6 +530,17 @@ const rowOf = (dir: string, id: string, store: BotStore): Listed | undefined => 
 };
 
 /**
+ * Whose talk a start is: the person reading, or else the owner the host
+ * recorded for the session, which is the host's own for a root connection and
+ * none on a host with no users. A plugin's session, such as the webhook's,
+ * talks for its callers and is no talk at all.
+ */
+const talkFor = (start: Start): { owner: Owner | undefined } | undefined => {
+  if (start.reader?.plugin !== undefined || start.owner?.startsWith('plugin:') === true) return undefined;
+  return { owner: start.reader !== undefined ? `user:${start.reader.id}` : start.owner };
+};
+
+/**
  * The `bot-chat` agent, over one daemon's configuration folder and its bots.
  *
  * `store` is read rather than a file of its own, because a chat is a chat
@@ -518,7 +555,8 @@ export function botChatAgent(
   store: BotStore,
   heard?: (message: ChatMessage, handle: TurnHandle) => void,
   cancelled?: (session: string, turnId: string) => void,
-): Agent<Session> {
+  talks?: Talks,
+): Agent<Promise<Session>> {
   /**
    * One chat: the turns it holds and the bot it is a chat with.
    *
@@ -527,7 +565,14 @@ export function botChatAgent(
    * opens on what was said in it rather than on an empty conversation.
    */
   function chat(start: Start, bot: BotRecord, id: string, mark: Bag, dir: string): Session {
-    const turns: ChatTurn[] = logAt(fileOf(dir, id))?.turns ?? [];
+    const read = logAt(fileOf(dir, id));
+    /*
+     * The turn a restart left open, where somebody listens to answer it. Only
+     * in the session's default chat: the log is the session's, and another
+     * chat of the session that opened it would answer a turn it never had.
+     */
+    const left = heard === undefined || start.chatId !== undefined ? undefined : read?.open;
+    const turns: ChatTurn[] = (read?.turns ?? []).filter((one) => one.id !== left?.id);
     let modified = new Date().toISOString();
     let draft: Bag | undefined;
     /**
@@ -535,11 +580,20 @@ export function botChatAgent(
      *
      * Not in `turns`: a turn is one of those once it has ended, and what a
      * client reading the chat is told about while it runs is `activeTurn`. A
-     * chat starts with none open, even one whose log has a line a turn began
-     * with and none it ended with - nothing here knows who was going to answer
-     * it, and the plugin that started the chat is where that is known.
+     * chat starts with the last turn its log began and never ended open again,
+     * where it has a listener: a restart came while the bot was answering it,
+     * and the listener wakes the bot again. With no listener it reads back
+     * interrupted, as nothing would answer it.
      */
-    let open: OpenTurn | undefined;
+    let open: OpenTurn | undefined = left === undefined ? undefined : {
+      id: left.id,
+      startedAt: left.startedAt ?? new Date().toISOString(),
+      message: left.message,
+      responseParts: [...left.responseParts],
+      calls: [],
+      asked: [],
+      answers: 0,
+    };
     /**
      * The turns sent while another was open, in the order they came, each
      * handed on once the turn in front of it has ended: the chat answers one
@@ -590,9 +644,9 @@ export function botChatAgent(
      * worker chat derived here is a chat that does not exist. The chat is the
      * back session's own, which only this side knows.
      */
-    const showWorking = (held: OpenTurn, chat: string, title: string): void => {
+    const showWorking = (held: OpenTurn, chat: string, title: string, made?: string): void => {
       if (held.calls.some((one) => one.chat === chat)) return;
-      const toolCallId = `call-${crypto.randomUUID()}`;
+      const toolCallId = made ?? `call-${crypto.randomUUID()}`;
       const meta: Bag = { toolKind: 'subagent', subagentChatUri: chat };
       const part: Bag = {
         kind: 'toolCall',
@@ -916,10 +970,10 @@ export function botChatAgent(
         if (held === undefined) return;
         finish(held, 'error', [{ kind: 'error', error: { errorType: 'sendFailed', message } }]);
       },
-      subagent: (chat, title) => {
+      subagent: (chat, title, toolCallId) => {
         const held = open;
         if (held === undefined) return;
-        showWorking(held, chat, title);
+        showWorking(held, chat, title, toolCallId);
       },
       asking: (entry) => {
         const held = open;
@@ -969,7 +1023,30 @@ export function botChatAgent(
         one.answer?.(true);
       },
     };
-    if (heard !== undefined) handle.onMessage = (message) => { heard(message, handle); };
+    /*
+     * With `secondSession` at `allow` a person may hold more than one session
+     * with a bot, and the one a read answers is the one they used last, so each
+     * message writes it down. A session a plugin made has no reader and no row.
+     */
+    const talk = talkFor(start);
+    const lastUsed = talks !== undefined && talks.second === 'allow' && talk !== undefined
+      ? (): void => {
+        talks.keep(bot.id, talk.owner, start.uri).catch(() => {});
+      }
+      : undefined;
+    if (heard !== undefined) handle.onMessage = (message) => { lastUsed?.(); heard(message, handle); };
+    /*
+     * The turn a restart left open is handed to the listener as a new one is,
+     * once the host holds the chat this create answers: the bot is woken
+     * again, and its reply lands in that same turn.
+     */
+    if (open !== undefined) {
+      const reopened = open;
+      setTimeout(() => {
+        if (open !== reopened) return;
+        handle.onMessage?.({ session: start.uri, chat: start.chatUri, bot: bot.id, turnId: reopened.id, text: String(reopened.message.text ?? '') });
+      }, 0);
+    }
     if (cancelled !== undefined) handle.onCancel = cancelled;
 
     /**
@@ -1303,6 +1380,28 @@ export function botChatAgent(
     defaults: () => ({}),
 
     /*
+     * A talk with a bot runs in the bot's folder, trusted, with none of the
+     * daemon user's settings, on the bot's computer, whatever folder the
+     * client sent: the Back chats that do its work are chats of this session,
+     * and the bot's rules are its `AGENTS.md` there. A slug no bot has is
+     * answered nothing, so `create` gives its own refusal.
+     */
+    placeSession: async (settings) => {
+      const asked = settings['bot'];
+      const slug = typeof asked === 'string' ? asked.trim() : '';
+      if (slug === '') return undefined;
+      await store.ready();
+      const bot = store.get(slug);
+      if (bot === undefined) return undefined;
+      return {
+        workingDirectory: bot.workspace,
+        trusted: true,
+        userSettings: false,
+        ...(bot.computer === undefined ? {} : { computer: bot.computer }),
+      };
+    },
+
+    /*
      * The bots, as the answers to the chat's one setting.
      *
      * Without this the key reached every client as a text box: a property with
@@ -1373,19 +1472,44 @@ export function botChatAgent(
       return undefined;
     },
 
-    create: (start) => {
+    create: async (start) => {
       const asked = start.settings['bot'];
       const slug = typeof asked === 'string' ? asked.trim() : '';
-      // The store's cache, which is what a read of `bot://` answers from too.
-      // A chat is started by one of those reads, so the bot is here by then.
+      await store.ready();
       const found = slug === '' ? undefined : store.get(slug);
-      // A bot this person may not read is one they are not told exists.
-      const bot = found !== undefined && start.reader !== undefined && !mayRead(found, start.reader) ? undefined : found;
+      /*
+       * A bot this person may not read is one they are not told exists, and
+       * one they may read but not talk to is the same answer: a talk is
+       * `bot:chat`, apart from the read.
+       */
+      const reader = start.reader;
+      // A plugin's own connection, such as the webhook's, is no person: it
+      // talks for its callers, so it holds no talk of its own.
+      const person = reader !== undefined && reader.plugin === undefined ? reader : undefined;
+      const bot = found !== undefined && reader !== undefined && (!mayRead(found, reader) || (person !== undefined && !mayChat(found, person))) ? undefined : found;
       // A plain sentence rather than a coded refusal: the host answers whatever
       // a backend throws out of `create` as its own `INVALID_PARAMS`, keeping
       // the words and dropping the code, so a code here would be one no client
       // could ever see.
       if (bot === undefined) throw new Error(`There is no bot ${slug}.`);
+      /*
+       * One session for each bot and owner, the root's among them. A second
+       * session is refused naming the first, unless `secondSession` is
+       * `allow`, and the session they talk in is written down. A session a
+       * plugin makes is no talk, so neither is asked of it.
+       */
+      const talk = talkFor(start);
+      if (talk !== undefined && talks !== undefined) {
+        const held = await talks.of(bot.id, talk.owner);
+        // A session started again, by a restart or a client opening its row,
+        // is one the host already holds: it is neither refused nor written
+        // over the talk the row names.
+        const again = start.resume !== undefined;
+        if (!again && held !== undefined && held !== start.uri && talks.second === 'refuse') {
+          throw new Error(`You already have a session with ${bot.name}: ${held}.`);
+        }
+        if (held === undefined || (!again && held !== start.uri)) await talks.keep(bot.id, talk.owner, start.uri);
+      }
       // The id the conversation is kept under: the one this chat was resumed
       // by, which is how a chat opens on its own log again.
       return chat(start, bot, start.resume ?? idOf(start.uri), markOf(bot), logsOf(configDir, bot.id));

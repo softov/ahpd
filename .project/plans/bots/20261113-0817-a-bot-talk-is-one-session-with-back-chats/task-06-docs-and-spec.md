@@ -1,6 +1,6 @@
 ---
 title: The docs and the spec say a talk is one session
-status: todo
+status: implemented
 depends:
   - task-04-a-restart-wakes-the-bot-again.md
   - task-05-the-webhook-picks-its-session-shape.md
@@ -38,4 +38,6 @@ They cover one session for each bot and person, its Back chat, `bot:chat`, and t
 - `node <do-spec>/scripts/lint-prose.mjs .project/specs/bots.md .project/plans/bots/00-bots.md` passes.
 
 ## Resume
+
+- Written on 2026-11-13. Only the session model of `specs/bots.md` was changed. Its template scenarios were stale before this plan and stay as they were.
 

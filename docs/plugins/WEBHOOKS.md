@@ -284,7 +284,9 @@ The data's `connector` is the connector's id, set by the plugin, and no body fie
 
 ## A call to a bot
 
-A call to a bot endpoint queues its text as a message in its thread's own chat with the bot. The caller names a thread, and each thread is a conversation of its own, as the spec gives a separate conversation its own chat: the first call of a thread opens a chat in the plugin's session with the bot with `createChat`, which the session says as `session/chatAdded`, and every later call of the thread talks there. The session is the plugin's own chat with the bot, made the way a person makes one: `createSession` on the `bot-chat` provider, naming the bot in its config, the first time a call to that bot needs it, and again where the host no longer holds it - [BOTS.md](BOTS.md#the-chat-and-its-back-sessions).
+A call to a bot endpoint queues its text as a message in its thread's own chat with the bot. The caller names a thread, and each thread is a conversation of its own, as the spec gives a separate conversation its own chat: the first call of a thread opens a chat in the plugin's session with the bot with `createChat`, which the session says as `session/chatAdded`, and every later call of the thread talks there. The session is the plugin's own chat with the bot, made the way a person makes one: `createSession` on the `bot-chat` provider, naming the bot in its config, the first time a call to that bot needs it, and again where the host no longer holds it - [BOTS.md](BOTS.md#a-talk-and-its-back-chat). Each thread's chat is a Front of its own, so each thread wakes a Back chat of its own in that session.
+
+With the plugin option `threadSessions` at `true`, each thread is a session of its own with the bot instead, made with `createSession` the first time the thread calls and again where the host no longer holds it, and the thread talks in that session's default chat. `false` is the default. A value that is not a boolean is reported, and `false` is used.
 
 The message is a `chat/pendingMessageSet` of kind `queued`, with the origin `agent`, as [VS Code's router](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L270-L282) sends a message into another session's chat. The host takes it up as a turn once the chat runs nothing, so the calls of one thread are answered in the order they came. The turn is the host's, and names the message as its `queuedMessageId`, which is how the plugin knows which turn answers the call.
 
@@ -297,7 +299,7 @@ The call is one of two shapes:
 
 A JSON body that has no string `text` is the second shape, so the whole body is the text.
 
-The plugin keeps each thread in the `webhook-threads` collection, as the endpoint, the thread id, the session and the thread's chat. A session started again under a new URI gives the thread a new chat there, written down under the record's own id.
+The plugin keeps each thread in the `webhook-threads` collection, as the endpoint, the thread id, the session and the thread's chat. A session started again under a new URI gives the thread a new chat there, or a new session where `threadSessions` is `true`, written down under the record's own id.
 
 ### The reply
 
@@ -318,7 +320,7 @@ A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugi
 ```json
 {
   "plugins": [
-    { "name": "@ahpd/webhook", "options": { "syncTimeoutSeconds": 30, "maxBodyBytes": 1048576 }, "grants": ["session:read", "session:create", "session:write", "chat:create"] }
+    { "name": "@ahpd/webhook", "options": { "syncTimeoutSeconds": 30, "maxBodyBytes": 1048576, "threadSessions": false }, "grants": ["session:read", "session:create", "session:write", "chat:create"] }
   ]
 }
 ```

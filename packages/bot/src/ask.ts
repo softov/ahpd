@@ -31,8 +31,8 @@ import type { Answering } from './wake.js';
 
 /** What the copy reads and sends through. */
 export interface AskSeams {
-  /** The main turn one back session is answering, or nothing where none is. */
-  main(backSession: string): Answering | undefined;
+  /** The Front turn one Back chat is answering, or nothing where none is. */
+  main(backChat: string): Answering | undefined;
   /**
    * One entry of a session's `inputNeeded`, or nothing where it is not there.
    *
@@ -43,6 +43,12 @@ export interface AskSeams {
   request(session: string, id: string): Promise<Bag | undefined>;
   /** Send one action on a chat, and give the host's reason where it refused it. */
   send(chat: string, action: Bag): Promise<string | undefined>;
+  /**
+   * The chat whose tool call made `chat`, read off the `tool` origin in the
+   * session's chat list, or nothing for a chat no call made. A subagent of a
+   * Back asks in a worker chat of its own, made by a call in the Back.
+   */
+  parentOf?(session: string, chat: string): Promise<string | undefined>;
   /** Say what went wrong, for the operator to read. */
   problem(line: string): void;
 }
@@ -51,10 +57,12 @@ export interface AskSeams {
 interface Copy {
   /** The main chat's session, which is where the answer is given. */
   session: string;
-  /** The back session that asked. */
+  /** The session that asked, which its removal names. */
   back: string;
-  /** The back session's chat, which is where the answer is sent. */
+  /** The chat that asked, which is where the answer is sent: the Back, or a worker chat under it. */
   chat: string;
+  /** The Back chat the Front turn waits on, which is what a withdrawal takes the copy out of. */
+  backChat: string;
   /** The entry's own id, which is what its removal names. */
   id: string;
   /** Which of the two answers this copy takes. */
@@ -73,7 +81,7 @@ export interface Ask {
    * and the request stays in the back session, where its own client still sees
    * it.
    */
-  asked(backSession: string, id: string): Promise<void>;
+  asked(session: string, chat: string, id: string): Promise<void>;
   /**
    * Take one request's copy out of the main turn because the back session no
    * longer waits on it.
@@ -81,7 +89,7 @@ export interface Ask {
    * Called for every removal the host raises, including the ones this plugin
    * never copied: forgetting an unknown id costs nothing.
    */
-  withdrawn(backSession: string, id: string): void;
+  withdrawn(session: string, id: string): void;
 }
 
 /** Whether a value is a JSON object, which is what every entry here is. */
@@ -149,8 +157,20 @@ export function botAsk(seams: AskSeams, askIn: AskIn = 'main'): Ask {
   };
 
   return {
-    asked: async (back, id) => {
-      const held = seams.main(back);
+    asked: async (back, asked, id) => {
+      /*
+       * The Back chat the asking chat is, or is under: a subagent's question
+       * is asked in its worker chat, which a call in the Back made, through
+       * any workers between. A few steps, so a loop in the origins ends.
+       */
+      let asker = asked;
+      let held = seams.main(asker);
+      for (let step = 0; held === undefined && seams.parentOf !== undefined && step < 8; step += 1) {
+        const up = await seams.parentOf(back, asker);
+        if (up === undefined || up === asker) break;
+        asker = up;
+        held = seams.main(asker);
+      }
       if (held === undefined) return;
       let entry: Bag | undefined;
       try { entry = await seams.request(back, id); }
@@ -165,19 +185,22 @@ export function botAsk(seams: AskSeams, askIn: AskIn = 'main'): Ask {
        * over has nobody to ask. The handle is the chat's and outlives its
        * turns, so the turn is compared too.
        */
-      const now = seams.main(back);
+      const now = seams.main(asker);
       if (now === undefined || now.handle !== held.handle || now.turnId !== held.turnId) return;
       const kind = textOf(entry['kind']);
       const chat = textOf(entry['chat']);
       if (chat === undefined) return;
       if (kind !== 'chatInput' && kind !== 'toolConfirmation') return;
       if (askIn === 'own') {
+        // A Back chat of the Front's own session is on that session's
+        // `inputNeeded` already, so it is not listed a second time.
+        if (held.session === back) return;
         listings.set(key(back, id), held.handle);
         held.handle.listed?.(entry);
         return;
       }
       const turnId = textOf(entry['turnId']);
-      const copy: Copy = { session: held.session, back, chat, id, kind, ...(turnId === undefined ? {} : { turnId }) };
+      const copy: Copy = { session: held.session, back, chat, backChat: asker, id, kind, ...(turnId === undefined ? {} : { turnId }) };
       // Every id an answer may name it with: the entry's own, and the request
       // or the call inside it.
       const names = [id];
@@ -230,10 +253,14 @@ export function botAsk(seams: AskSeams, askIn: AskIn = 'main'): Ask {
       }
       // Every alias goes: they are one copy, and the entry's removal names one
       // of them.
+      let asker: string | undefined;
       for (const [at, copy] of copies) {
-        if (copy.back === back && copy.id === id) copies.delete(at);
+        if (copy.back === back && copy.id === id) {
+          asker = copy.backChat;
+          copies.delete(at);
+        }
       }
-      seams.main(back)?.handle.withdrawn?.(id);
+      if (asker !== undefined) seams.main(asker)?.handle.withdrawn?.(id);
     },
   };
 }

@@ -15,7 +15,9 @@ refs:
   - "[code://packages/bot/src/provider.ts#L372-L391](../../packages/bot/src/provider.ts#L372-L391) - `mayLink` and `workspaceFor`"
   - "[code://packages/bot/src/provider.ts#L471-L547](../../packages/bot/src/provider.ts#L471-L547) - `write`, make and edit of a bot"
   - "[code://packages/bot/src/provider.ts#L562-L574](../../packages/bot/src/provider.ts#L562-L574) - `remove`, which leaves a tombstone"
-  - "[code://packages/bot/src/wake.ts#L221-L234](../../packages/bot/src/wake.ts#L221-L234) - `sessionFor`, the session a bot starts"
+  - "[code://packages/bot/src/wake.ts](../../packages/bot/src/wake.ts) - `backOf`, the Back chat of a Front, found by its origin or started"
+  - "[code://packages/bot/src/talks.ts](../../packages/bot/src/talks.ts) - `botTalks`, the one talk for each bot and person"
+  - "[code://packages/bot/src/chat.ts](../../packages/bot/src/chat.ts) - `botChatAgent`: `placeSession`, the one-talk refusal, and the turn a restart left open"
   - "[code://packages/bot/src/template.ts#L59-L67](../../packages/bot/src/template.ts#L59-L67) - `firstTurn`, the filled template for each new chat"
   - "[code://packages/bot/src/catalogue.ts#L68-L193](../../packages/bot/src/catalogue.ts#L68-L193) - `botCatalogue`, the `x-ahpd-bots://` channel"
   - "[code://packages/bot/src/store.ts#L97-L244](../../packages/bot/src/store.ts#L97-L244) - `botStore`, the cache over the host record store"
@@ -33,33 +35,49 @@ The code is in [`code://packages/bot/src/provider.ts`](../../packages/bot/src/pr
 
 ### A person makes a bot
 
-WHEN a person writes `bot://<slug>` with a name and no session
+WHEN a person writes `bot://<slug>` with a name
 AND the slug is a lowercase slug of at most 40 characters that no bot or tombstone holds
 THEN the plugin makes the bot's folder, when the bot names no computer
-AND starts the bot's session before it saves the record, with the bot as the session title.
+AND starts no session.
+The record has no `session` field. A body that has one is accepted, and the plugin does not keep the field.
 
-### A bot is linked to a session that exists
+### A person talks to a bot
 
-WHEN a write names a `session` for the bot
-THEN the plugin links that session in place of starting one
-AND refuses with -32602 a session it does not know, and with -32009 a session of another owner.
+WHEN a client creates a `bot-chat` session that names the bot
+AND the reader owns the bot or holds `bot:chat`
+THEN the session runs in the bot's folder, trusted, with no user settings, on the bot's computer
+AND the plugin writes the session in the bot's `fronts` rows, one row for each bot and person.
+WHEN the same person creates a second session with that bot
+THEN the plugin refuses it and names the first session, unless the option `secondSession` is `allow`.
+A session that a plugin creates is not refused.
+WHEN a person reads `bot://<slug>`
+THEN the answer has `session`, the person's own talk, when the host still holds it.
 
-### The session a bot starts
+### The Back of a talk
 
-WHEN the plugin starts a bot's session
-THEN the session has the bot's owner, the bot folder as its working directory, and the preset or harness as its provider
-AND it names the model only when there is no preset, and sets the `computer` config key when the bot names a computer.
+WHEN a message arrives in the Front, which is the default chat of a talk
+THEN the plugin sends it to the Back: the chat of the same session whose `tool` origin names the Front
+AND starts the Back with `startChat` when there is none, on the preset, or on the provider and the model.
+The origin of a new Back names the `subagent` call that the Front turn shows.
+The Back gets the tool `post_message`, and `post_message` posts only into the Front turn that the calling chat answers.
+A bot that names no agent gets a Back on the default agent of the host.
+
+### A restart during a reply
+
+WHEN the daemon starts and a Front log ends with a turn that has no end
+THEN the plugin opens the session again when the daemon listens
+AND the Front opens that turn again, and the Back gets the message again.
 
 ### A bot's connectors
 
 WHEN a bot's record names `connectors`
 THEN the plugin keeps the map a session's `connectors` config key holds.
 A body that names an alias that is not a lowercase slug, or a value that is not `connectors://<adapter>/<id>`, is refused with -32602.
-AND each session the bot started answers that map through the plugin's `registerBindings` reader.
-The request a bot starts a session with names no `connectors` key, so the reader is the one answer.
+AND each talk with the bot answers that map through the plugin's `registerBindings` reader.
+A Back session that an older daemon started also answers that map.
 An edit is what the next tool list and the next call read.
 WHEN the bot's record goes
-THEN the sessions it started are answered nothing.
+THEN its talks are answered nothing.
 A session no bot started is answered nothing too.
 
 ### The first turn of each chat is the template
@@ -93,8 +111,7 @@ AND an admin that names a `root:` owner gets `root:<host name>` of this host.
 ### An edit keeps the owner and the folder
 
 WHEN a write edits a bot that exists
-THEN the owner and the workspace stay as they are, and a body that changes them is refused
-AND an absent `session` keeps the link, while `null` or a blank value removes it.
+THEN the owner and the workspace stay as they are, and a body that changes them is refused.
 
 ### A colour is a name or a hex
 
@@ -129,7 +146,7 @@ AND a write whose `ifMatch` differs from the record's `updatedAt` is refused wit
 
 WHEN a person removes a bot
 THEN the plugin deletes the record and writes a tombstone for its slug
-AND the bot folder and the session stay.
+AND the bot folder and its talks stay.
 
 ### A hand edit of the file
 

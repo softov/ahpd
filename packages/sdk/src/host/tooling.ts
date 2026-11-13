@@ -421,6 +421,14 @@ interface ChatStart {
   config?: Record<string, unknown>;
   prompt?: string;
   from?: Bag;
+  /** What the chat was made from; `user` where absent. A `tool` origin names a chat of the same session. */
+  origin?: { kind: 'user' } | { kind: 'tool'; chat: string; toolCallId: string };
+  /** How a person may use the chat; `full` where absent. */
+  interactivity?: 'full' | 'read-only' | 'hidden';
+  /** Opt-in host tools the chat is offered beside its session's. */
+  tools?: string[];
+  /** The plugin that asked, where a plugin did. */
+  by?: string;
 }
 
 export function createTooling(ctx: HostContext): Tooling {
@@ -535,9 +543,12 @@ export function createTooling(ctx: HostContext): Tooling {
    * instructions - read off the same list - say nothing about them either.
    *
    * Less the session tools, too, where its provider is not offered them.
+   *
+   * With a chat, the opt-in tools its maker named for that chat alone are
+   * offered there as well.
    */
-  const contributingTo = (uri: string, provider?: string): HostTool[] => {
-    const named = namedBy(uri);
+  const contributingTo = (uri: string, provider?: string, chatUri?: string): HostTool[] => {
+    const named = [...namedBy(uri), ...(chatUri === undefined ? [] : ctx.chatTools.get(chatUri) ?? [])];
     return ctx.contributing.filter((one) =>
       (one.optIn !== true || named.includes(one.definition.name))
       && (sessionToolsFor(uri, provider) || !SESSION_TOOL_NAMES.includes(one.definition.name))
@@ -1936,8 +1947,27 @@ export function createTooling(ctx: HostContext): Tooling {
      * rather than quietly started on the session's own: the plugin asked for
      * a harness, and one it did not get would be a chat it never asked for.
      */
-    const agent = asked.provider === undefined ? held.agent : ctx.agents.get(asked.provider);
+    /*
+     * A plugin's chat that names no backend, in a session of that plugin's own
+     * agent, runs on this host's default agent, as a client's create that
+     * names none does: a plugin's own agent is a front of its own, such as a
+     * bot's talk, which runs no model, and its chats are the work behind it.
+     * The default is the first agent the host serves that is not one of that
+     * plugin's own and is not turned off or paused: the agents are in the
+     * order the plugins loaded, so the first may be the front itself, and a
+     * chat on the front would be one more front.
+     */
+    const ownFront = asked.provider === undefined && asked.by !== undefined
+      && options.agentStarts?.[held.agent.provider]?.by === asked.by;
+    const agent = asked.provider !== undefined ? ctx.agents.get(asked.provider)
+      : !ownFront ? held.agent
+      : [...ctx.agents.values()].find((one) => options.agentStarts?.[one.provider]?.by !== asked.by
+        && agentRefusal(ctx.options.disabledAgents?.(), ctx.options.pausedAgents?.(), one.provider) === undefined);
     if (agent === undefined) throw new Error(noProvider(asked.provider));
+    // A chat made by a call is drawn under that call, so the call's chat has
+    // to be one a client of this session can see.
+    if (asked.origin?.kind === 'tool' && !held.chats.has(asked.origin.chat))
+      throw new Error(`${asked.origin.chat} is not a chat of ${at}`);
     // A chat of an agent its record turned off or paused starts nothing, said
     // with the sentence that state uses.
     const unavailable = agentRefusal(ctx.options.disabledAgents?.(), ctx.options.pausedAgents?.(), agent.provider);
@@ -1976,7 +2006,25 @@ export function createTooling(ctx: HostContext): Tooling {
      */
     startsRead(ctx, at, chatUri);
     if (asked.title !== undefined) kept.setChatTitle(idOf(at), chatUri, asked.title);
-    const chat = await spawn(agent, at, chatUri, chatIdFor(at, chatUri), config, preamble === undefined ? undefined : { context: preamble }, held.workingDirectory, undefined, held.additional);
+    /*
+     * What it was made from, how a person may use it and the tools it alone is
+     * offered, written down before it opens: the record `spawn` writes and the
+     * tools the backend starts with are read from here, as a client's chat
+     * writes its origin before it opens.
+     */
+    if (asked.origin !== undefined && asked.origin.kind !== 'user') ctx.madeFrom.set(chatUri, asked.origin);
+    if (asked.interactivity !== undefined && asked.interactivity !== 'full') ctx.chatInteractivity.set(chatUri, asked.interactivity);
+    if (asked.tools !== undefined && asked.tools.length > 0) ctx.chatTools.set(chatUri, [...asked.tools]);
+    let chat: Session;
+    try {
+      chat = await spawn(agent, at, chatUri, chatIdFor(at, chatUri), config, preamble === undefined ? undefined : { context: preamble }, held.workingDirectory, undefined, held.additional);
+    }
+    catch (error) {
+      ctx.madeFrom.delete(chatUri);
+      ctx.chatInteractivity.delete(chatUri);
+      ctx.chatTools.delete(chatUri);
+      throw error;
+    }
     log(`opened ${chatUri} in ${at}`);
     ctx.keepChatOwnConfigValues(at, chatUri, own);
     if (asked.title !== undefined) persistChatTitle(at, chatUri, asked.title);
@@ -2783,7 +2831,7 @@ export function createTooling(ctx: HostContext): Tooling {
    */
   const offeredTools = (uri: string, chatUri: string, provider?: string): BoundTool[] => [
     ...clientTools(uri),
-    ...contributingTo(uri, provider).flatMap((one): BoundTool[] => {
+    ...contributingTo(uri, provider, chatUri).flatMap((one): BoundTool[] => {
       /*
        * A tool for the session's own chats alone, as VS Code's
        * `topLevelChatOnly`: a worker chat a call spawned is not a chat a

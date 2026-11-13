@@ -57,13 +57,13 @@ export function postMessage(wake: Wake): HostTool {
       annotations: { title: 'Post Message', readOnlyHint: false, destructiveHint: false },
     },
     /*
-     * Only a session that asked for it has it.
+     * Only a chat that asked for it has it.
      *
-     * The tool means one thing: the chat that woke this session is waiting on
-     * the reply. A session nobody is waiting on - anything but a bot's back
-     * session - has no such chat, and offering the tool there would be offering
-     * a reply to nowhere. The wake names it when it starts a back session, and
-     * the name is kept with the session, so a restart offers it again.
+     * The tool means one thing: the Front that woke this chat is waiting on the
+     * reply. A chat nobody is waiting on - anything but a bot's Back - has no
+     * such Front, and offering the tool there would be offering a reply to
+     * nowhere. The wake names it when it starts a Back chat, and the name is
+     * kept with the chat, so a restart offers it again.
      */
     optIn: true,
     /*
@@ -82,8 +82,10 @@ export function postMessage(wake: Wake): HostTool {
       const asked = input['text'];
       const text = typeof asked === 'string' ? asked.trim() : '';
       if (text === '') return 'What should the reply say? Give post_message the text to post.';
-      if (!wake.posted(at.session, text)) {
-        return 'There is no main chat waiting on this session, so there is nothing to post to.';
+      // The calling chat is the Back a Front turn waits on, or no chat at all:
+      // a chat cannot name another chat's Front.
+      if (!wake.posted(at.chat, text)) {
+        return 'There is no main chat waiting on this chat, so there is nothing to post to.';
       }
       return 'Posted to the main chat.';
     },

@@ -7,7 +7,7 @@ import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { sdkVersion } from '../../sdk/src/version.js';
-import { backSessions, sessionsOf } from '../src/names.js';
+import { backSessions, frontSessions, frontsOf, sessionsOf } from '../src/names.js';
 import { apply, defaults } from '../src/plugin.js';
 import { postMessage } from '../src/post.js';
 import { botStore } from '../src/store.js';
@@ -19,7 +19,7 @@ import type { BotSessions } from '../src/wake.js';
 import type { BotRecord } from '../src/record.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { ToolCall } from '../../sdk/src/types/host.js';
-import type { LoaderContext, SessionRequest } from '../../sdk/src/types/plugin.js';
+import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Owner } from '../../sdk/src/types/usage.js';
 
 /*
@@ -59,7 +59,6 @@ const bot = (over: Partial<BotRecord> = {}): BotRecord => ({
   body: 'robot',
   color: 'red',
   provider: 'base',
-  session: 'work',
   workspace: WORKSPACE,
   owner: 'user:soft',
   createdAt: '2026-10-16T00:00:00.000Z',
@@ -109,16 +108,12 @@ const turn = (): Recorded => {
  * `post_message` finds the main chat from the calling session and from nothing
  * else, so the rest of a `ToolCall` is not there to be stubbed.
  */
-const called = (session: string): ToolCall => ({ session } as unknown as ToolCall);
+/** The Back chat the first wake starts, which these cases post from. */
+const BACK = 'ahp-chat:/back-1';
 
-/**
- * A wake over one host, with everything the host owns stubbed.
- *
- * The collections and the store are real, because the row a start writes is
- * what a later message finds. The sessions are a map that mints a URI per
- * start, `look` reads a chat off the same map, and `send` records what it was
- * asked to carry rather than carrying it.
- */
+/** A call of the tool from one chat of the talk's session. */
+const called = (chat: string): ToolCall => ({ session: CHAT, chat } as unknown as ToolCall);
+
 async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'post') {
   const records = memoryRecords();
   const store = botStore(
@@ -128,41 +123,37 @@ async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'pos
   );
   await store.put(record);
   const backsRows = await records.collection(sessionsOf(record.id));
-  const backs = backSessions(() => backsRows);
+  const frontsRows = await records.collection(frontsOf(record.id));
 
-  /** The default chat of each back session, by the session's URI. */
-  const at = new Map<string, string>();
-  /** Whose each session is, the main chat the person's: a URI absent here is one this host no longer has. */
+  /** Whose each session is: a URI absent here is one this host no longer has. */
   const owners = new Map<string, Owner>([[CHAT, PERSON]]);
-  /** What the wake sent the back sessions. */
+  /** The Back chats started, by the Front each was started for. */
+  const backs = new Map<string, string>();
+  /** What the wake sent the Back chats. */
   const sent: Bag[] = [];
   let minted = 0;
 
-  const sessions: BotSessions = {
-    owner: async (uri) => owners.get(uri),
-    start: async (wanted: SessionRequest) => {
-      minted += 1;
-      const uri = `ahp-session:/${minted}`;
-      owners.set(uri, wanted.owner);
-      at.set(uri, `ahp-chat:/${minted}`);
-      return uri;
-    },
-  };
+  const sessions: BotSessions = { owner: async (uri) => owners.get(uri) };
 
   const wake = botWake({
     store,
-    backs,
+    fronts: frontSessions(() => frontsRows),
+    backs: backSessions(() => backsRows),
     sessions,
     // What a first wake writes into the folder: the real plugin fills the
     // template, and these cases are about the post rather than the file.
     agents: async (one) => `# ${one.name}\n`,
-    look: async (session) => {
-      const chat = at.get(session);
-      if (chat === undefined) throw new Error(`${session} names no chat to say a message in`);
-      return { chat };
+    backChat: async (_session, front) => backs.get(front),
+    startChat: async (_session, wanted) => {
+      minted += 1;
+      const uri = `ahp-chat:/back-${minted}`;
+      const origin = wanted.origin as { chat: string };
+      backs.set(origin.chat, uri);
+      return uri;
     },
-    // What the message becomes in the back session is task 03's, and what it
-    // carries is not what a post answers: nothing here is refused.
+    look: async (chat) => ({ chat }),
+    // What the message becomes in the Back is the wake's, and what it carries
+    // is not what a post answers: nothing here is refused.
     send: async (_channel, action) => {
       sent.push(action);
       return undefined;
@@ -174,14 +165,14 @@ async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'pos
 }
 
 /**
- * A message that wakes the one back session, and the turn it leaves open. The
- * back session takes the message up as its turn, as its host does at once
- * when the session is idle.
+ * A message that wakes the one Back chat, and the turn it leaves open. The
+ * Back takes the message up as its turn, as its host does at once
+ * when the chat is idle.
  */
 async function woken(one: Awaited<ReturnType<typeof sitting>>): Promise<Recorded> {
   const said = turn();
   await one.wake.woken(message('t1', 'hello'), said.handle);
-  one.wake.taken('ahp-session:/1', 'r1', String(one.sent.at(-1)?.['id']));
+  one.wake.taken(BACK, 'r1', String(one.sent.at(-1)?.['id']));
   return said;
 }
 
@@ -189,35 +180,35 @@ it('adds the text the back session posts to the main turn, and keeps it open', a
   const one = await sitting();
   const said = await woken(one);
 
-  expect(await one.post.run({ text: 'the answer' }, called('ahp-session:/1'))).toBe('Posted to the main chat.');
+  expect(await one.post.run({ text: 'the answer' }, called(BACK))).toBe('Posted to the main chat.');
 
   // The text goes into the turn the person is waiting on, and the turn stays
   // open while the back session's turn runs.
   expect(said.posts).toEqual(['the answer']);
   expect(said.replies).toEqual([]);
   expect(said.endings).toEqual([]);
-  expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1' });
+  expect(one.wake.main(BACK)).toMatchObject({ turnId: 't1' });
 });
 
 it('posts every call of one back turn, and ends the main turn once with that turn', async () => {
   const one = await sitting();
   const said = await woken(one);
 
-  expect(await one.post.run({ text: 'working on it' }, called('ahp-session:/1'))).toBe('Posted to the main chat.');
-  expect(await one.post.run({ text: 'the answer' }, called('ahp-session:/1'))).toBe('Posted to the main chat.');
+  expect(await one.post.run({ text: 'working on it' }, called(BACK))).toBe('Posted to the main chat.');
+  expect(await one.post.run({ text: 'the answer' }, called(BACK))).toBe('Posted to the main chat.');
   expect(said.posts).toEqual(['working on it', 'the answer']);
 
-  one.wake.finished('ahp-session:/1', 'the answer');
+  one.wake.finished(BACK, 'the answer');
 
   // The posts are the answer: the end adds no last words and no notice.
   expect(said.endings).toEqual(['ended']);
   expect(said.replies).toEqual([]);
   expect(said.notices).toEqual([]);
-  expect(one.wake.main('ahp-session:/1')).toBeUndefined();
+  expect(one.wake.main(BACK)).toBeUndefined();
 
   // A post after the turn ended has nothing to post to.
-  expect(await one.post.run({ text: 'and again' }, called('ahp-session:/1')))
-    .toBe('There is no main chat waiting on this session, so there is nothing to post to.');
+  expect(await one.post.run({ text: 'and again' }, called(BACK)))
+    .toBe('There is no main chat waiting on this chat, so there is nothing to post to.');
   expect(said.posts).toEqual(['working on it', 'the answer']);
 });
 
@@ -225,33 +216,33 @@ it('keeps a post through a steer into the same main turn', async () => {
   const one = await sitting();
   const said = await woken(one);
 
-  await one.post.run({ text: 'the answer' }, called('ahp-session:/1'));
+  await one.post.run({ text: 'the answer' }, called(BACK));
   // The person says more while the back turn runs, and it goes into the same
   // main turn. It waits in the back session behind the turn that posted.
   await one.wake.woken(message('t1', 'and one more thing'), said.handle);
   const more = String(one.sent.at(-1)?.['id']);
-  one.wake.finished('ahp-session:/1', 'the first words');
+  one.wake.finished(BACK, 'the first words');
   expect(said.endings).toEqual([]);
 
   // The turn that message becomes ends the main turn the post went into.
-  one.wake.taken('ahp-session:/1', 'r2', more);
-  one.wake.finished('ahp-session:/1', 'the last words');
+  one.wake.taken(BACK, 'r2', more);
+  one.wake.finished(BACK, 'the last words');
 
   expect(said.posts).toEqual(['the answer']);
   expect(said.replies).toEqual([]);
   expect(said.endings).toEqual(['ended']);
 });
 
-it('refuses a session that is not a back session', async () => {
+it('refuses a chat that is not a Back', async () => {
   const one = await sitting();
   const said = await woken(one);
 
-  // A session this wake never woke has no main chat behind it, and the tool
+  // A chat this wake never woke has no Front behind it, and the tool
   // says so rather than throwing: the model can go on with its own turn.
-  expect(await one.post.run({ text: 'the answer' }, called('ahp-session:/stray')))
-    .toBe('There is no main chat waiting on this session, so there is nothing to post to.');
+  expect(await one.post.run({ text: 'the answer' }, called('ahp-chat:/stray')))
+    .toBe('There is no main chat waiting on this chat, so there is nothing to post to.');
   expect(said.replies).toEqual([]);
-  expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1' });
+  expect(one.wake.main(BACK)).toMatchObject({ turnId: 't1' });
 });
 
 it('posts into the chat that woke the session, never one an input names', async () => {
@@ -260,7 +251,7 @@ it('posts into the chat that woke the session, never one an input names', async 
 
   // The only input is the text, and anything else a caller sends is ignored:
   // the chat answered is the one the calling session was woken by.
-  await one.post.run({ text: 'the answer', session: 'bot-chat:/another' }, called('ahp-session:/1'));
+  await one.post.run({ text: 'the answer', session: 'bot-chat:/another' }, called(BACK));
 
   expect(said.posts).toEqual(['the answer']);
 });
@@ -272,7 +263,7 @@ it('posts into the chat that woke the session, never one an input names', async 
 async function ended(absent: MainTurnAbsence | undefined, text: string) {
   const one = await sitting(bot(), absent);
   const said = await woken(one);
-  one.wake.finished('ahp-session:/1', text);
+  one.wake.finished(BACK, text);
   return { one, said };
 }
 
@@ -284,7 +275,7 @@ it('posts the last words of a turn that ended with no post, by default', async (
   expect(said.replies).toEqual(['The answer is 42.']);
   expect(said.notices).toEqual([]);
   expect(said.endings).toEqual([]);
-  expect(one.wake.main('ahp-session:/1')).toBeUndefined();
+  expect(one.wake.main(BACK)).toBeUndefined();
 });
 
 it('ends with nothing on post when the turn said nothing', async () => {
@@ -343,7 +334,7 @@ it('fails the main turn with the words the back session\'s failed turn ended wit
   const one = await sitting();
   const said = await woken(one);
 
-  one.wake.finished('ahp-session:/1', 'half an answer', 'the model call failed');
+  one.wake.finished(BACK, 'half an answer', 'the model call failed');
 
   expect(said.failures).toEqual(['the model call failed']);
   expect(said.replies).toEqual([]);
@@ -355,16 +346,16 @@ it('ends the main turn once, whichever road got there first', async () => {
   const one = await sitting();
   const said = await woken(one);
 
-  one.wake.finished('ahp-session:/1', 'the answer');
+  one.wake.finished(BACK, 'the answer');
   // A second ending would be a turn of its own, and a session this wake never
   // woke ends nothing at all.
-  one.wake.finished('ahp-session:/1', 'and again');
-  one.wake.finished('ahp-session:/stray', 'nobody');
+  one.wake.finished(BACK, 'and again');
+  one.wake.finished('ahp-chat:/stray', 'nobody');
 
   expect(said.replies).toEqual(['the answer']);
   expect(said.notices).toEqual([]);
   expect(said.endings).toEqual([]);
-  expect(one.wake.main('ahp-session:/1')).toBeUndefined();
+  expect(one.wake.main(BACK)).toBeUndefined();
 });
 
 it('ends the main turn with no more text when the session\'s own turn ends after a post', async () => {
@@ -372,10 +363,10 @@ it('ends the main turn with no more text when the session\'s own turn ends after
     const one = await sitting(bot(), absent);
     const said = await woken(one);
 
-    await one.post.run({ text: 'the answer' }, called('ahp-session:/1'));
+    await one.post.run({ text: 'the answer' }, called(BACK));
     // The answer is not followed by the last words as well, and neither is it
     // followed by a notice saying it was not given, whatever the option says.
-    one.wake.finished('ahp-session:/1', 'the last words');
+    one.wake.finished(BACK, 'the last words');
 
     expect(said.posts).toEqual(['the answer']);
     expect(said.replies).toEqual([]);
@@ -388,8 +379,8 @@ it('fails the main turn when the back turn fails after a post', async () => {
   const one = await sitting();
   const said = await woken(one);
 
-  await one.post.run({ text: 'half an answer' }, called('ahp-session:/1'));
-  one.wake.finished('ahp-session:/1', 'half an answer', 'the model call failed');
+  await one.post.run({ text: 'half an answer' }, called(BACK));
+  one.wake.finished(BACK, 'half an answer', 'the model call failed');
 
   expect(said.posts).toEqual(['half an answer']);
   expect(said.failures).toEqual(['the model call failed']);
@@ -433,8 +424,8 @@ it('gives mainTurnPostMessageAbsent a default of post, and declares it', () => {
 it('declares the options something reads, and those alone', async () => {
   // A chat runs no model, so nothing opens a chat with a template: the count of
   // chats a first turn listed is an option nothing reads, gone with the builder.
-  expect(Object.keys(optionsSchema.properties)).toEqual(['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn']);
-  expect(Object.keys(defaults)).toEqual(['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn']);
+  expect(Object.keys(optionsSchema.properties)).toEqual(['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn', 'secondSession']);
+  expect(Object.keys(defaults)).toEqual(['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn', 'secondSession']);
   const exported = await import('../src/index.js');
   expect(exported).not.toHaveProperty('firstTurn');
   expect(exported).not.toHaveProperty('chatLines');

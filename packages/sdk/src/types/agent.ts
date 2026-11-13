@@ -9,6 +9,7 @@ import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Account, Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
 import type { Principal } from './users.js';
+import type { Owner } from './usage.js';
 import type { CommandTerminal, StartTerminals, OutputTerminals, TerminalOutputs } from './terminals.js';
 import type { BackgroundTasks } from './background.js';
 import type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
@@ -185,6 +186,18 @@ export interface SessionAt {
   workingDirectory?: string;
 }
 
+/** Where an agent's `placeSession` puts a session a client creates on it. Each field left out is the client's. */
+export interface SessionPlace {
+  /** The session's folder, as a path or a `file://` URI, in place of the one the client sent. */
+  workingDirectory?: string;
+  /** Whether that folder is trusted, kept with the session so a restart trusts it again. Needs the plugin's `session:trust`. */
+  trusted?: boolean;
+  /** Whether the backend loads the person's own settings. Absent is `true`. */
+  userSettings?: boolean;
+  /** The session's `computer` setting, in place of the client's. */
+  computer?: string;
+}
+
 /**
  * The machine a session ran in, handed to a backend that deletes it there.
  *
@@ -346,6 +359,15 @@ export interface Start {
    * it, and checks nothing when it is absent, as `trusted` reads no window.
    */
   reader?: Principal;
+  /**
+   * Whose work the session is, as the host records it: `user:<id>` for a
+   * person, `root:<host>` for a root connection, `plugin:<name>` for a
+   * plugin's. Handed on every start, a restart's too.
+   *
+   * Absent where the host records no owner: a host with no users, and a root
+   * connection under `rootOwner` `none`.
+   */
+  owner?: Owner;
   /**
    * Tools the host contributes to this session, for the backend to offer.
    *
@@ -892,6 +914,22 @@ export interface Agent<Started extends Session | Promise<Session> = Session | Pr
    * inside, and a `~` in a value is expanded when the machine is made.
    */
   machine?(): Record<string, MachineNeed>;
+
+  /**
+   * Where a session a client creates on this agent runs, decided by the agent.
+   *
+   * Asked once, when a client's `createSession` names this agent, with the
+   * session's config and the person creating it, before the host picks a
+   * folder or checks the config. A field the answer leaves out is the
+   * client's, and an absent answer is a session placed as the client asked,
+   * so an agent with no opinion leaves this out. Not asked for a session a
+   * plugin starts: that request names its own folder and trust.
+   *
+   * A `trusted` answer needs `session:trust` on the entry of the plugin that
+   * registered this agent, and the create is refused naming the grant
+   * otherwise. A `computer` answer is checked as a client's `computer` is.
+   */
+  placeSession?(settings: Readonly<Record<string, unknown>>, reader?: Principal): SessionPlace | undefined | Promise<SessionPlace | undefined>;
 
   /**
    * Whether a session in a machine runs in a host started inside it.

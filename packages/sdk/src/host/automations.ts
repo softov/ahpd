@@ -212,7 +212,7 @@ export interface Automations {
    * added to a session that belongs to somebody, so it is their own
    * `chat:create` that has to hold before anything is started.
    */
-  startForPluginChat(session: string, wanted: ChatRequest): Promise<string>;
+  startForPluginChat(session: string, wanted: ChatRequest, by?: string): Promise<string>;
   /**
    * Set every plugin trigger's `deliver` and `run` on the entry it closes over.
    *
@@ -1058,7 +1058,7 @@ export function createAutomations(ctx: HostContext): Automations {
    * `createChat` take - so a chat started here is one nobody could tell apart
    * from one started at the door.
    */
-  const beginPluginChat = async (at: string, wanted: ChatRequest): Promise<string> => {
+  const beginPluginChat = async (at: string, wanted: ChatRequest, by?: string): Promise<string> => {
     const owner = kept.owner(idOf(at));
     if (options.users !== undefined && owner?.startsWith('user:') === true) {
       const person = principalFor(owner);
@@ -1066,11 +1066,11 @@ export function createAutomations(ctx: HostContext): Automations {
         throw new RpcError(-32009, refusalReason(person.id, 'chat:create'), {});
       }
     }
-    return (await ctx.openChat(at, wanted)).chat;
+    return (await ctx.openChat(at, { ...wanted, ...(by === undefined ? {} : { by }) })).chat;
   };
 
-  const startForPluginChat = (session: string, wanted: ChatRequest): Promise<string> =>
-    startHeld(() => beginPluginChat(session, wanted));
+  const startForPluginChat = (session: string, wanted: ChatRequest, by?: string): Promise<string> =>
+    startHeld(() => beginPluginChat(session, wanted, by));
 
   /**
    * Whether this host can open a session: running now, or in its catalogue.
@@ -1507,7 +1507,7 @@ export function createAutomations(ctx: HostContext): Automations {
       // set on this same object by the plugin host, and a request that asks for
       // a trusted folder is answered from it.
       one.start = (wanted, named) => startForPlugin(wanted, one, named);
-      one.startChat = (session, wanted) => startForPluginChat(session, wanted);
+      one.startChat = (session, wanted) => startForPluginChat(session, wanted, one.by);
       one.opens = (uri) => opensSession(uri);
     }
   };

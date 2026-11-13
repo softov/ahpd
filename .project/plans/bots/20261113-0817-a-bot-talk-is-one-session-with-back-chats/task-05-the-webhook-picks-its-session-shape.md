@@ -1,6 +1,6 @@
 ---
 title: The webhook picks its session shape
-status: todo
+status: implemented
 depends:
   - task-03-the-back-is-a-chat-of-the-front.md
 layer: "webhook"
@@ -32,4 +32,7 @@ The webhook option `threadSessions` is `false` by default, one session for each 
 - `pnpm typecheck` passes, and `pnpm vitest run packages/webhook` passes.
 
 ## Resume
+
+- Built on 2026-11-13, with two cases in `packages/webhook/test/webhook-bot.test.ts`.
+- With `true`, a thread talks in its own session's default chat, read off the session's state.
 

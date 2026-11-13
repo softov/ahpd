@@ -4,18 +4,20 @@ import { expandHome, mayUseAgentFor, ownershipOf, reason, Status } from '@ahpd/s
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { botAsk } from './ask.js';
 import { botCatalogue, CATALOGUE_SCHEME } from './catalogue.js';
-import { botChatAgent } from './chat.js';
+import { botChatAgent, openTalks } from './chat.js';
 import { prepareAgentsTemplate } from './folder.js';
-import { backSessions, BOTS_DIR, LEGACY_CHATS, LEGACY_SESSIONS, sessionsOf } from './names.js';
+import { backSessions, BOTS_DIR, frontSessions, frontsOf, LEGACY_CHATS, LEGACY_SESSIONS, sessionsOf } from './names.js';
 import { postMessage } from './post.js';
 import { botProvider } from './provider.js';
 import { isSlug } from './record.js';
 import { botStore } from './store.js';
+import { botTalks, isSecondSession, urisOf } from './talks.js';
 import { agentsTextOf } from './template.js';
 import { botWake, isMainTurnAbsence } from './wake.js';
 import type { InstructionsIn, Yaml } from './agents.js';
 import type { AskIn } from './ask.js';
 import type { BotRecord } from './record.js';
+import type { SecondSession } from './talks.js';
 import type { ContextIn, MainTurnAbsence } from './wake.js';
 import type { Bag, Owner, Plugin, PluginPeer, RecordCollection, TurnEndEvent } from '@ahpd/sdk';
 import type { BotSessions } from './wake.js';
@@ -70,6 +72,7 @@ export const defaults = {
   instructionsIn: 'section',
   contextIn: 'text',
   askIn: 'main',
+  secondSession: 'refuse',
 } as const;
 
 /** What the plugin's connection to the host calls itself, which is how it knows its own frames. */
@@ -465,6 +468,11 @@ export const apply: Plugin['apply'] = (host, options) => {
    * lists a subagent's. The schema names the two.
    */
   const askIn: AskIn = options.askIn === 'own' ? 'own' : defaults.askIn;
+  /*
+   * What a person's second session with the same bot gets: refused naming the
+   * first, or opened. The schema names the two.
+   */
+  const second: SecondSession = isSecondSession(options.secondSession) ? options.secondSession : defaults.secondSession;
   const kept = host.records('templates', { body: 'text' });
   const templates = {
     // A bot file is edited by hand too, so a name is checked again here.
@@ -534,6 +542,17 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   const backs = backSessions((bot) => collection(sessionsOf(bot)));
   /*
+   * One row per bot and person: the session they talk to the bot in. What lets
+   * a read of the bot answer it, and a second create be refused naming it.
+   */
+  const fronts = frontSessions((bot) => collection(frontsOf(bot)));
+  const talks = botTalks({
+    fronts,
+    configDir: host.configDir,
+    kept: (uri) => host.sessionKept(uri),
+    owner: (uri) => host.sessionOwner(uri),
+  }, second);
+  /*
    * The plugin's own connection to this host, opened by the first message that
    * needs one.
    *
@@ -560,10 +579,9 @@ export const apply: Plugin['apply'] = (host, options) => {
     opened.catch(failed);
     return opened;
   };
-  /** This host's own sessions, where a back session is started, and read for whose a session is. */
+  /** This host's own sessions, read for whose a session is. */
   const sessions: BotSessions = {
     owner: (uri) => host.sessionOwner(uri),
-    start: (wanted, named) => host.startSession(wanted, named),
   };
   /**
    * One action sent on a chat of this host, as a client sends one.
@@ -612,13 +630,17 @@ export const apply: Plugin['apply'] = (host, options) => {
     agents,
     mayUse,
     available,
+    talks,
   }));
+  // The one grant a bot asks for, apart from reading it: talking to it.
+  host.registerGrants('bot', { operations: ['chat'] });
   /*
    * The wake: every turn a chat with a bot begins, and every message steered
    * into an open one, goes to the back session the bot's record names.
    */
   const wake = botWake({
     store,
+    fronts,
     backs,
     sessions,
     /*
@@ -628,25 +650,27 @@ export const apply: Plugin['apply'] = (host, options) => {
      */
     agents,
     /*
-     * A back session's chat, and whether a turn is running in it: the two
-     * things a message needs, both read off the session's own state, which is
-     * what a subscribe answers. Idle means the message begins a turn, and
-     * working means it steers the one that is running.
+     * The Back chat of a Front: the chat of the session whose `tool` origin
+     * names the Front chat, read off the session's own state, which is what a
+     * subscribe answers. A plugin cannot list a session's chats otherwise.
      */
-    look: async (session) => {
+    backChat: async (session, front) => {
       const { channels } = await connection();
-      const { chat, working } = await channels.hold(session, (held) => {
-        const state = held ?? {};
-        const named = state['defaultChat'];
-        if (typeof named !== 'string' || named === '') {
-          throw new Error(`${session} names no chat to say a message in`);
-        }
-        const status = typeof state['status'] === 'number' ? state['status'] : Status.Idle;
-        return { chat: named, working: (status & Status.InProgress) !== 0 };
+      return await channels.hold(session, (held) => {
+        const chats = held?.['chats'];
+        if (!Array.isArray(chats)) return undefined;
+        const found = chats.find((one: unknown) => {
+          const origin = (one as Bag | undefined)?.['origin'] as Bag | undefined;
+          return origin?.['kind'] === 'tool' && origin['chat'] === front;
+        }) as Bag | undefined;
+        return typeof found?.['resource'] === 'string' ? found['resource'] : undefined;
       });
-      if (!working) return { chat };
-      // And the turn running there, off the chat's own state, which a stop
-      // of the main turn cancels by its id.
+    },
+    startChat: (session, wanted) => host.startChat(session, wanted),
+    // A Back chat and the turn running in it, off the chat's own state, which
+    // a stop of the Front turn cancels by its id.
+    look: async (chat) => {
+      const { channels } = await connection();
       const active = await channels.hold(chat, (held) => held?.['activeTurn'] as Bag | undefined);
       return { chat, ...(typeof active?.['id'] === 'string' ? { turn: active['id'] } : {}) };
     },
@@ -670,7 +694,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * session of another plugin's, or one whose person's turn has ended.
    */
   const ask = botAsk({
-    main: (backSession) => wake.main(backSession),
+    main: (backChat) => wake.main(backChat),
     request: async (session, id) => {
       const { channels } = await connection();
       const list = await channels.hold(session, (state) => state?.['inputNeeded']);
@@ -681,10 +705,20 @@ export const apply: Plugin['apply'] = (host, options) => {
       return found === undefined ? undefined : found as Bag;
     },
     send,
+    parentOf: async (session, chat) => {
+      const { channels } = await connection();
+      return await channels.hold(session, (state) => {
+        const chats = state?.['chats'];
+        if (!Array.isArray(chats)) return undefined;
+        const found = chats.find((one: unknown) => (one as Bag | undefined)?.['resource'] === chat) as Bag | undefined;
+        const origin = found?.['origin'] as Bag | undefined;
+        return origin?.['kind'] === 'tool' && typeof origin['chat'] === 'string' ? origin['chat'] : undefined;
+      });
+    },
     problem: (line) => { host.problem(`${name}: ${line}`); },
   }, askIn);
   host.on('input_needed_set', (event) => {
-    void ask.asked(event.session, event.id).catch((error: unknown) => {
+    void ask.asked(event.session, event.chat, event.id).catch((error: unknown) => {
       host.problem(`${name}: the request ${event.id} in ${event.session} was not shown: ${reason(error)}`);
     });
   });
@@ -710,7 +744,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L126-L171
    */
   host.on('turn_start', (event) => {
-    if (wake.main(event.session) !== undefined) wake.taken(event.session, event.turn, event.queuedMessageId);
+    if (wake.main(event.chat) !== undefined) wake.taken(event.chat, event.turn, event.queuedMessageId);
   });
   /*
    * The end of a turn: the words it ended with, read off the session's chat.
@@ -729,10 +763,10 @@ export const apply: Plugin['apply'] = (host, options) => {
   host.on('turn_end', (event: TurnEndEvent) => {
     // A start the host refused had no `turn_start` to say which queued message
     // it took up, so its end says it, and the message waits no more.
-    if (event.reason.kind === 'rejected' && event.queuedMessageId !== undefined && wake.main(event.session) !== undefined) {
-      wake.taken(event.session, event.turnId, event.queuedMessageId);
+    if (event.reason.kind === 'rejected' && event.queuedMessageId !== undefined && wake.main(event.channel) !== undefined) {
+      wake.taken(event.channel, event.turnId, event.queuedMessageId);
     }
-    const held = wake.main(event.session);
+    const held = wake.main(event.channel);
     if (held === undefined || event.channel !== held.chat) return;
     /*
      * Whether this is still the main turn waiting when the read comes back: a
@@ -741,7 +775,7 @@ export const apply: Plugin['apply'] = (host, options) => {
      * for every turn in it, so the turn is compared as well.
      */
     const still = (): boolean => {
-      const now = wake.main(event.session);
+      const now = wake.main(event.channel);
       return now !== undefined && now.handle === held.handle && now.turnId === held.turnId;
     };
     const read = (async (): Promise<string> => {
@@ -751,11 +785,11 @@ export const apply: Plugin['apply'] = (host, options) => {
     read.then((text) => {
       if (!still()) return;
       const failed = event.reason.kind === 'error' || event.reason.kind === 'rejected' ? event.reason.error.message : undefined;
-      wake.finished(event.session, text, failed);
+      wake.finished(event.channel, text, failed);
     }, (error: unknown) => {
       host.problem(`${name}: the end of turn ${event.turnId} in ${event.channel} was not read: ${reason(error)}`);
       if (!still()) return;
-      wake.finished(event.session, '');
+      wake.finished(event.channel, '');
     });
   });
   /*
@@ -765,6 +799,27 @@ export const apply: Plugin['apply'] = (host, options) => {
    * A steer the wake failed on is dropped, as one whose send failed is. See
    * `chat.ts`.
    */
+  /*
+   * A talk a restart left with a turn open, opened again once the daemon
+   * listens: the subscribe has the host bring the session back, its Front
+   * opens on its log with that turn open, and the turn is handed to the wake
+   * as a new one is, so the bot answers it without anybody opening the talk.
+   */
+  host.on('listening', () => {
+    void (async (): Promise<void> => {
+      for (const id of openTalks(host.configDir)) {
+        for (const uri of urisOf(id)) {
+          if (!await host.sessionKept(uri)) continue;
+          const { channels } = await connection();
+          const front = await channels.hold(uri, (state) => state?.['defaultChat']);
+          if (typeof front === 'string') await channels.hold(front, () => undefined);
+          break;
+        }
+      }
+    })().catch((error: unknown) => {
+      host.problem(`${name}: the talks a restart left open were not opened again: ${reason(error)}`);
+    });
+  });
   host.registerAgent(botChatAgent(host.configDir, store, (message, handle) => {
     wake.woken(message, handle).catch((error: unknown) => {
       host.problem(`${name}: a message in ${message.session} was not woken: ${reason(error)}`);
@@ -774,5 +829,5 @@ export const apply: Plugin['apply'] = (host, options) => {
     wake.stopped(session, turnId).catch((error: unknown) => {
       host.problem(`${name}: the work behind ${turnId} in ${session} was not stopped: ${reason(error)}`);
     });
-  }));
+  }, talks));
 };

@@ -1,6 +1,6 @@
 ---
 title: A read-only chat takes no message from a client
-status: todo
+status: implemented
 depends:
   - task-01-a-chat-request-names-origin-and-tools.md
 layer: "sdk host"
@@ -33,4 +33,7 @@ A client's turn, queued message and resume in any `read-only` chat are refused, 
 - `pnpm typecheck` passes, and `pnpm vitest run packages/sdk` passes.
 
 ## Resume
+
+- Built on 2026-11-13, with two cases in `packages/sdk/test/plugin-chat-shape.test.ts`. The read-only case fails when the new branch is turned off.
+- The resume check at `chatactions.ts:1795` still compares with `readOnly`, as [problems/a-read-only-chat-can-be-resumed.md](../../../problems/a-read-only-chat-can-be-resumed.md) says.
 

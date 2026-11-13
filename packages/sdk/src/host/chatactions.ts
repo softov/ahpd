@@ -471,8 +471,7 @@ export function chatAction(
     return;
   }
   if (worker && type === 'chat/turnStarted') {
-    const owning = sessions.get(sessionFor(channel));
-    const lead = owning === undefined ? undefined : leadOf(owning);
+    const lead = ctx.workerLead(channel);
     const command = lead === undefined ? undefined : commandOf(lead);
     if (lead !== undefined && command !== undefined) bang(lead, channel, command);
     else unsent(channel, 'rejected', 'readOnly', 'This chat is read-only.');
@@ -496,6 +495,21 @@ export function chatAction(
   if (worker && !WORKER_ACTIONS.has(type)) {
     dispatch(channel, action, origin);
     return;
+  }
+  /*
+   * A chat a plugin made `read-only` takes no message from a client either,
+   * in the words a worker's chat refuses one with: a person watches it and
+   * does not type into it.
+   */
+  if (ctx.chatInteractivity.get(channel) === 'read-only') {
+    if (type === 'chat/turnStarted') {
+      unsent(channel, 'rejected', 'readOnly', 'This chat is read-only.');
+      return;
+    }
+    if (type === 'chat/pendingMessageSet' || type === 'chat/turnResume') {
+      refuse(connection.peer, channel, action, origin, 'This chat is read-only.');
+      return;
+    }
   }
   /*
    * A client's action on a session another host runs, carried there as the
@@ -575,12 +589,12 @@ export function chatAction(
    *
    * A chat channel names one; a session channel names the default,
    * because that is what a client talking to a session without having
-   * asked for a chat means. A worker's chat names its session's lead,
-   * whose backend runs the worker.
+   * asked for a chat means. A worker's chat names the backend that runs the
+   * worker: the chat whose call started it, or the session's lead.
    */
   const owning = worker ? sessionFor(channel) : channel;
   const holding = sessions.get(owning);
-  const held = byChat.get(channel)?.chat ?? (holding ? leadOf(holding) : undefined);
+  const held = byChat.get(channel)?.chat ?? (worker ? ctx.workerLead(channel) : undefined) ?? (holding ? leadOf(holding) : undefined);
   /*
    * A session being started again waits for the start to finish.
    *

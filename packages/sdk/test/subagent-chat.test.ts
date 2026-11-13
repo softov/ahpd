@@ -1153,3 +1153,76 @@ it('leaves the session read when a worker chat is marked unread', async () => {
   finishWorker();
   await settle();
 });
+
+/**
+ * A host whose session runs on a plugin's own agent, `front`, with a chat the
+ * plugin started on the asking fake: the chat whose worker asks is not the
+ * session's lead, as a bot's Back chat is not its talk's.
+ */
+async function inPeerChat(asker: Agent = askingInWorker()) {
+  wire.length = 0;
+  told.length = 0;
+  const { echo } = await import('../../../examples/echo/agent.js');
+  const { foldHostOptions, pluginHost } = await import('../src/plugins/plugins.js');
+  const { loggerOf } = await import('../src/log.js');
+  const { sdkVersion } = await import('../src/version.js');
+  const context = { path: '/tmp', paths: ['/tmp'], version: sdkVersion(), hostName: 'test', configDir: '/tmp', log: loggerOf(() => {}), say: () => {} };
+  const { host: plugin, contribution } = pluginHost('bots', context);
+  plugin.registerAgent({ ...echo({ path: '/tmp', pace: 0 }), provider: 'front' });
+  const { options } = foldHostOptions({ path: '/tmp', agents: [asker] }, [contribution]);
+  const host = createHost(options);
+  const client = host.accept(peer());
+  const ask = asking(client);
+  await ask('initialize', { channel: 'ahp-root://', clientId: 'ask', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] });
+  const session = await plugin.startSession({ owner: 'plugin:bots', provider: 'front', workingDirectory: '/tmp' });
+  const chat = await plugin.startChat(session, { provider: 'fake' });
+  await ask('subscribe', { channel: session });
+  await ask('subscribe', { channel: chat });
+  const send = async (channel: string, action: Bag): Promise<void> => {
+    await ask('dispatchAction', { channel, action });
+    await settle();
+  };
+  return { ask, session, chat, send };
+}
+
+it('takes an approval given on the worker chat of a chat that is not the lead to that chat\'s backend', async () => {
+  const { ask, session, chat, send } = await inPeerChat();
+  await send(chat, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run a subagent' } });
+  const worker = workerChat(session, chat, 'toolu_agent');
+  await ask('subscribe', { channel: worker });
+  told.length = 0;
+
+  await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: true, confirmed: 'user-action' });
+
+  expect(told).toEqual([{ what: 'confirm', id: 'toolu_bash', value: true }]);
+});
+
+/** The asking fake, whose worker's Bash says what it runs, as Claude's backend says a shell call it asks about. */
+const sayingShell = (): Agent => {
+  const base = askingInWorker();
+  return {
+    ...base,
+    create: (start: Start) => base.create({
+      ...start,
+      subagent: (toolCallId, request) => {
+        const worker = start.subagent?.(toolCallId, request);
+        if (worker === undefined) return worker;
+        return {
+          ...worker,
+          emit: (action: Bag) => worker.emit(action.type === 'chat/toolCallReady' && action.toolCallId === 'toolu_bash'
+            ? { ...action, confirmationTitle: 'Run a command', permissionKind: 'shell', shellCommand: 'mkdir -p /github/scratch', shellLanguage: 'bash' }
+            : action),
+        };
+      },
+    } as Start),
+  };
+};
+
+it('hands the host\'s own approval of such a worker\'s call to that chat\'s backend', async () => {
+  const { ask, chat, send } = await inPeerChat(sayingShell());
+  await send('ahp-root://', { type: 'root/configChanged', config: { globalAutoApproveEnabled: true } });
+  await send(chat, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run a subagent' } });
+  void ask;
+
+  expect(told.filter((one) => one.id === 'toolu_bash')).toEqual([{ what: 'confirm', id: 'toolu_bash', value: true, option: undefined }]);
+});

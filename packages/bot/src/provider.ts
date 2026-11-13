@@ -4,12 +4,14 @@ import { RpcError } from '@ahpd/sdk';
 import { covers, ownerFilter } from '@ahpd/sdk';
 import { instructionsProblem } from './agents.js';
 import { AGENTS_FILE, fromAgents, makeFolder, partsOf, readAgentsFile, writeAgentsFile } from './folder.js';
+import { CHAT_PROVIDER, NOT_ITS_OWN_FRONT } from './names.js';
 import {
-  BOT_BODIES, BOT_COLORS, checkRecord, DEFAULT_SESSION, isSlug, TURN_WORD,
+  BOT_BODIES, BOT_COLORS, checkRecord, isSlug,
 } from './record.js';
 import type { InstructionsIn, Yaml } from './agents.js';
 import type { BotCatalogue } from './catalogue.js';
 import type { BotRecord } from './record.js';
+import type { Talks } from './talks.js';
 import type { BotStore } from './store.js';
 import type { BotTemplates } from './template.js';
 import type {
@@ -121,6 +123,12 @@ export interface BotOptions {
    * a host that has no agents to check against, where nothing is marked.
    */
   available?(provider: string): boolean;
+  /**
+   * The session each person talks to each bot in, answered on a read as
+   * `session`. Absent where nobody talks to a bot, as in a test of the record
+   * alone.
+   */
+  talks?: Talks;
 }
 
 /**
@@ -238,10 +246,6 @@ const manifest = (hostName: string) => ({
     provider: { type: 'string', description: 'The agent provider a session of it runs on.' },
     model: { type: 'string', description: 'The model it asks for.' },
     preset: { type: 'string', description: 'The session preset it starts from.' },
-    session: {
-      type: 'string',
-      description: `The name of the back session a message to it wakes, as a slug, or one with ${TURN_WORD} in it for a session of its own per message. Absent is ${DEFAULT_SESSION}.`,
-    },
     workspace: { type: 'string', description: 'The folder it works in, under the plugin root. Its own, and never moved.' },
     computer: { type: 'string', description: 'The machine it runs in.' },
     // Named here because a write takes it, and a schema a client follows says
@@ -275,6 +279,24 @@ export const mayRead = (bot: BotRecord, reader: Principal): boolean => {
   if (bot.owner.startsWith('team:')) return covers(memberships, bot.owner.slice('team:'.length));
   if (bot.owner.startsWith('project:')) return covers(memberships, bot.owner.slice('project:'.length));
   return false;
+};
+
+/**
+ * Whether this reader may talk to this bot in a session of their own.
+ *
+ * Two ways in, and no others: a bot's owner holds no grant for their own talk,
+ * and `bot:chat` is what lets anybody else open one. A membership of the team
+ * or project a bot belongs to is not a way in, because a talk is one person and
+ * one bot. Asked after `mayRead`: a bot a person may not read is one they are
+ * not told exists.
+ *
+ * A reader who is nobody - the root connection, and every connection on a host
+ * with no users directory - is this host, which talks to any of its bots.
+ */
+export const mayChat = (bot: BotRecord, reader: Principal | undefined): boolean => {
+  if (reader === undefined) return true;
+  if (bot.owner === `user:${reader.id}`) return true;
+  return reader.can('bot:chat');
 };
 
 /**
@@ -525,7 +547,7 @@ export function botProvider(options: BotOptions): BotProvider {
      * answer content and its sessions are made by a create.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L610-L611
      */
-    read: async (uri) => {
+    read: async (uri, _wanted, reader) => {
       await store.ready();
       const held = at(uri);
       if (held.slug === '' || held.path !== '') throw absent(uri);
@@ -545,7 +567,17 @@ export function botProvider(options: BotOptions): BotProvider {
       const state = provider !== undefined && options.available !== undefined && !options.available(provider)
         ? { state: 'unavailable' as const }
         : {};
-      return json({ ...bot, ...state });
+      /*
+       * The reader's own session with the bot, where they have one: theirs
+       * alone, so a read by anybody else answers the record without it. The
+       * read starts nothing.
+       */
+      // A read with no reader is the root's, as a root connection has no
+      // principal; a plugin's own read has no talk.
+      const talk = options.talks === undefined || reader?.plugin !== undefined
+        ? undefined
+        : await options.talks.of(bot.id, reader === undefined ? undefined : `user:${reader.id}`);
+      return json({ ...bot, ...state, ...(talk === undefined ? {} : { session: talk }) });
     },
 
     /**
@@ -599,6 +631,7 @@ export function botProvider(options: BotOptions): BotProvider {
        * its own rule of whoever starts a session on it.
        */
       const provider = draft.preset ?? draft.provider;
+      if (draft.provider === CHAT_PROVIDER) throw new RpcError(-32602, NOT_ITS_OWN_FRONT);
       if (provider !== undefined && options.mayUse !== undefined && !options.mayUse(whose, provider)) {
         throw new RpcError(-32009, `${provider} is not an agent ${whose} may use`);
       }
@@ -622,7 +655,6 @@ export function botProvider(options: BotOptions): BotProvider {
         ...(draft.provider === undefined ? {} : { provider: draft.provider }),
         ...(draft.model === undefined ? {} : { model: draft.model }),
         ...(draft.preset === undefined ? {} : { preset: draft.preset }),
-        session: draft.session,
         workspace: workspaceFor(slug, draft.workspace, existing),
         ...(draft.computer === undefined ? {} : { computer: draft.computer }),
         ...(draft.connectors === undefined ? {} : { connectors: draft.connectors }),

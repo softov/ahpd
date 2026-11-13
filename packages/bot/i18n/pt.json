@@ -18,6 +18,9 @@
     },
     "askIn": {
       "description": "Onde aparecem as perguntas e aprovações da sessão de trabalho. 'main' (padrão) as copia no chat principal para responder lá; 'own' as deixa no chat da sessão de trabalho e as lista no inputNeeded do chat principal."
+    },
+    "secondSession": {
+      "description": "O que recebe uma segunda sessão com o mesmo bot. 'refuse' (padrão) a recusa e cita a sessão da pessoa; 'allow' a abre, e o bot responde com a usada por último."
     }
   },
   "session": {

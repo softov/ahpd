@@ -23,6 +23,7 @@ Restart the daemon on main first. Do them from the top down.
 - [vscode-checks.md](vscode-checks.md) - 40 min.
 - [cofold-resume-checks.md](cofold-resume-checks.md) - 30 min, VS Code.
 - [host-108-token-checks.md](host-108-token-checks.md) - 25 min, a second computer that reaches port 37537.
+- [bot-talk-checks.md](bot-talk-checks.md) - 30 min, on the test daemon after the bot talk branch merges: ahpw, VS Code, a second user and a webhook.
 - [plugin-54-webhook-checks.md](plugin-54-webhook-checks.md) - 60 min, a public port, a GitHub repo, a Slack app, users `alice` and `bob`, and the webhook plugin's grants.
 - [plugin-50-first-pieces.md](plugin-50-first-pieces.md) - 60 to 120 min, one account per piece.
 - [host-0813-moved-chat-checks.md](host-0813-moved-chat-checks.md) - ahpw and ahpc, with `chatMoves.enabled` on for the second part.

@@ -235,6 +235,8 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const state: Bag = {
       ...talking.chat.chatState(),
       origin: getChatOrigin(chatUri),
+      // How a person may use it, where the plugin that made it said.
+      ...(ctx.chatInteractivity.get(chatUri) === undefined ? {} : { interactivity: ctx.chatInteractivity.get(chatUri) }),
       /*
        * The session's default chat holds the title it was given, or none,
        * which reads as its session's: whoever titles the session, a client

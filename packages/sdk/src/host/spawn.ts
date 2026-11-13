@@ -92,6 +92,13 @@ export interface Spawn {
    * a spawned chat's owner from the spawning call's records alone.
    */
   workerOf(chat: string): { session: string; toolCallId: string } | undefined;
+  /**
+   * The backend that runs a worker chat: the backend of the session's chat
+   * whose call started it, through any workers between, or the session's lead
+   * where that chat is not held. A worker of a chat that is not the default
+   * chat, such as a bot's Back, runs in that chat's backend and not in the lead.
+   */
+  workerLead(chat: string): Session | undefined;
   /** A chat of a session held as `<provider>:/<id>`, in the `ahp-session:/<id>` spelling it was built for, when it has one. */
   legacyChatUri(uri: string, chatUri: string): string | undefined;
   /** A chat's stored title. */
@@ -316,6 +323,17 @@ export function createSpawn(ctx: HostContext): Spawn {
       if (one !== undefined) return { session, toolCallId: String(one.toolCallId ?? '') };
     }
     return undefined;
+  };
+  const workerLead = (chat: string): Session | undefined => {
+    const live = subagents.get(chat);
+    const session = live?.session ?? workerOf(chat)?.session;
+    const held = session === undefined ? undefined : sessions.get(session);
+    if (held === undefined) return undefined;
+    let at = live?.parentChat;
+    if (at !== undefined) {
+      for (let up = subagents.get(at); up !== undefined && up.parentChat !== at; up = subagents.get(at)) at = up.parentChat;
+    }
+    return (at === undefined ? undefined : held.chats.get(at)) ?? ctx.leadOf(held);
   };
   /**
    * A message with the attachments the client sent back on it.
@@ -605,11 +623,8 @@ export function createSpawn(ctx: HostContext): Spawn {
   const sendSubagent = (uri: string, given: Bag): void => {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
-    // A question a worker's call puts is the lead chat's backend's to be answered, as a client's answer on the worker's chat is.
-    const action = toolReady(ref.session, uri, withMcpContributor(ref.session, withWorkerUri(uri, given)), () => {
-      const owning = sessions.get(ref.session);
-      return owning === undefined ? undefined : ctx.leadOf(owning);
-    });
+    // A question a worker's call puts is answered by the backend that runs the worker, as a client's answer on the worker's chat is.
+    const action = toolReady(ref.session, uri, withMcpContributor(ref.session, withWorkerUri(uri, given)), () => workerLead(uri));
     if (action === undefined || decidedAlready(uri, action)) return;
     const was = ctx.stateOf(uri)?.status;
     // Whether this ends the turn the worker's chat runs, whose end is then raised as every chat's is.
@@ -1267,6 +1282,8 @@ export function createSpawn(ctx: HostContext): Spawn {
      * host holds the session: its models are then learned once it is held.
      */
     let reported = false;
+    // Whose work the session is, as the store keeps it.
+    const ownerOfSession = kept.owner(idOf(uri));
     const wired: Start = {
       uri,
       chatUri,
@@ -1276,6 +1293,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       ...ctx.schemaPolicy(),
       ...(userSettings === undefined ? {} : { userSettings }),
       ...(sender?.principal === undefined ? {} : { reader: sender.principal }),
+      ...(ownerOfSession === undefined ? {} : { owner: ownerOfSession }),
       /*
        * The tools bound to this session: this host's own, and whatever the
        * clients already in it provide.
@@ -2181,7 +2199,7 @@ export function createSpawn(ctx: HostContext): Spawn {
   return {
     unstamped, withWorkerUri, stampedCalls, withSender, withSenderSaid, asSentChat,
     sendSubagent, endedWorkers, raiseTurnEnd,
-    openSubagent, mintSubagentChatUri, workerOf, legacyChatUri, titleOf, persistChatTitle, persistSessionTitle, recordSessionProvider,
+    openSubagent, mintSubagentChatUri, workerOf, workerLead, legacyChatUri, titleOf, persistChatTitle, persistSessionTitle, recordSessionProvider,
     spawn, wirePlan, completePlan,
   };
 }

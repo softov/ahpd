@@ -96,6 +96,10 @@ read bot://<slug> -> the reader's session in `session`
 | Back sessions from before this plan stay as they are, and the next message starts a Back chat | Softov, 2026-11-13, chose "Stay as they are" | 03 |
 | After a restart, a Front turn left open reopens, the bot wakes again, and the reply lands in that turn | Softov, 2026-11-13, "A wake or something else must happen to make the bot work again and reply"; chose "The same turn reopens" | 04 |
 | The webhook option `threadSessions`: `false` by default is one session for each bot, `true` is a session for each thread | Softov, 2026-11-13, chose "One session per bot" and "threadSessions: true \| false" | 05 |
+| A Back chat of a bot that names no agent runs on the host's default agent | Softov, 2026-11-13, chose "Host's default agent" | 03 |
+| A talk is kept by the session's owner, and every root owner is one talker, `root` | Softov, 2026-11-13, chose "Count by owner" | 01 |
+| A plugin's turn in a session it does not own is checked and charged as the session owner's | Softov, 2026-11-13, chose "The talk's owner" | 03 |
+| A Back chat is titled `@main/<bot>/<person>`, with `main` fixed for now | Softov, 2026-11-13, wrote "@main/telly/softov" | 03 |
 
 ## Proposed architecture
 
@@ -113,12 +117,12 @@ read bot://<slug> -> the reader's session in `session`
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - one-session-for-each-bot-and-person](task-01-one-session-for-each-bot-and-person.md) | todo | - |
-| [02 - the-front-runs-in-the-bots-folder](task-02-the-front-runs-in-the-bots-folder.md) | todo | - |
-| [03 - the-back-is-a-chat-of-the-front](task-03-the-back-is-a-chat-of-the-front.md) | todo | 01, 02 |
-| [04 - a-restart-wakes-the-bot-again](task-04-a-restart-wakes-the-bot-again.md) | todo | 03 |
-| [05 - the-webhook-picks-its-session-shape](task-05-the-webhook-picks-its-session-shape.md) | todo | 03 |
-| [06 - docs-and-spec](task-06-docs-and-spec.md) | todo | 04, 05 |
+| [01 - one-session-for-each-bot-and-person](task-01-one-session-for-each-bot-and-person.md) | implemented | - |
+| [02 - the-front-runs-in-the-bots-folder](task-02-the-front-runs-in-the-bots-folder.md) | implemented | - |
+| [03 - the-back-is-a-chat-of-the-front](task-03-the-back-is-a-chat-of-the-front.md) | implemented | 01, 02 |
+| [04 - a-restart-wakes-the-bot-again](task-04-a-restart-wakes-the-bot-again.md) | implemented | 03 |
+| [05 - the-webhook-picks-its-session-shape](task-05-the-webhook-picks-its-session-shape.md) | implemented | 03 |
+| [06 - docs-and-spec](task-06-docs-and-spec.md) | implemented | 04, 05 |
 
 ## Risks and tradeoffs
 
@@ -130,8 +134,8 @@ read bot://<slug> -> the reader's session in `session`
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** build the two host plans, then [task-01-one-session-for-each-bot-and-person.md](task-01-one-session-for-each-bot-and-person.md).
+- **Done so far:** tasks 01 to 06 are `implemented`, waiting for review, with the two host plans, in the branch `bots/20261113-0817-a-bot-talk-is-one-session`.
+- **Next action:** Softov's review, and the restart check by hand on the test daemon.
 - **Open questions:** none.
 - **Watch out for:** the webhook's sessions are owned by the plugin, not a person, so the refusal skips them.
 

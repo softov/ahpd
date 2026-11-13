@@ -92,6 +92,10 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "Largest request body accepted, in bytes. Defaults to 5242880 (5 MiB). Larger bodies get 413."
+        },
+        "threadSessions": {
+          "type": "boolean",
+          "description": "How a bot endpoint's caller threads talk to the bot. false (default) is one session with the bot, and a chat of it for each thread; true is a session of its own for each thread."
         }
       }
     }

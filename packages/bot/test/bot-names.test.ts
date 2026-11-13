@@ -13,7 +13,7 @@ import { sdkVersion } from '../../sdk/src/version.js';
 import { holds } from '../../sdk/src/access/users.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { CHAT_PROVIDER } from '../src/chat.js';
-import { backSessions, rowId, sessionsOf, userOf } from '../src/names.js';
+import { backSessions, backTitle, rowId, sessionsOf, userOf } from '../src/names.js';
 import { apply } from '../src/plugin.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
@@ -100,6 +100,9 @@ function made(tokens: Record<string, Grant[]> = {}) {
     sessions: () => sessions,
     records: () => records,
     alert: () => {},
+    // A talk runs in the bot's folder, trusted, which the daemon's entry for
+    // this plugin allows.
+    grants: ['session:trust'],
   });
   apply(plugin, { root: bots });
 
@@ -231,4 +234,10 @@ it('keeps a back session by its name, one collection per bot', async () => {
   expect(await backs.get('motion', 'ana', 'nope')).toBeUndefined();
   expect((await backs.sessions('motion')).sort()).toEqual(['ahp-session:/second', 'ahp-session:/woken']);
   expect(await backs.sessions('other')).toEqual(['ahp-session:/elsewhere']);
+});
+
+it('titles a Back chat @main/<bot>/<person>, with the root and no owner as root', () => {
+  expect(backTitle('telly', 'user:softov')).toBe('@main/telly/softov');
+  expect(backTitle('telly', 'root:soft-sandbox')).toBe('@main/telly/root');
+  expect(backTitle('telly', undefined)).toBe('@main/telly/root');
 });

@@ -31,6 +31,18 @@ export interface BotSeams {
   /** The plugin's session with the bot, made with `createSession` where it has none, or nothing when the host made none. */
   session(bot: string): Promise<string | undefined>;
   /**
+   * Whether a thread has a session of its own, the option `threadSessions`,
+   * rather than a chat of the plugin's one session with the bot.
+   */
+  threadSessions?: boolean;
+  /**
+   * A new session with the bot for one thread, and its default chat, where the
+   * thread talks; nothing when the host made none.
+   */
+  threadSession?(bot: string): Promise<{ session: string; chat: string } | undefined>;
+  /** Whether the host still holds a session. */
+  holds?(session: string): Promise<boolean>;
+  /**
    * Open a chat of its own in that session, as a client opens one with
    * `createChat`, and answer its URI, or nothing when the host refused it.
    */
@@ -192,6 +204,20 @@ export function botTarget(seams: BotSeams): Target {
   const queued = new Map<string, Promise<Thread | undefined>>();
 
   const lookFor = async (endpoint: Endpoint, thread: string, bot: string): Promise<Thread | undefined> => {
+    /*
+     * With `threadSessions`, a thread is a session of its own with the bot and
+     * talks in its default chat: kept while the host holds it, and made again
+     * where it does not.
+     */
+    if (seams.threadSessions === true && seams.threadSession !== undefined) {
+      const kept = await findThread(seams.threads, endpoint.id, thread);
+      if (kept !== undefined && await seams.holds?.(kept.session) === true) return kept;
+      const made = await seams.threadSession(bot);
+      if (made === undefined) return undefined;
+      const record: Thread = { id: kept?.id ?? threadId(), endpoint: endpoint.id, thread, session: made.session, chat: made.chat };
+      await seams.threads.put({ ...record });
+      return record;
+    }
     const session = await seams.session(bot);
     if (session === undefined) return undefined;
     const kept = await findThread(seams.threads, endpoint.id, thread);

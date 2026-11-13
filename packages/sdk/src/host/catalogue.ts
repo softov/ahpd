@@ -265,7 +265,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       ...(chat.activity() !== undefined ? { activity: chat.activity() } : {}),
       // The same answer the chat's own state gives. A summary that left it out
       // while the state carried it would be two answers to one question.
-      interactivity: 'full',
+      interactivity: ctx.chatInteractivity.get(uri) ?? 'full',
       /*
        * Absent when it cannot move, which is what the protocol says absence
        * means. A row with the key left off is one a client draws no move control
