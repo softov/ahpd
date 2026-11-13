@@ -21,7 +21,7 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     permissions:
       # What lets npm trade a GitHub OIDC token for a publish. Without it the
       # publish falls back to looking for a token that is not there.
@@ -102,10 +102,11 @@ jobs:
           echo "$version goes to $channel."
 
       # The same checks CI runs. A release is the one build where a green tick
-      # somewhere else is not good enough.
+      # somewhere else is not good enough. CI splits the suite into shards;
+      # here it runs whole, in one step, so its limit is the whole suite's.
       - run: pnpm boundary
       - run: pnpm typecheck
-      - run: timeout 600 pnpm test
+      - run: timeout 1500 pnpm test
       - run: pnpm build
 
       # Packed by pnpm and not by npm, because these packages depend on each

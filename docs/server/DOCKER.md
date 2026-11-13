@@ -11,7 +11,7 @@ The file is fetched from GitHub at a tag, so it runs that tag's image and needs 
 
 ```bash
 mkdir work
-curl -fsSLO https://raw.githubusercontent.com/ahpio/ahpd/v0.15.0-rc.1/docker/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/ahpio/ahpd/v0.15.0-rc.2/docker/compose.yaml
 docker compose up -d
 ```
 
@@ -43,7 +43,7 @@ docker run -d --name ahpd --restart unless-stopped \
   -p 127.0.0.1:9187:9187 \
   -v ahpd-home:/home/ahpd \
   -v "$PWD/work:/work" \
-  ghcr.io/ahpio/ahpd:0.15.0-rc.1
+  ghcr.io/ahpio/ahpd:0.15.0-rc.2
 ```
 
 `ahpd-home` here is a volume of its own. Compose names its volume after the project folder, so the two commands do not share one.
@@ -53,7 +53,7 @@ docker run -d --name ahpd --restart unless-stopped \
 The image builds from a tag or a branch without a checkout:
 
 ```bash
-docker build -t ahpd:dev "https://github.com/ahpio/ahpd.git#v0.15.0-rc.1"
+docker build -t ahpd:dev "https://github.com/ahpio/ahpd.git#v0.15.0-rc.2"
 docker build -t ahpd:dev "https://github.com/ahpio/ahpd.git#main"
 ```
 

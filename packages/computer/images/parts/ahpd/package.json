@@ -2,7 +2,7 @@
   "name": "ahpd-part-ahpd",
   "private": true,
   "dependencies": {
-    "@ahpd/sdk": "0.8.0",
-    "@ahpd/server": "0.8.0"
+    "@ahpd/sdk": "0.15.0-rc.1",
+    "@ahpd/server": "0.15.0-rc.1"
   }
 }
