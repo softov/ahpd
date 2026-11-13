@@ -16,6 +16,9 @@ VOLUME="ahpd-smoke-$SUFFIX"
 RO_VOLUME="ahpd-smoke-$SUFFIX-ro"
 CONTAINER="ahpd-smoke-$SUFFIX"
 RO_CONTAINER="ahpd-smoke-$SUFFIX-ro"
+# A volume that holds only an image-version, for the downgrade check.
+VERSION_VOLUME="ahpd-smoke-$SUFFIX-version"
+VERSION_CONTAINER="ahpd-smoke-$SUFFIX-version"
 # The same volume, for the container a swap replaces. A restart policy is what
 # carries `ahpd restart` back: the process exits and Docker starts it again.
 POLICY=(--restart unless-stopped)
@@ -23,8 +26,8 @@ POLICY=(--restart unless-stopped)
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 
 cleanup() {
-  docker rm -f "$CONTAINER" "$RO_CONTAINER" >/dev/null 2>&1 || true
-  docker volume rm "$VOLUME" "$RO_VOLUME" >/dev/null 2>&1 || true
+  docker rm -f "$CONTAINER" "$RO_CONTAINER" "$VERSION_CONTAINER" >/dev/null 2>&1 || true
+  docker volume rm "$VOLUME" "$RO_VOLUME" "$VERSION_VOLUME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -222,6 +225,59 @@ check_upgrade() {
   ' || fail 'the installed plugin did not load on the new image'
 }
 
+# The version ahpd says it is in this image.
+image_version() { docker run --rm "$IMAGE" --version; }
+
+# A fresh volume that holds only the image-version file, as an image of that
+# version would have left it.
+version_volume() {
+  docker rm -f "$VERSION_CONTAINER" >/dev/null 2>&1 || true
+  docker volume rm "$VERSION_VOLUME" >/dev/null 2>&1 || true
+  docker run --rm -v "$VERSION_VOLUME:/home/ahpd" --entrypoint sh "$IMAGE" -c \
+    'mkdir -p "$HOME/.config/ahpd" && printf "%s\n" "$1" > "$HOME/.config/ahpd/image-version"' sh "$1"
+}
+
+# A pre-release is lower than its release, so a pre-release image refuses a
+# volume its release wrote. Skipped for a released image, which has no release
+# above it of its own version.
+check_prerelease_refuses_its_release() {
+  local image release said
+  image=$(image_version)
+  case $image in
+    *-*) ;;
+    *) say "   skipped: $image is not a pre-release"; return 0 ;;
+  esac
+  release=${image%%-*}
+  version_volume "$release"
+  if said=$(timeout 120 docker run --name "$VERSION_CONTAINER" -v "$VERSION_VOLUME:/home/ahpd" "$IMAGE" 2>&1); then
+    fail "the $image image started on a volume at $release"
+  fi
+  docker rm -f "$VERSION_CONTAINER" >/dev/null
+  case $said in
+    *'an older image does not start on a newer volume'*) ;;
+    *) fail "the $image image stopped on a volume at $release, but not at the downgrade check: $said" ;;
+  esac
+}
+
+# A volume a lower pre-release of the same version wrote starts this image,
+# and then says this image's version. `X.Y.Z-0` is below every other
+# pre-release of X.Y.Z, and below X.Y.Z itself.
+check_lower_prerelease_starts() {
+  local image lower written
+  image=$(image_version)
+  lower="${image%%-*}-0"
+  if [ "$lower" = "$image" ]; then
+    say "   skipped: no pre-release is lower than $image"
+    return 0
+  fi
+  version_volume "$lower"
+  docker run -d --name "$VERSION_CONTAINER" -p 127.0.0.1::9187 -v "$VERSION_VOLUME:/home/ahpd" "$IMAGE" >/dev/null
+  wait_healthy "$VERSION_CONTAINER"
+  written=$(docker exec "$VERSION_CONTAINER" cat /home/ahpd/.config/ahpd/image-version)
+  [ "$written" = "$image" ] || fail "the volume says $written after the start, not $image"
+  docker rm -f "$VERSION_CONTAINER" >/dev/null
+}
+
 check_pty() {
   # The call a terminal makes for its spawner. A result with `pty` is a
   # pseudoterminal, and the protocol then reports the terminal as isPty: true.
@@ -252,6 +308,8 @@ run_check 'a restart keeps the token and the state' check_restart
 run_check 'ahpd restart brings the container back with the same token' check_exec_restart
 run_check 'a new container on the same volume keeps the state' check_new_container
 run_check 'an upgrade swaps the image and keeps the plugin' check_upgrade
+run_check 'a pre-release image refuses a volume its release wrote' check_prerelease_refuses_its_release
+run_check 'a volume a lower pre-release wrote starts the image' check_lower_prerelease_starts
 run_check 'a terminal is a pseudoterminal' check_pty
 run_check 'the image runs with a read-only root' check_read_only
 say ''

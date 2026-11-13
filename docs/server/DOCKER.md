@@ -163,6 +163,8 @@ AHPD_TAG=0.15.0 docker compose up -d
 ```
 
 An image older than the volume's `image-version` does not start, because the plugins there follow a newer sdk.
+Versions are compared as semver, so a pre-release is older than its release: a volume at `0.15.0-rc.2` starts the `0.15.0` image, and the `0.15.0-rc.2` image refuses a volume at `0.15.0`.
+An `image-version` that is not a version stops the start, and the log names it.
 Set `AHPD_ALLOW_DOWNGRADE=1` to start it anyway, and expect a plugin to fail to load.
 
 ### Backup

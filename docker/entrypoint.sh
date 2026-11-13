@@ -13,6 +13,9 @@ set -eu
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ahpd"
 VERSION_FILE="$CONFIG_DIR/image-version"
 DEFAULT_PLUGINS='@ahpd/web'
+# Where the image installed @ahpd/server, whose semver the downgrade check
+# reads versions with.
+SERVER_DIR='/opt/ahpd/lib/node_modules/@ahpd/server'
 
 STEP='start'
 fail() {
@@ -33,10 +36,23 @@ image=$(ahpd --version) || fail 'ahpd --version'
 volume=$(cat "$VERSION_FILE" 2>/dev/null || true)
 
 STEP='the downgrade check'
-if [ -n "$volume" ] && [ "$volume" != "$image" ] && [ "${AHPD_ALLOW_DOWNGRADE:-}" != '1' ] && \
-   [ "$(printf '%s\n%s\n' "$image" "$volume" | sort -V | head -n 1)" = "$image" ]; then
-  printf 'ahpd: this image is %s and the volume was written by %s; an older image does not start on a newer volume. Set AHPD_ALLOW_DOWNGRADE=1 to start it anyway.\n' "$image" "$volume" >&2
-  exit 1
+# The versions are read as semver, with the server's own semver, so a
+# pre-release is lower than its release: a volume at 0.15.0-rc.1 starts the
+# 0.15.0 image. A version semver cannot read stops the start by name.
+if [ -n "$volume" ] && [ "$volume" != "$image" ] && [ "${AHPD_ALLOW_DOWNGRADE:-}" != '1' ]; then
+  # The script is JavaScript, and its `${...}` are its own template literals.
+  # shellcheck disable=SC2016
+  order=$(node -e '
+    const [server, image, volume] = process.argv.slice(1);
+    const semver = require(require.resolve("semver", { paths: [server] }));
+    if (semver.valid(image) === null) { console.log(`the image version ${image} is not a version`); process.exit(1); }
+    if (semver.valid(volume) === null) { console.log(`the volume version ${volume} is not a version`); process.exit(1); }
+    console.log(semver.lt(image, volume) ? "older" : "newer");
+  ' "$SERVER_DIR" "$image" "$volume") || fail "$order"
+  if [ "$order" = 'older' ]; then
+    printf 'ahpd: this image is %s and the volume was written by %s; an older image does not start on a newer volume. Set AHPD_ALLOW_DOWNGRADE=1 to start it anyway.\n' "$image" "$volume" >&2
+    exit 1
+  fi
 fi
 
 # Unset means the web UI, which is what a first start should have; empty means
