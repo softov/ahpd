@@ -64,7 +64,7 @@ parts-bump.yml weekly -> parts-bump.mjs -> npm dist-tags of @ahpd/server -> vers
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The bump moves the ahpd part](task-01-the-bump-moves-the-ahpd-part.md) | todo | - |
+| [01 - The bump moves the ahpd part](task-01-the-bump-moves-the-ahpd-part.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -73,8 +73,8 @@ parts-bump.yml weekly -> parts-bump.mjs -> npm dist-tags of @ahpd/server -> vers
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-bump-moves-the-ahpd-part.md](task-01-the-bump-moves-the-ahpd-part.md).
+- **Done so far:** task 01 is implemented on 2026-11-13, as [implemented.md](implemented.md) says.
+- **Next action:** review the PR, then run `parts-bump.yml` by hand after it merges.
 - **Open questions:** none.
 - **Watch out for:** `newerThan` stays as it is for every other part. Only the ahpd part takes a prerelease.
 

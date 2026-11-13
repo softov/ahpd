@@ -180,3 +180,72 @@ it('writes the moves a registry entry that is one version does make', () => {
   // The path of each command in the download is the entry's own, and stays.
   expect(parts[0]?.paths).toEqual({ goose: 'goose' });
 });
+
+/** The ahpd part at a version, as the parts file writes it. */
+const ahpdAt = (version: string): Record<string, unknown> =>
+  ({ id: 'ahpd', name: 'ahpd', kind: 'ahpd', version, requires: ['node'], plugins: ['@ahpd/agent-cofold'], bin: ['ahpd'] });
+
+/**
+ * An npm on `PATH` that answers `view <name> dist-tags --json` with `NPM_TAGS`
+ * and otherwise writes a lock where it ran, as the stand-in above does.
+ */
+const NPM_WITH_TAGS = `#!/bin/sh
+if [ "$1" = view ]; then printf '%s\\n' "$NPM_TAGS"; exit 0; fi
+echo "$(pwd) $*" >> "$NPM_LOG"
+echo '{ "lockfileVersion": 3 }' > package-lock.json
+`;
+
+/** One run of the script over the ahpd part at `held`, with npm serving `tags` of `@ahpd/server`. */
+const bumpAhpd = (held: string, tags: unknown) => {
+  const at = mkdtempSync(join(tmpdir(), 'ahpd-bump-'));
+  loose.push(at);
+  for (const dir of ['scripts', 'packages/computer/images', 'bin']) mkdirSync(join(at, dir), { recursive: true });
+  writeFileSync(join(at, 'scripts/parts-bump.mjs'), readFileSync(SCRIPT));
+  writeFileSync(join(at, 'bin/npm'), NPM_WITH_TAGS, { mode: 0o755 });
+  const file = join(at, 'packages/computer/images/versions.json');
+  writeFileSync(file, `${JSON.stringify([ahpdAt(held)], null, 2)}\n`);
+  const registry = join(at, 'registry.json');
+  writeFileSync(registry, JSON.stringify({ agents: [] }));
+  const run = spawnSync(process.execPath, [join(at, 'scripts/parts-bump.mjs'), '--registry', registry], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${join(at, 'bin')}:${process.env.PATH ?? ''}`, NPM_LOG: join(at, 'npm.log'), NPM_TAGS: JSON.stringify(tags) },
+  });
+  return {
+    said: `${run.stdout ?? ''}${run.stderr ?? ''}`,
+    status: run.status,
+    version: (JSON.parse(readFileSync(file, 'utf8')) as { version?: string }[])[0]?.version,
+    manifest: (): unknown => JSON.parse(readFileSync(join(at, 'packages/computer/images/parts/ahpd/package.json'), 'utf8')),
+  };
+};
+
+// POSIX-only: the stand-in npm is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('moves the ahpd part to a newer release candidate on next, as npm 12 answers its tags', () => {
+  const run = bumpAhpd('0.15.0-rc.1', [{ latest: '0.14.0', next: '0.15.0-rc.2' }]);
+  expect(run.status, run.said).toBe(0);
+  expect(run.said).toContain('bumped ahpd 0.15.0-rc.1 -> 0.15.0-rc.2');
+  expect(run.version).toBe('0.15.0-rc.2');
+  // The part is installed from its lock, which pins both packages at the new version.
+  expect(run.manifest()).toEqual({ name: 'ahpd-part-ahpd', private: true, dependencies: { '@ahpd/sdk': '0.15.0-rc.2', '@ahpd/server': '0.15.0-rc.2' } });
+});
+
+// POSIX-only: the stand-in npm is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('moves the ahpd part to the release that follows its candidates, as earlier npm answers its tags', () => {
+  const run = bumpAhpd('0.15.0-rc.2', { latest: '0.15.0', next: '0.15.0-rc.2' });
+  expect(run.status, run.said).toBe(0);
+  expect(run.said).toContain('bumped ahpd 0.15.0-rc.2 -> 0.15.0');
+  expect(run.version).toBe('0.15.0');
+});
+
+// POSIX-only: the stand-in npm is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('leaves the ahpd part when npm serves nothing newer, and names both versions', () => {
+  const run = bumpAhpd('0.15.0', { latest: '0.15.0', next: '0.15.0-rc.2' });
+  expect(run.said).toContain('skipped ahpd: npm has 0.15.0, which is not newer than 0.15.0');
+  expect(run.version).toBe('0.15.0');
+});
+
+// POSIX-only: the stand-in npm is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('leaves the ahpd part when npm names no version it can read', () => {
+  const run = bumpAhpd('0.15.0-rc.1', { latest: 'not a version' });
+  expect(run.said).toContain('skipped ahpd: npm names no latest or next version of @ahpd/server');
+  expect(run.version).toBe('0.15.0-rc.1');
+});
