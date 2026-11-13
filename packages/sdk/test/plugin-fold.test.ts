@@ -555,6 +555,18 @@ describe('the tunnel kinds a fold carries', () => {
     expect(options.tunnelKinds?.ngrok?.by).toBe('beta');
   });
 
+  it('keeps the catalogs of the plugin that registered a kind, for the text of its operations', () => {
+    const catalogs = { pt: { operations: { start: { label: 'Iniciar' } } } };
+    const alpha = pluginHost('alpha', ADAPTER_CONTEXT, { i18n: catalogs });
+    alpha.host.registerTunnelKind(tunnelKind('devtunnel'));
+    const beta = pluginHost('beta', ADAPTER_CONTEXT);
+    beta.host.registerTunnelKind(tunnelKind('ngrok'));
+
+    const { options } = foldHostOptions(base(), [alpha.contribution, beta.contribution]);
+    expect(options.tunnelKinds?.devtunnel?.catalogs).toEqual(catalogs);
+    expect(options.tunnelKinds?.ngrok?.catalogs).toBeUndefined();
+  });
+
   it('refuses a kind name two plugins register, and names both', () => {
     const alpha = pluginHost('alpha', ADAPTER_CONTEXT);
     alpha.host.registerTunnelKind(tunnelKind('devtunnel'));

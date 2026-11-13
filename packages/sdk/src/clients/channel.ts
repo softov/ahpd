@@ -29,7 +29,7 @@
 
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
-import type { OperationChannel } from '../kinds/operations.js';
+import { hostOperationText, operationsIn, type OperationChannel } from '../kinds/operations.js';
 import type { ClientRegistry, ConnectedClient } from '../types/host.js';
 import type { Operation } from '../types/kinds.js';
 import type { ChannelHandle, PluginChannel } from '../types/plugin.js';
@@ -113,8 +113,8 @@ export function clientsChannel(options: ClientsChannelOptions): ClientsChannel {
     id: 'drop',
     kind: 'host',
     label: 'Drop',
-    description: 'Closes this connection. The client may connect again at once.',
-    confirmation: 'Drop this client? Its connection closes now, and it may reconnect at once.',
+    description: 'Closes this connection. The client can connect again at once.',
+    confirmation: 'Drop this client? Its connection closes now, and it can connect again.',
     scopes: ['client'],
     grant: DROP,
     status: 'idle',
@@ -165,7 +165,7 @@ export function clientsChannel(options: ClientsChannelOptions): ClientsChannel {
     snapshot: async (asked, reader, client) => {
       const state = await records.channel.snapshot(asked, reader, client) as Record<string, unknown>;
       startTimer();
-      return { ...state, operations: operationsOf() };
+      return { ...state, operations: operationsIn(operationsOf(), handle?.localeOf?.(client), hostOperationText('client')) };
     },
     left: (client) => {
       records.channel.left?.(client);

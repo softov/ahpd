@@ -20,6 +20,10 @@ import { fileURLToPath } from 'node:url';
  * views at run time, so only that shape is checked: `text` or `label`, a string.
  * A `messages` key is one the sources hold as a quoted string, which is the key
  * a lookup names, and its value is a string.
+ * An `operations` path is the row and the operation in the host's catalog, or
+ * the operation alone in a plugin's, each a name the sources quote, or
+ * `create`, which the host makes for every tunnel kind. Its leaves are `label`,
+ * `description` and `confirmation`, each a string.
  *
  * With no argument it reads the sdk's own catalogs and every package whose
  * manifest names `ahpd.i18n`. Each argument is one package folder instead.
@@ -151,6 +155,21 @@ for (const dir of packages) {
           if (!quoted(key)) say([block, key], 'matches no message the sources look up');
           else if (typeof leaf !== 'string') say([block, key], 'is not a string');
         }
+        continue;
+      }
+      if (block === 'operations') {
+        const walk = (path, value) => {
+          const entries = object(value);
+          if (entries === undefined) return say(path, 'is not an object');
+          for (const [name, leaf] of Object.entries(entries)) {
+            if (typeof leaf === 'string') {
+              if (name !== 'label' && name !== 'description' && name !== 'confirmation') say([...path, name], 'matches no field');
+            }
+            else if (name !== 'create' && !quoted(name)) say([...path, name], 'matches no operation the sources name');
+            else walk([...path, name], leaf);
+          }
+        };
+        walk([block], body);
         continue;
       }
       if (block !== 'options' && block !== 'session') { say([block], 'is not a block a lookup reads'); continue; }

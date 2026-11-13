@@ -314,7 +314,7 @@ async function served(options: { register?: boolean; fold?: (agents: Agent[]) =>
 }
 
 /** A client signed in as `id`, whose channel actions are kept. */
-const as = async (host: Host, users: Users, id: string) => {
+const as = async (host: Host, users: Users, id: string, locale?: string) => {
   const token = await users.mint(id);
   const seen: { method: string; params: Bag }[] = [];
   const client = host.accept({
@@ -322,7 +322,7 @@ const as = async (host: Host, users: Users, id: string) => {
     notify: (method, params) => { seen.push({ method, params: params as Bag }); },
   });
   const ready = await client.handle({
-    method: 'initialize', params: { clientId: id, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
+    method: 'initialize', params: { clientId: id, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT], ...(locale === undefined ? {} : { locale }) },
   }) as Bag;
   await client.handle({ method: 'authenticate', params: { channel: ROOT, resource: users.resource.resource, token } });
   const call = async (method: string, params: Bag) => client.handle({ method, params }).then(
@@ -1451,3 +1451,27 @@ it('sends one value of the view data to the agent\'s readers, and the row holds 
   expect((await cy.rows())['mine']?.['views']).toEqual({ main: viewOf({ plan: 'pro' }) });
   await close();
 });
+
+/*
+ * The list sends its operations beside the records, as the tunnel list does,
+ * so a client draws each row's buttons with the host's words, in the locale
+ * the client sent.
+ */
+it('lists its operations in the locale the client sent, and in English for one that sent none', async () => {
+  const { host, users, close } = await served();
+  const operationsOf = async (one: Awaited<ReturnType<typeof as>>): Promise<Record<string, Bag>> => {
+    const answer = await one.call('subscribe', { channel: URI }) as Bag;
+    const listed = ((answer['result'] as Bag)['snapshot'].state as Bag)['operations'] as Bag[];
+    return Object.fromEntries(listed.map((op) => [String(op['id']), op]));
+  };
+
+  // One client id has one locale, so the English client comes after the Portuguese one is read.
+  const inPt = await operationsOf(await as(host, users, 'cy', 'pt-BR'));
+  expect(Object.keys(inPt)).toEqual(['enable', 'pause', 'disable', 'check', 'remove']);
+  expect(inPt['disable']).toMatchObject({ label: 'Desativar', description: 'Desativa o agente. Ninguém o usa até ele ser ativado de novo.' });
+  expect(inPt['remove']).toMatchObject({ label: 'Remover', confirmation: 'Remover este agente? As sessões dele terminam e ele é excluído.' });
+  const inEn = await operationsOf(await as(host, users, 'cy'));
+  expect(inEn['disable']).toMatchObject({ label: 'Disable', description: 'Turns the agent off. Nobody can use it until it is on again.' });
+  await close();
+});
+

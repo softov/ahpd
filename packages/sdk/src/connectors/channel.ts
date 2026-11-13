@@ -116,7 +116,7 @@ import { alertList, dropOpenAlerts, raiseOpenAlerts } from '../plugins/alerts.js
 import { bag, isRecord, reason } from '../utils/values.js';
 import type { ActionCall, CheckResult, Connector, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, ServedAdapter } from '../types/connectors.js';
 import type { AlertList } from '../plugins/alerts.js';
-import type { OperationChannel } from '../kinds/operations.js';
+import { hostOperationText, withOperations, type OperationChannel } from '../kinds/operations.js';
 import type { PluginMethod, ViewHandle } from '../types/plugin.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
 import type { Grant, Principal } from '../types/users.js';
@@ -1739,7 +1739,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       id: 'enable',
       kind: 'host',
       label: 'Enable',
-      description: 'Writes enabled: true, opens and checks the connector again, and answers its row.',
+      description: 'Turns the connector on and checks it.',
       scopes: ['connector'],
       grant: 'connector:put',
       status: 'idle',
@@ -1748,7 +1748,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       id: 'disable',
       kind: 'host',
       label: 'Disable',
-      description: 'Closes the connector and writes enabled: false, so it answers no call and lists no model, and answers its row.',
+      description: 'Turns the connector off. Registers and calls through it stop.',
       scopes: ['connector'],
       grant: 'connector:put',
       status: 'idle',
@@ -1757,8 +1757,8 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       id: 'remove',
       kind: 'host',
       label: 'Remove',
-      description: 'Closes one connector and takes it out.',
-      confirmation: 'Remove this connector? Its secrets are taken out of the vault and its record goes.',
+      description: 'Deletes the connector and its saved credentials.',
+      confirmation: 'Remove this connector? Its saved credentials are deleted too.',
       scopes: ['connector'],
       grant: 'connector:remove',
       status: 'idle',
@@ -1796,7 +1796,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   };
 
   return {
-    channel,
+    channel: withOperations(channel, operationsOf, hostOperationText('connector')),
     methods,
     operations,
     run,
