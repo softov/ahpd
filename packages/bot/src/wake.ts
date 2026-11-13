@@ -55,6 +55,11 @@ export interface Looked {
 export interface BotSessions {
   /** Whose the session at this URI is, or nothing where this host has none. */
   owner(uri: string): Promise<Owner | undefined>;
+  /**
+   * Whether this host has a users directory. A host without one records no
+   * owner for any session, so `owner` answers nothing for every session there.
+   */
+  hasUsers: boolean;
 }
 
 /** What the wake reads and sends through. */
@@ -744,7 +749,12 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post', cont
           failed(`There is no bot ${message.bot}.`);
           return;
         }
-        const owner = await seams.sessions.owner(message.session);
+        /*
+         * A host with no users directory records no session's owner, and a
+         * bot there is the host's own, so the bot's owner is whose the talk is.
+         */
+        const owner = await seams.sessions.owner(message.session)
+          ?? (seams.sessions.hasUsers ? undefined : bot.owner);
         if (owner === undefined) {
           failed(`${message.session} is a session this host does not hold`);
           return;

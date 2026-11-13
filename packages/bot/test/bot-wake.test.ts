@@ -137,11 +137,13 @@ type Listed = { resource: string; origin?: Bag };
  *
  * `seeded` is what an earlier daemon left: Front rows and the rows of the Back
  * sessions it started, which say whose bot a session is.
+ * `users: false` is a host with no users directory, which records no session's
+ * owner.
  */
 async function sitting(
   record: BotRecord = bot(),
   mayUse?: (owner: Owner, provider: string | undefined) => boolean,
-  seeded: { fronts?: string[]; backs?: string[] } = {},
+  seeded: { fronts?: string[]; backs?: string[]; users?: boolean } = {},
 ) {
   const records = memoryRecords();
   const store = botStore(
@@ -179,7 +181,7 @@ async function sitting(
   for (const session of seeded.fronts ?? []) await fronts.put(record.id, 'ana', session);
   for (const session of seeded.backs ?? []) await backs.put(record.id, 'ana', 'work', session);
 
-  const sessions: BotSessions = { owner: async (uri) => owners.get(uri) };
+  const sessions: BotSessions = { owner: async (uri) => owners.get(uri), hasUsers: seeded.users ?? true };
 
   const wake = botWake({
     store,
@@ -587,6 +589,34 @@ it('ends the Front turn with the host\'s own words when it refuses the message',
  * at its create, and which bot is the chat's config's. A session this host
  * does not hold, and one whose bot has gone, have nothing behind them.
  */
+/*
+ * A host with no users directory records no owner for any session, which is
+ * the default install. The bot there is the host's own, and the talk is too.
+ */
+it('wakes a bot in a session with no owner on a host with no users, as the bot\'s owner', async () => {
+  const one = await sitting(bot({ owner: 'root:box' }), undefined, { users: false });
+  one.owners.delete(CHAT);
+  const said = turn();
+
+  await one.wake.woken(message('t1', 'hello'), said.handle);
+
+  expect(said.failures).toEqual([]);
+  expect(one.starts).toHaveLength(1);
+  expect(one.starts[0]!.wanted).toMatchObject({ title: '@main/backer/root' });
+  expect(String((one.sent[0]!.action['message'] as { text: string }).text)).toMatch(/\nfrom: box\n/);
+});
+
+it('ends a turn in a session with no owner on a host with users', async () => {
+  const one = await sitting();
+  one.owners.delete(CHAT);
+  const said = turn();
+
+  await one.wake.woken(message('t1', 'hello'), said.handle);
+
+  expect(said.failures).toEqual([`${CHAT} is a session this host does not hold`]);
+  expect(one.starts).toEqual([]);
+});
+
 it('ends a turn in a session the host does not hold, or whose bot has gone', async () => {
   const one = await sitting();
   const stray = turn();

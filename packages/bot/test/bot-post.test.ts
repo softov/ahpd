@@ -152,7 +152,7 @@ async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'pos
   const sent: Bag[] = [];
   let minted = 0;
 
-  const sessions: BotSessions = { owner: async (uri) => owners.get(uri) };
+  const sessions: BotSessions = { owner: async (uri) => owners.get(uri), hasUsers: true };
   /** The Front's handle, which a post reaches when no message of the person's waits. */
   const front = turn();
   /** The Back chats with a turn running, which hold a turn the bot opened. */
