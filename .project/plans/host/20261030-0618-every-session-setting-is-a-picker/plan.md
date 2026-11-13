@@ -92,7 +92,7 @@ client opens a picker -> sessionConfigCompletions(property) -> answerer by name 
 ## Resume state
 
 - **Done so far:** all four tasks. A harness answers a key of its own schema, and the Bot chat offers its bots that way. An ACP harness lists the modes its agent's source names, until a session hears others. A session's settings come in the order computer, isolation and branch, then the rest.
-- **Next action:** none. The plan is built. The chat a picked bot opens does nothing; [the brief](../../../briefs/bot-master-chat.md) holds it.
+- **Next action:** none. The plan is built. The chat a picked bot opens does nothing; [the plan](../../bots/20261113-0817-a-bot-talk-is-one-session-with-back-chats/plan.md) holds it.
 - **Open questions:** none.
 - **Watch out for:** VS Code draws its own Approvals picker only for Claude's five modes. An ACP harness gets the plain picker, as expected.
 

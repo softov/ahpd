@@ -14,7 +14,7 @@ refs:
   - "[code://packages/bot/src/wake.ts#L702-L757](../../../../packages/bot/src/wake.ts#L702-L757) - `woken` sends it, and ends the main turn on a refused send"
   - "[code://packages/bot/src/chat.ts#L1195-L1205](../../../../packages/bot/src/chat.ts#L1195-L1205) - `steer`, the one path where a person's message goes into the open main turn"
   - https://github.com/microsoft/vscode/blob/171e90619c7/src/vs/workbench/contrib/chat/browser/widget/input/chatQueuePickerActionItem.ts#L64-L73 - VS Code lets the person pick \"Add to Queue\" or \"Steer with Message\"
-  - problems/a-bot-chat-is-not-a-subagent-of-its-back-session.md - the wider problem this fix is one case of
+  - plans/bots/20261113-0817-a-bot-talk-is-one-session-with-back-chats/plan.md - the plan for the wider problem this fix is one case of
 ---
 
 ## Goal

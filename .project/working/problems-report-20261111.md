@@ -28,7 +28,7 @@ None of them blocks the tag: each is a fault in one path, with a workaround or a
 | 9 | [a-worktree-made-after-start-offers-no-changeset.md](../problems/a-worktree-made-after-start-offers-no-changeset.md) | major | A new worktree shows counts on its row and nothing in Changes |
 | 10 | [a-client-cannot-update-a-scoped-plugin-that-failed-to-load.md](../problems/a-client-cannot-update-a-scoped-plugin-that-failed-to-load.md) | major | An old plugin that fails to load cannot be updated from a client, only from the terminal |
 | 11 | [a-webhook-automation-skips-the-wake-cap.md](../problems/a-webhook-automation-skips-the-wake-cap.md) | major | A webhook sender can wake an automation past its cap and overlap mode. Not reproduced |
-| 12 | [a-bot-chat-is-not-a-subagent-of-its-back-session.md](../problems/a-bot-chat-is-not-a-subagent-of-its-back-session.md) | major | Each bot turn path needs its own fix; the shape is the cause |
+| 12 | a-bot-chat-is-not-a-subagent-of-its-back-session.md, now [this plan](../plans/bots/20261113-0817-a-bot-talk-is-one-session-with-back-chats/plan.md) | major | Each bot turn path needs its own fix; the shape is the cause |
 | 13 | [a-bot-file-edited-by-hand-to-a-new-owner-takes-it-after-a-restart.md](../problems/a-bot-file-edited-by-hand-to-a-new-owner-takes-it-after-a-restart.md) | major | A hand edit moves a bot's owner at a restart with no log line |
 
 ## Major, on machines, nodes and containers
@@ -112,5 +112,5 @@ The audit of 2026-11-08 wrote these 11 problems and never committed them. Each w
 | [a-client-names-its-own-answer-host-policy.md](../problems/a-client-names-its-own-answer-host-policy.md) | minor |
 | [a-push-can-turn-off-the-auto-approval-restriction.md](../problems/a-push-can-turn-off-the-auto-approval-restriction.md) | minor |
 | [a-push-device-hears-sessions-by-client-id-alone.md](../problems/a-push-device-hears-sessions-by-client-id-alone.md) | minor |
-| [a-reader-of-a-bot-can-drive-its-trusted-session.md](../problems/a-reader-of-a-bot-can-drive-its-trusted-session.md) | minor |
+| a-reader-of-a-bot-can-drive-its-trusted-session.md, now [this plan](../plans/bots/20261113-0817-a-bot-talk-is-one-session-with-back-chats/plan.md) | minor |
 | [global-auto-approve-approves-every-tool-call.md](../problems/global-auto-approve-approves-every-tool-call.md) | minor |

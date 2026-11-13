@@ -36,6 +36,6 @@ A client now draws the Bot chat's bot and an ACP harness's approvals as pickers 
 
 ## Left for later
 
-- The chat a picked bot opens does nothing. See [the brief](../../../briefs/bot-master-chat.md).
+- The chat a picked bot opens does nothing. See [the plan](../../bots/20261113-0817-a-bot-talk-is-one-session-with-back-chats/plan.md).
 - The remaining ACP rows carry no preset modes: Copilot, OpenCode, Kilo, Goose, Pi, dsh, Devin, Cursor, Amp, Cline and omp.
 - Each stays a text box until its first session names its modes.

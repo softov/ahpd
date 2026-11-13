@@ -46,4 +46,5 @@ resourceWrite bot://<slug> -> botProvider.write -> makeFolder -> message to the 
 - A bot's machine is not checked, and a bot from a profile has no machine of its own ([plan](20261028-0545-a-bot-runs-in-a-machine/plan.md)).
 - A wake session of a manager bot can edit outside the bot's folder ([plan](20261028-0545-a-manager-bot-edits-only-its-own-folder/plan.md)).
 - A bot has no tool that makes a bot or changes a bot's record ([plan](20261028-0545-a-bot-changes-bots-with-a-tool/plan.md)).
-- A bot has no private session, and a talk with a bot is not one Front with its Backs ([plan](20261028-0545-a-bot-session-has-a-front-and-backs/plan.md)).
+- A talk with a bot is not one session with its Back chats ([plan](20261113-0817-a-bot-talk-is-one-session-with-back-chats/plan.md)).
+- A bot has no private session, groups or wakes with no person behind them ([plan](20261028-0545-a-bot-session-has-a-front-and-backs/plan.md)).

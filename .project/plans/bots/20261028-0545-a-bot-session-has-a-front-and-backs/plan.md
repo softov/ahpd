@@ -98,18 +98,17 @@ Not written yet.
 ## Resume state
 
 - **Done so far:** moved from plugin/52 p14 on 2026-10-28, when Softov made the `bots` domain. It was merged 2026-10-22 from the plugin/52 drafts p4, p6, p9, p11 and the permission mode of p7. Example templates are in `~/.config/ahpd/templates/bots/`: `wake-mention.md` and `wake-automation.md`.
-- **Next action:** finish host/107, ask the open questions, then write the tasks.
+- **Moved out on 2026-11-13:** a person's direct talk, its Back chats and the webhook went to [bots/20261113-0817-a-bot-talk-is-one-session-with-back-chats](../20261113-0817-a-bot-talk-is-one-session-with-back-chats/plan.md). This plan keeps groups, the private session, automations and the finished-session wake.
+- **Next action:** build bots/20261113-0817-a-bot-talk-is-one-session-with-back-chats, ask the open questions, then write the tasks. That plan answers two earlier questions: the Back sessions that exist stay as they are, and a Back chat is `full`.
 - **Open questions:**
-  1. What happens to the Back sessions that exist - proposed: no migration; a new message starts a Back chat.
-  2. Is a Back chat `read-only` or `full` for the person - proposed: `read-only`, so the person talks only in the Front.
-  3. Is the private session a bot provider session with Back chats and no Front - proposed: yes.
-  4. The delay before a mention wakes the bot - proposed: 10 seconds, and a new mention in that time restarts the wait.
-  5. How many messages a wake gives - proposed: the last 20, set by a plugin option.
-  6. Who may add a member to a group - proposed: the chat's owner.
-  7. May a bot read a group where nobody mentioned it - proposed: no, a wake gets the last messages the template names.
-  8. How a bot names the group to post to - proposed: a `chat` argument on `post_message`, limited to groups where the bot is a member.
-  9. How a finished-session wake knows the chat to post to - proposed: the task names the chat.
-  10. A harness with no `auto` mode - proposed: the bot names the harness's own value, and an unknown value uses the default.
+  1. Is the private session a bot provider session with Back chats and no Front - proposed: yes.
+  2. The delay before a mention wakes the bot - proposed: 10 seconds, and a new mention in that time restarts the wait.
+  3. How many messages a wake gives - proposed: the last 20, set by a plugin option.
+  4. Who may add a member to a group - proposed: the chat's owner.
+  5. May a bot read a group where nobody mentioned it - proposed: no, a wake gets the last messages the template names.
+  6. How a bot names the group to post to - proposed: a `chat` argument on `post_message`, limited to groups where the bot is a member.
+  7. How a finished-session wake knows the chat to post to - proposed: the task names the chat.
+  8. A harness with no `auto` mode - proposed: the bot names the harness's own value, and an unknown value uses the default.
 - **Watch out for:** read how an `independent` session records its creator before the `childFinished` task.
 
 ## Final verification checklist
