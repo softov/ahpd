@@ -49,7 +49,6 @@ Ask, and Claude runs them on an isolated daemon, not on ports 5180 and 37537.
 ## Softov's decision, nothing to run
 
 - [acp-19-records-follow-up.md](acp-19-records-follow-up.md) - a question about acp/19.
-- [plugin-58-icon-curation.md](plugin-58-icon-curation.md) - which icons to keep.
 
 ## Another machine
 

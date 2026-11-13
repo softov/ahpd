@@ -8,6 +8,8 @@ plans:
 
 # Curate the icon of each plugin in this repository
 
+Softov accepted every candidate in the table on 2026-11-13. A change to an icon starts as a new brief.
+
 Plan 58 task 05 gives each plugin in this repository one SVG icon.
 Plan 61 task 01 gives each Lucide icon a second file for a dark background.
 Seven candidates come from Lucide, which publishes its icons under the ISC licence, and each of those files keeps its licence comment.
