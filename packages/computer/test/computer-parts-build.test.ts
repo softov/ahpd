@@ -99,6 +99,59 @@ it('pulls a missing part at its tag from the registry the package names, and a s
   expect(pulled(path)).toHaveLength(2);
 });
 
+/** A digests file beside the state file, as the release writes one: each tag's digest. */
+const digestsFile = (path: string, digests: Record<string, unknown> | string): string => {
+  const file = join(path, '..', 'digests.json');
+  writeFileSync(file, typeof digests === 'string' ? digests : `${JSON.stringify(digests)}\n`);
+  return file;
+};
+
+/** A digest of the shape the registry answers, one per letter. */
+const digestFor = (letter: string): string => `sha256:${letter.repeat(64)}`;
+
+it('pulls a part by the digest the release pinned, and tags it by the tag every machine names', async () => {
+  const path = state();
+  const digests = digestsFile(path, { [tagFor(node)]: digestFor('a'), [tagFor(codex)]: digestFor('b') });
+  const lines: string[] = [];
+
+  expect(await ensurePart('codex', { runtime: runtime(path), parts, digests, log: (line) => { lines.push(line); } })).toBe(tagFor(codex));
+  const named = (tag: string): string => `${registryOf()}/${tag.slice(0, tag.lastIndexOf(':'))}`;
+  expect(pulled(path)).toEqual([`${named(tagFor(node))}@${digestFor('a')}`, `${named(tagFor(codex))}@${digestFor('b')}`]);
+  expect(held(path).images).toContain(tagFor(codex));
+  expect(lines.some((line) => line.includes('no pinned digest'))).toBe(false);
+});
+
+it('pulls a part by its tag when no digest is pinned, and says so once for each part', async () => {
+  const path = state();
+  const digests = digestsFile(path, { [tagFor(node)]: digestFor('a') });
+  const said: [string, string | undefined][] = [];
+
+  await ensurePart('codex', { runtime: runtime(path), parts, digests, log: (line, level) => { said.push([line, level]); } });
+  expect(pulled(path)).toEqual([`${registryOf()}/${tagFor(node).replace(/:[^:]*$/, '')}@${digestFor('a')}`, remoteFor(codex)]);
+  expect(said.filter(([line]) => line.includes('no pinned digest'))).toEqual([[`${tagFor(codex)} has no pinned digest, so it is pulled by its tag`, 'warn']]);
+});
+
+it('refuses a part when the digests file is not an object of sha256 digests, and names the file', async () => {
+  const path = state();
+  const digests = digestsFile(path, { [tagFor(node)]: 'md5:nothing' });
+
+  await expect(ensurePart('codex', { runtime: runtime(path), parts, digests })).rejects.toThrow(`${digests} is not an object of sha256 digests by tag`);
+  expect(pulled(path)).toEqual([]);
+});
+
+it('pulls the joined image by the digest the release pinned for its tag', async () => {
+  // The tag the joined image is asked for, read off a host with no digests.
+  const first = state();
+  const { tag } = await ensureJoined({ runtime: runtime(first), parts });
+
+  const path = state();
+  const digests = digestsFile(path, { [tagFor(node)]: digestFor('a'), [tagFor(codex)]: digestFor('b'), [tag]: digestFor('c') });
+  const joined = await ensureJoined({ runtime: runtime(path), parts, digests });
+  expect(joined.tag).toBe(tag);
+  expect(pulled(path)).toContain(`${registryOf()}/ahpd-agents@${digestFor('c')}`);
+  expect(held(path).images).toContain(tag);
+});
+
 it('answers the GitHub container registry of the repository the package names', () => {
   expect(registryOf()).toBe('ghcr.io/ahpio');
 });

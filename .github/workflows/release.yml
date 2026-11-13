@@ -20,6 +20,11 @@ env:
 
 jobs:
   release:
+    # The parts first: `@ahpd/computer` carries the digest of each part image
+    # the parts job publishes, and a host pulls each part by it. A part that
+    # does not build or push stops the release here, before any package is
+    # staged; a rerun of the failed job carries on.
+    needs: parts
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -109,6 +114,16 @@ jobs:
       - run: timeout 1500 pnpm test
       - run: pnpm build
 
+      # The digests the parts job wrote, beside the versions file they pin, so
+      # the computer package carries them. A dry run pushed nothing, so it has
+      # none and packs without them.
+      - name: The parts' digests
+        if: ${{ inputs.dry_run != true }}
+        uses: actions/download-artifact@v4
+        with:
+          name: parts-digests
+          path: packages/computer/images
+
       # Packed by pnpm and not by npm, because these packages depend on each
       # other with `workspace:^` and only pnpm rewrites that to a real range on
       # the way out. An `npm pack` tarball carries the literal `workspace:^`,
@@ -136,6 +151,19 @@ jobs:
               console.log(deps.length === 0 ? '  no sibling dependencies' : deps.map(([n, v]) => '  ' + n + ' ' + v).join('\\n'));
             "
           done
+
+      # A computer package with no digests would have every host pull its parts
+      # by tag, which is what the digests are there to stop.
+      - name: The computer package carries the parts' digests
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          set -eu
+          tarball=$(ls ${{ runner.temp }}/ahpd-computer-*.tgz)
+          if ! tar -tzf "$tarball" | grep -qx 'package/images/digests.json'; then
+            echo "$tarball has no images/digests.json. It must not be published."
+            exit 1
+          fi
+          tar -xzOf "$tarball" package/images/digests.json
 
       # Staged by npm, not published, and by npm rather than pnpm because
       # trusted publishing is npm's own feature and pnpm's support for it has
@@ -275,6 +303,16 @@ jobs:
       - name: Build the parts, and push them
         if: ${{ inputs.dry_run != true }}
         run: node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs --push
+
+      # The digest of each image the push left published, for the release job
+      # to pack into the computer package.
+      - name: Hand the digests to the release job
+        if: ${{ inputs.dry_run != true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: parts-digests
+          path: packages/computer/images/digests.json
+          if-no-files-found: error
 
       - name: Build the parts, and push nothing
         if: ${{ inputs.dry_run == true }}

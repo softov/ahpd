@@ -76,10 +76,10 @@ release parts job -> parts-publish.mjs --push -> registry digest per tag -> dige
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The publish job writes the digests](task-01-the-publish-job-writes-the-digests.md) | todo | - |
-| [02 - A host pulls a part by its digest](task-02-a-host-pulls-a-part-by-its-digest.md) | todo | 01 |
-| [03 - The release carries the digests](task-03-the-release-carries-the-digests.md) | todo | 01 |
-| [04 - The docs say a part is pinned](task-04-the-docs-say-a-part-is-pinned.md) | todo | 02, 03 |
+| [01 - The publish job writes the digests](task-01-the-publish-job-writes-the-digests.md) | implemented | - |
+| [02 - A host pulls a part by its digest](task-02-a-host-pulls-a-part-by-its-digest.md) | implemented | 01 |
+| [03 - The release carries the digests](task-03-the-release-carries-the-digests.md) | implemented | 01 |
+| [04 - The docs say a part is pinned](task-04-the-docs-say-a-part-is-pinned.md) | implemented | 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -89,8 +89,8 @@ release parts job -> parts-publish.mjs --push -> registry digest per tag -> dige
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-publish-job-writes-the-digests.md](task-01-the-publish-job-writes-the-digests.md).
+- **Done so far:** tasks 01 to 04 are implemented on 2026-11-13, as [implemented.md](implemented.md) says.
+- **Next action:** review the PR, then a dry run of `release.yml` on its branch, the first run of the artifact actions.
 - **Open questions:** none.
 - **Watch out for:** the joined image's tag hashes `versions.json`, so nothing may write a digest there. `pullImage` takes the remote reference and the local tag apart, so a digest reference needs no change in the runtime.
 

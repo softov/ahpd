@@ -62,6 +62,62 @@ export interface Part {
 export const versionsPath = (): string => fileURLToPath(new URL('../images/versions.json', import.meta.url));
 
 /**
+ * Where the release writes the digest of each image it published, by the tag
+ * a host asks for: `scripts/parts-publish.mjs --push` writes it, and the
+ * release packs it beside the versions file. A checkout has none, since the
+ * file is never committed.
+ */
+export const digestsPath = (): string => fileURLToPath(new URL('../images/digests.json', import.meta.url));
+
+/** A digest a host pulls by: the sha256 of the image's manifest, which the registry answers for. */
+const DIGEST = /^sha256:[0-9a-f]{64}$/;
+
+/** Each digests file read, by its path, so a host reads it once. */
+const digestsRead = new Map<string, Map<string, string>>();
+
+/**
+ * The digest the release published `tag` at, or `undefined` when the file
+ * names none or is not there. A file that is not an object of sha256 digests
+ * is refused by its path, since a host would otherwise pull by tag what the
+ * release meant to pin.
+ */
+export const digestOf = (tag: string, path: string = digestsPath()): string | undefined => {
+  let held = digestsRead.get(path);
+  if (held === undefined) {
+    let text: string | undefined;
+    try { text = readFileSync(path, 'utf8'); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    let parsed: unknown = {};
+    if (text !== undefined) {
+      try { parsed = JSON.parse(text); }
+      catch { parsed = undefined; }
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)
+      || !Object.values(parsed).every((one) => typeof one === 'string' && DIGEST.test(one))) {
+      throw new Error(`${path} is not an object of sha256 digests by tag`);
+    }
+    held = new Map(Object.entries(parsed as Record<string, string>));
+    digestsRead.set(path, held);
+  }
+  return held.get(tag);
+};
+
+/**
+ * Where a host pulls `tag` from: the release's image by its digest, so a tag
+ * pushed again with other content is not what runs, else the tag itself, as a
+ * checkout does, with a line that says so.
+ * https://docs.docker.com/reference/cli/docker/image/pull/#pull-an-image-by-digest-immutable-identifier
+ */
+export const remoteOf = (tag: string, log?: (line: string, level?: LogLevel) => void, path?: string): string => {
+  const digest = digestOf(tag, path);
+  if (digest !== undefined) return `${registryOf()}/${tag.slice(0, tag.lastIndexOf(':'))}@${digest}`;
+  log?.(`${tag} has no pinned digest, so it is pulled by its tag`, 'warn');
+  return `${registryOf()}/${tag}`;
+};
+
+/**
  * Where the release workflow publishes the parts and a host pulls them from:
  * the GitHub container registry namespace of the repository this package
  * names, `ghcr.io/<owner>`, lowercase as the registry's names are.
@@ -370,6 +426,8 @@ export interface EnsureOptions {
   runtime: ComputerRuntime;
   /** The parts to read, which is the shipped file unless a caller says otherwise. */
   parts?: Part[];
+  /** The digests file to read, which is the shipped one unless a caller says otherwise. */
+  digests?: string;
   /** Where a line the load says goes: the override in use. */
   log?: (line: string, level?: LogLevel) => void;
   /**
@@ -983,7 +1041,7 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
         return tag;
       }
       try {
-        await options.runtime.pullImage(`${registryOf()}/${tag}`, tag);
+        await options.runtime.pullImage(remoteOf(tag, options.log, options.digests), tag);
         const said = await checked(tag);
         if (said !== undefined) {
           await options.runtime.removeImage(tag).catch((error: unknown) => {
@@ -1320,7 +1378,7 @@ export const ensureJoined = async (options: EnsureOptions): Promise<Joined> => {
   });
   return once(tag, async () => {
     if (!await options.runtime.hasImage(tag)) {
-      if (released) await options.runtime.pullImage(`${registryOf()}/${tag}`, tag);
+      if (released) await options.runtime.pullImage(remoteOf(tag, options.log, options.digests), tag);
       else await options.runtime.buildImage(tag, contextOf(file));
     }
     return { tag, parts: held, missing };

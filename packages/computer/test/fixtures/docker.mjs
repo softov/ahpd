@@ -13,6 +13,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -255,14 +256,22 @@ if (verb === 'info') {
 /*
  * `docker buildx`, as the release workflow builds with it: `imagetools
  * inspect` answers for an image the registry holds, which `published` lists,
- * and `build` is recorded in `buildx` with its platforms, tags, build
- * contexts, labels, whether it pushed, the Dockerfile it was piped and the
- * names of the other files beside it; a pushed tag is then published.
+ * and with `--format` prints its manifest, whose digest is the one `digests`
+ * names for the reference, else the sha256 of the reference itself. `build`
+ * is recorded in `buildx` with its platforms, tags, build contexts, labels,
+ * whether it pushed, the Dockerfile it was piped and the names of the other
+ * files beside it; a pushed tag is then published.
  */
 if (verb === 'buildx') {
   if (args[1] === 'imagetools' && args[2] === 'inspect') {
     keep();
-    process.exit((held.published ?? []).includes(args[3]) ? 0 : 1);
+    const reference = args[3];
+    if (!(held.published ?? []).includes(reference)) process.exit(1);
+    if (args.includes('--format')) {
+      const digest = held.digests?.[reference] ?? `sha256:${createHash('sha256').update(reference).digest('hex')}`;
+      process.stdout.write(`${JSON.stringify({ mediaType: 'application/vnd.oci.image.index.v1+json', digest })}\n`);
+    }
+    process.exit(0);
   }
   const flag = (name) => args.flatMap((one, at) => (args[at - 1] === name ? [one] : []));
   const entries = contextEntries(await readStdin());

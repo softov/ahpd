@@ -1,6 +1,6 @@
 ---
 title: A host pulls a part by its digest
-status: todo
+status: implemented
 depends: [task-01-the-publish-job-writes-the-digests.md]
 layer: "computer"
 refs:
@@ -46,3 +46,4 @@ With no digest, it pulls by the tag, as today, and logs a warning that names the
 - `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run packages/computer` passes.
 
 ## Resume
+- Implemented on 2026-11-13. [implemented.md](implemented.md) holds what was built, what was verified and the departures.

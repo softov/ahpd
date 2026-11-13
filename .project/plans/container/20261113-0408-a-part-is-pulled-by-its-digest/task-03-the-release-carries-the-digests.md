@@ -1,6 +1,6 @@
 ---
 title: The release carries the digests
-status: todo
+status: implemented
 depends: [task-01-the-publish-job-writes-the-digests.md]
 layer: "release workflow"
 refs:
@@ -36,3 +36,4 @@ A part that fails stops the npm stage, and a dry run packs with no digests.
 - After the next tag run, `tar -tzf` on the staged `@ahpd/computer` tarball lists `package/images/digests.json`.
 
 ## Resume
+- Implemented on 2026-11-13. [implemented.md](implemented.md) holds what was built, what was verified and the departures.

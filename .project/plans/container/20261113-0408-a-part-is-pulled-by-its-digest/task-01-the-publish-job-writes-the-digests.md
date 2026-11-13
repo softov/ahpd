@@ -1,6 +1,6 @@
 ---
 title: The publish job writes the digests
-status: todo
+status: implemented
 depends: []
 layer: "scripts"
 refs:
@@ -42,3 +42,4 @@ Without `--push` it writes no file.
 - `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run packages/computer/test/parts-publish.test.ts` passes.
 
 ## Resume
+- Implemented on 2026-11-13. [implemented.md](implemented.md) holds what was built, what was verified and the departures.
