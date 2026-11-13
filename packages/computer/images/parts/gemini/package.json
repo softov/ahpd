@@ -2,6 +2,6 @@
   "name": "ahpd-part-gemini",
   "private": true,
   "dependencies": {
-    "@google/gemini-cli": "0.67.0"
+    "@google/gemini-cli": "0.68.0"
   }
 }
