@@ -1,4 +1,5 @@
 import { invokeOperation, loggerOf, memoryRecords, tunnelsChannel } from '@ahpd/sdk';
+import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { checkTunnelKind } from '../../sdk/src/plugins/validate.js';
@@ -219,3 +220,18 @@ it('adds no system tunnel without a connector, and says what to set', async () =
   expect(alerts[0]?.text).toContain('`connector`');
   expect(alerts[0]?.text).toContain('Sign in to a devtunnel connector');
 });
+
+/*
+ * A person reads the kind's own operations in the locale their client sent, so
+ * each catalog the plugin ships names every one of them, and the create.
+ */
+it('has a label and a description in each catalog for every operation of the kind, and for its create', () => {
+  for (const locale of ['pt', 'es']) {
+    const catalog = JSON.parse(readFileSync(new URL(`../i18n/${locale}.json`, import.meta.url), 'utf8')) as { operations?: Record<string, { label?: string; description?: string }> };
+    for (const id of ['create', ...OPERATIONS.map((one) => one.id)]) {
+      expect(catalog.operations?.[id]?.label, `${locale} ${id} label`).toBeTruthy();
+      expect(catalog.operations?.[id]?.description, `${locale} ${id} description`).toBeTruthy();
+    }
+  }
+});
+

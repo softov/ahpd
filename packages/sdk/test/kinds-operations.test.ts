@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { invokeOperation, OPERATION_GRANT } from '../src/kinds/operations.js';
+import { hostOperationText, invokeOperation, OPERATION_GRANT, operationsIn } from '../src/kinds/operations.js';
 import type { OperationChannel } from '../src/kinds/operations.js';
 import type { Operation } from '../src/types/kinds.js';
 import type { Principal } from '../src/types/users.js';
@@ -163,3 +163,30 @@ it('sets the operation to error with its message when the work throws', async ()
   expect(one.settled).toEqual([{ id: 'fake/create', error: 'the port is taken' }]);
   expect(one.problems).toEqual([`fake/create on ${URI} failed: the port is taken`]);
 });
+
+/*
+ * An operation's text in the reader's locale: each of its three fields at its
+ * field path, English where no catalog has one, and a field it lacks absent.
+ */
+it('puts each label, description and confirmation in the reader\'s locale, and keeps English where no catalog has it', () => {
+  const ops: Operation[] = [
+    { id: 'remove', kind: 'host', label: 'Remove', description: "Ends the agent's sessions and deletes the agent.", confirmation: 'Remove this agent? Its sessions end, and the agent is deleted.', scopes: ['agent'], grant: 'agent:remove', status: 'idle' },
+    { id: 'fake/remove', kind: 'fake', label: 'Remove', scopes: ['tunnel'], grant: 'tunnel:delete', status: 'idle' },
+    { id: 'odd', kind: 'host', label: 'Odd', description: 'No catalog has this.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
+  ];
+
+  const pt = operationsIn(ops, 'pt-BR', (one) => hostOperationText(one.kind === 'host' ? 'agent' : 'tunnel')(one));
+  expect(pt[0]).toMatchObject({ label: 'Remover', description: 'Encerra as sessões do agente e o exclui.', confirmation: 'Remover este agente? As sessões dele terminam e ele é excluído.' });
+  // A tunnel operation reads the name after its kind, and has no description to translate.
+  expect(pt[1]).toMatchObject({ label: 'Remover' });
+  expect(pt[1]).not.toHaveProperty('description');
+  expect(pt[2]).toMatchObject({ label: 'Odd', description: 'No catalog has this.' });
+
+  expect(operationsIn(ops, 'es', hostOperationText('agent'))[0]).toMatchObject({ label: 'Eliminar' });
+  expect(operationsIn(ops, undefined, hostOperationText('agent'))).toEqual(ops);
+
+  // A kind's own catalogs come first, at the path the kind's text says.
+  const own = operationsIn([ops[2]!], 'pt', () => ({ path: ['operations', 'odd'], catalogs: [{ pt: { operations: { odd: { label: 'Estranho' } } } }] }));
+  expect(own[0]).toMatchObject({ label: 'Estranho', description: 'No catalog has this.' });
+});
+

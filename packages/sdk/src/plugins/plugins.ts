@@ -663,7 +663,8 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
         problems.push(`plugin ${contribution.by} registers tunnel kind ${name}, which ${held.by === 'the daemon' ? 'the daemon' : `plugin ${held.by}`} already registered`);
         continue;
       }
-      tunnelKinds[name] = kind;
+      // The plugin's catalogs go with the kind, as an agent's do, for the text of its operations.
+      tunnelKinds[name] = contribution.i18n === undefined ? kind : { ...kind, catalogs: contribution.i18n };
     }
   }
   if (Object.keys(tunnelKinds).length > 0) options.tunnelKinds = tunnelKinds;

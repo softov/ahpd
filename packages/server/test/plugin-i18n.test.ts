@@ -191,4 +191,23 @@ describe('tools/i18n-check.mjs', () => {
       'labels is not a block a lookup reads',
     ]);
   });
+
+  it('prints an operation the sources do not name, and a field an operation has not', () => {
+    write('i18n-ops/src/kind.ts', "export const OPERATIONS = [{ id: 'start', label: 'Start' }];\n");
+    write('i18n-ops/i18n/pt.json', JSON.stringify({
+      operations: {
+        create: { label: 'Criar' },
+        start: { label: 'Iniciar', description: 'Inicia.', icon: 'play' },
+        launch: { label: 'Lançar' },
+      },
+    }));
+    const dir = pkg('i18n-ops', { i18n: 'i18n' });
+
+    const answer = run(dir);
+    expect(answer.status).toBe(1);
+    expect(answer.stdout.trim().split('\n').map((line) => line.replace(/^.*pt\.json: /, ''))).toEqual([
+      'operations.start.icon matches no field',
+      'operations.launch matches no operation the sources name',
+    ]);
+  });
 });

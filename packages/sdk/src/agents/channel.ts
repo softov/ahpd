@@ -86,7 +86,7 @@ import { recordViews } from '../plugins/views.js';
 import { alertList, dropOpenAlerts, raiseOpenAlerts } from '../plugins/alerts.js';
 import { bag, isRecord, reason } from '../utils/values.js';
 import type { Icon } from '@microsoft/agent-host-protocol';
-import type { OperationChannel } from '../kinds/operations.js';
+import { hostOperationText, withOperations, type OperationChannel } from '../kinds/operations.js';
 import type { Agent } from '../types/agent.js';
 import type { AgentMode, AgentOwner, AgentState, AgentTemplate, ServedEngine } from '../types/agents.js';
 import type { HandedAgent } from '../types/computers.js';
@@ -1233,11 +1233,11 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
 
   /** The operations the list offers now: the five the fixed commands serve. */
   const operationsOf = (): Operation[] => [
-    { id: 'enable', kind: 'host', label: 'Enable', description: 'Writes mode: enabled and opens the record again.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
-    { id: 'pause', kind: 'host', label: 'Pause', description: 'Writes mode: paused, so the record stays open and its sessions are kept.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
-    { id: 'disable', kind: 'host', label: 'Disable', description: 'Writes mode: disabled, so the record is not opened or served.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
-    { id: 'check', kind: 'host', label: 'Check', description: "Builds the record's backend and asks its probe.", scopes: ['agent'], grant: 'agent:put', status: 'idle' },
-    { id: 'remove', kind: 'host', label: 'Remove', description: 'Ends the sessions on the agent and takes its record out.', confirmation: 'Remove this agent? Its sessions end and its record goes.', scopes: ['agent'], grant: 'agent:remove', status: 'idle' },
+    { id: 'enable', kind: 'host', label: 'Enable', description: 'Turns the agent on again.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
+    { id: 'pause', kind: 'host', label: 'Pause', description: 'Stops new sessions and new messages on this agent.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
+    { id: 'disable', kind: 'host', label: 'Disable', description: 'Turns the agent off. Nobody can use it until it is on again.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
+    { id: 'check', kind: 'host', label: 'Check', description: 'Checks that the agent can run on this host.', scopes: ['agent'], grant: 'agent:put', status: 'idle' },
+    { id: 'remove', kind: 'host', label: 'Remove', description: "Ends the agent's sessions and deletes the agent.", confirmation: 'Remove this agent? Its sessions end, and the agent is deleted.', scopes: ['agent'], grant: 'agent:remove', status: 'idle' },
   ];
 
   /** Whether one record offers an operation now. */
@@ -1279,7 +1279,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
   };
 
   return {
-    channel,
+    channel: withOperations(channel, operationsOf, hostOperationText('agent')),
     methods,
     operations,
     agents: () => inTurn(() => sync()),

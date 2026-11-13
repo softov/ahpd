@@ -310,3 +310,53 @@ it('refuses an operation the record does not offer now, naming it', async () => 
   await expect(one.invoke('fake/enable', {}, id)).rejects.toThrow('fake/enable is not offered');
   expect(one.called.filter((call) => call.what === 'enable')).toHaveLength(0);
 });
+
+/*
+ * The text a person reads is the reader's own: the host's operations from the
+ * host's catalogs, and a kind's create and its own operations from the
+ * catalogs of the plugin that registered the kind. The channel keeps English.
+ */
+it('sends the operations in each reader\'s locale, and each operations update to each subscriber in its own', async () => {
+  const collection = await memoryRecords().collection('tunnels', { format: 'json' });
+  const fake = fakeKind();
+  const kind: ServedTunnelKind = {
+    ...fake.kind,
+    operations: [{ id: 'open', label: 'Open', description: 'Opens it.' }],
+    catalogs: { pt: { operations: { create: { label: 'Falso' }, open: { label: 'Abrir', description: 'Abre.' } } } },
+  };
+  const tunnels = tunnelsChannel({ collection, kinds: () => ({ fake: kind }), vault: () => made(), check });
+  const sent: { action: Bag; to?: string }[] = [];
+  tunnels.channel.bind({
+    publish: (_uri, action, options) => { sent.push({ action, ...(options?.to === undefined ? {} : { to: options.to }) }); },
+    subscribers: () => [{ client: 'pt-client', reader: undefined }, { client: 'en-client', reader: undefined }],
+    localeOf: (client) => (client === 'pt-client' ? 'pt-BR' : undefined),
+  });
+  const byId = (operations: unknown): Record<string, Bag> =>
+    Object.fromEntries((operations as Bag[]).map((one) => [String(one['id']), one]));
+
+  const pt = byId((await tunnels.channel.channel.snapshot(URI, undefined, 'pt-client') as Bag)['operations']);
+  expect(pt['fake/update']).toMatchObject({ label: 'Editar', description: 'Altera as configurações deste túnel.' });
+  expect(pt['fake/remove']).toMatchObject({
+    label: 'Remover',
+    description: 'Exclui este túnel.',
+    confirmation: 'Remover este túnel? O endereço dele deixa de chegar a este host.',
+  });
+  expect(pt['fake/open']).toMatchObject({ label: 'Abrir', description: 'Abre.' });
+  // The plugin's catalog has the create's label and not its description.
+  expect(pt['fake/create']).toMatchObject({ label: 'Falso', description: 'A fake tunnel.' });
+
+  const en = byId((await tunnels.channel.channel.snapshot(URI, undefined, 'en-client') as Bag)['operations']);
+  expect(en['fake/update']).toMatchObject({ label: 'Edit', description: "Changes this tunnel's settings." });
+  expect(en['fake/remove']).toMatchObject({ label: 'Remove', confirmation: 'Remove this tunnel? Its address stops reaching this host.' });
+  expect(en['fake/open']).toMatchObject({ label: 'Open', description: 'Opens it.' });
+
+  // A list operation sets its status, which every subscriber is sent in its own locale.
+  const command = invokeOperation({ channels: () => ({ [URI]: tunnels.operations }), check });
+  await command.handle({ channel: URI, operationId: 'fake/create', input: { port: 8080 } }, undefined, 'pt-client');
+  const updates = sent.filter((one) => one.action['type'] === 'x-ahpd-tunnels/operations');
+  expect(updates.length).toBeGreaterThan(0);
+  expect(updates.every((one) => one.to === 'pt-client' || one.to === 'en-client')).toBe(true);
+  const last = (to: string): Record<string, Bag> => byId(updates.filter((one) => one.to === to).at(-1)?.action['operations']);
+  expect(last('pt-client')['fake/remove']?.['label']).toBe('Remover');
+  expect(last('en-client')['fake/remove']?.['label']).toBe('Remove');
+});

@@ -41,5 +41,28 @@
       "title": "Equipo y proyecto",
       "description": "A qué equipo y proyecto se atribuye el trabajo de esta sesión"
     }
+  },
+  "operations": {
+    "agent": {
+      "enable": { "label": "Activar", "description": "Activa el agente de nuevo." },
+      "pause": { "label": "Pausar", "description": "Bloquea nuevas sesiones y mensajes en este agente." },
+      "disable": { "label": "Desactivar", "description": "Desactiva el agente. Nadie puede usarlo hasta que se active de nuevo." },
+      "check": { "label": "Comprobar", "description": "Comprueba si el agente puede ejecutarse en este host." },
+      "remove": { "label": "Eliminar", "description": "Cierra las sesiones del agente y lo elimina.", "confirmation": "¿Eliminar este agente? Sus sesiones terminan y el agente se elimina." }
+    },
+    "connector": {
+      "enable": { "label": "Activar", "description": "Activa el conector y lo comprueba." },
+      "disable": { "label": "Desactivar", "description": "Desactiva el conector. Los registros y las llamadas a través de él se detienen." },
+      "remove": { "label": "Eliminar", "description": "Elimina el conector y sus credenciales guardadas.", "confirmation": "¿Eliminar este conector? Sus credenciales guardadas también se eliminan." }
+    },
+    "tunnel": {
+      "update": { "label": "Editar", "description": "Cambia la configuración de este túnel." },
+      "remove": { "label": "Eliminar", "description": "Elimina este túnel.", "confirmation": "¿Eliminar este túnel? Su dirección deja de llegar a este host." },
+      "enable": { "label": "Activar", "description": "Activa el túnel." },
+      "disable": { "label": "Desactivar", "description": "Desactiva el túnel. Su dirección deja de llegar a este host." }
+    },
+    "client": {
+      "drop": { "label": "Desconectar", "description": "Cierra esta conexión. El cliente puede volver a conectarse enseguida.", "confirmation": "¿Desconectar este cliente? Su conexión se cierra ahora y puede volver a conectarse." }
+    }
   }
 }

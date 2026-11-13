@@ -26,10 +26,83 @@
  */
 
 import { refusalReason } from '../host/gate.js';
+import { HOST_CATALOGS, translated, type Catalogs } from '../i18n.js';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import type { Operation } from '../types/kinds.js';
-import type { PluginMethod } from '../types/plugin.js';
+import type { RecordsChannel } from '../resources/recordschannel.js';
+import type { ChannelHandle, PluginMethod } from '../types/plugin.js';
 import type { Grant, Principal } from '../types/users.js';
+
+/**
+ * Where one operation's text is: the field path before `label`,
+ * `description` or `confirmation`, and the catalogs read for it, first first.
+ */
+export interface OperationText {
+  path: readonly string[];
+  catalogs: readonly (Catalogs | undefined)[];
+}
+
+/**
+ * The operations as a reader in `locale` reads them.
+ *
+ * Each label, description and confirmation is looked up at its field path, and
+ * keeps its English where no catalog has it. A field an operation does not
+ * have stays absent. No locale is English, as for every other text.
+ */
+export const operationsIn = (
+  operations: readonly Operation[],
+  locale: string | undefined,
+  textOf: (operation: Operation) => OperationText,
+): Operation[] => {
+  if (locale === undefined) return [...operations];
+  return operations.map((operation) => {
+    const { path, catalogs } = textOf(operation);
+    const text = (field: string, english: string): string => translated([...path, field], english, locale, ...catalogs);
+    return {
+      ...operation,
+      ...(operation.label === undefined ? {} : { label: text('label', operation.label) }),
+      ...(operation.description === undefined ? {} : { description: text('description', operation.description) }),
+      ...(operation.confirmation === undefined ? {} : { confirmation: text('confirmation', operation.confirmation) }),
+    };
+  });
+};
+
+/**
+ * The text of one of the host's own operations: `operations.<row>.<name>` in
+ * the host's catalogs, where `<name>` is the id after its kind, so a tunnel's
+ * `devtunnel/remove` reads `operations.tunnel.remove`.
+ */
+export const hostOperationText = (row: string) => (operation: Operation): OperationText => ({
+  path: ['operations', row, operation.id.slice(operation.id.lastIndexOf('/') + 1)],
+  catalogs: [HOST_CATALOGS],
+});
+
+/**
+ * A records channel whose snapshot lists its operations beside the records, in
+ * the reader's locale, as the tunnel and client lists do. A client draws a
+ * row's buttons from this list, and the row's `operations` names which apply.
+ */
+export const withOperations = (
+  records: RecordsChannel,
+  operations: () => Operation[],
+  textOf: (operation: Operation) => OperationText,
+): RecordsChannel => {
+  let handle: ChannelHandle | undefined;
+  return {
+    ...records,
+    channel: {
+      ...records.channel,
+      snapshot: async (asked, reader, client) => {
+        const state = await records.channel.snapshot(asked, reader, client) as Record<string, unknown>;
+        return { ...state, operations: operationsIn(operations(), handle?.localeOf?.(client), textOf) };
+      },
+    },
+    bind: (given) => {
+      handle = given;
+      records.bind(given);
+    },
+  };
+};
 
 /** The grant the one command needs, and the name it is served under. */
 export const OPERATION_COMMAND = 'x-ahpd/invokeOperation';

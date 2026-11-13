@@ -17,6 +17,7 @@
 
 import type { Icon } from '@microsoft/agent-host-protocol';
 import type { ConnectorOwner } from './connectors.js';
+import type { Catalogs } from '../i18n.js';
 import type { KindOperation } from './kinds.js';
 
 /**
@@ -203,4 +204,6 @@ export interface TunnelKind {
 export interface ServedTunnelKind extends TunnelKind {
   /** The plugin that registered it. */
   by: string;
+  /** The catalogs of that plugin, where the text of the kind's operations is translated. */
+  catalogs?: Catalogs;
 }

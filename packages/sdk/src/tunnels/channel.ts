@@ -51,15 +51,18 @@ import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
 import { reason } from '../utils/values.js';
 import { connectorRefusal, withConnectorChoices } from '../connectors/fields.js';
-import type { OperationChannel } from '../kinds/operations.js';
+import { hostOperationText, operationsIn, type OperationChannel, type OperationText } from '../kinds/operations.js';
 import type { ConnectorRef } from '../types/connectors.js';
 import type { Operation, OperationStatus } from '../types/kinds.js';
-import type { PluginChannel } from '../types/plugin.js';
+import type { ChannelHandle, PluginChannel } from '../types/plugin.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
 import type { Grant } from '../types/users.js';
 import type { ServedTunnelKind, Tunnel, TunnelReport, TunnelStatus } from '../types/tunnels.js';
 import type { Vault } from '../types/vault.js';
 
+
+/** The operations the host makes for every kind, whose text is the host's own. */
+const HOST_OPERATIONS = new Set(['update', 'remove', 'enable', 'disable']);
 /** The channel's scheme, and the URI its state is read at. */
 const SCHEME = 'x-ahpd-tunnels';
 const URI = `${SCHEME}://`;
@@ -136,7 +139,7 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
   /** The status of each list operation, in memory only. */
   const listed = new Map<string, { status: OperationStatus; error?: string }>();
   /** Where a publish of the operations goes, once the host is built over the channel. */
-  let handle: { publish(uri: string, action: { type: string } & Record<string, unknown>): void } | undefined;
+  let handle: ChannelHandle | undefined;
 
   const problem = (message: string): void => { options.onProblem?.(`${SCHEME}: ${message}`); };
 
@@ -333,7 +336,8 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
         out.push({
           id: named('update'),
           kind: kind.name,
-          label: `Edit ${kind.title}`,
+          label: 'Edit',
+          description: "Changes this tunnel's settings.",
           input: kind.schema,
           scopes: ['tunnel'],
           grant: 'tunnel:put',
@@ -343,14 +347,15 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
       out.push({
         id: named('remove'),
         kind: kind.name,
-        label: `Remove ${kind.title}`,
-        confirmation: `Remove this ${kind.title.toLowerCase()} tunnel?`,
+        label: 'Remove',
+        description: 'Deletes this tunnel.',
+        confirmation: 'Remove this tunnel? Its address stops reaching this host.',
         scopes: ['tunnel'],
         grant: 'tunnel:delete',
         ...status(named('remove')),
       });
-      out.push({ id: named('enable'), kind: kind.name, label: 'Enable', scopes: ['tunnel'], grant: 'tunnel:put', ...status(named('enable')) });
-      out.push({ id: named('disable'), kind: kind.name, label: 'Disable', scopes: ['tunnel'], grant: 'tunnel:put', ...status(named('disable')) });
+      out.push({ id: named('enable'), kind: kind.name, label: 'Enable', description: 'Turns the tunnel on.', scopes: ['tunnel'], grant: 'tunnel:put', ...status(named('enable')) });
+      out.push({ id: named('disable'), kind: kind.name, label: 'Disable', description: 'Turns the tunnel off. Its address stops reaching this host.', scopes: ['tunnel'], grant: 'tunnel:put', ...status(named('disable')) });
       for (const operation of kind.operations ?? []) {
         out.push({
           id: named(operation.id),
@@ -387,9 +392,25 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
     });
   };
 
-  /** Tell each subscriber of the list what its operations are now. */
+  /**
+   * Where one operation's text is: the host's own four in the host's catalogs,
+   * and a kind's create and its own operations in the catalogs of the plugin
+   * that registered the kind, at `operations.<name>`.
+   */
+  const textOf = (operation: Operation): OperationText => {
+    const name = operation.id.slice(operation.kind.length + 1);
+    if (HOST_OPERATIONS.has(name)) return hostOperationText('tunnel')(operation);
+    return { path: ['operations', name], catalogs: [options.kinds()[operation.kind]?.catalogs] };
+  };
+
+  /** Tell each subscriber of the list what its operations are now, in its own locale. */
   const publishOperations = (): void => {
-    handle?.publish(URI, { type: `${SCHEME}/operations`, operations: servedOperations() });
+    if (handle === undefined) return;
+    const operations = servedOperations();
+    for (const one of handle.subscribers(URI)) {
+      const action = { type: `${SCHEME}/operations`, operations: operationsIn(operations, handle.localeOf?.(one.client), textOf) };
+      handle.publish(URI, action, { to: one.client });
+    }
   };
 
   const source = {
@@ -421,7 +442,7 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
     ...records.channel,
     snapshot: async (asked, reader, client) => {
       const state = await records.channel.snapshot(asked, reader, client) as Record<string, unknown>;
-      return { ...state, operations: servedOperations() };
+      return { ...state, operations: operationsIn(servedOperations(), handle?.localeOf?.(client), textOf) };
     },
   };
 

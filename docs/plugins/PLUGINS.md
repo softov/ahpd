@@ -1605,6 +1605,7 @@ The value names a folder in the package. Each `<locale>.json` in it is one catal
 | `options.<key>` | One property of the `optionsSchema` |
 | `session.<key>` | One key of the new session form that the plugin declares |
 | `messages.<key>` | One thing the plugin says to a person itself, such as a notification it sends, keyed as its code looks it up |
+| `operations.<id>` | One operation of a tunnel kind the plugin registers, by the id the kind declares, and `create` for the kind's create. It takes `label`, `description` and `confirmation` |
 
 Each key of `options` and `session` takes `title`, `description`, `enum.<value>` for the label of one value, `enumDescriptions.<value>` for its description, and `items.title`. A key that sets `enumDynamic` keeps its labels and their descriptions, because its values are data.
 
@@ -1903,9 +1904,11 @@ It needs `operation:invoke`. It also admits a caller who holds the grant the ope
 
 Every channel with operations puts an `operations` list in its state, and every row carries `operations`, the ids that record offers now. The list holds the label, the description, the input schema and the grant; the row holds only the ids. A client draws a record's buttons from its ids and takes the words from the list. Four channels serve one: `x-ahpd-tunnels`, `x-ahpd-clients`, `x-ahpd-agents` and `x-ahpd-connectors`. A channel works the ids out from the record each time it sends the row.
 
+The list comes in the locale the client sent at `initialize`. Each `label`, `description` and `confirmation` is looked up at `operations.<row>.<id>` in the host's catalogs, such as `operations.agent.disable.description`. A tunnel kind's create and its own operations are looked up at `operations.<id>` in the catalogs of the plugin that registered the kind. A client that sent no locale gets English.
+
 It refuses a channel it does not have, with `-32001`. It refuses an operation the channel's state does not list now, and one the target record does not offer now. It refuses a target on a list operation, and an operation on one record with no `target.id`, naming the scope it runs on. It refuses an input the operation's schema refuses. It checks all of these before it calls the channel.
 
-The operation's `status` is `running` while it runs, and then `idle`, or `error` with the message it threw. A list operation's status stays on the operations of the channel's state, and every subscriber is sent `x-ahpd-tunnels/operations` with the list. An operation on one tunnel sets the record's `operation` to `{ id, status, error? }`, and every subscriber is sent the changed row.
+The operation's `status` is `running` while it runs, and then `idle`, or `error` with the message it threw. A list operation's status stays on the operations of the channel's state, and every subscriber is sent `x-ahpd-tunnels/operations` with the list, in its own locale. An operation on one tunnel sets the record's `operation` to `{ id, status, error? }`, and every subscriber is sent the changed row.
 
 The answer goes to the caller alone: the record the operation left, or `{}` for an operation that removed it. When the work throws, the caller is told the message and the operation's status is `error`.
 

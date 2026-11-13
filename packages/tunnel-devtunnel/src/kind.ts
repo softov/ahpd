@@ -122,28 +122,28 @@ export const OPERATIONS: KindOperation[] = [
   {
     id: 'start',
     label: 'Start',
-    description: 'Puts the port on the Dev Tunnel and serves it.',
+    description: 'Starts the tunnel, so its address reaches this host.',
     icon: 'play',
     offered: (record) => record['status'] !== 'running',
   },
   {
     id: 'stop',
     label: 'Stop',
-    description: 'Takes the port off the Dev Tunnel.',
+    description: 'Stops the tunnel. Its address stops reaching this host.',
     icon: 'stop',
     offered: (record) => record['status'] === 'running',
   },
   {
     id: 'restart',
     label: 'Restart',
-    description: 'Reconnects the relay without changing the Dev Tunnel.',
+    description: 'Connects the tunnel again. Its address stays the same.',
     icon: 'restart',
     offered: (record) => record['status'] === 'running',
   },
   {
     id: 'anonymous',
     label: 'Anonymous access',
-    description: 'Whether somebody who is not signed in to this account may reach the tunnel.',
+    description: 'Lets people who are not signed in to this account reach the tunnel.',
     input: {
       type: 'object',
       properties: { on: { type: 'boolean', title: 'Anonymous access' } },

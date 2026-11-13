@@ -90,7 +90,7 @@ interface Sock {
 }
 
 /** A connection on `socket`, introduced as `clientId`, and signed in as `id` when it is given. */
-const connect = async (socket: number, clientId: string, id?: string): Promise<Sock> => {
+const connect = async (socket: number, clientId: string, id?: string, locale?: string): Promise<Sock> => {
   const notes: Sock['notes'] = [];
   const closed: string[] = [];
   let connected: Connected | undefined;
@@ -106,7 +106,7 @@ const connect = async (socket: number, clientId: string, id?: string): Promise<S
     (result) => ({ result: result as Bag }),
     (error: { code: number; message: string }) => ({ code: error.code, message: error.message }),
   );
-  await call('initialize', { clientId, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] });
+  await call('initialize', { clientId, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT], ...(locale === undefined ? {} : { locale }) });
   if (id !== undefined) {
     const token = await users.mint(id);
     const answer = await call('authenticate', { channel: ROOT, resource: users.resource.resource, token });
@@ -302,4 +302,25 @@ it('offers drop as one operation on a client, with a grant and a confirmation', 
     grant: 'client:drop',
     confirmation: expect.any(String),
   })]);
+});
+
+it('lists the drop operation in the locale the client sent, and in English for one that sent none', async () => {
+  await served();
+  const pt = await connect(7, 'ana-window', 'ana', 'pt');
+  const en = await connect(8, 'ana-other', 'ana');
+  const operationsOf = async (one: Sock): Promise<Bag[]> =>
+    ((await one.call('subscribe', { channel: URI }))['result']!['snapshot'].state as Bag)['operations'] as Bag[];
+
+  expect((await operationsOf(pt))[0]).toMatchObject({
+    id: 'drop',
+    label: 'Desconectar',
+    description: 'Fecha esta conexão. O cliente pode se conectar de novo na hora.',
+    confirmation: 'Desconectar este cliente? A conexão fecha agora e ele pode se conectar de novo.',
+  });
+  expect((await operationsOf(en))[0]).toMatchObject({
+    id: 'drop',
+    label: 'Drop',
+    description: 'Closes this connection. The client can connect again at once.',
+    confirmation: 'Drop this client? Its connection closes now, and it can connect again.',
+  });
 });

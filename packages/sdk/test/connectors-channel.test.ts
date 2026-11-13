@@ -208,7 +208,7 @@ async function served(register = true) {
 }
 
 /** A client signed in as `id`, whose channel actions are kept. */
-const as = async (host: Host, users: Users, id: string) => {
+const as = async (host: Host, users: Users, id: string, locale?: string) => {
   const token = await users.mint(id);
   const seen: { method: string; params: Bag }[] = [];
   const client = host.accept({
@@ -216,7 +216,7 @@ const as = async (host: Host, users: Users, id: string) => {
     notify: (method, params) => { seen.push({ method, params: params as Bag }); },
   });
   const ready = await client.handle({
-    method: 'initialize', params: { clientId: id, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
+    method: 'initialize', params: { clientId: id, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT], ...(locale === undefined ? {} : { locale }) },
   }) as Bag;
   await client.handle({ method: 'authenticate', params: { channel: ROOT, resource: users.resource.resource, token } });
   const call = async (method: string, params: Bag) => client.handle({ method, params }).then(
@@ -1793,3 +1793,24 @@ it('replaces the whole data model at /, and refuses a bad path, a surface with n
   ]);
   await close();
 });
+
+it('lists its operations in the locale the client sent, and in English for one that sent none', async () => {
+  const { host, users, close } = await served();
+  const operationsOf = async (one: Awaited<ReturnType<typeof as>>): Promise<Record<string, Bag>> => {
+    const answer = await one.call('subscribe', { channel: URI }) as Bag;
+    const listed = ((answer['result'] as Bag)['snapshot'].state as Bag)['operations'] as Bag[];
+    return Object.fromEntries(listed.map((op) => [String(op['id']), op]));
+  };
+
+  // One client id has one locale, so the English client comes after the Spanish one is read.
+  const inEs = await operationsOf(await as(host, users, 'cy', 'es'));
+  expect(Object.keys(inEs)).toEqual(['enable', 'disable', 'remove']);
+  expect(inEs['remove']).toMatchObject({
+    label: 'Eliminar',
+    description: 'Elimina el conector y sus credenciales guardadas.',
+    confirmation: '¿Eliminar este conector? Sus credenciales guardadas también se eliminan.',
+  });
+  expect((await operationsOf(await as(host, users, 'cy')))['enable']).toMatchObject({ label: 'Enable', description: 'Turns the connector on and checks it.' });
+  await close();
+});
+

@@ -25,5 +25,12 @@
       "relay-down": { "text": "O relé está desligado" },
       "clients-label": { "text": "Clientes conectados" }
     }
+  },
+  "operations": {
+    "create": { "label": "Dev Tunnel", "description": "Uma porta em um Microsoft Dev Tunnel, acessada pela URL que o serviço atribui." },
+    "start": { "label": "Iniciar", "description": "Inicia o túnel, para que o endereço dele chegue a este host." },
+    "stop": { "label": "Parar", "description": "Para o túnel. O endereço dele deixa de chegar a este host." },
+    "restart": { "label": "Reiniciar", "description": "Reconecta o túnel. O endereço continua o mesmo." },
+    "anonymous": { "label": "Acesso anônimo", "description": "Permite que pessoas sem login nesta conta acessem o túnel." }
   }
 }
