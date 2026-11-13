@@ -11,8 +11,8 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 
 - The last stable release is 0.14.0 (`v0.14.0`). `0.15.0-rc.2` is on npm `next` (`v0.15.0-rc.2`, on `8db0b85b5`), the first release from `ahpio/ahpd`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
 - Main's last code merge is #318 (`de1924b99`): the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushes the branch and the PR is opened by hand. No PR is open.
-- #317 (`e338a1c98`): a piece shows its host mark again. Softov curates the new Postgres mark in [pending/plugin-58-icon-curation.md](../pending/plugin-58-icon-curation.md).
-- The bump calls a newer prerelease not newer: [problems/the-bump-calls-a-newer-prerelease-not-newer.md](../problems/the-bump-calls-a-newer-prerelease-not-newer.md).
+- #317 (`e338a1c98`): a piece shows its host mark again. Softov accepted the icons and marks on 2026-11-13, the Postgres mark among them.
+- A part on a prerelease takes a newer prerelease: plan [container/20261113-0721](../plans/container/20261113-0721-a-prerelease-part-takes-a-newer-one/plan.md), for dsh.
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
 - `check` and `check-windows` must both be green before a merge; no ruleset requires them now. A rerun is not the fix for a case that fails at random: each one gets a problem file, to be fixed. `gh run rerun <id> -R ahpio/ahpd --failed` reruns a job.
