@@ -10,8 +10,8 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## Main
 
 - The last stable release is 0.14.0 (`v0.14.0`). `0.15.0-rc.2` is on npm `next` (`v0.15.0-rc.2`, on `8db0b85b5`), the first release from `ahpio/ahpd`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
-- Main's last code merge is #317 (`e338a1c98`): a piece shows its host mark again, plan plugin/20261113-0534. Softov curates the new Postgres mark in [pending/plugin-58-icon-curation.md](../pending/plugin-58-icon-curation.md).
-- #318 is open: the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushed the branch and the PR was opened by hand. Its `image` job needs `0.15.0-rc.2` on npm, which it is.
+- Main's last code merge is #318 (`de1924b99`): the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushes the branch and the PR is opened by hand. No PR is open.
+- #317 (`e338a1c98`): a piece shows its host mark again. Softov curates the new Postgres mark in [pending/plugin-58-icon-curation.md](../pending/plugin-58-icon-curation.md).
 - The bump calls a newer prerelease not newer: [problems/the-bump-calls-a-newer-prerelease-not-newer.md](../problems/the-bump-calls-a-newer-prerelease-not-newer.md).
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
@@ -21,7 +21,7 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## The dev daemon
 
 - Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`, on ports 5180 and 37537. It runs from `src`, so a restart is all a merge needs. It needs `DEEPSEEK_API_KEY` in its environment. Never restart it or use its ports yourself.
-- It was last restarted at 02:22 local on 2026-11-12, on #303. It needs a restart for #304 to #317.
+- It was last restarted at 02:22 local on 2026-11-12, on #303. It needs a restart for #304 to #318.
 - `/github/ahpd` is a shared checkout. Work in a worktree from `origin/main` under `/github/ahpd.worktrees/`.
 - A test daemon for checks: `source .project/pending/test-daemon.sh`, on port 39200, with its token at `~/ahpd-check/token`. Check `ss -ltnp` before you start one, and stop it by pid.
 
