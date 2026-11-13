@@ -1,6 +1,6 @@
 ---
 title: The downgrade check reads versions as semver
-status: todo
+status: implemented
 depends: [task-02-the-entrypoint-seeds-plugins.md]
 layer: "image"
 refs:
@@ -38,3 +38,11 @@ An image that moves from a pre-release to its release starts, and an image older
 
 ## Resume
 
+
+- **Done so far:** `docker/entrypoint.sh` compares the image and volume versions with `semver.lt`, from the `semver` that `/opt/ahpd/lib/node_modules/@ahpd/server` resolves. A version semver cannot read stops the start with the step's line, and `AHPD_ALLOW_DOWNGRADE=1` skips the check. `sort` is gone. `docker/test/smoke.sh` has two cases after `check_upgrade`. In the first, a pre-release image refuses a volume at its own release. In the second, a volume at `X.Y.Z-0` starts the image and then holds its version. `docs/server/DOCKER.md` says that a pre-release is older than its release.
+- **Verified on 2026-11-12:** `bash docker/test/smoke.sh ahpd:semver-check` passed every check, with the two new cases, on an image built from this branch. `check_upgrade` skipped, because `ghcr.io/ahpio/ahpd:0.14` does not exist. shellcheck passed on `docker/entrypoint.sh`, run from `koalaman/shellcheck:stable`. By hand, `semver.lt('0.15.0-rc.1', '0.15.0')` is true. The CI `image` job runs on the PR.
+- **Next action:** review.
+- **Open questions:** none.
+- **Watch out for:** the refusal case is skipped on a released image, and the start case runs on every image.
+
+Files changed by this task: `docker/entrypoint.sh`, `docker/test/smoke.sh`, `docs/server/DOCKER.md`.
