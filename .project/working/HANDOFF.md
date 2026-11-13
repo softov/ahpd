@@ -43,7 +43,7 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 - With a problem file:
   - `computer-spawn.test.ts`: [the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md](../problems/the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md).
   - `agent-cofold-fork.test.ts`: [a-cofold-truncation-case-ends-its-third-turn-without-completing.md](../problems/a-cofold-truncation-case-ends-its-third-turn-without-completing.md).
-  - `computer-devcontainer.test.ts`, four cases: [dev-container-cases-ask-before-the-first-listing.md](../problems/dev-container-cases-ask-before-the-first-listing.md).
+  - `computer-devcontainer.test.ts`: three cases are fixed by container/20261113-2134, and the fourth is [a-dev-container-case-waits-on-a-late-docker-call.md](../problems/a-dev-container-case-waits-on-a-late-docker-call.md).
   - `nested-process.test.ts`, two cases: [a-test-removes-its-folder-while-a-child-writes-in-it.md](../problems/a-test-removes-its-folder-while-a-child-writes-in-it.md).
   - `host-attachments.test.ts`: [two-attachment-cases-time-out-on-windows.md](../problems/two-attachment-cases-time-out-on-windows.md).
   - `computer-servercheck.test.ts` "runs its own script under sh": task 02 of plugin/20261106-1058.
