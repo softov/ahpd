@@ -10,7 +10,7 @@ Current progress and pending items only, as of 2026-11-12. *Outside this reposit
 ## Main
 
 - The last stable release is 0.14.0 (`v0.14.0`). `0.15.0-rc.2` is on npm `next` (`v0.15.0-rc.2`, on `8db0b85b5`), the first release from `ahpio/ahpd`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
-- Main's last code merge is #313 (`8db0b85b5`), the bump. No PR is open.
+- Main's last code merge is #315 (`5916a8c03`), the digest pin. No PR is open.
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
 - `check` and `check-windows` must both be green before a merge; no ruleset requires them now. A slow runner can fail a job with nothing wrong: rerun once with `gh run rerun <id> -R ahpio/ahpd --failed`.
@@ -69,6 +69,7 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
 - The release run of 2026-11-11: thirteen plans, from #273 to #281, #286 and #293 to #295. They are acp/20261110-0813, cofold/20261110-0813 (two), host/20261110-0813 (six), host/20261111-0609 (two), host/20261111-1203 and pi/20261110-0813.
 - The five fixes of the release run's problems, #296 to #300: pi/20261111-1444, cofold/20261111-1445, daemon/20261111-1447, container/20261111-1507 and plugin/20261111-1507.
 - daemon/20261110-0947, ahpd runs from an image: task 06 is #312, and tasks 01 to 05 were reviewed on 2026-11-11.
+- container/20261113-0408, a part is pulled by its digest: #315. Its first tag run checks the artifact steps, which a dry run skips.
 
 ## Next
 
@@ -100,7 +101,7 @@ Its notepad is [release-run.md](release-run.md), its agent tests are in [release
 ## Waiting for Softov
 
 - What 0.15.0 needs is in [pending/release.md](../pending/release.md#left).
-- `0.15.0-rc.2` is tagged with the machine parts pulled by tag. The digest pin comes before 0.15.0 (Softov, 2026-11-12). It is planned as [container/20261113-0408](../plans/container/20261113-0408-a-part-is-pulled-by-its-digest/plan.md), `planned`, four tasks `todo`.
+- `0.15.0-rc.2` is tagged with the machine parts pulled by tag. The digest pin is #315 on main since 2026-11-13, so the next release pins the parts.
 - `ghcr.io/ahpio/ahpd` and the 17 part packages are public since 2026-11-12. A new part gets a private package on its first push, and Softov makes it public on its settings page. An anonymous token from `https://ghcr.io/token?scope=repository:<name>:pull&service=ghcr.io` reads a manifest to check one.
 - `edge.yml` has no paths filter, so a plan-only push to main builds the edge image. A `paths-ignore` is suggested.
 - The API keys in his private env file were shown in a chat on 2026-11-11. He rotates them.
