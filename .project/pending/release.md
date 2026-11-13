@@ -13,7 +13,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 1. *Before 0.15.0*:
    - A working day on the daemon, and the checks by hand.
    - The digest pin is built in #315, as [container/20261113-0408](../plans/container/20261113-0408-a-part-is-pulled-by-its-digest/plan.md). The next tag run is the first to pack the digests: check the staged `@ahpd/computer` for `images/digests.json`.
-   - The ahpd part at the release's own version: [problems/the-ahpd-part-does-not-follow-the-release.md](../problems/the-ahpd-part-does-not-follow-the-release.md).
+   - The ahpd part follows the last release on npm: plan [container/20261113-0507](../plans/container/20261113-0507-the-ahpd-part-follows-the-release/plan.md). The host's own version is [briefs/the-ahpd-part-is-the-releases-own-build.md](../briefs/the-ahpd-part-is-the-releases-own-build.md), for 0.16.
    - Plain text for each operation, sent in the client's language: *Operations* in [briefs/the-text-a-person-reads-is-plain.md](../briefs/the-text-a-person-reads-is-plain.md#operations).
 
 ## Done
