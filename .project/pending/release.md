@@ -11,8 +11,6 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 ## Left
 
 1. *rc.3, after its release run*:
-   - Softov approves the 13 staged packages on npm. Then `npm view @ahpd/server dist-tags` gives `next: 0.15.0-rc.3`.
-   - Rerun the `image` job of main's CI run after the approval. It fails until npm serves `0.15.0-rc.3`, as in [problems/the-image-of-a-version-not-on-npm-cannot-install-a-plugin.md](../problems/the-image-of-a-version-not-on-npm-cannot-install-a-plugin.md).
    - The parts of #318 are on ghcr at their new tags. Softov makes `compclau` again and runs a Claude session in it.
    - Run `parts-bump.yml` by hand. It proposes the ahpd part at `0.15.0-rc.3` and dsh at `0.2.2-rc.1`. Actions may not open a PR here, so open it from the pushed branch.
 2. *Before 0.15.0*:
@@ -22,6 +20,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 ## Done
 
+- **The rc.3 approval.** Softov approved the 13 staged packages on 2026-11-13, and npm serves `0.15.0-rc.3` under `next`. Main's CI run 43442023450 passed `image` on its second rerun after that.
 - **The rc.3 release run.** Run 43394827388 passed `parts`, `release` and `image` on 2026-11-13. It passed 9697 tests and staged the 13 packages under `next`. The staged `@ahpd/computer` holds `images/digests.json` with 17 entries, the first tag run of the digest pin of #315 ([container/20261113-0408](../plans/container/20261113-0408-a-part-is-pulled-by-its-digest/plan.md)).
 - **The rc.3 bump.** #320 sets `0.15.0-rc.3` and holds the notes for #315 to #319. Dry run 43389493385 passed `parts`, `release` and `image`. Its PR's `image` job failed only on `@ahpd/sdk@0.15.0-rc.3`, which npm does not serve yet.
 - **After rc.2.** Five PRs merged on 2026-11-13:
