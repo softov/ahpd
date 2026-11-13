@@ -12,8 +12,10 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 - The last stable release is 0.14.0 (`v0.14.0`). `0.15.0-rc.2` is on npm `next` (`v0.15.0-rc.2`, on `8db0b85b5`), the first release from `ahpio/ahpd`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
 - Main's last code merge is #318 (`de1924b99`): the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushes the branch and the PR is opened by hand.
 - #317 (`e338a1c98`): a piece shows its host mark again. Softov accepted the icons and marks on 2026-11-13, the Postgres mark among them.
-- #319 is open: plan container/20261113-0721, a part on a prerelease takes a newer prerelease, for dsh. It merges on Softov's word with its checks green.
-- The dev config's `claude` profile names `agents: ["claude"]` since 2026-11-13, in place of its three hand mounts, so a machine from it carries the `claude` part. `compclau` was made before that, and is made again from the profile.
+- #319 is merged: plan container/20261113-0721, a part on a prerelease takes a newer prerelease. The next run of `parts-bump.yml` proposes dsh 0.2.2-rc.1.
+- The dev config's `claude` profile names `agents: ["claude"]` since 2026-11-13, in place of its three hand mounts. A machine from it carries the `claude` part.
+- The machine `compclau` was made again from it on 2026-11-13, without the `claude` part. PR #318 pins `claude` 0.106.0, and ghcr has it only after a release pushes it. This host has no earlier image. Softov waits for rc.3, and makes `compclau` again after it.
+- After a parts bump merges, a checkout loads a moved part only after a release pushes it. `parts-publish.mjs --local` builds every part on this host in its place.
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
 - `check` and `check-windows` must both be green before a merge; no ruleset requires them now. A rerun is not the fix for a case that fails at random: each one gets a problem file, to be fixed. `gh run rerun <id> -R ahpio/ahpd --failed` reruns a job.
@@ -69,7 +71,7 @@ Remove each only on Softov's word.
 - `release-report`: detached, for plan-only commits of the release check.
 - `ahpd-part-bump`: the branch of #316, merged.
 - `piece-marks`: the branch of #317, merged.
-- `prerelease-part`: the branch of #319.
+- `prerelease-part`: the branch of #319, merged.
 - `notes-catch-up`, `downgrade-semver`, `release-rc2` and `devtunnel-flake`: the branches of #311, #312, #313 and #314, each merged.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334`, `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`.
 
@@ -83,6 +85,7 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
 - The five fixes of the release run's problems, #296 to #300: pi/20261111-1444, cofold/20261111-1445, daemon/20261111-1447, container/20261111-1507 and plugin/20261111-1507.
 - daemon/20261110-0947, ahpd runs from an image: task 06 is #312, and tasks 01 to 05 were reviewed on 2026-11-11.
 - plugin/20261113-0534, a piece shows its host mark again: #317.
+- container/20261113-0721, a part on a prerelease takes a newer prerelease: #319.
 - container/20261113-0507, the ahpd part follows the last release: #316.
 - container/20261113-0408, a part is pulled by its digest: #315. Dry run 43367407253 on its branch passed on 2026-11-13, with `parts`, `release` and `image` each after the one before. Its first tag run checks the artifact steps, which a dry run skips.
 
