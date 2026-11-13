@@ -2,6 +2,6 @@
   "name": "ahpd-part-copilot",
   "private": true,
   "dependencies": {
-    "@github/copilot": "1.0.107"
+    "@github/copilot": "1.0.110"
   }
 }
