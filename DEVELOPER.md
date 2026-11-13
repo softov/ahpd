@@ -146,6 +146,8 @@ git push origin vX.Y.Z
   The channel is `latest` for a stable version and `next` for a pre-release.
 - Its `parts` job builds every part in `packages/computer/images/versions.json` for `linux/amd64` and `linux/arm64` with `scripts/parts-publish.mjs --push` and pushes each to `ghcr.io/<owner>/ahpd-part/<id>:<tag>`, the owner being the one `@ahpd/computer`'s `repository` names, which is where every host pulls its parts; then the joined image of them all, to `ghcr.io/<owner>/ahpd-agents:<hash>`.
   A tag already there is left as it is.
+  It writes the digest of each image it pushed or found there to `packages/computer/images/digests.json`, which is never committed, and hands it to the release job, which packs it into `@ahpd/computer`; a host pulls each part by that digest.
+  The release job waits for the parts job, so a part that does not build or push stops the release before any package is staged, and a rerun of the failed job carries on.
   A part pushed to a personal account for the first time is a private package, [GitHub's default](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility), and no host can pull it until it is made public on its package page, once.
 
 The publish list and the tag check are one list - decision [one tag publishes every package in the workspace](./DEVELOPER.md).

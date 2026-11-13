@@ -1,6 +1,6 @@
 ---
 title: The docs say a part is pinned
-status: todo
+status: implemented
 depends: [task-02-a-host-pulls-a-part-by-its-digest.md, task-03-the-release-carries-the-digests.md]
 layer: "docs"
 refs:
@@ -30,3 +30,4 @@ The docs say that an installed host pulls each part by the digest its package ca
 - The two pages name `digests.json` and say what a checkout does.
 
 ## Resume
+- Implemented on 2026-11-13. [implemented.md](implemented.md) holds what was built, what was verified and the departures.

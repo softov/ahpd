@@ -1,5 +1,6 @@
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,22 +30,47 @@ afterEach(() => {
 interface Built { platforms: string[]; tags: string[]; contexts: string[]; labels: string[]; push: boolean; dockerfile?: string; files?: string[] }
 interface Held { buildx?: Built[]; builds?: { tag: string }[]; published?: string[] }
 
-/** One run of the script with these arguments, over a scripted docker holding `state`. */
-const publish = (args: string[], state: Record<string, unknown> = {}): { held: Held; status: number | null; out: string } => {
+/**
+ * One run of the script with these arguments, over a scripted docker holding
+ * `state`. A `--push` writes its digests into the run's own folder, never into
+ * the checkout's `images`, and `digests` is what it wrote, if anything. The
+ * script runs as a child the case waits on, so the worker still answers vitest
+ * while a run lasts.
+ */
+const publish = async (args: string[], state: Record<string, unknown> = {}): Promise<{
+  held: Held; status: number | null; out: string; digests?: Record<string, string>;
+}> => {
   const dir = mkdtempSync(join(tmpdir(), 'ahpd-parts-publish-'));
   loose.push(dir);
   const path = join(dir, 'docker.json');
+  const digests = join(dir, 'digests.json');
   writeFileSync(path, JSON.stringify({ machines: [], calls: [], images: [], ...state }));
   writeFileSync(join(dir, 'docker'), `#!/bin/sh\nexec "${process.execPath}" "${FIXTURE}" "$@"\n`, { mode: 0o755 });
   // The checkout's own ahpd part is not what a release publishes.
   const env = { ...process.env };
   delete env.AHPD_PART_AHPD_ROOT;
-  const ran = spawnSync(process.execPath, ['--conditions', 'development', '--import', DEV, SCRIPT, ...args], {
-    encoding: 'utf8',
-    env: { ...env, PATH: `${dir}:${process.env.PATH ?? ''}`, DOCKER_FAKE_STATE: path },
+  const own = args.includes('--push') && !args.includes('--digests') ? ['--digests', digests] : [];
+  const ran = await new Promise<{ status: number | null; stdout: string }>((done, fail) => {
+    const child = spawn(process.execPath, ['--conditions', 'development', '--import', DEV, SCRIPT, ...args, ...own], {
+      env: { ...env, PATH: `${dir}:${process.env.PATH ?? ''}`, DOCKER_FAKE_STATE: path },
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    let stdout = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
+    child.on('error', fail);
+    child.on('close', (status) => { done({ status, stdout }); });
   });
-  return { held: JSON.parse(readFileSync(path, 'utf8')) as Held, status: ran.status, out: ran.stdout };
+  return {
+    held: JSON.parse(readFileSync(path, 'utf8')) as Held,
+    status: ran.status,
+    out: ran.stdout,
+    ...(existsSync(digests) ? { digests: JSON.parse(readFileSync(digests, 'utf8')) as Record<string, string> } : {}),
+  };
 };
+
+/** The digest the scripted docker answers for a published reference it was given no digest for. */
+const fakeDigest = (reference: string): string => `sha256:${createHash('sha256').update(reference).digest('hex')}`;
 
 /*
  * Each case runs the release script whole, and every docker call it makes
@@ -60,8 +86,8 @@ const tagFor = (part: Part): string => tagOf(part, undefined, dockerfileOf(part,
 const remoteFor = (part: Part): string => `${registryOf()}/${tagFor(part)}`;
 
 // POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
-it.skipIf(!posix)('builds every part for both platforms and pushes it where a host pulls it, node before what copies it in', () => {
-  const { held, status } = publish(['--push']);
+it.skipIf(!posix)('builds every part for both platforms and pushes it where a host pulls it, node before what copies it in', async () => {
+  const { held, status } = await publish(['--push']);
   expect(status).toBe(0);
   const built = held.buildx ?? [];
   // Each part once, and the joined image after them, for both platforms,
@@ -89,8 +115,8 @@ it.skipIf(!posix)('builds every part for both platforms and pushes it where a ho
  * and pushed where a host whose parts all loaded at those tags pulls it.
  */
 // POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
-it.skipIf(!posix)('builds the joined image last, every part copied in from its published tag on the pinned base, and pushes it', () => {
-  const { held, status } = publish(['--push']);
+it.skipIf(!posix)('builds the joined image last, every part copied in from its published tag on the pinned base, and pushes it', async () => {
+  const { held, status } = await publish(['--push']);
   expect(status).toBe(0);
   const joined = (held.buildx ?? []).at(-1);
   expect(joined?.tags).toHaveLength(1);
@@ -105,16 +131,16 @@ it.skipIf(!posix)('builds the joined image last, every part copied in from its p
 }, CASE_MS);
 
 // POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
-it.skipIf(!posix)('leaves a tag already published as it is', () => {
-  const { held, out } = publish(['--push'], { published: [remoteFor(codex)] });
+it.skipIf(!posix)('leaves a tag already published as it is', async () => {
+  const { held, out } = await publish(['--push'], { published: [remoteFor(codex)] });
   expect((held.buildx ?? []).some((one) => one.tags.includes(remoteFor(codex)))).toBe(false);
   expect(out).toContain(`${remoteFor(codex)} is already published`);
   expect((held.buildx ?? []).some((one) => one.tags.includes(remoteFor(node)))).toBe(true);
 }, CASE_MS);
 
 // POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
-it.skipIf(!posix)('rehearses without pushing, and says which part it cannot build on a node not published yet', () => {
-  const { held, out } = publish([]);
+it.skipIf(!posix)('rehearses without pushing, and says which part it cannot build on a node not published yet', async () => {
+  const { held, out } = await publish([]);
   const built = held.buildx ?? [];
   expect(built.every((one) => !one.push)).toBe(true);
   expect(built.some((one) => one.tags.includes(remoteFor(node)))).toBe(true);
@@ -124,8 +150,8 @@ it.skipIf(!posix)('rehearses without pushing, and says which part it cannot buil
 }, CASE_MS);
 
 // POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
-it.skipIf(!posix)('builds every part on this host\'s Docker at the tag its daemon asks for, with --local', () => {
-  const { held, status } = publish(['--local']);
+it.skipIf(!posix)('builds every part on this host\'s Docker at the tag its daemon asks for, with --local', async () => {
+  const { held, status } = await publish(['--local']);
   expect(status).toBe(0);
   const tags = (held.builds ?? []).map((one) => one.tag);
   // Each part, and the joined image of them last.
@@ -134,4 +160,49 @@ it.skipIf(!posix)('builds every part on this host\'s Docker at the tag its daemo
   expect(tags).toContain(tagFor(codex));
   expect(tags.at(-1)).toMatch(/^ahpd-agents:[0-9a-f]{12}$/);
   expect(held.buildx ?? []).toEqual([]);
+}, CASE_MS);
+
+// POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('writes the digest of each image it pushed, by the tag a host asks for, the joined image included', async () => {
+  const { status, digests } = await publish(['--push']);
+  expect(status).toBe(0);
+  const tags = Object.keys(digests ?? {});
+  expect(tags).toHaveLength(parts.length + 1);
+  expect(digests?.[tagFor(codex)]).toBe(fakeDigest(remoteFor(codex)));
+  expect(tags.find((one) => one.startsWith('ahpd-agents:'))).toMatch(/^ahpd-agents:[0-9a-f]{12}$/);
+  // Sorted by tag, so two runs over the same registry write the same bytes.
+  expect(tags).toEqual([...tags].sort((one, two) => one.localeCompare(two)));
+}, CASE_MS);
+
+// POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('reads the digest of an image already published, and builds nothing for it', async () => {
+  const pinned = `sha256:${'a'.repeat(64)}`;
+  const { held, status, digests } = await publish(['--push'], { published: [remoteFor(codex)], digests: { [remoteFor(codex)]: pinned } });
+  expect(status).toBe(0);
+  expect((held.buildx ?? []).some((one) => one.tags.includes(remoteFor(codex)))).toBe(false);
+  expect(digests?.[tagFor(codex)]).toBe(pinned);
+}, CASE_MS);
+
+// POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('fails the run for an image the registry answers no sha256 digest for, and names it', async () => {
+  const { status, out, digests } = await publish(['--push'], { digests: { [remoteFor(codex)]: 'md5:nothing' } });
+  expect(status).toBe(1);
+  expect(out).toContain(`codex has no digest: the registry answered none for ${remoteFor(codex)}`);
+  expect(digests?.[tagFor(codex)]).toBeUndefined();
+  expect(digests?.[tagFor(node)]).toBe(fakeDigest(remoteFor(node)));
+}, CASE_MS);
+
+// POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('writes no digests for a rehearsal', async () => {
+  expect((await publish([])).out).not.toContain('digests written');
+}, CASE_MS);
+
+// POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('writes no digests for a build on this host', async () => {
+  expect((await publish(['--local'])).out).not.toContain('digests written');
+}, CASE_MS);
+
+// POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('refuses --digests without --push', async () => {
+  expect((await publish(['--local', '--digests', join(tmpdir(), 'unused.json')])).status).toBe(2);
 }, CASE_MS);

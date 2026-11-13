@@ -28,3 +28,6 @@ dist
 
 # Packages a plugin installs with host.install, such as Activepieces pieces.
 /packages/*/installed
+
+# The digests a release writes for each part image; packed into @ahpd/computer, never committed.
+packages/computer/images/digests.json

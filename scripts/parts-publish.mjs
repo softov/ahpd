@@ -14,34 +14,54 @@
  * image under it is the one this would build.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L52
  *
+ * `--push` also writes the digest of each image it pushed or found published,
+ * by the tag a host asks for, to `packages/computer/images/digests.json`, or
+ * to the file `--digests` names. The release packs that file into
+ * `@ahpd/computer`, and a host pulls each image by its digest, so a tag pushed
+ * again with other content is not what a host runs. The file is never
+ * committed: a checkout has none, and pulls by tag.
+ *
  * `--local` builds each image on this host's Docker, for a checkout whose part
  * Dockerfiles moved since the last release: a daemon run from it finds them by
  * their tags and pulls nothing. With neither flag every image is built for both
  * platforms and nothing is pushed, which is the release's rehearsal.
  *
  * Usage, with the resolver and the condition that read the plugin's own source:
- *   node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs [--push | --local]
+ *   node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs [--push [--digests <file>] | --local]
  *
- * Exit status is 1 when an image did not build, and 2 for a refusal of the
- * arguments.
+ * Exit status is 1 when an image did not build or has no digest after its push,
+ * and 2 for a refusal of the arguments.
  */
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const USAGE = `Every part image and the joined image, built at the tags a daemon from this checkout asks for.
 
   node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs           build for both platforms, push nothing
-  node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs --push    build for both platforms and push what is not there
-  node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs --local   build on this host's Docker`;
+  node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs --push    build for both platforms, push what is not there, and write each digest
+  node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs --local   build on this host's Docker
+
+  --digests <file>   with --push, where the digests are written; packages/computer/images/digests.json by default`;
 
 const argv = process.argv.slice(2);
-if (argv.some((one) => one !== '--push' && one !== '--local') || (argv.includes('--push') && argv.includes('--local'))) {
+const digestsAt = argv.indexOf('--digests');
+const flags = argv.filter((_, at) => digestsAt === -1 || (at !== digestsAt && at !== digestsAt + 1));
+if (
+  flags.some((one) => one !== '--push' && one !== '--local')
+  || (flags.includes('--push') && flags.includes('--local'))
+  || (digestsAt !== -1 && (argv[digestsAt + 1] === undefined || !flags.includes('--push')))
+) {
   process.stderr.write(`${USAGE}\n`);
   process.exit(2);
 }
-const push = argv.includes('--push');
-const local = argv.includes('--local');
+const push = flags.includes('--push');
+const local = flags.includes('--local');
+/** Where `--push` writes the digests, which `@ahpd/computer` ships beside its versions file. */
+const digestsFile = digestsAt === -1
+  ? fileURLToPath(new URL('../packages/computer/images/digests.json', import.meta.url))
+  : argv[digestsAt + 1];
 
 const { ahpdSourceOf, contextOf, dockerfileOf, hashOf, joinedDockerfile, lockOf, readParts, registryOf, tagOf } = await import('../packages/computer/src/parts.ts');
 const { dockerRuntime } = await import('../packages/computer/src/runtime.ts');
@@ -63,6 +83,39 @@ const docker = dockerRuntime({ command: 'docker', label: 'ahpd.computer=1' });
 
 /** Whether the registry holds an image, which a manifest it answers for says. */
 const published = (reference) => spawnSync('docker', ['buildx', 'imagetools', 'inspect', reference], { stdio: 'ignore' }).status === 0;
+
+/**
+ * The digest of the image the registry holds at `reference`: the digest of its
+ * manifest, which for an image of two platforms is the index both are listed
+ * in, so a pull by it picks this host's platform. `undefined` when the
+ * registry answers none, or one that is not a sha256.
+ * https://docs.docker.com/reference/cli/docker/buildx/imagetools/inspect/#format
+ */
+const digestOf = (reference) => {
+  const said = spawnSync('docker', ['buildx', 'imagetools', 'inspect', reference, '--format', '{{json .Manifest}}'], { encoding: 'utf8' });
+  if (said.status !== 0) return undefined;
+  try {
+    const digest = JSON.parse(said.stdout).digest;
+    return typeof digest === 'string' && /^sha256:[0-9a-f]{64}$/.test(digest) ? digest : undefined;
+  }
+  catch {
+    return undefined;
+  }
+};
+
+/** The digest of each image `--push` left published, by the tag a host asks for. */
+const digests = new Map();
+
+/** Keep the digest of a published image, or fail the run for one with none. */
+const keepDigest = (image, remote) => {
+  const digest = digestOf(remote);
+  if (digest === undefined) {
+    process.stdout.write(`${image.name} has no digest: the registry answered none for ${remote}\n`);
+    return false;
+  }
+  digests.set(image.tag, digest);
+  return true;
+};
 
 // Each part after the parts it requires, so `node` is there before what copies it in.
 const ordered = [];
@@ -143,6 +196,7 @@ for (const image of images) {
   const remote = `${registry}/${image.tag}`;
   if (published(remote)) {
     process.stdout.write(`${remote} is already published\n`);
+    if (push && !keepDigest(image, remote)) failed = true;
     continue;
   }
   // An image another is copied into is copied in by its tag, which here is
@@ -164,11 +218,21 @@ for (const image of images) {
   ], { input: image.context, stdio: ['pipe', 'inherit', 'inherit'] });
   if (built.status === 0) {
     process.stdout.write(`${remote} ${push ? 'pushed' : 'built'}\n`);
+    if (push && !keepDigest(image, remote)) failed = true;
   }
   else {
     process.stdout.write(`${image.name} not built: docker buildx build exited ${built.status ?? built.signal}\n`);
     unbuilt.add(image.tag);
     failed = true;
   }
+}
+
+// What a host pulls by: every image this run left published, sorted by tag so
+// two runs over the same registry write the same bytes. Written on a failed run
+// too, for what it did publish, though the release stops on that run.
+if (push) {
+  const sorted = Object.fromEntries([...digests].sort(([one], [two]) => one.localeCompare(two)));
+  writeFileSync(digestsFile, `${JSON.stringify(sorted, null, 2)}\n`);
+  process.stdout.write(`${digests.size} digests written to ${digestsFile}\n`);
 }
 process.exit(failed ? 1 : 0);
