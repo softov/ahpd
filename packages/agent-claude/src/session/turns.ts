@@ -326,7 +326,7 @@ export function createTurns(ctx: SessionContext): Turns {
       refuseTurn(turnId, text, unstarted, began, from, attachments);
       return;
     }
-    if (unbound !== undefined) console.warn(`@ahpd/agent-claude: ${unbound}; the turn runs on the agent it has`);
+    if (unbound !== undefined) ctx.options.log?.(`@ahpd/agent-claude: ${unbound}; the turn runs on the agent it has`, 'warn');
     /*
      * The servers the session switched, which a CLI is brought to before each
      * prompt, as VS Code's send reconciles them.
@@ -345,7 +345,7 @@ export function createTurns(ctx: SessionContext): Turns {
     if (model !== undefined && model.id !== ctx.chosen) {
       const unmoved = await ctx.take(model.id);
       if (unmoved === undefined) ctx.chosen = model.id;
-      else console.warn(`@ahpd/agent-claude: ${unmoved}; the turn runs on ${ctx.chosen ?? 'the default model'}`);
+      else ctx.options.log?.(`@ahpd/agent-claude: ${unmoved}; the turn runs on ${ctx.chosen ?? 'the default model'}`, 'warn');
       if (ctx.disposed || stops !== stopped) return;
     }
     /*

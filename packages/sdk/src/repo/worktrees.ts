@@ -3,6 +3,7 @@
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { cp, lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import type { LogLevel } from '../log.js';
 import type { Worktree, Worktrees } from '../types/worktrees.js';
 import { runGit } from './hardened.js';
 
@@ -101,7 +102,7 @@ export const worktreeFor = (branch: string): string =>
  * createHost({ path, agents: [claude({ paths })], worktrees: gitWorktrees() });
  * ```
  */
-export function gitWorktrees(): Worktrees {
+export function gitWorktrees(options: { log?: (line: string, level?: LogLevel) => void } = {}): Worktrees {
   return {
     repository: async (dir) => {
       const found = await git(dir, ['rev-parse', '--show-toplevel'], 5_000).catch(() => undefined);
@@ -239,7 +240,7 @@ export function gitWorktrees(): Worktrees {
             await link(worktree.repository, worktree.path, folder);
           }
         } catch (error) {
-          console.warn(`@ahpd/sdk: could not link every folder into ${worktree.path}: ${(error as Error).message}`);
+          options.log?.(`@ahpd/sdk: could not link every folder into ${worktree.path}: ${(error as Error).message}`, 'warn');
         }
       }
       for (const pattern of worktree.include ?? []) {

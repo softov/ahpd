@@ -750,6 +750,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       // entries its CLI writes.
       const readBack = start.resume === undefined || start.forkAt !== undefined ? undefined : readForkAnchorUuids.get(start.resume);
       return createSession({
+      ...(options.log === undefined ? {} : { log: options.log }),
       ...(inside === undefined ? {} : { spawn: inside, spawnExecutable: executable, spawnConfigDir: configDir }),
       exits,
       uri: start.uri,

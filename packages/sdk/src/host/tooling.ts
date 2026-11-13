@@ -1418,10 +1418,10 @@ export function createTooling(ctx: HostContext): Tooling {
     for (const [chatUri, chat] of held.chats) {
       void Promise.resolve(chat.setTools?.(boundTools(uri, chatUri)))
         .then((took) => {
-          if (took === false) console.warn(`@ahpd/sdk: ${uri} did not take its tools; a chat of it still offers what it did`);
+          if (took === false) ctx.log.warn(`@ahpd/sdk: ${uri} did not take its tools; a chat of it still offers what it did`);
         })
         .catch((error: unknown) => {
-          console.warn(`@ahpd/sdk: ${uri} could not be retooled: ${(error as Error).message}`);
+          ctx.log.warn(`@ahpd/sdk: ${uri} could not be retooled: ${(error as Error).message}`);
         });
     }
   };

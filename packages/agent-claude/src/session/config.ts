@@ -164,7 +164,7 @@ export function createConfig(ctx: SessionContext): Config {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8469-L8473
      */
     if (list === undefined) {
-      console.warn('@ahpd/agent-claude: ignoring a malformed shellInitScripts; the last valid script stays in force');
+      ctx.options.log?.('@ahpd/agent-claude: ignoring a malformed shellInitScripts; the last valid script stays in force', 'warn');
       ctx.config.shellInitScripts = value;
       return true;
     }

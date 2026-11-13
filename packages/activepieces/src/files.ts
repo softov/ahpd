@@ -22,6 +22,7 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative } from 'node:path';
 import { Readable } from 'node:stream';
 import type { Prop } from './props.ts';
+import { engineLog } from './wire.ts';
 
 /** The part of an `ApFile` a piece reads. */
 export interface ApFile {
@@ -254,7 +255,9 @@ export const fileProcessor = async (prop: Prop, value: unknown, folder: string |
     return await handleUrlFile(value);
   }
   catch (error) {
-    console.error(error);
+    // The URL can hold a token, so the line names only where the file was.
+    const where = URL.canParse(value) && !isAbsolute(value) ? new URL(value).origin : 'an attachment';
+    engineLog('error', `activepieces: a file from ${where} could not be read: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 };

@@ -5,7 +5,8 @@ import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
-import type { Answer, DescribedAnswer } from '../src/wire.js';
+import { isLog } from '../src/wire.js';
+import type { Answer, DescribedAnswer, LogMessage } from '../src/wire.js';
 
 /*
  * The engine process, asked directly.
@@ -57,13 +58,20 @@ function start(env: Record<string, string> = {}): ChildProcess {
 function ask(engine: ChildProcess, request: Record<string, unknown>): Promise<Answer> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { reject(new Error('the engine did not answer')); }, 10_000);
-    engine.once('message', (message) => {
+    // A line for the daemon's log is not the answer, so it is kept and the wait goes on.
+    const heard = (message: unknown): void => {
+      if (isLog(message)) { logged.push(message); return; }
       clearTimeout(timer);
+      engine.off('message', heard);
       resolve(message as Answer);
-    });
+    };
+    engine.on('message', heard);
     engine.send({ id: 1, ...request });
   });
 }
+
+/** The lines the engines sent for the daemon's log. */
+const logged: LogMessage[] = [];
 
 /** The answer to a `describe`, which a case that got another answer should not read. */
 const described = (answer: Answer): DescribedAnswer => {
@@ -253,11 +261,15 @@ describe('a call carries a file', () => {
   // Plan plugin/70, Softov 2026-10-26: "A refusal names a URL's host, never its
   // path or query", where a signed URL carries its token.
   it('refuses a FILE URL it could not read naming its host alone, never its path or query', async () => {
+    logged.length = 0;
     const said = failed(await ask(start(), run('read', { file: 'https://127.0.0.1:1/bucket/report.pdf?sig=secret-sig&se=2026' })));
 
     expect(JSON.parse(said)).toEqual({ file: ['Expected file url or base64 with mimeType, received: 127.0.0.1:1'] });
     expect(said).not.toContain('secret-sig');
     expect(said).not.toContain('report.pdf');
+    // The daemon's log is told why, by the URL's origin alone.
+    expect(logged).toEqual([{ type: 'log', level: 'error', line: expect.stringContaining('activepieces: a file from https://127.0.0.1:1 could not be read:') as string }]);
+    expect(JSON.stringify(logged)).not.toContain('secret-sig');
   });
 });
 

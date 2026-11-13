@@ -208,13 +208,15 @@ export function opened(
     emit: (channel, action) => { sent.push({ channel, action }); },
     ...over,
   } as Start;
+  // The lines the session wrote to the daemon's log.
+  const logged: string[] = [];
   // No file of pi's is read for a resumed session here: the fake has none.
-  const session = piSession(options, start, open ?? pi.open, async () => undefined);
+  const session = piSession({ log: (line) => { logged.push(line); }, ...options }, start, open ?? pi.open, async () => undefined);
   const types = (channel?: string) => sent
     .filter((one) => channel === undefined || one.channel === channel)
     .map((one) => String(one.action.type));
   const last = (type: string) => [...sent].reverse().find((one) => one.action.type === type)?.action;
-  return { session, pi, sent, types, last };
+  return { session, pi, sent, types, last, logged };
 }
 
 export const settled = async (): Promise<void> => { await new Promise((done) => { setTimeout(done, 5); }); };

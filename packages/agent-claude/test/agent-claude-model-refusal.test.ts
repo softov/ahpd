@@ -96,11 +96,16 @@ const ended = (): Record<string, unknown> => ({ type: 'result', subtype: 'succes
  * A real session over a CLI that answers nothing, and the two things it says:
  * what it emitted, and what its CLI read, the CLI its first send starts.
  */
+/** The lines a session wrote to the daemon's log, since the last one was made. */
+const logged: string[] = [];
+
 async function open() {
   sdk.reset();
   const said: Bag[] = [];
   const prompts = sdk.prompts;
+  logged.length = 0;
   const session = createSession({
+    log: (line: string) => { logged.push(line); },
     uri: 'ahp-session:/model',
     chatUri: 'ahp-chat:/model',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-model-')),
@@ -128,7 +133,6 @@ async function open() {
  */
 it('runs a turn on the model it has when the CLI refuses the one it named, and sends the turn handed behind it after it', async () => {
   const { session, prompts, chat, message } = await open();
-  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
   sdk.refuses['claude-2.1'] = "Model 'claude-2.1' not found";
 
   session.changeModel({ id: 'opus' });
@@ -147,13 +151,12 @@ it('runs a turn on the model it has when the CLI refuses the one it named, and s
   expect(prompts).toEqual(['first', 'second']);
   expect(message('t2').model).toEqual({ id: 'opus' });
   expect(chat()).not.toContain('chat/error');
-  expect(warned.mock.calls.some(([line]) => String(line).includes("The harness would not take model claude-2.1: Model 'claude-2.1' not found"))).toBe(true);
+  expect(logged.some((line) => line.includes("The harness would not take model claude-2.1: Model 'claude-2.1' not found"))).toBe(true);
 
   sdk.push(ended());
   await settle();
   expect(prompts).toEqual(['first', 'second', 'third']);
   expect(message('t3').model).toEqual({ id: 'opus' });
-  warned.mockRestore();
 });
 
 it('runs on a model the CLI takes, and says which one, as before', async () => {

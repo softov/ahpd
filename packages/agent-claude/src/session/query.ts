@@ -893,17 +893,17 @@ export function createQuery(ctx: SessionContext): Query {
     try {
       const answer = await inTime(ask.call(handle, { detail: 'summary' }));
       if (answer === LATE) {
-        console.warn('@ahpd/agent-claude: the context breakdown took too long; it is left out');
+        ctx.options.log?.('@ahpd/agent-claude: the context breakdown took too long; it is left out', 'warn');
         return undefined;
       }
       const model = str(bag(answer).model) ?? ctx.ran;
       const figure = contextOf(answer, limitOf(model)?.contextWindow);
       if (figure === undefined) {
-        console.warn('@ahpd/agent-claude: the context breakdown held no token count; it is left out');
+        ctx.options.log?.('@ahpd/agent-claude: the context breakdown held no token count; it is left out', 'warn');
       }
       return figure;
     } catch (error) {
-      console.warn(`@ahpd/agent-claude: the context breakdown failed: ${reason(error)}`);
+      ctx.options.log?.(`@ahpd/agent-claude: the context breakdown failed: ${reason(error)}`, 'warn');
       return undefined;
     }
   };
