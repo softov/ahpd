@@ -1296,7 +1296,16 @@ const openInTree = async (repository_: string, changes: ChangesetSource, agent: 
     method: 'dispatchAction',
     params: { channel: await mintedChat(client), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
   });
-  await waitFor(() => git(repository_, 'worktree', 'list', '--porcelain').includes('refs/heads/agents/'));
+  /*
+   * The host is still writing the tree while this reads it, and git can fail
+   * on a tree it is halfway through, as "failed to read .git/worktrees/<name>/
+   * commondir" on Windows. A read that fails is a tree not there yet.
+   */
+  const listed = (): boolean => {
+    try { return git(repository_, 'worktree', 'list', '--porcelain').includes('refs/heads/agents/'); }
+    catch { return false; }
+  };
+  await waitFor(listed);
   return { client, peer: p, where: cutTree(repository_) };
 };
 
