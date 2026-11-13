@@ -73,6 +73,7 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
 
 ## Next
 
+- AHP 1.1.0 is on npm since 2026-11-13, and goes in 0.16 (Softov, 2026-11-13). 0.15.0 stays on AHP 1.0.0. The first 0.16 work is a new read of host/117 against 1.1.0, as [pending/release.md](../pending/release.md#not-in-this-release) says.
 - ahpc's `cli/20261112-0821-create-session-waits-on-progress`, in the ahpc repository, can be built. A create that makes no machine sends no progress, so ahpc keeps its timeout for it.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`. Softov chose deletion as VS Code does. Its Resume state holds the research and two questions before task 01 is rewritten.
 - The brief [the-terminal-tool-runs-on-windows-when-set.md](../briefs/the-terminal-tool-runs-on-windows-when-set.md) waits for Softov's word. Its open points are where the setting lives and its name.
