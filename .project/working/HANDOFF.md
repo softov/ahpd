@@ -99,6 +99,10 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
   - All nine tasks of the three plans are `implemented` in `bot-talk`, not committed, on 2026-11-13. The sdk, computer, bot, webhook and server suites pass, and `pnpm typecheck` passes. The PR text waits for Softov.
   - A computer that the agent names skipped the door's `computer:write`, because the door reads only the client's config. The branch checks it after the hook.
   - The checks by hand after the merge are [pending/bot-talk-checks.md](../pending/bot-talk-checks.md), on the branch: a real restart, ahpw, VS Code and the webhook.
+  - Softov's first run made about 45 Back chats in one session. First, the Back went to `bot-chat` itself, the first agent in load order. Then `bot-chat` reopened the open Front turn in every new chat. Both are fixed in the branch, and a record that names `bot-chat` is refused. The test daemon showed one Back on `claude` after the fix.
+  - A talk is now kept by the session's owner, through the new `Start.owner`. Every root owner is one talker, `root` (Softov, 2026-11-13, "Count by owner").
+  - Found on main: [a bot never answers on a host with no users](../problems/a-bot-never-answers-on-a-host-with-no-users.md), and [the chats of a bot talk share one log](../problems/the-chats-of-a-bot-talk-share-one-log.md).
+  - Gumbo and ember in Softov's `~/.config/ahpd/bots` now name `provider: claude`, at his request.
 - AHP 1.1.0 is on npm since 2026-11-13, and goes in 0.16 (Softov, 2026-11-13). 0.15.0 stays on AHP 1.0.0. The first 0.16 work is a new read of host/117 against 1.1.0, as [pending/release.md](../pending/release.md#not-in-this-release) says.
 - ahpc's `cli/20261112-0821-create-session-waits-on-progress`, in the ahpc repository, can be built. A create that makes no machine sends no progress, so ahpc keeps its timeout for it.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`. Softov chose deletion as VS Code does. Its Resume state holds the research and two questions before task 01 is rewritten.
