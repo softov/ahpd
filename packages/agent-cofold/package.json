@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/agent-cofold",
-  "version": "0.15.0-rc.2",
+  "version": "0.15.0-rc.3",
   "type": "module",
   "description": "Cofold agent runtime integration for the Agent Host Protocol. Run it as an ahpd plugin or use it directly with @ahpd/sdk.",
   "keywords": [

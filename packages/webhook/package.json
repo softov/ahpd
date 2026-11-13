@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/webhook",
-  "version": "0.15.0-rc.2",
+  "version": "0.15.0-rc.3",
   "type": "module",
   "description": "Webhooks for ahpd. A URL that talks to a bot or fires an automation, with its own secret.",
   "keywords": [

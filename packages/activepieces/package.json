@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/activepieces",
-  "version": "0.15.0-rc.2",
+  "version": "0.15.0-rc.3",
   "type": "module",
   "description": "Activepieces integration for the Agent Host Protocol. Each piece becomes an ahpd connector, and each action a host tool.",
   "keywords": [

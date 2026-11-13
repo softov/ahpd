@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/agent-pi",
-  "version": "0.15.0-rc.2",
+  "version": "0.15.0-rc.3",
   "type": "module",
   "description": "Pi coding agent integration for the Agent Host Protocol. Run it in process as an ahpd plugin or use it directly with @ahpd/sdk.",
   "keywords": [

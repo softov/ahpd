@@ -75,7 +75,7 @@ What changed in each release: one page for each minor release, with its patch re
 | File | What it covers |
 | --- | --- |
 | [archive.md](updates/archive.md) | Every release, by year |
-| [v0_15.md](updates/v0_15.md) | 0.15.0-rc.1 and 0.15.0-rc.2 |
+| [v0_15.md](updates/v0_15.md) | 0.15.0-rc.1 to 0.15.0-rc.3 |
 | [v0_14.md](updates/v0_14.md) | 0.14.0 |
 | [v0_13.md](updates/v0_13.md) | 0.13.0 |
 | [v0_12.md](updates/v0_12.md) | 0.12.0 |
