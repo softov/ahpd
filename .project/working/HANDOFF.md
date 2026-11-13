@@ -9,7 +9,7 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 
 ## Main
 
-- The last stable release is 0.14.0 (`v0.14.0`). `0.15.0-rc.2` is on npm `next` (`v0.15.0-rc.2`, on `8db0b85b5`), the first release from `ahpio/ahpd`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
+- The last stable release is 0.14.0 (`v0.14.0`). `v0.15.0-rc.3` is tagged on `28dd315e0` (#320), and its release run 43394827388 stages the packages under `next` for Softov's approval. `0.15.0-rc.2` is on npm `next`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
 - Main's last code merge is #318 (`de1924b99`): the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushes the branch and the PR is opened by hand.
 - #317 (`e338a1c98`): a piece shows its host mark again. Softov accepted the icons and marks on 2026-11-13, the Postgres mark among them.
 - #319 is merged: plan container/20261113-0721, a part on a prerelease takes a newer prerelease. The next run of `parts-bump.yml` proposes dsh 0.2.2-rc.1.
