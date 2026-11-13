@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { Agent, Bag, Start } from '../../sdk/src/types/index.js';
 import { createHost } from '../../sdk/src/host.js';
@@ -154,15 +154,14 @@ it('runs the turn after pi refused the truncation, and logs the refusal', async 
     emit: (channel, action) => { sent.push({ channel, action }); },
     rewindAt: 'entry-7',
   } as Start;
-  const session = piSession({}, start, pi.open);
-  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const logged: string[] = [];
+  const session = piSession({ log: (line) => { logged.push(line); } }, start, pi.open);
 
   session.sendMessage('t1', 'hello');
   await until(() => sent.some((one) => one.action.type === 'chat/turnComplete'));
   expect(sent.filter((one) => one.action.type === 'chat/error')).toEqual([]);
   expect(pi.opens).toHaveLength(1);
   expect(pi.asked.filter((one) => one.kind === 'truncate')).toHaveLength(1);
-  expect(warned.mock.calls.some(([line]) => String(line).includes('refused to move the leaf back to entry-7'))).toBe(true);
-  warned.mockRestore();
+  expect(logged.some((line) => line.includes('refused to move the leaf back to entry-7'))).toBe(true);
   session.close();
 });

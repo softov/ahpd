@@ -680,9 +680,8 @@ it('hands a steering message back when the turn ends before pi reads it', async 
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L449-L474
  */
 it('keeps the turn running when pi will not take a steer, and takes the message out', async () => {
-  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  try {
-    const { session, pi, sent } = opened();
+  {
+    const { session, pi, sent, logged } = opened();
     pi.hold();
     session.sendMessage('t1', 'hello');
     await settled();
@@ -693,10 +692,7 @@ it('keeps the turn running when pi will not take a steer, and takes the message 
     expect(sent.filter((one) => one.action.type === 'chat/pendingMessageRemoved').map((one) => one.action))
       .toEqual([{ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' }]);
     expect(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id).toBe('t1');
-    expect(warned.mock.calls.flat().join(' ')).toContain('pi is compacting');
-  }
-  finally {
-    warned.mockRestore();
+    expect(logged.join(' ')).toContain('pi is compacting');
   }
 });
 
@@ -882,16 +878,14 @@ it('names where a watched turn ended as the point a fork copies through', async 
  * a4e689ae).
  */
 it('runs the turn when pi refuses to move the leaf back, and logs the refusal', async () => {
-  const { session, pi, last } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
+  const { session, pi, last, logged } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
   pi.refuseTruncate();
-  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
   session.sendMessage('t1', 'hello');
   await settled();
   expect(pi.asked.find((one) => one.kind === 'truncate')?.entryId).toBe('entry-7');
   expect(last('chat/error')).toBeUndefined();
   expect(pi.asked.find((one) => one.kind === 'prompt')?.text).toBe('hello');
-  expect(warned.mock.calls.some(([line]) => String(line).includes('refused to move the leaf back to entry-7'))).toBe(true);
-  warned.mockRestore();
+  expect(logged.some((line) => line.includes('refused to move the leaf back to entry-7'))).toBe(true);
 });
 
 it('fails the turn on the last assistant message ending in error', async () => {

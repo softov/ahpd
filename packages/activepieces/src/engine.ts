@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installSsrfGuard } from './guard.ts';
 import { inputOf } from './props.ts';
 import type { Props } from './props.ts';
+import { engineLog } from './wire.ts';
 import type { ActionDescription, Answer, AuthDescription, PieceDescription, PropDescription, Request, RunRequest, Store, ValidateRequest } from './wire.js';
 
 /**
@@ -331,7 +332,7 @@ const keptOf = async (folder: string | undefined, connector: string): Promise<Ke
       if (isRecord(read)) for (const [key, value] of Object.entries(read)) entries.set(key, value);
     }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.error(error);
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') engineLog('error', `activepieces: the store of ${connector} could not be read: ${reason(error)}`);
     }
   }
   const kept: Kept = { entries, written: Promise.resolve() };

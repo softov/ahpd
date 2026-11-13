@@ -1365,7 +1365,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     // The files `@` completes, listed by `rg` on the path as `git` is run.
     workspaceFiles: ripgrepFiles(),
     changes: gitChanges(),
-    worktrees: gitWorktrees(),
+    worktrees: gitWorktrees({ log: stamp }),
     /*
      * Where those trees go, when the operator named a folder.
      *

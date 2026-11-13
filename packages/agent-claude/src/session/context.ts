@@ -1,5 +1,5 @@
 import type { query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
+import type { BackgroundTasks, Bag, BoundTool, LogLevel, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
 import type { AgentLogins } from '../logins.js';
 import type { OfferedModel } from '../models.js';
 import type { Asked, SpawnedProcess } from '../spawn.js';
@@ -51,6 +51,8 @@ export interface PendingSdkMessage {
  * `claude()` when the session named a machine.
  */
 export interface ClaudeSessionOptions extends SessionOptions {
+  /** The daemon's log, where a session says what it left out or could not do. */
+  log?: (line: string, level?: LogLevel) => void;
   /**
    * The name this chat's own conversation is kept under, from `Start.chatId`.
    *

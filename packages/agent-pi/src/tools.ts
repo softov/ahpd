@@ -13,7 +13,7 @@
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
-import type { BoundTool, ClientCallAnswer, CommandTerminal } from '@ahpd/sdk';
+import type { BoundTool, ClientCallAnswer, CommandTerminal, LogLevel } from '@ahpd/sdk';
 import { loadPi } from './pi.js';
 
 /**
@@ -89,10 +89,12 @@ export async function toPiTool(
    * call to show it on.
    */
   openedFor?: (toolCallId: string) => ((terminal: CommandTerminal) => void) | undefined,
+  /** The daemon's log, where a dropped tool is said. */
+  log?: (line: string, level?: LogLevel) => void,
 ): Promise<ToolDefinition | undefined> {
   const { definition } = bound;
   if (bound.run === undefined && PI_TOOLS.has(definition.name)) {
-    console.warn(`@ahpd/agent-pi: dropping client tool "${definition.name}", which is one of pi's own`);
+    log?.(`@ahpd/agent-pi: dropping client tool "${definition.name}", which is one of pi's own`, 'warn');
     return undefined;
   }
   const { defineTool, Type } = await loadPi();

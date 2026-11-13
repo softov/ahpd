@@ -245,6 +245,30 @@ export const isAnswer = (value: unknown): value is Answer => {
   return known && typeof message['id'] === 'number';
 };
 
+/**
+ * A line the engine has for the daemon's log. The engine is a process of its
+ * own with no log, so it hands the line to the plugin, which writes it.
+ */
+export interface LogMessage {
+  type: 'log';
+  level: 'warn' | 'error';
+  line: string;
+}
+
+/** Whether a value came over the channel as a line for the daemon's log. */
+export const isLog = (value: unknown): value is LogMessage => {
+  if (typeof value !== 'object' || value === null) return false;
+  const message = value as Record<string, unknown>;
+  return message['type'] === 'log' && typeof message['line'] === 'string'
+    && (message['level'] === 'warn' || message['level'] === 'error');
+};
+
+/** Send a line for the daemon's log from the engine, which only the plugin can write to. */
+export const engineLog = (level: LogMessage['level'], line: string): void => {
+  const message: LogMessage = { type: 'log', level, line };
+  process.send?.(message);
+};
+
 /** Whether a value came over the channel as a running action's output, with an id. */
 export const isOutput = (value: unknown): value is OutputMessage =>
   typeof value === 'object' && value !== null && (value as Record<string, unknown>)['type'] === 'output'

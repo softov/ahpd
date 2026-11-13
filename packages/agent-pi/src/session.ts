@@ -987,7 +987,7 @@ export function piSession(
     const building = [...offering];
     built = building;
     // A client's call waits for the answer its client sends.
-    const tools = (await Promise.all(building.map((one) => toPiTool(one, (_bound, toolCallId) => calls.wait(toolCallId), openedFor))))
+    const tools = (await Promise.all(building.map((one) => toPiTool(one, (_bound, toolCallId) => calls.wait(toolCallId), openedFor, options.log))))
       .flatMap((tool) => (tool === undefined ? [] : [tool]));
     // An empty entry is not an instruction, and pi would put a blank paragraph
     // in the system prompt for one.
@@ -1088,7 +1088,7 @@ export function piSession(
          * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1982-L1986
          */
         const moved = await backend.truncate(start.rewindAt);
-        if (!moved) console.warn(`@ahpd/agent-pi: pi refused to move the leaf back to ${start.rewindAt}`);
+        if (!moved) options.log?.(`@ahpd/agent-pi: pi refused to move the leaf back to ${start.rewindAt}`, 'warn');
       }
       // The host learns this agent's models from here; a rebuild lists the
       // same ones, so only the first open says so.
@@ -1490,7 +1490,7 @@ export function piSession(
              * cannot hand its agent.
              * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L449-L474
              */
-            console.warn(`@ahpd/agent-pi: pi did not take the steering message ${id}: ${reason(error)}`);
+            options.log?.(`@ahpd/agent-pi: pi did not take the steering message ${id}: ${reason(error)}`, 'warn');
           }
           if (queued) return;
           const at = submittedSteering.indexOf(id);

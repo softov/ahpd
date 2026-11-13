@@ -148,11 +148,16 @@ const contextAnswer = (): Bag => ({
 });
 
 /** Replay frames through a real session with a recording host seam. */
+/** The lines a session wrote to the daemon's log, since the last one was made. */
+const logged: string[] = [];
+
 async function replay(frames: Record<string, unknown>[]) {
   sdk.reset();
   sdk.asked = 0;
   const main: Bag[] = [];
+  logged.length = 0;
   const session = createSession({
+    log: (line: string) => { logged.push(line); },
     uri: 'ahp-session:/context',
     chatUri: 'ahp-chat:/context',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-context-')),
@@ -295,19 +300,16 @@ it('puts the breakdown and the bar on a turn\'s usage, beside its cost', async (
 });
 
 it('ends the turn without the breakdown when the answer fails', { timeout: 15000 }, async () => {
-  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
   sdk.answer = async () => { throw new Error('the control channel is gone'); };
   const { main } = await replay([...round(), result()]);
 
   expect(lastUsage(main)._meta).not.toHaveProperty('contextAttribution');
   expect(lastUsage(main)._meta).toMatchObject({ 'ahpd.cost': { amount: 0.5, currency: 'USD' } });
-  expect(warned.mock.calls.map((one) => String(one[0])).join('\n'))
+  expect(logged.join('\n'))
     .toContain('the context breakdown failed: the control channel is gone');
-  warned.mockRestore();
 });
 
 it('ends the turn without the breakdown when the answer is late', { timeout: 20000 }, async () => {
-  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
   sdk.answer = () => new Promise(() => {});
   const { main } = await replay([...round(), result()]);
 
@@ -320,6 +322,5 @@ it('ends the turn without the breakdown when the answer is late', { timeout: 200
   await settle();
   expect(main.some((one) => one.type === 'chat/turnComplete')).toBe(true);
   expect(lastUsage(main)._meta).not.toHaveProperty('contextAttribution');
-  expect(warned.mock.calls.map((one) => String(one[0])).join('\n')).toContain('took too long');
-  warned.mockRestore();
+  expect(logged.join('\n')).toContain('took too long');
 });

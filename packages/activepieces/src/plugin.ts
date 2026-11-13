@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { LOGO_LIMIT, LOGO_TIMEOUT_MS, logoOf } from './logos.js';
 import type { NetworkMode } from './guard.js';
 import { adapterOf, nameOf } from './mapping.js';
-import { isAnswer, isOutput } from './wire.js';
+import { isAnswer, isLog, isOutput } from './wire.js';
 import type { ChildProcess } from 'node:child_process';
 import type { Logo } from './logos.js';
 import type { RunCallArgs } from './mapping.js';
@@ -279,6 +279,10 @@ export function engine(host: PluginHost, settings: EngineSettings = {}): Engine 
     };
 
     forked.on('message', (message: unknown) => {
+      if (isLog(message)) {
+        host.log(message.line, message.level);
+        return;
+      }
       if (isOutput(message)) {
         outputs.get(message.id)?.(message.data);
         return;
