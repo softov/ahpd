@@ -4,20 +4,33 @@ title: What a release needs before its tag
 
 # What a release needs before its tag
 
-`v0.15.0-rc.2` is out on npm under `next`, from `8db0b85b5`, on 2026-11-12. `latest` stays on `0.14.0`. Status at 2026-11-12.
+`v0.15.0-rc.3` is tagged on `28dd315e0` (#320) on 2026-11-13, and its release run 43394827388 stages the packages under `next`. `v0.15.0-rc.2` is on npm under `next`, and `latest` stays on `0.14.0`. Status at 2026-11-13.
 
 A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and stages every package. The tag comes last, and only on Softov's word.
 
 ## Left
 
-1. *Before 0.15.0*:
+1. *rc.3, after its release run*:
+   - The run passes `parts`, `release` and `image`. A red run is reported as red.
+   - The staged `@ahpd/computer` holds `images/digests.json`, the first run of the digest pin of #315 ([container/20261113-0408](../plans/container/20261113-0408-a-part-is-pulled-by-its-digest/plan.md)).
+   - Softov approves the 13 staged packages on npm. Then `npm view @ahpd/server dist-tags` gives `next: 0.15.0-rc.3`.
+   - Rerun the `image` job of main's CI run after the approval. It fails until npm serves `0.15.0-rc.3`, as in [problems/the-image-of-a-version-not-on-npm-cannot-install-a-plugin.md](../problems/the-image-of-a-version-not-on-npm-cannot-install-a-plugin.md).
+   - The parts of #318 are on ghcr at their new tags. Softov makes `compclau` again and runs a Claude session in it.
+   - Run `parts-bump.yml` by hand. It proposes the ahpd part at `0.15.0-rc.3` and dsh at `0.2.2-rc.1`. Actions may not open a PR here, so open it from the pushed branch.
+2. *Before 0.15.0*:
    - A working day on the daemon, and the checks by hand.
-   - The digest pin is built in #315, as [container/20261113-0408](../plans/container/20261113-0408-a-part-is-pulled-by-its-digest/plan.md). The next tag run is the first to pack the digests: check the staged `@ahpd/computer` for `images/digests.json`.
-   - The ahpd part follows the last release on npm: plan [container/20261113-0507](../plans/container/20261113-0507-the-ahpd-part-follows-the-release/plan.md). The host's own version is [briefs/the-ahpd-part-is-the-releases-own-build.md](../briefs/the-ahpd-part-is-the-releases-own-build.md), for 0.16.
+   - The host's own version for the ahpd part is [briefs/the-ahpd-part-is-the-releases-own-build.md](../briefs/the-ahpd-part-is-the-releases-own-build.md), for 0.16.
    - Plain text for each operation, sent in the client's language: *Operations* in [briefs/the-text-a-person-reads-is-plain.md](../briefs/the-text-a-person-reads-is-plain.md#operations).
 
 ## Done
 
+- **The rc.3 bump.** #320 sets `0.15.0-rc.3` and holds the notes for #315 to #319. Dry run 43389493385 passed `parts`, `release` and `image`. Its PR's `image` job failed only on `@ahpd/sdk@0.15.0-rc.3`, which npm does not serve yet.
+- **After rc.2.** Five PRs merged on 2026-11-13:
+  - PR #315 pulls a part by its digest.
+  - PR #316 moves the ahpd part to the last release on npm.
+  - PR #317 puts back the Activepieces marks.
+  - PR #318 bumps ten parts, the ahpd part to `0.15.0-rc.2`.
+  - PR #319 lets a part on a prerelease take a newer one.
 - **The image and the parts are public.** Softov made `ghcr.io/ahpio/ahpd` and the 17 part packages public on 2026-11-12. An anonymous read of each answers 200.
 - **0.15.0-rc.2 on npm.** Softov approved the 13 staged packages on 2026-11-12. `npm view` gives `next: 0.15.0-rc.2` and `latest: 0.14.0` for each. `@ahpd/server@next` installs in an empty folder and says `0.15.0-rc.2`.
 - **Main's CI after the approval.** The `image` job of run 43357606552 passed on its rerun, so `check`, `check-windows` and `image` are green at `150983cbe`.

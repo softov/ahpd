@@ -10,11 +10,13 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## Main
 
 - The last stable release is 0.14.0 (`v0.14.0`). `v0.15.0-rc.3` is tagged on `28dd315e0` (#320), and its release run 43394827388 stages the packages under `next` for Softov's approval. `0.15.0-rc.2` is on npm `next`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
-- Main's last code merge is #318 (`de1924b99`): the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushes the branch and the PR is opened by hand.
+- Main's last merge is #320 (`28dd315e0`), the bump to `0.15.0-rc.3`. No PR is open.
+- The steps after the rc.3 release run are in *rc.3, after its release run* of [pending/release.md](../pending/release.md#left).
+- #318 (`de1924b99`) is the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushes the branch and the PR is opened by hand.
 - #317 (`e338a1c98`): a piece shows its host mark again. Softov accepted the icons and marks on 2026-11-13, the Postgres mark among them.
-- #319 is merged: plan container/20261113-0721, a part on a prerelease takes a newer prerelease. The next run of `parts-bump.yml` proposes dsh 0.2.2-rc.1.
+- #319 (`9b17317d7`): plan container/20261113-0721, a part on a prerelease takes a newer prerelease. The next run of `parts-bump.yml` proposes dsh 0.2.2-rc.1.
 - The dev config's `claude` profile names `agents: ["claude"]` since 2026-11-13, in place of its three hand mounts. A machine from it carries the `claude` part.
-- The machine `compclau` was made again from it on 2026-11-13, without the `claude` part. PR #318 pins `claude` 0.106.0, and ghcr has it only after a release pushes it. This host has no earlier image. Softov waits for rc.3, and makes `compclau` again after it.
+- The machine `compclau` was made again from it on 2026-11-13, without the `claude` part. PR #318 pins `claude` 0.106.0, and ghcr has it only after a release pushes it. This host has no earlier image. Softov makes `compclau` again once rc.3 has pushed the parts.
 - After a parts bump merges, a checkout loads a moved part only after a release pushes it. `parts-publish.mjs --local` builds every part on this host in its place.
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
@@ -24,7 +26,7 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## The dev daemon
 
 - Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`, on ports 5180 and 37537. It runs from `src`, so a restart is all a merge needs. It needs `DEEPSEEK_API_KEY` in its environment. Never restart it or use its ports yourself.
-- It was last restarted at 02:22 local on 2026-11-12, on #303. It needs a restart for #304 to #318.
+- Softov restarted it on 2026-11-13 after #317, from `/github/ahpd` at main. #319 and #320 change no daemon code, so they need no restart.
 - `/github/ahpd` is a shared checkout. Work in a worktree from `origin/main` under `/github/ahpd.worktrees/`.
 - A test daemon for checks: `source .project/pending/test-daemon.sh`, on port 39200, with its token at `~/ahpd-check/token`. Check `ss -ltnp` before you start one, and stop it by pid.
 
@@ -71,7 +73,7 @@ Remove each only on Softov's word.
 - `release-report`: detached, for plan-only commits of the release check.
 - `ahpd-part-bump`: the branch of #316, merged.
 - `piece-marks`: the branch of #317, merged.
-- `prerelease-part`: the branch of #319, merged.
+- `prerelease-part` and `release-rc3`: the branches of #319 and #320, merged.
 - `notes-catch-up`, `downgrade-semver`, `release-rc2` and `devtunnel-flake`: the branches of #311, #312, #313 and #314, each merged.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334`, `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`.
 
