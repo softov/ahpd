@@ -55,7 +55,8 @@ Remove each only on Softov's word.
 - `pr302-check`: detached at #302's head, merged.
 - Ten `build-agents-*` worktrees, each on a branch that is on main: the plans of #301 to #310. Their daemon sessions stay.
 - `release-report`: detached, for plan-only commits of the release check.
-- `notes-catch-up`: branch `docs/20261112-0-15-notes-catch-up`, PR #311, the release notes of what merged since 0.15.0-rc.1. It merges on Softov's word, before the bump to `0.15.0-rc.2`.
+- `notes-catch-up`: branch `docs/20261112-0-15-notes-catch-up`, PR #311, the release notes of what merged since 0.15.0-rc.1. It merges on Softov's word, before the bump to `0.15.0-rc.2`. Its local commit `4b62c7456`, the `root/progress` line of `docs/sdk/AHP.md`, is not pushed.
+- `downgrade-semver`: branch `daemon/20261110-0947-the-downgrade-check-reads-semver`, task 06 of daemon/20261110-0947, committed as `44e8e1201` and not pushed. The smoke test runs on the image `ahpd:semver-check`.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334`, `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`.
 
 ## Plans waiting to close
@@ -97,7 +98,7 @@ Its notepad is [release-run.md](release-run.md), its agent tests are in [release
 
 ## Waiting for Softov
 
-- The 13 `npm trust` commands in [pending/release.md](../pending/release.md) come before the next release. The first release from `ahpio/ahpd` is `0.15.0-rc.2`.
+- What `0.15.0-rc.2` needs before its tag is in [pending/release.md](../pending/release.md#left). npm trusts `ahpio/ahpd` since 2026-11-12.
 - `0.15.0-rc.2` is tagged with the machine parts pulled by tag. The digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md) comes before 0.15.0 (Softov, 2026-11-12).
 - The GHCR package `ghcr.io/ahpio/ahpd` is private until he makes it public once. The edge image is on it: run 43315911087 pushed `sha-2a04b74`. Its visibility was not read: the `gh` token has no `read:packages`. No machine part is on `ghcr.io/ahpio` until `0.15.0-rc.2`.- `edge.yml` has no paths filter, so a plan-only push to main builds the edge image. A `paths-ignore` is suggested.
 - The API keys in his private env file were shown in a chat on 2026-11-11. He rotates them.

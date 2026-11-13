@@ -4,40 +4,21 @@ title: What a release needs before its tag
 
 # What a release needs before its tag
 
-`v0.15.0-rc.1` is out on npm under `next`, from `a7b0cfd7`, on 2026-11-04. `latest` stays on `0.14.0`. Status at 2026-11-11.
+`v0.15.0-rc.1` is out on npm under `next`, from `a7b0cfd7`, on 2026-11-04. `latest` stays on `0.14.0`. Status at 2026-11-12.
 
 A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and stages every package. The tag comes last, and only on Softov's word.
 
 ## Left
 
-1. *Before the next release*: npm trusts `ahpio/ahpd` to publish each package, as *Trust the new repository* says.
-2. *Before 0.15.0*: a working day on the daemon, and the checks by hand.
-
-## Trust the new repository
-
-The repository moved from `softov/ahpd` to `ahpio/ahpd` on 2026-11-11. npm publishes a package only from the repository it trusts for it, so each of the 13 packages in `PUBLISHED` of `release.yml` needs the new one.
-Softov runs these, signed in to npm as the owner of `@ahpd`:
-
-```sh
-npm trust github @ahpd/sdk --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/activepieces --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/agent-claude --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/agent-cofold --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/agent-acp --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/agent-pi --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/bot --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/tasks --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/computer --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/push --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/webhook --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/tunnel-devtunnel --file release.yml --repo ahpio/ahpd --allow-stage-publish
-npm trust github @ahpd/server --file release.yml --repo ahpio/ahpd --allow-stage-publish
-```
-
-After that, the first release from `ahpio/ahpd` is `0.15.0-rc.2`. It also pushes the image and the machine parts to `ghcr.io/ahpio`, where a host looks for them since #290.
+1. *Before 0.15.0-rc.2*, the first release from `ahpio/ahpd`. It also pushes the image and the machine parts to `ghcr.io/ahpio`, where a host looks for them since #290.
+   - PR #311, the release notes of what merged since 0.15.0-rc.1, merges.
+   - The PR of task 06 of daemon/20261110-0947, the downgrade check read as semver, merges.
+   - A bump PR sets `0.15.0-rc.2` in each package of `PUBLISHED` and as the default `AHPD_TAG` of [docker/compose.yaml](../../docker/compose.yaml), and dates the notes' Unreleased heading, as #231 and #233 did for 0.15.0-rc.1. The tag check in `release.yml` refuses a tag that either one does not name.
+2. *Before 0.15.0*: a working day on the daemon, the checks by hand, and the digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md).
 
 ## Done
 
+- **npm trusts `ahpio/ahpd`.** Softov ran the 13 `npm trust github <package> --file release.yml --repo ahpio/ahpd --allow-stage-publish` commands, one for each package of `PUBLISHED`, on 2026-11-12.
 - **The move to `ahpio/ahpd`.** #290 merged on 2026-11-11: each package's `repository` names `ahpio/ahpd`, and the machine parts come from `ghcr.io/ahpio`.
 - **ahpw on the release candidate.** ahpw `aec9fd3` sets `@ahpd/sdk` to `^0.15.0-rc.1`, and `@ahpd/web 0.9.0-rc.1` is on npm.
 
