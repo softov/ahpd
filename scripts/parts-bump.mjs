@@ -6,6 +6,8 @@
  * registry does not carry is asked about itself. An archive the feed ships a
  * sum for takes that sum, and one it does not is downloaded and hashed here,
  * because a part is built only when its archive matches what is written down.
+ * The ahpd part follows the higher of the `latest` and `next` versions npm
+ * serves of `@ahpd/server`, which is the last release, a candidate included.
  *
  * A part that moves and installs npm packages has its lock written again, in
  * `parts/<id>` beside the parts file, which is what the part is installed from.
@@ -96,6 +98,58 @@ const npmVersion = (name) => {
   return asked.status === 0 ? asked.stdout.trim() : undefined;
 };
 
+/**
+ * The versions npm serves a package under its `latest` and `next` tags, or
+ * `undefined` when npm answers nothing it can read. npm 12 answers a `--json`
+ * view as an array of one object, and earlier npm as the object itself.
+ */
+const npmChannels = (name) => {
+  const asked = spawnSync('npm', ['view', name, 'dist-tags', '--json'], { encoding: 'utf8' });
+  if (asked.status !== 0) return undefined;
+  try {
+    const said = JSON.parse(asked.stdout);
+    const tags = Array.isArray(said) ? said[0] : said;
+    return tags !== null && typeof tags === 'object' ? { latest: tags.latest, next: tags.next } : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * How two exact versions order, as semver orders them: `1` when `one` is the
+ * higher, `-1` when `two` is, `0` when they are the same version. A release is
+ * higher than its own prerelease (`0.15.0` follows `0.15.0-rc.2`), and build
+ * metadata does not count.
+ * https://semver.org/#spec-item-11
+ */
+const orderOf = (one, two) => {
+  const read = (version) => {
+    const [core, ...tag] = String(version).replace(/^v/, '').split('+')[0].split('-');
+    return { core: core.split('.').map(Number), pre: tag.length === 0 ? [] : tag.join('-').split('.') };
+  };
+  const a = read(one);
+  const b = read(two);
+  for (let at = 0; at < 3; at++) {
+    if ((a.core[at] ?? 0) !== (b.core[at] ?? 0)) return (a.core[at] ?? 0) > (b.core[at] ?? 0) ? 1 : -1;
+  }
+  if (a.pre.length === 0 || b.pre.length === 0) {
+    if (a.pre.length === b.pre.length) return 0;
+    return a.pre.length === 0 ? 1 : -1;
+  }
+  for (let at = 0; at < Math.max(a.pre.length, b.pre.length); at++) {
+    const x = a.pre[at];
+    const y = b.pre[at];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    if (x === y) continue;
+    const numbers = [/^\d+$/.test(x), /^\d+$/.test(y)];
+    if (numbers[0] && numbers[1]) return Number(x) > Number(y) ? 1 : -1;
+    if (numbers[0] !== numbers[1]) return numbers[0] ? -1 : 1;
+    return x > y ? 1 : -1;
+  }
+  return 0;
+};
+
 /** The sum of the file at a url, for an archive the registry ships without one. */
 const shaOf = async (url) => {
   let bytes;
@@ -147,7 +201,21 @@ const newerThan = (next, held) => {
 const bumpOf = async (part, entries) => {
   const entry = entries.get(part.id);
 
-  if (part.kind === 'ahpd') return { skipped: 'ahpd is this repository, and its version moves with the package' };
+  /*
+   * The ahpd part runs the last release npm serves, one release behind the
+   * host: a release cannot pin its own version, which npm serves only after it
+   * is approved, after the tag run. Its `next` counts, unlike any other
+   * part's prerelease, because a release candidate of ahpd is a version npm
+   * serves and a host on that channel runs.
+   */
+  if (part.kind === 'ahpd') {
+    const channels = npmChannels('@ahpd/server');
+    const served = [channels?.latest, channels?.next].filter((one) => typeof one === 'string' && EXACT.test(one));
+    if (served.length === 0) return { skipped: 'npm names no latest or next version of @ahpd/server' };
+    const version = served.reduce((one, two) => (orderOf(two, one) > 0 ? two : one));
+    if (orderOf(version, part.version) <= 0) return { skipped: `npm has ${version}, which is not newer than ${part.version}` };
+    return { version };
+  }
   if (part.kind === 'node') return { skipped: 'node is not fed by the registry or by npm; move it by hand' };
 
   if (part.kind === 'npm') {
