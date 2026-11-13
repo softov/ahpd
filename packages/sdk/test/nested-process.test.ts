@@ -50,12 +50,27 @@ beforeEach(() => {
   process.on('uncaughtException', guard);
 });
 
-afterEach(() => {
+/** Wait until a child has exited, or for `ms` at most. */
+const exited = (child: ChildProcessWithoutNullStreams, ms = 5_000): Promise<void> => new Promise((done) => {
+  if (child.exitCode !== null || child.signalCode !== null) { done(); return; }
+  const timer = setTimeout(done, ms);
+  child.once('exit', () => { clearTimeout(timer); done(); });
+});
+
+afterEach(async () => {
   process.off('uncaughtException', guard);
-  for (const child of children.splice(0)) {
+  /*
+   * Each inner host is killed and its exit waited for before its folder goes:
+   * a host still writing its state while the folder is removed failed the
+   * removal with ENOTEMPTY. A process the host started can outlive it, so the
+   * removal also tries again.
+   */
+  const killed = children.splice(0);
+  for (const child of killed) {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
-  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
+  await Promise.all(killed.map((child) => exited(child)));
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   expect(escaped).toEqual([]);
 });
 
