@@ -50,7 +50,6 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
   - `computer-disposable.test.ts`: the teardown in the nested-process file's problem, and two cases in [a-disposable-machine-case-fails-at-random.md](../problems/a-disposable-machine-case-fails-at-random.md).
   - `usage-port.test.ts`: [a-usage-port-case-times-out-on-windows.md](../problems/a-usage-port-case-times-out-on-windows.md).
   - `changes-refresh.test.ts` and `worktrees.test.ts`: [git-cases-time-out-on-windows.md](../problems/git-cases-time-out-on-windows.md).
-  - `host-tools.test.ts`: [a-dropped-client-case-loses-its-window-on-windows.md](../problems/a-dropped-client-case-loses-its-window-on-windows.md).
   - `computer-far-docker.test.ts`: [a-far-docker-listing-misses-one-profile-on-windows.md](../problems/a-far-docker-listing-misses-one-profile-on-windows.md).
   - `commands.test.ts`: [the-machine-commands-case-times-out-on-windows.md](../problems/the-machine-commands-case-times-out-on-windows.md).
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" was fixed by #314.

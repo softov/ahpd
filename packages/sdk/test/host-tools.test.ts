@@ -3078,7 +3078,8 @@ describe('a client\'s call, held by the backend', () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
    */
   it('fails a dropped client\'s streaming call once the daemon\'s window runs out, readied first', async () => {
-    const { held, clients, chatUri, peers } = await open(['a', 'b'], { clientToolCallDisconnectTimeoutMs: 50 });
+    // A window longer than a `settle`, which on a Windows runner outlasted 50 ms.
+    const { held, clients, chatUri, peers } = await open(['a', 'b'], { clientToolCallDisconnectTimeoutMs: 1000 });
     const { start, calls } = held();
     start.emit('chat', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'open it', origin: { kind: 'user' } } });
     start.emit('chat', {

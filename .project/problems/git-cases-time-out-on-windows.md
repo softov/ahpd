@@ -25,6 +25,8 @@ Unknown.
 Each `git` call is a new process, and a Windows runner is slow to start one. The first two cases make many calls in one run.
 In the third case, the test's own `git worktree list` read the worktree folder while the host was still writing it.
 
+Plan host/20261113-2331 fixes the third case: `openInTree` takes a `git` read that fails as a tree not there yet.
+
 ## Impact
 
 A Windows CI job fails at random, and blocks a merge until it runs again.
