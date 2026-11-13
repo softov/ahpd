@@ -19,6 +19,7 @@ In one run of the computer suite these cases timed out at 5000 ms:
 - `computer-devcontainer.test.ts`: `does not hand back an image built without a part the file now has`
 - `computer-needs.test.ts`: `makes the machine without a part whose load fails, and refuses only the session that needs it`
 - `computer-parts-mount.test.ts`: `writes the time a machine used a part volume into its marker, and again once an hour has passed`
+- `computer-plugin.test.ts`: `starts, stops and restarts a machine by writing what it should be`, in a later run with a load average of 8
 
 The adopted container case also timed out alone, on main at `b4ad32951` and on the bot-talk branch, while the load was near 5.
 
