@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/computer",
-  "version": "0.15.0-rc.2",
+  "version": "0.15.0-rc.3",
   "type": "module",
   "description": "Disposable machines for agent sessions, on Docker, VMs or ssh boxes. Run it as an ahpd plugin.",
   "keywords": [

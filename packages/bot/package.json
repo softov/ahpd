@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/bot",
-  "version": "0.15.0-rc.2",
+  "version": "0.15.0-rc.3",
   "type": "module",
   "description": "Bots for ahpd. Each bot has its own identity, workspace and sessions.",
   "keywords": [
