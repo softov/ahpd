@@ -10,7 +10,7 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## Main
 
 - The last stable release is 0.14.0 (`v0.14.0`). `v0.15.0-rc.3` is tagged on `28dd315e0` (#320). Its release run 43394827388 passed `parts`, `release` and `image` on 2026-11-13, and staged the 13 packages under `next`. Softov approved them on 2026-11-13, and npm serves `0.15.0-rc.3` under `next` since 14:36 UTC. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
-- Main's last merge is #323 (`271c212d9`). #321 to #324 merged on 2026-11-13, after the rc.3 release. No PR is open.
+- Main's last merge is #328 (`169f231d8`). #321 to #328 merged on 2026-11-13, after the rc.3 release. No PR is open.
 - The steps after the rc.3 release run are in *rc.3, after its release run* of [pending/release.md](../pending/release.md#left). The run, the digest check, the approval and the ghcr check of the parts of #318 are done: 17 of 17 digests match. Softov makes `compclau` again, and the parts bump PR waits for his word.
 - The staged `@ahpd/computer@0.15.0-rc.3` holds `images/digests.json` with 17 entries, `ahpd-agents` and 16 parts, the first tag run of #315. Its step logs `tar: stdout: write error`, from `grep -q` closing the pipe. That is harmless now, and it turns the check over if the step ever runs under `pipefail`.
 - #318 (`de1924b99`) is the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushes the branch and the PR is opened by hand.
@@ -27,13 +27,15 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## The dev daemon
 
 - Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`, on ports 5180 and 37537. It runs from `src`, so a restart is all a merge needs. It needs `DEEPSEEK_API_KEY` in its environment. Never restart it or use its ports yourself.
-- Softov restarted it on 2026-11-13 after #317. #321, #322 and #323 change the daemon, and #324 changes tests only.
+- Softov restarted it on 2026-11-13 after #317. #321, #322, #323 and #326 change the daemon. #324, #325, #327 and #328 change tests only.
 - A restart brings the bot talk, bots on a host with no users, and the operations in the client's language.
+- It also writes plugin warnings to the daemon's log with a time and a level.
 - `/github/ahpd` is a shared checkout. Work in a worktree from `origin/main` under `/github/ahpd.worktrees/`.
 - A test daemon for checks: `source .project/pending/test-daemon.sh`, on port 39200, with its token at `~/ahpd-check/token`. Check `ss -ltnp` before you start one, and stop it by pid.
 
 ## Tests
 
+- Six computer cases time out on this machine at any load, and pass on CI: [computer-cases-time-out-on-a-busy-machine.md](../problems/computer-cases-time-out-on-a-busy-machine.md).
 - Run one vitest suite at a time: `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run <package>`. A fresh worktree needs `pnpm schema` first.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every run. Restore it with `git checkout --` and never print it.
 - An sdk host change is gated by the computer suite too.
@@ -70,7 +72,7 @@ Remove each only on Softov's word.
 - `pr302-check`: detached at #302's head, merged.
 - Ten `build-agents-*` worktrees, each on a branch that is on main: the plans of #301 to #310. Their daemon sessions stay.
 - `release-report`: detached, for plan-only commits of the release check.
-- `bot-talk`, `bot-no-users`, `op-text` and `dc-listing`: the branches of #321, #322, #323 and #324, each merged.
+- `bot-talk`, `bot-no-users`, `op-text`, `dc-listing`, `flakes`, `console-log`, `flakes2` and `flakes3`: the branches of #321 to #328, each merged.
 - `parts-bump`: branch `parts-bump-20261113-2`, pushed, with no PR yet.
 - `ahpd-part-bump`: the branch of #316, merged.
 - `piece-marks`: the branch of #317, merged.
@@ -94,6 +96,10 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
 - bots/20261113-1959, a bot answers on a host with no users: #322.
 - host/20261113-2009, an operation reads plain in the client's language: #323.
 - container/20261113-2134, dev container cases wait for the first listing: #324.
+- host/20261113-2243, a held test folder fails no job, and the cofold truncation case says how its turn ended: #325.
+- plugin/20261113-2254, plugin warnings go to the daemon's log: #326.
+- host/20261113-2319, three cases that fail at random wait on what they mean: #327.
+- host/20261113-2331, two Windows cases wait on what they read: #328.
 - container/20261113-0408, a part is pulled by its digest: #315. Dry run 43367407253 on its branch passed on 2026-11-13, with `parts`, `release` and `image` each after the one before. Its first tag run checks the artifact steps, which a dry run skips.
 
 ## Next
@@ -103,6 +109,7 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
   - A Back chat is titled `@main/<bot>/<person>`, with `main` fixed for now (Softov, 2026-11-13). The host name in `root:<host>` is `os.hostname()`, and nothing sets it yet; see [briefs/the-root-owner-has-a-fixed-host-name.md](../briefs/the-root-owner-has-a-fixed-host-name.md).
   - Gumbo and ember in Softov's `~/.config/ahpd/bots` name `provider: claude`, at his request.
 - #323, the operations in the client's language, is merged on 2026-11-13, as `271c212d9`, after #324 fixed three dev container cases that fail at random. The plans close on Softov's word.
+- A review of the CI failures on main, on 2026-11-13, gave #325 to #328. What is left of the cases that fail at random is in *Tests*. The other open problems need Softov's choice, or change more of the daemon than a fix of a test.
 - AHP 1.1.0 is on npm since 2026-11-13, and goes in 0.16 (Softov, 2026-11-13). 0.15.0 stays on AHP 1.0.0. The first 0.16 work is a new read of host/117 against 1.1.0, as [pending/release.md](../pending/release.md#not-in-this-release) says.
 - ahpc's `cli/20261112-0821-create-session-waits-on-progress`, in the ahpc repository, can be built. A create that makes no machine sends no progress, so ahpc keeps its timeout for it.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`. Softov chose deletion as VS Code does. Its Resume state holds the research and two questions before task 01 is rewritten.
