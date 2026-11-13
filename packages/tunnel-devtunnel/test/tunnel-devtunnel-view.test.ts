@@ -8,6 +8,7 @@ import { TUNNEL_PORT } from '../src/discovery.js';
 import { devtunnelKind, POLL_MS } from '../src/kind.js';
 import type { KindOptions } from '../src/kind.js';
 import type { Service, Shown } from '../src/service.js';
+import { WAIT_MS } from '../../../tools/wait.ts';
 
 /*
  * The plugin's page, and the poll behind it.
@@ -231,10 +232,10 @@ it('starts no poll when the tunnel stops during its first read', async () => {
   const { kind, views } = kindFor(service);
 
   const started = kind.create(SYSTEM, () => {});
-  // The first read comes after the tunnel id is digested, which is a turn of
-  // the event loop, so the read is waited for rather than assumed.
-  for (let at = 0; at < 50 && shown.length === 0; at++) await vi.advanceTimersByTimeAsync(0);
-  expect(shown).toHaveLength(1);
+  // The first read comes after the tunnel id is digested by `crypto.subtle`,
+  // which answers from the thread pool and not after a count of event-loop
+  // turns, so the read is waited for by the clock.
+  await vi.waitFor(() => { expect(shown).toHaveLength(1); }, { timeout: WAIT_MS });
 
   await kind.invoke('stop', SYSTEM, () => {});
   answer(UP);
