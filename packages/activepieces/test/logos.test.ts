@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { logoOf, LOGO_LIMIT } from '../src/logos.js';
+import { logoOf, LOGO_LIMIT, MARKS } from '../src/logos.js';
 import type { Answer } from '../src/fetch.js';
 import type { LogoFetcher } from '../src/logos.js';
 
@@ -22,6 +23,9 @@ afterEach(() => {
   vi.useRealTimers();
   rmSync(home, { recursive: true, force: true });
 });
+
+/** The folder the host reads a `mark:<name>` from. */
+const MARK_FOLDER = fileURLToPath(new URL('../../server/icons/', import.meta.url));
 
 /** The cache file of one piece, under the extension its type is kept as. */
 const cache = (piece: string, extension = 'png'): string => join(home, 'activepieces', 'icons', `${piece}.${extension}`);
@@ -168,13 +172,36 @@ describe('logoOf', () => {
     expect(fake.calls).toEqual([]);
   });
 
-  it('fetches each piece\'s own logo, GitHub\'s among them', async () => {
+  it('fetches the own logo of a piece with no host mark', async () => {
+    expect(MARKS['ap-airtable']).toBeUndefined();
     const body = Buffer.from('the logo');
     const fake = fetcher(body, { contentType: 'image/png' });
 
-    const logo = await logoOf('ap-github', 'https://cdn.activepieces.com/pieces/github.png', home, fake.answer);
+    const logo = await logoOf('ap-airtable', 'https://cdn.activepieces.com/pieces/airtable.png', home, fake.answer);
 
-    expect(fake.calls).toEqual(['https://cdn.activepieces.com/pieces/github.png']);
+    expect(fake.calls).toEqual(['https://cdn.activepieces.com/pieces/airtable.png']);
     expect(logo.icon).toEqual({ src: `data:image/png;base64,${body.toString('base64')}`, contentType: 'image/png' });
+  });
+
+  it('answers the host mark of a piece in the table, before the cache and the CDN', async () => {
+    // A cached logo and a fetch that fails the case: the mark wins over both.
+    mkdirSync(join(home, 'activepieces', 'icons'), { recursive: true });
+    writeFileSync(cache('ap-whatsapp'), Buffer.from('a cached logo'));
+    const failing: LogoFetcher = async () => { throw new Error('a marked piece must not fetch'); };
+
+    for (const [piece, mark] of Object.entries(MARKS)) {
+      const logo = await logoOf(piece, `https://cdn.activepieces.com/pieces/${piece}.png`, home, failing);
+      expect(logo, piece).toEqual({ icon: { src: `mark:${mark}` } });
+    }
+    // A daemon with no configuration folder still sends the mark.
+    expect(await logoOf('ap-postgres', 'https://cdn.activepieces.com/pieces/postgres.png', undefined, failing))
+      .toEqual({ icon: { src: 'mark:postgres' } });
+  });
+
+  it('names only marks the host ships, the pieces whose logos are over the limit among them', () => {
+    expect(Object.keys(MARKS)).toEqual(expect.arrayContaining(['ap-jira-cloud', 'ap-linear', 'ap-postgres', 'ap-resend', 'ap-whatsapp']));
+    for (const mark of Object.values(MARKS)) {
+      expect(existsSync(join(MARK_FOLDER, `${mark}.svg`)), mark).toBe(true);
+    }
   });
 });

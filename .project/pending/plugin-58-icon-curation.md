@@ -42,6 +42,7 @@ Nothing else changes, because the manifest of each package names the file, not t
 | Resend | `packages/server/icons/resend.svg` | the Resend mark, in black | `packages/server/icons/resend-dark.svg`, in `#E6EDF3` | https://cdn.simpleicons.org/resend | CC0 1.0, from Simple Icons |
 | GitHub | `packages/server/icons/github.svg` | the GitHub mark, in `#181717` | `packages/server/icons/github-dark.svg`, in `#E6EDF3` | https://cdn.simpleicons.org/github | CC0 1.0, from Simple Icons |
 | WhatsApp | `packages/server/icons/whatsapp.svg` | the WhatsApp mark, in `#25D366` | none | https://cdn.simpleicons.org/whatsapp | CC0 1.0, from Simple Icons |
+| Postgres | `packages/server/icons/postgres.svg` | the PostgreSQL elephant, in `#4169E1` | none | https://cdn.simpleicons.org/postgresql | CC0 1.0, from Simple Icons |
 | Gemini | `packages/server/icons/gemini.svg` | the Google Gemini mark, in `#8E75B2` | none | https://cdn.simpleicons.org/googlegemini | CC0 1.0, from Simple Icons |
 | Copilot | `packages/server/icons/copilot.svg` | the GitHub Copilot mark, in black | `packages/server/icons/copilot-dark.svg`, in `#E6EDF3` | https://cdn.simpleicons.org/githubcopilot | CC0 1.0, from Simple Icons |
 | OpenCode | `packages/server/icons/opencode.svg` | the OpenCode mark, in black | `packages/server/icons/opencode-dark.svg`, in `#E6EDF3` | https://cdn.simpleicons.org/opencode | CC0 1.0, from Simple Icons |
@@ -51,7 +52,7 @@ Nothing else changes, because the manifest of each package names the file, not t
 | dsh | `packages/server/icons/dsh.svg` | none yet: tell me the mark you want | none | please name the vendor's page | to be stated |
 
 The first eleven rows are plugin icons under their package, and the rest are the marks the host ships in `packages/server/icons/`.
-Since 1ea68fcb8, no adapter names the Jira, Linear, Resend, GitHub or WhatsApp mark. Each of those pieces shows its own logo, or none if the logo is over 32 KB. Say whether those five marks stay.
+The GitHub, Jira Cloud, Linear, Postgres, Resend and WhatsApp pieces show their host mark, not their CDN logo (Softov, 2026-11-13, plan plugin/20261113-0534). The Postgres mark is new: say whether it stays.
 A plugin, an adapter or an ACP template names a mark as `{ "src": "mark:<name>" }`, and the host resolves it.
 Codex reuses `openai.svg`, which the host ships already.
 The Resend and GitHub marks are black, so each has a dark file in `#E6EDF3`, as Copilot and Cursor have.
