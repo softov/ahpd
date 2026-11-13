@@ -10,8 +10,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 ## Left
 
-1. *0.15.0-rc.2*: Softov makes the 17 part packages public, as [docker-image-first-push.md](docker-image-first-push.md) says. The `ahpd` image is public.
-2. *Before 0.15.0*:
+1. *Before 0.15.0*:
    - A working day on the daemon, and the checks by hand.
    - The digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md).
    - The ahpd part at the release's own version: [problems/the-ahpd-part-does-not-follow-the-release.md](../problems/the-ahpd-part-does-not-follow-the-release.md).
@@ -19,6 +18,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 ## Done
 
+- **The image and the parts are public.** Softov made `ghcr.io/ahpio/ahpd` and the 17 part packages public on 2026-11-12. An anonymous read of each answers 200.
 - **0.15.0-rc.2 on npm.** Softov approved the 13 staged packages on 2026-11-12. `npm view` gives `next: 0.15.0-rc.2` and `latest: 0.14.0` for each. `@ahpd/server@next` installs in an empty folder and says `0.15.0-rc.2`.
 - **Main's CI after the approval.** The `image` job of run 43357606552 passed on its rerun, so `check`, `check-windows` and `image` are green at `150983cbe`.
 - **The 0.15.0-rc.2 tag run.** Four PRs merged on 2026-11-12. PR #311 is the release notes, #312 the downgrade check read as semver, #313 the bump and #314 a flaky case. Dry run 43347391118 passed on the tree of `8db0b85b5`. Release run 43354150219 passed 9679 tests, staged the 13 packages under `next`, and pushed `ghcr.io/ahpio/ahpd:0.15.0-rc.2` and `:next`.
@@ -41,7 +41,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 ## Before 0.15.0
 
 - **A working day.** Softov uses the daemon on main for one working day: ahpw, VS Code, ahpc, bots, sessions and the tunnel. A fault is a problem file or a fix before 0.15.0.
-- **The Compose tag.** The bump sets the default `AHPD_TAG` in [docker/compose.yaml](../../docker/compose.yaml). A stable version takes its `X.Y`, such as `0.15`, and a pre-release takes the full version. The tag check in `release.yml` refuses a tag that the file does not name. After the first tag run, [docker-image-first-push.md](docker-image-first-push.md) makes the image public.
+- **The Compose tag.** The bump sets the default `AHPD_TAG` in [docker/compose.yaml](../../docker/compose.yaml). A stable version takes its `X.Y`, such as `0.15`, and a pre-release takes the full version. The tag check in `release.yml` refuses a tag that the file does not name. The image and the parts on `ghcr.io/ahpio` are public since 2026-11-12.
 - **The checks by hand.** [triage.md](triage.md) orders them. The ones for features a user meets first:
   - [cofold-resume-checks.md](cofold-resume-checks.md). The Claude resume passed on 2026-11-09, and the pi resume on 2026-11-10.
   - [host-1347-mcp-checks.md](host-1347-mcp-checks.md), the tools at `/mcp`.
@@ -53,3 +53,10 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 - MayCXC's `host/124-an-agents-shell-is-a-terminal-the-person-sees` is not merged. Main has its features from the four host/20261103-1620 plans.
 - `plans.mjs` lists the `active` and `draft` plans. None is needed for the release.
+
+## When npm rejects a release
+
+The image and the parts are pushed before the packages are approved on npm, so the image can offer a version that npm does not.
+Remove the tags from the image by hand on its package page when the release is refused there.
+Then `docker pull` and `npm i` name the same versions.
+`latest` is the one tag that a pre-release must never carry, as npm refuses a pre-release under it.

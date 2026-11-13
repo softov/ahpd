@@ -27,7 +27,6 @@ Restart the daemon on main first. Do them from the top down.
 - [plugin-50-first-pieces.md](plugin-50-first-pieces.md) - 60 to 120 min, one account per piece.
 - [host-0813-moved-chat-checks.md](host-0813-moved-chat-checks.md) - ahpw and ahpc, with `chatMoves.enabled` on for the second part.
 - [docker-checks.md](docker-checks.md) - Docker on this machine, and a phone on the same LAN.
-- [docker-image-first-push.md](docker-image-first-push.md) - a browser on the `ahpio` organization's package page. The daemon restart is not needed.
 
 ## The Linux test VM
 
