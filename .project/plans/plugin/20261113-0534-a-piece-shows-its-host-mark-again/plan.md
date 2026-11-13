@@ -66,7 +66,7 @@ plugin.ts load -> logoOf(<adapter name>) -> { src: "mark:<name>" } -> plugins.ts
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A piece takes its host mark](task-01-a-piece-takes-its-host-mark.md) | todo | - |
+| [01 - A piece takes its host mark](task-01-a-piece-takes-its-host-mark.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -75,8 +75,8 @@ plugin.ts load -> logoOf(<adapter name>) -> { src: "mark:<name>" } -> plugins.ts
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-piece-takes-its-host-mark.md](task-01-a-piece-takes-its-host-mark.md).
+- **Done so far:** task 01 is implemented on 2026-11-13, as [implemented.md](implemented.md) says.
+- **Next action:** review the PR. Softov curates the Postgres mark in the curation file.
 - **Open questions:** none.
 - **Watch out for:** the table is keyed by the adapter name, `ap-<piece>`, not by the npm package. The mark names are lowercase letters, digits and `-`, as `icons.ts` checks.
 

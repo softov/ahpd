@@ -14,7 +14,8 @@
  * A logo is held to upstream's 32 KB, because it travels in the adapters list
  * every client receives in full (plan plugin/58, Softov 2026-10-24: a piece
  * whose logo is larger ships a curated SVG). The bound and the ten seconds are
- * the plugin's `logoLimitBytes` and `logoTimeoutMs` options.
+ * the plugin's `logoLimitBytes` and `logoTimeoutMs` options. A piece in
+ * `MARKS` answers the host's mark instead, so its logo is never read.
  *
  * The fetch happens once for each piece: what it reads is kept in the daemon's
  * configuration folder, and a start after that reads the file rather than the
@@ -35,6 +36,24 @@ import type { Icon } from '@ahpd/sdk';
  * (plan plugin/58).
  */
 export const LOGO_LIMIT = 32 * 1024;
+
+/**
+ * The host mark each piece shows, by adapter name.
+ *
+ * A piece here is sent `{ src: "mark:<name>" }`, which the host resolves from
+ * the marks it ships in `packages/server/icons/`, with a dark file where one
+ * exists. Its CDN logo is neither read nor cached. Every logo here but
+ * GitHub's is over `LOGO_LIMIT`, so without the mark the piece has no icon,
+ * and the GitHub and Resend marks have a dark file their logos lack.
+ */
+export const MARKS: Readonly<Record<string, string>> = {
+  'ap-github': 'github',
+  'ap-jira-cloud': 'jira',
+  'ap-linear': 'linear',
+  'ap-postgres': 'postgres',
+  'ap-resend': 'resend',
+  'ap-whatsapp': 'whatsapp',
+};
 
 /**
  * How long the whole read may take, redirects included, unless the
@@ -125,9 +144,11 @@ const withinBound = async (read: Promise<Answer>, timeoutMs: number): Promise<An
 };
 
 /**
- * The icon of one piece, read from the cache or fetched once.
+ * The icon of one piece: its host mark, or its logo read from the cache or
+ * fetched once.
  *
- * `dir` is the daemon's configuration folder, which is where the cache lives.
+ * `piece` is the adapter name, which `MARKS` is keyed by. `dir` is the
+ * daemon's configuration folder, which is where the cache lives.
  * Absent, there is nowhere to keep the logo, so the promise of one fetch for
  * each piece cannot be kept and no fetch is made. `bounds` are the plugin's
  * `logoLimitBytes` and `logoTimeoutMs` options, and the read is the guarded
@@ -140,6 +161,9 @@ export async function logoOf(
   fetcher?: LogoFetcher,
   bounds: LogoBounds = { limitBytes: LOGO_LIMIT, timeoutMs: LOGO_TIMEOUT_MS },
 ): Promise<Logo> {
+  const mark = MARKS[piece];
+  if (mark !== undefined) return { icon: { src: `mark:${mark}` } };
+
   if (dir === undefined || dir === '') return {};
   const folder = folderOf(dir);
   const over = (size: number): boolean => bounds.limitBytes > 0 && size > bounds.limitBytes;

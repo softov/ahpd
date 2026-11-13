@@ -18,6 +18,8 @@ Each piece becomes an adapter, and the adapter carries the logo Activepieces pub
 
 A logo is read as VS Code reads a remote image: `https:` on every hop, five redirects followed by hand, ten seconds for the whole read, and its size checked from `content-length` and again as the bytes arrive, up to 32 KB, since a logo travels in the adapters list every client receives in full. The options `logoLimitBytes` (32768, 0 for no limit) and `logoTimeoutMs` (10000, 0 for no limit) set the two bounds. Each hop's address is checked as [the network](#the-network) below checks a piece's, so a logo URL that resolves into the host's own network is blocked. An answer that is not an image, a read that fails and a logo past the bound cost the icon and one line. The adapter is still registered, without it.
 
+Six pieces show a mark the host ships instead: GitHub, Jira Cloud, Linear, Postgres, Resend and WhatsApp. Their logos are over 32 KB, or have no file for a dark background. Their adapters carry `{ "src": "mark:<name>" }`, so the host sends the mark from `packages/server/icons/`, with its dark file where one exists, and the logo is neither fetched nor kept.
+
 The logos are the brands' own marks, and the plugin passes on what Activepieces publishes for each piece. They belong to their owners: a host that shows one is showing the piece, not claiming the mark.
 
 ## An action that takes or writes a file
