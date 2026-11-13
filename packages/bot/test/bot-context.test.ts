@@ -114,7 +114,7 @@ async function sitting(record: BotRecord = bot(), contextIn: ContextIn = 'text')
   const sent: { channel: string; action: Bag }[] = [];
   let minted = 0;
 
-  const sessions: BotSessions = { owner: async (uri) => owners.get(uri) };
+  const sessions: BotSessions = { owner: async (uri) => owners.get(uri), hasUsers: true };
 
   const wake = botWake({
     store,

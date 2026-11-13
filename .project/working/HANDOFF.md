@@ -101,7 +101,7 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
   - The checks by hand after the merge are [pending/bot-talk-checks.md](../pending/bot-talk-checks.md), on the branch: a real restart, ahpw, VS Code and the webhook.
   - Softov's first run made about 45 Back chats in one session. First, the Back went to `bot-chat` itself, the first agent in load order. Then `bot-chat` reopened the open Front turn in every new chat. Both are fixed in the branch, and a record that names `bot-chat` is refused. The test daemon showed one Back on `claude` after the fix.
   - A talk is now kept by the session's owner, through the new `Start.owner`. Every root owner is one talker, `root` (Softov, 2026-11-13, "Count by owner").
-  - Found on main: [a bot never answers on a host with no users](../problems/a-bot-never-answers-on-a-host-with-no-users.md), and [the chats of a bot talk share one log](../problems/the-chats-of-a-bot-talk-share-one-log.md).
+  - Found on main: [the chats of a bot talk share one log](../problems/the-chats-of-a-bot-talk-share-one-log.md). A bot never answered on a host with no users, and [bots/20261113-1959](../plans/bots/20261113-1959-a-bot-answers-on-a-host-with-no-users/plan.md) fixes it.
   - Gumbo and ember in Softov's `~/.config/ahpd/bots` now name `provider: claude`, at his request.
   - With `policies.check` on, Telly's Back turn was refused as `plugin:bot`. The branch now checks a plugin's turn in a session it does not own as the session owner's (Softov, 2026-11-13).
   - A Back chat is titled `@main/<bot>/<person>`, with `main` fixed for now (Softov, 2026-11-13). The host name in `root:<host>` is `os.hostname()`, and nothing sets it yet.
