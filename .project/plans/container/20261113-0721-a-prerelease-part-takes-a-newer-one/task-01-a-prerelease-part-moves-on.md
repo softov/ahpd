@@ -1,6 +1,6 @@
 ---
 title: A prerelease part moves to a newer one
-status: todo
+status: implemented
 depends: []
 layer: "scripts"
 refs:

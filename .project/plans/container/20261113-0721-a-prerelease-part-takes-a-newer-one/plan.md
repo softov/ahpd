@@ -58,7 +58,7 @@ parts-bump.yml -> bumpOf -> newerThan(feed, held) -> versions.json and the lock 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A prerelease part moves to a newer one](task-01-a-prerelease-part-moves-on.md) | todo | - |
+| [01 - A prerelease part moves to a newer one](task-01-a-prerelease-part-moves-on.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -66,8 +66,8 @@ parts-bump.yml -> bumpOf -> newerThan(feed, held) -> versions.json and the lock 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-prerelease-part-moves-on.md](task-01-a-prerelease-part-moves-on.md).
+- **Done so far:** task 01 is implemented on 2026-11-13, as [implemented.md](implemented.md) says.
+- **Next action:** review the PR, then run `parts-bump.yml` by hand to propose dsh's move.
 - **Open questions:** none.
 - **Watch out for:** a core that is not numbers, such as a feed that answers `latest`, still compares as a string in `newerThan`. Do not put the whole compare through `orderOf`, which reads each core segment as a number.
 

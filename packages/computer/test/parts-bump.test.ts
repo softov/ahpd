@@ -84,14 +84,34 @@ it('never proposes a prerelease, and proposes the release that follows it', () =
 
   // The registry is offering a version somebody is still working on: the part
   // stays where it is and the run says why rather than moving to it.
-  expect(candidate.said).toContain('skipped goose:');
-  expect(candidate.said).toContain('1.54.0-rc.1');
+  expect(candidate.said).toContain('skipped goose: the registry has 1.54.0-rc.1, a prerelease, and goose is on a release');
   expect(candidate.said).not.toContain('bumped goose');
   expect(candidate.said).toContain('Nothing moved.');
 
   // And the release it is a candidate for is the one that moves it.
   const released = bump([GOOSE], [entryOf('goose', '1.54.0')], true);
   expect(released.said).toContain('bumped goose 1.53.0 -> 1.54.0, 2 archives');
+});
+
+it('moves a part already on a prerelease to a newer prerelease, of the same core or a later one', () => {
+  const held = partOf('goose', '1.54.0-rc.1');
+
+  const sameCore = bump([held], [entryOf('goose', '1.54.0-rc.2')], true);
+  expect(sameCore.said).toContain('bumped goose 1.54.0-rc.1 -> 1.54.0-rc.2, 2 archives');
+
+  // dsh's case: a later core, still a candidate.
+  const laterCore = bump([held], [entryOf('goose', '1.55.0-rc.1')], true);
+  expect(laterCore.said).toContain('bumped goose 1.54.0-rc.1 -> 1.55.0-rc.1, 2 archives');
+
+  // Tags compare as semver orders them, not as strings: rc.10 follows rc.9.
+  const tenth = bump([partOf('goose', '1.54.0-rc.9')], [entryOf('goose', '1.54.0-rc.10')], true);
+  expect(tenth.said).toContain('bumped goose 1.54.0-rc.9 -> 1.54.0-rc.10, 2 archives');
+});
+
+it('leaves a part on a prerelease where it is when the feed has an older one, and says not newer', () => {
+  const older = bump([partOf('goose', '1.54.0-rc.2')], [entryOf('goose', '1.54.0-rc.1')], true);
+  expect(older.said).toContain('skipped goose: the registry has 1.54.0-rc.1, which is not newer than 1.54.0-rc.2');
+  expect(older.said).toContain('Nothing moved.');
 });
 
 it('skips a part whose archive url is not a plain https url, by name', () => {
