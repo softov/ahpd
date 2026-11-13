@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/push",
-  "version": "0.15.0-rc.1",
+  "version": "0.15.0-rc.2",
   "type": "module",
   "description": "Push notifications for ahpd. Tells a phone or browser when a session needs you, through Expo or Web Push.",
   "keywords": [

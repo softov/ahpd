@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/tasks",
-  "version": "0.15.0-rc.1",
+  "version": "0.15.0-rc.2",
   "type": "module",
   "description": "Tasks and plans for ahpd. One shared list that every agent reads and writes through host tools.",
   "keywords": [
