@@ -4,20 +4,27 @@ title: What a release needs before its tag
 
 # What a release needs before its tag
 
-`v0.15.0-rc.1` is out on npm under `next`, from `a7b0cfd7`, on 2026-11-04. `latest` stays on `0.14.0`. Status at 2026-11-12.
+`v0.15.0-rc.2` is tagged on `8db0b85b5`, on 2026-11-12, and its 13 packages are staged on npm under `next`. `latest` stays on `0.14.0`. Status at 2026-11-12.
 
 A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and stages every package. The tag comes last, and only on Softov's word.
 
 ## Left
 
-1. *Before 0.15.0-rc.2*, the first release from `ahpio/ahpd`. It also pushes the image and the machine parts to `ghcr.io/ahpio`, where a host looks for them since #290.
-   - PR #311, the release notes of what merged since 0.15.0-rc.1, merges.
-   - PR #312, task 06 of daemon/20261110-0947, the downgrade check read as semver, merges.
-   - A bump PR sets `0.15.0-rc.2` in each package of `PUBLISHED` and as the default `AHPD_TAG` of [docker/compose.yaml](../../docker/compose.yaml). It also dates the notes' Unreleased heading, as #231 and #233 did for 0.15.0-rc.1. The tag check in `release.yml` refuses a tag that the packages or the Compose file do not name.
-2. *Before 0.15.0*: a working day on the daemon, the checks by hand, and the digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md).
+1. *0.15.0-rc.2*:
+   - Softov approves the 13 staged packages on npm, `@ahpd/sdk` first, as run 43354150219 lists them.
+   - Rerun the `image` job of main's CI after the approval. It fails until npm serves `@ahpd/sdk@0.15.0-rc.2`, as [problems/the-image-of-a-version-not-on-npm-cannot-install-a-plugin.md](../problems/the-image-of-a-version-not-on-npm-cannot-install-a-plugin.md) says.
+   - Softov makes `ghcr.io/ahpio/ahpd` public once, as [docker-image-first-push.md](docker-image-first-push.md) says.
+2. *Before 0.15.0*:
+   - A working day on the daemon, and the checks by hand.
+   - The digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md).
+   - The ahpd part at the release's own version: [problems/the-ahpd-part-does-not-follow-the-release.md](../problems/the-ahpd-part-does-not-follow-the-release.md).
+   - Plain text for each operation, sent in the client's language: *Operations* in [briefs/the-text-a-person-reads-is-plain.md](../briefs/the-text-a-person-reads-is-plain.md#operations).
 
 ## Done
 
+- **The 0.15.0-rc.2 tag run.** Four PRs merged on 2026-11-12. PR #311 is the release notes, #312 the downgrade check read as semver, #313 the bump and #314 a flaky case. Dry run 43347391118 passed on the tree of `8db0b85b5`. Release run 43354150219 passed 9679 tests, staged the 13 packages under `next`, and pushed `ghcr.io/ahpio/ahpd:0.15.0-rc.2` and `:next`.
+- **The release run's limits.** #313 runs the tests under `timeout 1500` and the job under 45 minutes. The first rc.2 dry run, 43336912861, reached the old limit of 600 s.
+- **The ahpd part at 0.15.0-rc.1.** #313 moves it from 0.8.0, so the release pushed `ghcr.io/ahpio/ahpd-part/ahpd:0.15.0-rc.1-<hash>`.
 - **npm trusts `ahpio/ahpd`.** Softov ran the 13 `npm trust github <package> --file release.yml --repo ahpio/ahpd --allow-stage-publish` commands, one for each package of `PUBLISHED`, on 2026-11-12.
 - **The move to `ahpio/ahpd`.** #290 merged on 2026-11-11: each package's `repository` names `ahpio/ahpd`, and the machine parts come from `ghcr.io/ahpio`.
 - **ahpw on the release candidate.** ahpw `aec9fd3` sets `@ahpd/sdk` to `^0.15.0-rc.1`, and `@ahpd/web 0.9.0-rc.1` is on npm.

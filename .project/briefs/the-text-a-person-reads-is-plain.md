@@ -11,6 +11,11 @@ refs:
   - "[code://packages/sdk/src/host/chatattachment.ts#L15-L22](../../packages/sdk/src/host/chatattachment.ts#L15-L22) - text the model reads stays English"
   - "[code://packages/agent-acp/package.json#L75](../../packages/agent-acp/package.json#L75) - a plugin's description in its manifest"
   - git://790e3ec1 - the commit of ahpd the facts in *Plugin text* were checked at
+  - git://a5b1a6d09 - the commit of ahpd the facts in *Operations* were checked at
+  - "[code://packages/sdk/src/agents/channel.ts#L1236-L1240](../../packages/sdk/src/agents/channel.ts#L1236-L1240) - an agent row's operations, with their labels and descriptions"
+  - "[code://packages/sdk/src/connectors/channel.ts#L1739-L1760](../../packages/sdk/src/connectors/channel.ts#L1739-L1760) - a connector row's operations"
+  - "[code://packages/sdk/src/tunnels/channel.ts#L352](../../packages/sdk/src/tunnels/channel.ts#L352) - a tunnel row's operations"
+  - "[code://packages/sdk/src/clients/channel.ts#L115](../../packages/sdk/src/clients/channel.ts#L115) - a client row's Drop operation"
   - "[code://packages/server/src/pluginschannel.ts#L321-L338](../../packages/server/src/pluginschannel.ts#L321-L338) - `translate`, which puts a plugin's title, description and options form in the reader's locale"
   - "[code://packages/agent-acp/package.json#L90](../../packages/agent-acp/package.json#L90) - the options field `toolsChanged`, whose description tells a person how the code works"
   - "[code://packages/agent-acp/i18n/pt.json](../../packages/agent-acp/i18n/pt.json) - a plugin's Portuguese catalog, with the keys `meta`, `options` and `session`"
@@ -108,6 +113,34 @@ ahpw draws a plugin's text as the host sends it, so ahpw cannot fix it.
 - The `pt` and `es` catalogs of each plugin are translated again from the new English, in the same commit.
 - A description says what a field does for a person. A protocol name stays only where a person sets it, such as an `enum` value.
 - The plugins use the terms of `docs/sdk/TEXT.md`, which plan host/20261031-1200 writes.
+
+## Operations
+
+Softov chose on 2026-11-12 that the operations' text is fixed before 0.15.0.
+A record row carries `operations`, and ahpw draws each one as a button with its description as the tooltip.
+Tunnel and client rows have operations, and agent and connector rows have them since #302.
+The research of plan host/20261031-1200 was read at `c7f7d186` on 2026-10-31, and it names no operation.
+
+### What the operations have
+
+- Each operation has a `label` and a `description`, in English in the code.
+- A description tells how the code works, not what the person gets. Three tooltips that Softov saw in ahpw:
+  - A connector's Disable: "Closes the connector and writes enabled: false, so it answers no call and lists no model, and answers its row."
+  - An agent's Disable: "Writes mode: disabled, so the record is not opened or served, and answers its row."
+  - An agent's Pause: "Writes mode: paused, so the record stays open and its sessions are kept, and answers its row."
+- The host's catalogs have no key for an operation. The host sends each label and description in English.
+- ahpw translates a label by the operation's id, in its own catalog, such as `"disable": "Desativar"`. It has no entry for a description, so the tooltip stays English in a Portuguese window.
+- A client draws only what the host sends. So the host sends the label and the description in the client's language, and ahpw drops its own copies.
+
+### A first draft, for Softov's review
+
+| Operation | English | Portuguese |
+| --- | --- | --- |
+| Agent, Enable | Turns the agent back on. | Ativa o agente de novo. |
+| Agent, Pause | Stops new sessions and messages. Existing sessions stay. | Bloqueia novas sessões e mensagens. As sessões atuais ficam. |
+| Agent, Disable | Turns the agent off. Its sessions keep their history. | Desativa o agente. As sessões mantêm o histórico. |
+| Connector, Enable | Turns the connector on and checks it. | Ativa o conector e o verifica. |
+| Connector, Disable | Turns the connector off. Its calls and models stop. | Desativa o conector. Chamadas e modelos param. |
 
 ## Questions for a plan
 

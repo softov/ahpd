@@ -9,8 +9,8 @@ Current progress and pending items only, as of 2026-11-12. *Outside this reposit
 
 ## Main
 
-- The last release is 0.14.0 (`v0.14.0`). `0.15.0-rc.1` is on npm `next` (`v0.15.0-rc.1`). What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
-- Main's last code merge is #310 (`5341abc30`). Open: PR #311, the release notes, and PR #312, the downgrade check read as semver.
+- The last stable release is 0.14.0 (`v0.14.0`). `v0.15.0-rc.2` is tagged on `8db0b85b5`, and its 13 packages are staged on npm under `next`, waiting for Softov's approval. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
+- Main's last code merge is #313 (`8db0b85b5`), the bump. No PR is open.
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
 - `check` and `check-windows` must both be green before a merge; no ruleset requires them now. A slow runner can fail a job with nothing wrong: rerun once with `gh run rerun <id> -R ahpio/ahpd --failed`.
@@ -28,8 +28,9 @@ Current progress and pending items only, as of 2026-11-12. *Outside this reposit
 - Run one vitest suite at a time: `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run <package>`. A fresh worktree needs `pnpm schema` first.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every run. Restore it with `git checkout --` and never print it.
 - An sdk host change is gated by the computer suite too.
-- CI on main is green at `2a04b7472` (run 43315911168), `check` and `check-windows` both.
-- `release.yml` runs the whole `pnpm test` before it publishes, so a flaky case can fail a tag run.
+- CI on main at `8db0b85b5` (run 43351930159): `check` and `check-windows` pass, `windows (3/4)` after one rerun. `image` fails until npm serves `0.15.0-rc.2`.
+- `release.yml` runs the whole `pnpm test` under `timeout 1500` before it publishes, so a flaky case can fail a tag run. The suite took 520 s on 2026-11-12.
+- #314 fixed the devtunnel view case below: it waits for its first read by the clock.
 - Flaky on main in the 100 CI runs since 2026-11-11 08:10 UTC, each passed on a rerun:
   - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read": 5 runs, on Linux and Windows, last 43229860508. It fails at line 237, after the 50 event-loop turns of line 236. No problem file, no plan.
   - `agent-cofold-fork.test.ts` "keeps the chat going when the store cannot truncate the conversation": 3 runs on Linux. No problem file, no plan.
@@ -55,8 +56,7 @@ Remove each only on Softov's word.
 - `pr302-check`: detached at #302's head, merged.
 - Ten `build-agents-*` worktrees, each on a branch that is on main: the plans of #301 to #310. Their daemon sessions stay.
 - `release-report`: detached, for plan-only commits of the release check.
-- `notes-catch-up`: branch `docs/20261112-0-15-notes-catch-up`, PR #311, the release notes of what merged since 0.15.0-rc.1. It merges on Softov's word, before the bump to `0.15.0-rc.2`. It also fixes the `root/progress` line of `docs/sdk/AHP.md`.
-- `downgrade-semver`: branch `daemon/20261110-0947-the-downgrade-check-reads-semver`, PR #312, task 06 of daemon/20261110-0947. The smoke test passed on the image `ahpd:semver-check`, built from it.
+- `notes-catch-up`, `downgrade-semver`, `release-rc2` and `devtunnel-flake`: the branches of #311, #312, #313 and #314, each merged.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334`, `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`.
 
 ## Plans waiting to close
@@ -67,6 +67,7 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
 - plugin/20261112-0145, three plans: #301, #302 and #303.
 - The release run of 2026-11-11: thirteen plans, from #273 to #281, #286 and #293 to #295. They are acp/20261110-0813, cofold/20261110-0813 (two), host/20261110-0813 (six), host/20261111-0609 (two), host/20261111-1203 and pi/20261110-0813.
 - The five fixes of the release run's problems, #296 to #300: pi/20261111-1444, cofold/20261111-1445, daemon/20261111-1447, container/20261111-1507 and plugin/20261111-1507.
+- daemon/20261110-0947, ahpd runs from an image: task 06 is #312, and tasks 01 to 05 were reviewed on 2026-11-11.
 
 ## Next
 
@@ -89,8 +90,7 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
 - Some test helpers give up after a count of event-loop turns, not after a time, such as the `until(check, times)` of cofold-turn, nested-proxy and computer-disposable.
 - A Copy button beside a view's link needs a client-side copy action across ahpd's view checker, ahpw and ahpc.
 - Two comments in `packages/sdk/src/host/tooling.ts`, at lines 448 and 746, still name `heldAs`, which #191 removed.
-- `docs/sdk/AHP.md:175` says a session's start says no `root/progress`, which #309 changed. PR #311 fixes it.
-- The 0.15.0 image refuses a volume an rc wrote: `docker/entrypoint.sh:36-37` compares with `sort -V`, which puts `0.15.0` before `0.15.0-rc.1`. PR #312, task 06 of daemon/20261110-0947, fixes it.
+- A `usage-port.test.ts` case, where a plugin takes the usage port over, timed out on Windows at `8db0b85b5`. It timed out before, as the implemented record of claude/20261028-2213 says.
 
 ## The release run of 2026-11-11
 
@@ -98,9 +98,10 @@ Its notepad is [release-run.md](release-run.md), its agent tests are in [release
 
 ## Waiting for Softov
 
-- What `0.15.0-rc.2` needs before its tag is in [pending/release.md](../pending/release.md#left). npm trusts `ahpio/ahpd` since 2026-11-12.
+- Approve the 13 staged packages of `0.15.0-rc.2` on npm, `@ahpd/sdk` first. Then rerun main's `image` job. [pending/release.md](../pending/release.md#left) has the list.
 - `0.15.0-rc.2` is tagged with the machine parts pulled by tag. The digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md) comes before 0.15.0 (Softov, 2026-11-12).
-- The GHCR package `ghcr.io/ahpio/ahpd` is private until he makes it public once. The edge image is on it: run 43315911087 pushed `sha-2a04b74`. Its visibility was not read: the `gh` token has no `read:packages`. No machine part is on `ghcr.io/ahpio` until `0.15.0-rc.2`.- `edge.yml` has no paths filter, so a plan-only push to main builds the edge image. A `paths-ignore` is suggested.
+- The GHCR package `ghcr.io/ahpio/ahpd` is private until he makes it public once. It holds `edge`, `0.15.0-rc.2` and `next` now. Its visibility was not read: the `gh` token has no `read:packages`.
+- `edge.yml` has no paths filter, so a plan-only push to main builds the edge image. A `paths-ignore` is suggested.
 - The API keys in his private env file were shown in a chat on 2026-11-11. He rotates them.
 - The grant role editor in ahpw shows the new subjects of #205. Nobody has opened it in a browser.
 - [problems/a-refused-back-turn-stays-working-in-another-window.md](../problems/a-refused-back-turn-stays-working-in-another-window.md): check after the daemon restart.
