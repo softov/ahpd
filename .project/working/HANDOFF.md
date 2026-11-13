@@ -11,7 +11,7 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 
 - The last stable release is 0.14.0 (`v0.14.0`). `0.15.0-rc.2` is on npm `next` (`v0.15.0-rc.2`, on `8db0b85b5`), the first release from `ahpio/ahpd`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
 - Main's last code merge is #316 (`58d8e6e68`): the parts bump moves the ahpd part to the last release on npm. Run `parts-bump.yml` by hand to propose `0.15.0-rc.2` for it.
-- #317 is open: plan plugin/20261113-0534, a piece shows its host mark again. `1ea68fcb8` had removed the table from piece to mark. It merges on Softov's word with its checks green.
+- #317 is open and green: plan plugin/20261113-0534, a piece shows its host mark again. `1ea68fcb8` had removed the table from piece to mark. It merges on Softov's word.
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
 - `check` and `check-windows` must both be green before a merge; no ruleset requires them now. A rerun is not the fix for a case that fails at random: each one gets a problem file, to be fixed. `gh run rerun <id> -R ahpio/ahpd --failed` reruns a job.
@@ -32,15 +32,24 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 - CI on main is green at `150983cbe` (run 43357606552): `check`, `check-windows` and `image`, the image job after a rerun once npm served `0.15.0-rc.2`.
 - After a bump, the `image` job fails until npm serves the new version. Rerun it after the approval.
 - `release.yml` runs the whole `pnpm test` under `timeout 1500` before it publishes, so a flaky case can fail a tag run. The suite took 520 s on 2026-11-12.
-- #314 fixed the devtunnel view case below: it waits for its first read by the clock.
-- Flaky on main in the 100 CI runs since 2026-11-11 08:10 UTC, each passed on a rerun:
-  - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read": 5 runs, on Linux and Windows, last 43229860508. It fails at line 237, after the 50 event-loop turns of line 236. No problem file, no plan.
-  - `agent-cofold-fork.test.ts` "keeps the chat going when the store cannot truncate the conversation": 3 runs on Linux. No problem file, no plan.
-  - `computer-spawn.test.ts` "fails a turn on a session whose CLI is gone": on Linux (43162247025) and on Windows (43374043657), and it times out on this box. In [problems/the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md](../problems/the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md).
-  - `nested-process.test.ts` "a daemon that stops leaves the session inside the machine for the next one": once (43132937874).
-  - `computer-devcontainer.test.ts` "omits the dev container row for a URI it cannot read a folder from": once on Windows (43114109287).
-  - `computer-servercheck.test.ts` "runs its own script under sh": once (43115235109). Task 02 of plugin/20261106-1058 fixes it.
-  - `host-attachments.test.ts` "hands a queued and a steering message their attachments", once on Windows: in [problems/two-attachment-cases-time-out-on-windows.md](../problems/two-attachment-cases-time-out-on-windows.md).
+- A case that fails at random gets a problem file, to be fixed. The CI runs since 2026-11-10 were read on 2026-11-13. A case counts when it failed on main, or passed on a rerun of the same commit.
+- With a problem file:
+  - `computer-spawn.test.ts`: [the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md](../problems/the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md).
+  - `agent-cofold-fork.test.ts`: [a-cofold-truncation-case-ends-its-third-turn-without-completing.md](../problems/a-cofold-truncation-case-ends-its-third-turn-without-completing.md).
+  - `computer-devcontainer.test.ts`, four cases: [dev-container-cases-ask-before-the-first-listing.md](../problems/dev-container-cases-ask-before-the-first-listing.md).
+  - `nested-process.test.ts`, two cases: [a-test-removes-its-folder-while-a-child-writes-in-it.md](../problems/a-test-removes-its-folder-while-a-child-writes-in-it.md).
+  - `host-attachments.test.ts`: [two-attachment-cases-time-out-on-windows.md](../problems/two-attachment-cases-time-out-on-windows.md).
+  - `computer-servercheck.test.ts` "runs its own script under sh": task 02 of plugin/20261106-1058.
+- `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" was fixed by #314.
+- With no problem file yet, each failed once or twice:
+  - `usage-port.test.ts` "tells a plugin that its usage store was not wanted": Windows, main, 42832274878 and 43351930159.
+  - `computer-disposable.test.ts`, three cases: 42753469981, 42804449764, 42727088464 and 43044491680.
+  - `changes-refresh.test.ts`, two cases, Windows: 42760023503 and 42984895620.
+  - `worktrees.test.ts` "answers the branches a client types for", Windows: 42760023503.
+  - `host-tools.test.ts` "fails a dropped client's streaming call", Windows, main: 42842552404.
+  - `agents-channel.test.ts` "sends one root/agentsChanged with the new agent", Windows, main: 43331759178.
+  - `computer-far-docker.test.ts` "lists, for two profiles on one box", Windows: 42807821787.
+  - `commands.test.ts` "makes, stops, starts, restarts and removes a machine", Windows: 42747912760.
 
 ## Builders
 

@@ -39,7 +39,7 @@ A Windows job fails at random, and a PR waits for a rerun. Windows CI blocks a m
 
 ## Workaround
 
-Rerun the failed jobs.
+None. Running the job again is not a fix.
 
 ## Fix
 

@@ -29,7 +29,7 @@ A Windows CI job fails at random, about one run in two, and a PR waits for a rer
 
 ## Workaround
 
-Rerun the failed jobs.
+None. Running the job again is not a fix.
 
 ## Fix
 

@@ -27,7 +27,7 @@ A Windows CI job fails at random, and a PR waits for a rerun.
 
 ## Workaround
 
-Rerun the failed jobs.
+None. Running the job again is not a fix.
 
 ## Fix
 
