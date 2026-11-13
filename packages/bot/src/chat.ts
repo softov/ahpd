@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Status, bag, idOf, steerOf, steerPart, str, uriOf } from '@ahpd/sdk';
@@ -228,6 +229,12 @@ export interface TurnHandle {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L218-L228
    */
   steeringConsumed?(id: string): void;
+  /**
+   * Open a turn of the bot's own, whose message is the agent's, where no turn
+   * is open, and say its id; the open turn's id where one is. What the Back
+   * says while no message of the person's waits lands in it.
+   */
+  speak?(): string;
   /** What a client of this chat confirmed, for the plugin to send back to the back session. */
   onConfirm?: (toolCallId: string, approved: boolean, optionId?: string) => void;
   /**
@@ -548,7 +555,9 @@ const talkFor = (start: Start): { owner: Owner | undefined } | undefined => {
  * has is refused there rather than opening a session nothing can answer.
  *
  * `heard` is set as the `onMessage` of every chat's handle, a new chat and a
- * resumed one alike, and `cancelled` as its `onCancel`.
+ * resumed one alike, and `cancelled` as its `onCancel`. `fronts` holds every
+ * chat's handle by its chat URI while the chat is open, so a Back reaches its
+ * Front with no message of the person's waiting.
  */
 export function botChatAgent(
   configDir: string,
@@ -556,6 +565,7 @@ export function botChatAgent(
   heard?: (message: ChatMessage, handle: TurnHandle) => void,
   cancelled?: (session: string, turnId: string) => void,
   talks?: Talks,
+  fronts?: Map<string, TurnHandle>,
 ): Agent<Promise<Session>> {
   /**
    * One chat: the turns it holds and the bot it is a chat with.
@@ -951,6 +961,18 @@ export function botChatAgent(
         held.responseParts.push(part);
         start.emit('chat', { type: 'chat/responsePart', turnId: held.id, part });
       },
+      speak: () => {
+        if (open !== undefined) return open.id;
+        /*
+         * The protocol's message of the agent's own: a turn nobody sent, so a
+         * client draws it as the bot speaking first. Said by this backend, as
+         * a backend says a turn it opens itself.
+         */
+        const turnId = `bot-${randomUUID()}`;
+        const held = beginTurn(turnId, '', { origin: { kind: 'agent' } });
+        start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: held.startedAt, message: held.message });
+        return turnId;
+      },
       notice: (text) => {
         const held = open;
         if (held === undefined) return;
@@ -1048,6 +1070,7 @@ export function botChatAgent(
       }, 0);
     }
     if (cancelled !== undefined) handle.onCancel = cancelled;
+    fronts?.set(start.chatUri, handle);
 
     /**
      * Open a turn in this chat with what it began with, and write it down.
@@ -1356,7 +1379,7 @@ export function botChatAgent(
       settings: () => ({ ...start.settings }),
 
       // Nothing runs between turns: no process to stop and no timer to clear.
-      close: () => {},
+      close: () => { if (fronts?.get(start.chatUri) === handle) fronts.delete(start.chatUri); },
     };
   }
 

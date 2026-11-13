@@ -1607,6 +1607,12 @@ export interface ToolCall {
   session: string;
   /** The chat channel URI it was made from. */
   chat: string;
+  /**
+   * The worker chat the call was made in, where a subagent of `chat` made it.
+   * A subagent runs in the backend of `chat`, so `chat` names that chat and
+   * this names the subagent's own. Absent for a call of `chat`'s own.
+   */
+  from?: string;
   /** The agent the calling session runs, by its provider id, when the host holds the session. */
   provider?: string;
   /** The turn the call is running in, when the chat has one running. */

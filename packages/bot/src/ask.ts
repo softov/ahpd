@@ -44,11 +44,14 @@ export interface AskSeams {
   /** Send one action on a chat, and give the host's reason where it refused it. */
   send(chat: string, action: Bag): Promise<string | undefined>;
   /**
-   * The chat whose tool call made `chat`, read off the `tool` origin in the
-   * session's chat list, or nothing for a chat no call made. A subagent of a
-   * Back asks in a worker chat of its own, made by a call in the Back.
+   * The Front turn a chat of a talk reaches, opened by the bot where none
+   * waits, and the Back chat it answers: the wake's `reach`. A subagent of a
+   * Back asks in a worker chat of its own, under the Back. Without it, only a
+   * Back chat with a Front turn waiting is copied.
    */
-  parentOf?(session: string, chat: string): Promise<string | undefined>;
+  reach?(session: string, chat: string): Promise<{ back: string; held: Answering } | undefined>;
+  /** End the Front turn the bot opened for a Back chat where nothing holds it any more: the wake's `settle`. */
+  settle?(backChat: string): Promise<void>;
   /** Say what went wrong, for the operator to read. */
   problem(line: string): void;
 }
@@ -154,24 +157,31 @@ export function botAsk(seams: AskSeams, askIn: AskIn = 'main'): Ask {
       const refused = await seams.send(copy.chat, action);
       if (refused !== undefined) failed(copy, what, refused);
     })().catch((error: unknown) => { failed(copy, what, reason(error)); });
+    answeredIn(copy.backChat);
+  };
+
+  /** One question of a Back's is answered or withdrawn, and a Front turn the bot opened for it may end. */
+  const answeredIn = (backChat: string): void => {
+    const held = seams.main(backChat);
+    if (held === undefined) return;
+    held.questions = Math.max(0, (held.questions ?? 1) - 1);
+    seams.settle?.(backChat).catch((error: unknown) => { seams.problem(`the turn ${held.turnId} was not ended: ${reason(error)}`); });
   };
 
   return {
     asked: async (back, asked, id) => {
       /*
-       * The Back chat the asking chat is, or is under: a subagent's question
-       * is asked in its worker chat, which a call in the Back made, through
-       * any workers between. A few steps, so a loop in the origins ends.
+       * The Back chat the asking chat is, or is under, and the Front turn it
+       * reaches: a subagent's question is asked in its worker chat, and a
+       * question that comes while no turn of the person's waits opens one of
+       * the bot's own.
        */
-      let asker = asked;
-      let held = seams.main(asker);
-      for (let step = 0; held === undefined && seams.parentOf !== undefined && step < 8; step += 1) {
-        const up = await seams.parentOf(back, asker);
-        if (up === undefined || up === asker) break;
-        asker = up;
-        held = seams.main(asker);
-      }
-      if (held === undefined) return;
+      const found = seams.reach !== undefined
+        ? await seams.reach(back, asked)
+        : (() => { const one = seams.main(asked); return one === undefined ? undefined : { back: asked, held: one }; })();
+      if (found === undefined) return;
+      const asker = found.back;
+      const held = found.held;
       let entry: Bag | undefined;
       try { entry = await seams.request(back, id); }
       catch (error) {
@@ -211,6 +221,7 @@ export function botAsk(seams: AskSeams, askIn: AskIn = 'main'): Ask {
       const toolCallId = textOf(call?.['toolCallId']);
       if (toolCallId !== undefined) names.push(toolCallId);
       for (const name of names) copies.set(key(held.session, name), copy);
+      held.questions = (held.questions ?? 0) + 1;
       held.handle.asking?.(entry);
       held.handle.onConfirm = (id_, approved, optionId) => {
         const found = copyOf(held.session, id_);
@@ -260,7 +271,10 @@ export function botAsk(seams: AskSeams, askIn: AskIn = 'main'): Ask {
           copies.delete(at);
         }
       }
-      if (asker !== undefined) seams.main(asker)?.handle.withdrawn?.(id);
+      if (asker !== undefined) {
+        seams.main(asker)?.handle.withdrawn?.(id);
+        answeredIn(asker);
+      }
     },
   };
 }

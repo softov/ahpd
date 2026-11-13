@@ -29,6 +29,12 @@ The tests cover each part, but no test restarts a daemon or draws the Back in a 
 2. While the Back works, stop the test daemon with `ahpd stop`, and start it again with the same command.
 3. Pass: the Front turn is open again after the start, without opening the talk, and the bot's reply lands in that turn. Fail: the turn reads back as interrupted, or no reply comes.
 
+## A background timer
+
+1. Send Ello: `Start a background subagent that posts tick 1 to tick 4 with post_message, 15 seconds apart.`
+2. Pass: the Front turn ends, then each tick shows in the Front as a turn of the bot's own. An approval the subagent needs shows in the Front too.
+3. Pass: when the subagent ends, the Back's reply to its report shows in the Front. Fail: a tick or the reply shows only in the Back.
+
 ## The webhook
 
 1. Make a webhook endpoint for Ello and call it from two threads, `pr-1` and `pr-2`.

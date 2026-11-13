@@ -208,6 +208,8 @@ const SESSION = 'ahp-session:/one';
  * backend is started with and a message names its chat's session by.
  */
 const HELD = SESSION;
+/** A chat of its own for the case of a turn the bot opens. */
+const CHAT_OWN = 'ahp-chat:/own';
 /** The chat with the bot, which the host mints for the session: read off its state by `talkTo`. */
 let CHAT = '';
 
@@ -1051,6 +1053,37 @@ it('keeps a talk under the owner the host recorded where the start has no reader
   await agent.create(start('hook', 'plugin:webhook'));
   await agent.create(start('alone'));
   expect(kept).toEqual([['backer', 'user:ana', 'ahp-session:/ana'], ['backer', undefined, 'ahp-session:/alone']]);
+});
+
+it('opens a turn of the bot\'s own with speak, whose message is the agent\'s, and reads it back after a restart', async () => {
+  const { host, configDir, records } = made({}, ['session:trust']);
+  const client = await anyone(host);
+  await client.handle({ method: 'resourceWrite', params: { uri: 'bot://backer', data: JSON.stringify({ name: 'Backer' }), createOnly: true } });
+  const store = botStore(await records.collection('bots'), await records.collection('bots-gone'), () => {}, { yaml: { parseYaml, stringifyYaml } });
+  await store.ready();
+  const fronts = new Map<string, TurnHandle>();
+  const emitted: Bag[] = [];
+  const start = (): Start => ({
+    uri: HELD, chatUri: CHAT_OWN, settings: { bot: 'backer' }, resume: 'own',
+    schema: () => ({}), emit: (_channel: string, action: Bag) => { emitted.push(action); }, clientToolTimeoutMs: 0,
+  } as Start);
+  const session = await botChatAgent(configDir, store, () => {}, undefined, undefined, fronts).create(start());
+  const front = fronts.get(CHAT_OWN);
+  expect(front).toBeDefined();
+
+  const turnId = front?.speak?.() ?? '';
+  expect(turnId).toMatch(/^bot-/);
+  // A second speak while the turn is open is that same turn.
+  expect(front?.speak?.()).toBe(turnId);
+  expect(emitted[0]).toMatchObject({ type: 'chat/turnStarted', turnId, message: { origin: { kind: 'agent' } } });
+  front?.responsePart('tick 1');
+  front?.complete();
+  expect((session.chatState().turns as Bag[]).map((one) => [one['id'], one['state'], (one['message'] as Bag)['origin']])).toEqual([[turnId, 'complete', { kind: 'agent' }]]);
+
+  const again = await botChatAgent(configDir, store, () => {}).create(start());
+  expect((again.chatState().turns as Bag[]).map((one) => one['id'])).toEqual([turnId]);
+  session.close();
+  expect(fronts.has(CHAT_OWN)).toBe(false);
 });
 
 it('lists the talks whose log ends in a turn a restart left open, and no other', async () => {

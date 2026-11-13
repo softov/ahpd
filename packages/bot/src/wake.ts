@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { reason } from '@ahpd/sdk';
+import { idOf, openLink, reason } from '@ahpd/sdk';
 import { contextBlock, timeWithOffset } from './context.js';
 import { prepareFolder } from './folder.js';
 import { backTitle, CHAT_PROVIDER, NOT_ITS_OWN_FRONT, userOf } from './names.js';
@@ -106,6 +106,18 @@ export interface WakeSeams {
    * checks nothing.
    */
   mayUse?(owner: Owner, provider: string | undefined): boolean;
+  /**
+   * The chat whose tool call made `chat`, read off the `tool` origin in the
+   * session's chat list, or nothing for a chat no call made. A Back's origin
+   * names its Front, and a subagent's worker chat names the Back.
+   */
+  parentOf?(session: string, chat: string): Promise<string | undefined>;
+  /**
+   * The handle of a Front, the `bot-chat` chat `chat`, opening the session and
+   * the chat where the host does not hold them; nothing for a chat that is no
+   * Front.
+   */
+  front?(session: string, chat: string): Promise<TurnHandle | undefined>;
   /** Say what went wrong, for the operator to read. */
   problem(line: string): void;
 }
@@ -128,6 +140,15 @@ export interface Answering {
   chat: string;
   /** True once the Back chat has posted into this turn. */
   posted?: boolean;
+  /**
+   * True for a Front turn the bot opened itself, with no message of the
+   * person's: a post, a question or a turn of the Back's own that came while
+   * no turn waited. It ends when the Back has no turn running and no question
+   * of it is open.
+   */
+  own?: boolean;
+  /** The questions of the Back's copied into this turn and not answered yet. */
+  questions?: number;
   /**
    * The messages this wake sent the back session that no turn of it has taken
    * up yet, by their ids, each with the main chat's steering message it
@@ -228,6 +249,31 @@ export interface Wake {
    * a caller that posted into nothing says so.
    */
   posted(backChat: string, text: string): boolean;
+  /**
+   * The Front turn a chat of a talk reaches: the turn waiting on its Back, or
+   * one the bot opens in the Front where none waits. The chat is the Back or a
+   * worker chat under it, walked up through the `tool` origins, so a Back and
+   * its subagents reach the Front at any time and not only while a message of
+   * the person's waits. Nothing for a chat that is under no Front.
+   */
+  reach(session: string, chat: string): Promise<{ back: string; held: Answering } | undefined>;
+  /**
+   * Add an answer to the Front turn the chat reaches, opening one where none
+   * waits. False for a chat that is under no Front.
+   */
+  post(session: string, chat: string, text: string): Promise<boolean>;
+  /**
+   * A turn of the Back's own ended, one no message of this wake and no person
+   * sent, such as the one the harness starts when a background task ends. Its
+   * last words go to the Front in a turn of the bot's own, as
+   * `mainTurnPostMessageAbsent` says for a turn that did not post.
+   */
+  spoke(session: string, chat: string, text: string, failed?: string): Promise<void>;
+  /**
+   * End the Front turn the bot opened for `backChat` where nothing holds it
+   * any more: no Back turn runs and no question of it is open.
+   */
+  settle(backChat: string): Promise<void>;
   /**
    * End the main turn one back session was answering, because the session's
    * turn is over.
@@ -416,7 +462,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post', cont
         ...(provider === undefined ? {} : { provider }),
         ...(bot.preset !== undefined || bot.model === undefined ? {} : { model: bot.model }),
         title: backTitle(bot.id, owner),
-        tools: ['post_message'],
+        tools: ['post_message', 'send_message'],
         origin: { kind: 'tool', chat: message.chat, toolCallId: callId },
       });
     })();
@@ -497,8 +543,100 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post', cont
     held.handle.complete();
   };
 
+  /** The Front turns the bot is opening, by Back chat, so two posts at once open one. */
+  const opening = new Map<string, Promise<Answering | undefined>>();
+
+  /** The bot a talk is with, by name, for a notice; its slug where the store has it no more. */
+  const nameOf = (session: string): string => {
+    const slug = started.get(session);
+    return slug === undefined ? '' : seams.store.get(slug)?.name ?? slug;
+  };
+
+  /** The Front turn `back` answers, opened by the bot in `front` where none waits. */
+  const openFor = (session: string, back: string, front: TurnHandle): Promise<Answering | undefined> => {
+    const running = opening.get(back);
+    if (running !== undefined) return running;
+    const made = (async (): Promise<Answering | undefined> => {
+      const waiting = answering.get(back);
+      if (waiting !== undefined) return waiting;
+      const turnId = front.speak?.();
+      if (turnId === undefined) return undefined;
+      /*
+       * A turn of the person's that is open but not yet handed to the Back -
+       * its message on its way to the wake - is joined, and its own message
+       * ends it as before. Only a turn the bot opened is the bot's to end.
+       */
+      const held: Answering = {
+        session, turnId, handle: front, bot: nameOf(session), chat: back, waiting: new Map(),
+        ...(turnId.startsWith('bot-') ? { own: true } : {}),
+      };
+      answering.set(back, held);
+      return held;
+    })();
+    opening.set(back, made);
+    const done = (): void => { if (opening.get(back) === made) opening.delete(back); };
+    made.then(done, done);
+    return made;
+  };
+
+  const reach = async (session: string, chat: string): Promise<{ back: string; held: Answering } | undefined> => {
+    let at = chat;
+    // A few steps, so a loop in the origins ends.
+    for (let step = 0; step < 8; step += 1) {
+      const held = answering.get(at);
+      if (held !== undefined) return { back: at, held };
+      const parent = await seams.parentOf?.(session, at);
+      if (parent === undefined || parent === at) return undefined;
+      const front = await seams.front?.(session, parent);
+      if (front !== undefined) {
+        const opened = await openFor(session, at, front);
+        return opened === undefined ? undefined : { back: at, held: opened };
+      }
+      at = parent;
+    }
+    return undefined;
+  };
+
+  const settle = async (backChat: string): Promise<void> => {
+    const held = answering.get(backChat);
+    if (held?.own !== true || held.waiting.size > 0 || (held.questions ?? 0) > 0) return;
+    let looked: Looked;
+    try { looked = await seams.look(backChat); }
+    catch { return; }
+    // A turn running in the Back ends the Front turn when it ends.
+    if (looked.turn !== undefined) return;
+    if (answering.get(backChat) !== held || (held.questions ?? 0) > 0) return;
+    answering.delete(backChat);
+    held.handle.complete();
+  };
+
   return {
     main: (backChat) => answering.get(backChat),
+
+    reach,
+
+    post: async (session, chat, text) => {
+      const found = await reach(session, chat);
+      if (found === undefined) return false;
+      found.held.posted = true;
+      found.held.handle.responsePart(text);
+      await settle(found.back);
+      return true;
+    },
+
+    spoke: async (session, chat, text, failed) => {
+      // Only words to say: a turn that said nothing opens nothing, and a bot
+      // whose option keeps a turn without a post silent says nothing either.
+      if (failed === undefined && (text === '' || (absent !== 'post' && absent !== 'postNotice'))) return;
+      // The chat is a Back: its origin names a Front. A worker's turn is not.
+      const parent = await seams.parentOf?.(session, chat);
+      if (parent === undefined || await seams.front?.(session, parent) === undefined) return;
+      const found = await reach(session, chat);
+      if (found === undefined) return;
+      finished(found.back, text, failed);
+    },
+
+    settle,
 
     stopped: async (session, turnId) => {
       // What is on its way to a Back chat for this turn is dropped.
@@ -648,6 +786,8 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post', cont
          */
         const said = contextIn === 'meta' ? message.text : `${contextBlock([
           ['main chat', message.chat],
+          // The Back's own address, which a subagent sends to with send_message.
+          ['this chat', openLink(message.session, CHAT_PROVIDER, idOf(back))],
           ['from', userOf(owner)],
           ['time', timeWithOffset(new Date())],
         ])}\n\n${message.text}`;

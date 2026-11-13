@@ -207,7 +207,7 @@ it('copies a question a subagent of the Back asks in its worker chat, and sends 
     main: (chat) => (chat === BACK_CHAT ? held : undefined),
     request: async (at, id) => (at === MAIN && id === 'toolu_run' ? { ...approval(), chat: worker } : undefined),
     send: async (chat, action) => { toBack.push({ chat, action }); return undefined; },
-    parentOf: async (_at, chat) => (chat === worker ? BACK_CHAT : undefined),
+    reach: async (_at, chat) => (chat === worker ? { back: BACK_CHAT, held } : undefined),
     problem: () => {},
   });
   await ask.asked(MAIN, worker, 'toolu_run');
@@ -227,7 +227,7 @@ it('takes a subagent\'s question out of the main chat when the worker withdraws 
     main: (chat) => (chat === BACK_CHAT ? held : undefined),
     request: async (at, id) => (at === MAIN && id === 'toolu_run' ? { ...approval(), chat: worker } : undefined),
     send: async () => undefined,
-    parentOf: async (_at, chat) => (chat === worker ? BACK_CHAT : undefined),
+    reach: async (_at, chat) => (chat === worker ? { back: BACK_CHAT, held } : undefined),
     problem: () => {},
   });
   await ask.asked(MAIN, worker, 'toolu_run');

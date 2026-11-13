@@ -100,6 +100,8 @@ read bot://<slug> -> the reader's session in `session`
 | A talk is kept by the session's owner, and every root owner is one talker, `root` | Softov, 2026-11-13, chose "Count by owner" | 01 |
 | A plugin's turn in a session it does not own is checked and charged as the session owner's | Softov, 2026-11-13, chose "The talk's owner" | 03 |
 | A Back chat is titled `@main/<bot>/<person>`, with `main` fixed for now | Softov, 2026-11-13, wrote "@main/telly/softov" | 03 |
+| The Front is a chat: the Back reaches it at any time through its origin, and a bot turn with origin `agent` holds what comes while no turn waits | Softov, 2026-11-13, chose "In bot-talk now" | 03 |
+| A subagent messages its Back with `send_message`, offered in bot talks where `sessionTools` is off | Softov, 2026-11-13, chose "Offer send_message in bot talks" | 03 |
 
 ## Proposed architecture
 

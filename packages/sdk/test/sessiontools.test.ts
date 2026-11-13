@@ -518,6 +518,27 @@ describe('the set itself', () => {
    * a chat this host does not hold - a worker chat - and a folder it cannot
    * cut a tree from.
    */
+  it('lets a subagent send_message to the chat it runs under, and refuses the chat a call is made in', async () => {
+    const send = sessionTools().find((one) => one.definition.name === 'send_message');
+    if (send?.run === undefined) throw new Error('no send_message');
+    const sent = vi.fn(async () => ({ action: 'queued', messageId: 'm1', revision: 1, status: 'pending' }));
+    const at = (over: Partial<ToolCall>): ToolCall => ({
+      session: 'ahp-session:/talk', chat: 'ahp-chat:/back', turn: () => 't1', may: () => true, refusal: () => 'refused',
+      sessions: async () => [{ resource: 'ahp-session:/talk', provider: 'claude', title: 'Talk' }],
+      chats: () => [{ resource: 'ahp-chat:/back' }],
+      send: sent,
+      ...over,
+    } as unknown as ToolCall);
+    // The Back's own call to the Back is a call to the chat it is made in.
+    await expect(send.run({ session: 'ahp-session:/talk', message: 'hi' }, at({})))
+      .rejects.toThrow('refusing to send a message to the current chat');
+    expect(sent).not.toHaveBeenCalled();
+    // A subagent's call, made in its worker chat, reaches the Back.
+    const said = await send.run({ session: 'ahp-session:/talk', message: 'tick 1' }, at({ from: 'ahp-chat:/worker' }));
+    expect(JSON.parse(said)).toMatchObject({ action: 'queued' });
+    expect(sent).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses isolate_session with no turn, with an argument, or from a chat it cannot move', async () => {
     const isolate = sessionTools().find((one) => one.definition.name === 'isolate_session');
     if (isolate?.run === undefined) throw new Error('no isolate_session');

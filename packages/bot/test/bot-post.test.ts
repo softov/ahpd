@@ -21,6 +21,7 @@ import type { Bag } from '../../sdk/src/types/common.js';
 import type { ToolCall } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Owner } from '../../sdk/src/types/usage.js';
+import { botAsk } from '../src/ask.js';
 
 /*
  * The tool a back session answers its main chat with.
@@ -82,6 +83,10 @@ interface Recorded {
   endings: string[];
   /** What the turn failed with. */
   failures: string[];
+  /** The turns the bot opened in this chat with `speak`, by id. */
+  spoken: string[];
+  /** The requests copied into the turn, by id. */
+  asked: string[];
 }
 
 const turn = (): Recorded => {
@@ -90,7 +95,15 @@ const turn = (): Recorded => {
   const notices: string[] = [];
   const endings: string[] = [];
   const failures: string[] = [];
+  const spoken: string[] = [];
+  const asked: string[] = [];
   const handle: TurnHandle = {
+    asking: (entry) => { asked.push(String(entry['id'])); },
+    speak: () => {
+      const id = `bot-${spoken.length + 1}`;
+      spoken.push(id);
+      return id;
+    },
     complete: (text) => {
       if (text === undefined) endings.push('ended');
       else replies.push(text);
@@ -99,7 +112,7 @@ const turn = (): Recorded => {
     notice: (text) => { notices.push(text); },
     fail: (message) => { failures.push(message); },
   };
-  return { handle, replies, posts, notices, endings, failures };
+  return { handle, replies, posts, notices, endings, failures, spoken, asked };
 };
 
 /**
@@ -110,6 +123,12 @@ const turn = (): Recorded => {
  */
 /** The Back chat the first wake starts, which these cases post from. */
 const BACK = 'ahp-chat:/back-1';
+
+/** The Front every message here is said in. */
+const FRONT = 'ahp-chat:/main';
+
+/** A subagent's worker chat under the Back, which a call in the Back made. */
+const WORKER = 'ahp-chat:/worker';
 
 /** A call of the tool from one chat of the talk's session. */
 const called = (chat: string): ToolCall => ({ session: CHAT, chat } as unknown as ToolCall);
@@ -134,6 +153,10 @@ async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'pos
   let minted = 0;
 
   const sessions: BotSessions = { owner: async (uri) => owners.get(uri) };
+  /** The Front's handle, which a post reaches when no message of the person's waits. */
+  const front = turn();
+  /** The Back chats with a turn running, which hold a turn the bot opened. */
+  const running = new Set<string>();
 
   const wake = botWake({
     store,
@@ -151,7 +174,9 @@ async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'pos
       backs.set(origin.chat, uri);
       return uri;
     },
-    look: async (chat) => ({ chat }),
+    look: async (chat) => ({ chat, ...(running.has(chat) ? { turn: 'r-running' } : {}) }),
+    parentOf: async (_session, chat) => (chat === WORKER ? BACK : [...backs].find(([, back]) => back === chat)?.[0]),
+    front: async (_session, chat) => (chat === FRONT ? front.handle : undefined),
     // What the message becomes in the Back is the wake's, and what it carries
     // is not what a post answers: nothing here is refused.
     send: async (_channel, action) => {
@@ -161,7 +186,7 @@ async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'pos
     problem: () => {},
   }, absent);
 
-  return { wake, post: postMessage(wake), sent };
+  return { wake, post: postMessage(wake), sent, front, running };
 }
 
 /**
@@ -206,10 +231,74 @@ it('posts every call of one back turn, and ends the main turn once with that tur
   expect(said.notices).toEqual([]);
   expect(one.wake.main(BACK)).toBeUndefined();
 
-  // A post after the turn ended has nothing to post to.
-  expect(await one.post.run({ text: 'and again' }, called(BACK)))
-    .toBe('There is no main chat waiting on this chat, so there is nothing to post to.');
+  // A post after the turn ended goes into a turn the bot opens in the Front,
+  // which ends at once, as the Back runs no turn that would end it.
+  expect(await one.post.run({ text: 'and again' }, called(BACK))).toBe('Posted to the main chat.');
   expect(said.posts).toEqual(['working on it', 'the answer']);
+  expect(one.front.spoken).toEqual(['bot-1']);
+  expect(one.front.posts).toEqual(['and again']);
+  expect(one.front.endings).toEqual(['ended']);
+  expect(one.wake.main(BACK)).toBeUndefined();
+});
+
+it('posts a subagent\'s text from its worker chat into a turn the bot opens, while the Back runs no turn', async () => {
+  const one = await sitting();
+  const said = await woken(one);
+  one.wake.finished(BACK, 'started the timer');
+  expect(said.replies).toEqual(['started the timer']);
+
+  expect(await one.post.run({ text: 'tick 1' }, called(WORKER))).toBe('Posted to the main chat.');
+  expect(await one.post.run({ text: 'tick 2' }, called(WORKER))).toBe('Posted to the main chat.');
+
+  // Each tick is a turn of the bot's own, ended as soon as it is said.
+  expect(one.front.spoken).toEqual(['bot-1', 'bot-2']);
+  expect(one.front.posts).toEqual(['tick 1', 'tick 2']);
+  expect(one.front.endings).toEqual(['ended', 'ended']);
+});
+
+it('keeps the turn the bot opened while the Back runs a turn, and ends it with that turn', async () => {
+  const one = await sitting();
+  const said = await woken(one);
+  one.wake.finished(BACK, 'done');
+  expect(said.replies).toEqual(['done']);
+
+  one.running.add(BACK);
+  expect(await one.post.run({ text: 'the subagent finished' }, called(BACK))).toBe('Posted to the main chat.');
+  expect(one.front.endings).toEqual([]);
+  expect(one.wake.main(BACK)).toMatchObject({ turnId: 'bot-1', own: true });
+
+  one.running.delete(BACK);
+  one.wake.finished(BACK, 'the last words');
+  // It posted, so the end adds no last words.
+  expect(one.front.posts).toEqual(['the subagent finished']);
+  expect(one.front.replies).toEqual([]);
+  expect(one.front.endings).toEqual(['ended']);
+});
+
+it('says the last words of a turn the Back ran on its own in a turn the bot opens, and nothing of a worker\'s', async () => {
+  const one = await sitting();
+  const said = await woken(one);
+  one.wake.finished(BACK, 'started');
+  expect(said.replies).toEqual(['started']);
+
+  await one.wake.spoke(CHAT, WORKER, 'a worker said this');
+  expect(one.front.spoken).toEqual([]);
+
+  await one.wake.spoke(CHAT, BACK, '');
+  expect(one.front.spoken).toEqual([]);
+
+  await one.wake.spoke(CHAT, BACK, 'the timer is done: 4 ticks');
+  expect(one.front.spoken).toEqual(['bot-1']);
+  expect(one.front.replies).toEqual(['the timer is done: 4 ticks']);
+});
+
+it('keeps a Back\'s own turn out of the Front where mainTurnPostMessageAbsent is silence', async () => {
+  const one = await sitting(bot(), 'silence');
+  await woken(one);
+  one.wake.finished(BACK, 'started');
+
+  await one.wake.spoke(CHAT, BACK, 'the timer is done');
+  expect(one.front.spoken).toEqual([]);
 });
 
 it('keeps a post through a steer into the same main turn', async () => {
@@ -237,10 +326,10 @@ it('refuses a chat that is not a Back', async () => {
   const one = await sitting();
   const said = await woken(one);
 
-  // A chat this wake never woke has no Front behind it, and the tool
-  // says so rather than throwing: the model can go on with its own turn.
+  // A chat under no Front has nothing to post to, and the tool says so rather
+  // than throwing: the model can go on with its own turn.
   expect(await one.post.run({ text: 'the answer' }, called('ahp-chat:/stray')))
-    .toBe('There is no main chat waiting on this chat, so there is nothing to post to.');
+    .toBe('This chat is not under a main chat, so there is nothing to post to.');
   expect(said.replies).toEqual([]);
   expect(one.wake.main(BACK)).toMatchObject({ turnId: 't1' });
 });
@@ -398,7 +487,7 @@ it('is offered only to a session that names it, with the rule that it is the rep
   // the answer they are waiting on.
   expect(tool.confirm).toBe(false);
   expect(tool.instruction).toContain('main chat');
-  expect(tool.instruction).toMatch(/send_message starts a turn in another session and does not reply/);
+  expect(tool.instruction).toMatch(/send_message starts a turn in another chat and does not reach the person/);
 });
 
 it('asks with the question tool, and in the post when there is none', () => {
@@ -448,4 +537,35 @@ it('reports a value outside the table, and loads anyway', () => {
   // A value the table does not name is reported rather than thrown: the plugin
   // still loads, and the main turn is answered as post, which is the default.
   expect(problems).toEqual([expect.stringContaining('mainTurnPostMessageAbsent is "shout"')]);
+});
+
+it('copies a subagent\'s question asked while no turn waits into a turn the bot opens, and ends it once answered', async () => {
+  const one = await sitting();
+  const said = await woken(one);
+  one.wake.finished(BACK, 'started');
+  expect(said.replies).toEqual(['started']);
+  const toBack: Bag[] = [];
+  const entry: Bag = {
+    id: 'toolu_run', chat: WORKER, kind: 'toolConfirmation', turnId: 'w1',
+    toolCall: { toolCallId: 'toolu_run', toolName: 'Bash', displayName: 'Bash', status: 'pending-confirmation', confirmationTitle: 'Run in terminal?', invocationMessage: 'Run it' },
+  };
+  const ask = botAsk({
+    main: (chat) => one.wake.main(chat),
+    request: async () => entry,
+    send: async (chat, action) => { toBack.push({ chat, action }); return undefined; },
+    reach: (session, chat) => one.wake.reach(session, chat),
+    settle: (backChat) => one.wake.settle(backChat),
+    problem: () => {},
+  });
+
+  await ask.asked(CHAT, WORKER, 'toolu_run');
+  expect(one.front.spoken).toEqual(['bot-1']);
+  expect(one.front.asked).toEqual(['toolu_run']);
+  // The turn stays open while the question is.
+  expect(one.front.endings).toEqual([]);
+
+  one.front.handle.onConfirm?.('toolu_run', true, 'allow-once');
+  await new Promise((done) => { setTimeout(done, 5); });
+  expect(toBack).toMatchObject([{ chat: WORKER, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_run', approved: true } }]);
+  expect(one.front.endings).toEqual(['ended']);
 });

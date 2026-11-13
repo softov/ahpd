@@ -39,14 +39,14 @@ import type { Wake } from './wake.js';
  * is that a question is asked with the harness's tool, which is what task 06
  * shows in the main chat, and a harness with none asks in the text it posts.
  */
-export const POST_INSTRUCTION = 'A person is waiting in the main chat for your reply to the message that woke this session. Only post_message answers them: each call adds its text to their reply, and the reply ends when your turn ends. When you need an answer from them before you can reply, ask with your question tool: it puts the question in the main chat and brings their answer back here. A harness with no question tool asks in the text it posts. send_message starts a turn in another session and does not reply to the person waiting, so do not use it to answer.';
+export const POST_INSTRUCTION = 'A person talks to you in the main chat. Only post_message reaches them: each call adds its text to the main chat, while they wait on your reply or later, and a subagent you start can call it too. When you need an answer from them, ask with your question tool: it puts the question in the main chat and brings their answer back here. A harness with no question tool asks in the text it posts. send_message starts a turn in another chat and does not reach the person in the main chat. A subagent of yours messages you with send_message to the `this chat` link of your context.';
 
 export function postMessage(wake: Wake): HostTool {
   return {
     definition: {
       name: 'post_message',
       title: 'Post Message',
-      description: 'Post to the main chat that woke this session. The text is added to the turn the person is waiting on, which ends when this session\'s turn ends.',
+      description: 'Post to the main chat the person talks to you in. The text is added to the turn they are waiting on, or to a turn of your own where none waits, so you and your subagents can post at any time.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -78,14 +78,18 @@ export function postMessage(wake: Wake): HostTool {
      * chat that is no longer waiting is a call the session can recover from -
      * it says what happened in its own reply - and not a failure of the tool.
      */
-    run: (input, at) => {
+    run: async (input, at) => {
       const asked = input['text'];
       const text = typeof asked === 'string' ? asked.trim() : '';
       if (text === '') return 'What should the reply say? Give post_message the text to post.';
-      // The calling chat is the Back a Front turn waits on, or no chat at all:
-      // a chat cannot name another chat's Front.
-      if (!wake.posted(at.chat, text)) {
-        return 'There is no main chat waiting on this chat, so there is nothing to post to.';
+      /*
+       * The calling chat is a Back, or a worker chat under it, and its Front
+       * is the one its origin names: a chat cannot name another chat's Front.
+       * A post while no turn of the person's waits is said in a turn of the
+       * bot's own.
+       */
+      if (!await wake.post(at.session, at.chat, text)) {
+        return 'This chat is not under a main chat, so there is nothing to post to.';
       }
       return 'Posted to the main chat.';
     },

@@ -83,7 +83,7 @@ export { nestedAgent } from './sessions/nested.js';
 export type { NestedAsked, NestedHost, NestedOptions, NestedStarted } from './sessions/nested.js';
 export { resolveNeeds, expandHome, partTarget, PART_ROOT, machinePathOf, hostPathOf } from './machines/machine.js';
 export type { NeedSources } from './machines/machine.js';
-export { sessionTools, wakeupTool } from './tools/session.js';
+export { openLink, sessionTools, wakeupTool } from './tools/session.js';
 export { fillWords } from './automations/wakemessage.js';
 export { artifactTools, ARTIFACTS_META } from './tools/artifacts.js';
 export { gitWorktrees, worktreesOf, worktreeFor } from './repo/worktrees.js';

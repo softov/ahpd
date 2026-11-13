@@ -73,7 +73,7 @@ const message = (turnId: string, text: string, session = CHAT, chat = MAIN): Cha
  * `bot-context.test.ts`; here it is only in the way of the words.
  */
 const carrying = (said: string, main = MAIN): RegExp =>
-  new RegExp(`^<context>\\nmain chat: ${main}\\nfrom: ana\\ntime: [^\\n]+\\n</context>\\n\\n${said}$`);
+  new RegExp(`^<context>\\nmain chat: ${main}\\nthis chat: agent-host-session://bot-chat/[^\\n]+\\nfrom: ana\\ntime: [^\\n]+\\n</context>\\n\\n${said}$`);
 
 /** A handle over a Front turn, and what was said through it. */
 interface Recorded {
@@ -250,7 +250,7 @@ it('starts a Back chat in the Front\'s session on the bot\'s provider and model,
     title: '@main/backer/ana',
     // `post_message` is opt-in, so a chat that does not name it is never
     // offered it.
-    tools: ['post_message'],
+    tools: ['post_message', 'send_message'],
     origin: { kind: 'tool', chat: MAIN },
   });
   // The origin names the call the Front turn shows, which links the Back.

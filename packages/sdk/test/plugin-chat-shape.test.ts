@@ -50,7 +50,7 @@ const POST: HostTool = {
 };
 
 /** One host, one plugin with `post_message`, and the starts its backend saw, by chat. */
-function shaping(store?: SessionStore) {
+function shaping(store?: SessionStore, more: Partial<HostOptions> = {}) {
   const sessions = store ?? memorySessions();
   const base = echo({ path: DIR, pace: 0 });
   const starts: Start[] = [];
@@ -58,7 +58,7 @@ function shaping(store?: SessionStore) {
   const { host: plugin, contribution } = pluginHost('bots', context());
   plugin.registerTool(POST);
   const { options } = foldHostOptions({
-    path: DIR, agents: [agent], ...machine(), sessions, users: directory({ soft: ['session:*', 'chat:*'] }),
+    path: DIR, agents: [agent], ...machine(), sessions, users: directory({ soft: ['session:*', 'chat:*'] }), ...more,
   } as HostOptions, [contribution]);
   return { plugin, host: createHost(options), sessions, starts };
 }
@@ -257,4 +257,19 @@ it('hands the backend the session\'s owner on every start, a chat of the session
   await until(() => added(seen, chat) !== undefined, 'the chat was added');
 
   expect(starts.map((one) => one.owner)).toEqual(['user:soft', 'user:soft']);
+});
+
+it('offers a session tool a plugin named for its chat, where the session tools are off, and to that chat alone', async () => {
+  const { hostTools } = await import('../src/tools/index.js');
+  const { plugin, host, starts } = shaping(undefined, { sessionTools: false, tools: hostTools() });
+  await watch(host);
+  const session = await plugin.startSession({ owner: 'user:soft', workingDirectory: DIR });
+  const { seen, state } = await watch(host, session);
+  const front = state?.chats[0]?.resource as string;
+
+  const chat = await plugin.startChat(session, { tools: ['post_message', 'send_message'] });
+  await until(() => added(seen, chat) !== undefined, 'the chat was added');
+
+  expect(toolsOf(starts, chat)).toEqual(expect.arrayContaining(['post_message', 'send_message']));
+  expect(toolsOf(starts, front)).not.toContain('send_message');
 });

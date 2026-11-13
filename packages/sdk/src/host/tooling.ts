@@ -545,13 +545,15 @@ export function createTooling(ctx: HostContext): Tooling {
    * Less the session tools, too, where its provider is not offered them.
    *
    * With a chat, the opt-in tools its maker named for that chat alone are
-   * offered there as well.
+   * offered there as well, and so is a session tool its maker named, where
+   * the session tools are off: a bot's Back is offered `send_message`.
    */
   const contributingTo = (uri: string, provider?: string, chatUri?: string): HostTool[] => {
-    const named = [...namedBy(uri), ...(chatUri === undefined ? [] : ctx.chatTools.get(chatUri) ?? [])];
+    const forChat = chatUri === undefined ? [] : ctx.chatTools.get(chatUri) ?? [];
+    const named = [...namedBy(uri), ...forChat];
     return ctx.contributing.filter((one) =>
       (one.optIn !== true || named.includes(one.definition.name))
-      && (sessionToolsFor(uri, provider) || !SESSION_TOOL_NAMES.includes(one.definition.name))
+      && (sessionToolsFor(uri, provider) || !SESSION_TOOL_NAMES.includes(one.definition.name) || forChat.includes(one.definition.name))
       && (shellToolsFor() || !SHELL_TOOL_NAMES.includes(one.definition.name)));
   };
   /**
@@ -2194,9 +2196,24 @@ export function createTooling(ctx: HostContext): Tooling {
     ? sessionFlag(ctx, session, Status.IsArchived, true, { type: 'session/isArchivedChanged', isArchived: true })
     : chatFlag(ctx, session, chat, Status.IsArchived, true, { type: 'chat/isArchivedChanged', isArchived: true });
 
+  /**
+   * The worker chat of `session` whose running turn holds the call
+   * `toolCallId`, which a subagent made in the backend of the chat it is under.
+   */
+  const workerOfCall = (session: string, toolCallId: string | undefined): string | undefined => {
+    if (toolCallId === undefined) return undefined;
+    for (const [worker, ref] of ctx.subagents) {
+      if (ref.session !== session) continue;
+      const turn = ctx.stateOf(worker)?.activeTurn as Bag | undefined;
+      const parts = Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [];
+      if (parts.some((part) => (part.toolCall as Bag | undefined)?.toolCallId === toolCallId)) return worker;
+    }
+    return undefined;
+  };
   const toolContext = (uri: string, chatUri: string, provider?: string, call?: ToolCallFacts): ToolCall => ({
     session: uri,
     chat: chatUri,
+    ...(() => { const from = workerOfCall(uri, call?.toolCallId); return from === undefined ? {} : { from }; })(),
     ...providerOf(uri, provider),
     ...(call?.toolCallId === undefined ? {} : { toolCallId: call.toolCallId }),
     ...(call?.opened === undefined ? {} : { opened: call.opened }),

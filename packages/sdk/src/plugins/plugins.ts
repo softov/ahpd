@@ -28,6 +28,7 @@ import type { Catalogs } from '../i18n.js';
 import { idOf, schemeOf } from '../sessions/catalog.js';
 import { frozenCopy } from '../utils/frozen.js';
 import { holds, OPERATIONS } from '../access/users.js';
+import { SESSION_TOOL_NAMES } from '../tools/session.js';
 import { grantEntries } from '../host/root.js';
 import { createPair } from '../utils/pair.js';
 import { isRecordPath, isRecordSlug, RECORD_PATH, RECORD_SLUG } from '../resources/records.js';
@@ -1614,11 +1615,11 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
      */
     startChat(session, wanted) {
       const asked = checkChatRequest(wanted, by);
-      // A chat is offered only this plugin's own tools: another plugin's tool
-      // is that plugin's to offer.
-      const foreign = asked.tools?.find((name) => !tools.has(name));
+      // A chat is offered only this plugin's own tools, and the host's session
+      // tools: another plugin's tool is that plugin's to offer.
+      const foreign = asked.tools?.find((name) => !tools.has(name) && !SESSION_TOOL_NAMES.includes(name));
       if (foreign !== undefined) {
-        throw new Error(miss(by, 'startChat', `tools ${foreign}`, 'the name of a tool this plugin registered'));
+        throw new Error(miss(by, 'startChat', `tools ${foreign}`, 'the name of a tool this plugin registered, or of a session tool'));
       }
       const start = starts.startChat;
       if (start === undefined) {

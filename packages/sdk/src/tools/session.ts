@@ -1176,7 +1176,10 @@ export const sessionTools = (): HostTool[] => [
       }
       const chats = at.chats(found.session.resource);
       const target = found.chatId === undefined ? chats[0]?.resource : chats.find((one) => idOf(one.resource) === found.chatId)?.resource;
-      if (at.chat !== undefined && target === at.chat)
+      // The chat the call was made in: a subagent's own, where a subagent made
+      // it, so a subagent may message the chat it runs under.
+      const current = at.from ?? at.chat;
+      if (current !== undefined && target === current)
         throw new Error(`Invalid ${tool} input: refusing to send a message to the current chat.`);
       const messageId = request.messageId ?? crypto.randomUUID();
       // A new message is the first revision of its life; a replacement is the

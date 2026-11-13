@@ -5,6 +5,7 @@ import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { botAsk } from './ask.js';
 import { botCatalogue, CATALOGUE_SCHEME } from './catalogue.js';
 import { botChatAgent, openTalks } from './chat.js';
+import type { TurnHandle } from './chat.js';
 import { prepareAgentsTemplate } from './folder.js';
 import { backSessions, BOTS_DIR, frontSessions, frontsOf, LEGACY_CHATS, LEGACY_SESSIONS, sessionsOf } from './names.js';
 import { postMessage } from './post.js';
@@ -638,6 +639,22 @@ export const apply: Plugin['apply'] = (host, options) => {
    * The wake: every turn a chat with a bot begins, and every message steered
    * into an open one, goes to the back session the bot's record names.
    */
+  /*
+   * Every Front open in this process, by chat: the handle a Back reaches its
+   * Front through when no message of the person's waits. `bot-chat` keeps it.
+   */
+  const frontHandles = new Map<string, TurnHandle>();
+  /** The chat whose tool call made `chat`, read off its `tool` origin in the session's chat list. */
+  const parentOf = async (session: string, chat: string): Promise<string | undefined> => {
+    const { channels } = await connection();
+    return await channels.hold(session, (state) => {
+      const chats = state?.['chats'];
+      if (!Array.isArray(chats)) return undefined;
+      const found = chats.find((one: unknown) => (one as Bag | undefined)?.['resource'] === chat) as Bag | undefined;
+      const origin = found?.['origin'] as Bag | undefined;
+      return origin?.['kind'] === 'tool' && typeof origin['chat'] === 'string' ? origin['chat'] : undefined;
+    });
+  };
   const wake = botWake({
     store,
     fronts,
@@ -676,6 +693,22 @@ export const apply: Plugin['apply'] = (host, options) => {
     },
     send,
     mayUse,
+    parentOf,
+    /*
+     * A Front's handle, the host bringing the talk back where it does not hold
+     * it: a subscribe of the session restores it, and one of the chat starts
+     * the chat, which puts its handle here.
+     */
+    front: async (session, chat) => {
+      const open = frontHandles.get(chat);
+      if (open !== undefined) return open;
+      const { channels } = await connection();
+      const front = await channels.hold(session, (state) => state?.['defaultChat']);
+      // Only a talk's chat is a Front, and its session is the `bot-chat` one.
+      if (front === undefined) return undefined;
+      await channels.hold(chat, () => undefined);
+      return frontHandles.get(chat);
+    },
     problem: (line) => { host.problem(`${name}: ${line}`); },
   }, absent, contextIn);
   /*
@@ -705,16 +738,8 @@ export const apply: Plugin['apply'] = (host, options) => {
       return found === undefined ? undefined : found as Bag;
     },
     send,
-    parentOf: async (session, chat) => {
-      const { channels } = await connection();
-      return await channels.hold(session, (state) => {
-        const chats = state?.['chats'];
-        if (!Array.isArray(chats)) return undefined;
-        const found = chats.find((one: unknown) => (one as Bag | undefined)?.['resource'] === chat) as Bag | undefined;
-        const origin = found?.['origin'] as Bag | undefined;
-        return origin?.['kind'] === 'tool' && typeof origin['chat'] === 'string' ? origin['chat'] : undefined;
-      });
-    },
+    reach: (session, chat) => wake.reach(session, chat),
+    settle: (backChat) => wake.settle(backChat),
     problem: (line) => { host.problem(`${name}: ${line}`); },
   }, askIn);
   host.on('input_needed_set', (event) => {
@@ -767,7 +792,25 @@ export const apply: Plugin['apply'] = (host, options) => {
       wake.taken(event.channel, event.turnId, event.queuedMessageId);
     }
     const held = wake.main(event.channel);
-    if (held === undefined || event.channel !== held.chat) return;
+    /*
+     * A turn no Front turn waits on, that nobody sent: a Back's own turn, such
+     * as the one the harness starts when a background task ends. Its words go
+     * to the Front in a turn of the bot's own. One a person typed in the Back
+     * has a sender and stays there, and so does a stopped one.
+     */
+    if (held === undefined) {
+      if (event.sender !== undefined || event.reason.kind === 'cancelled') return;
+      const failed = event.reason.kind === 'error' || event.reason.kind === 'rejected' ? event.reason.error.message : undefined;
+      void (async (): Promise<void> => {
+        const { channels } = await connection();
+        const text = await channels.hold(event.channel, (state) => textOf(state, event.turnId));
+        await wake.spoke(event.session, event.channel, text, failed);
+      })().catch((error: unknown) => {
+        host.problem(`${name}: the end of turn ${event.turnId} in ${event.channel} was not said in its Front: ${reason(error)}`);
+      });
+      return;
+    }
+    if (event.channel !== held.chat) return;
     /*
      * Whether this is still the main turn waiting when the read comes back: a
      * message that arrived meanwhile holds its own turn in the same chat, and
@@ -829,5 +872,5 @@ export const apply: Plugin['apply'] = (host, options) => {
     wake.stopped(session, turnId).catch((error: unknown) => {
       host.problem(`${name}: the work behind ${turnId} in ${session} was not stopped: ${reason(error)}`);
     });
-  }, talks));
+  }, talks, frontHandles));
 };

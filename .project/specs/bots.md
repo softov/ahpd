@@ -59,7 +59,17 @@ WHEN a message arrives in the Front, which is the default chat of a talk
 THEN the plugin sends it to the Back: the chat of the same session whose `tool` origin names the Front
 AND starts the Back with `startChat` when there is none, on the preset, or on the provider and the model.
 The origin of a new Back names the `subagent` call that the Front turn shows.
-The Back gets the tool `post_message`, and `post_message` posts only into the Front turn that the calling chat answers.
+The Back gets the tools `post_message` and `send_message`. `post_message` posts only into the Front that the origin of the Back names.
+
+### The Back reaches the Front at any time
+
+WHEN the Back, or a subagent of the Back, posts or asks a question
+AND no Front turn waits
+THEN the plugin opens a Front turn of the bot's own, with message origin `agent`
+AND the post or the question lands in that turn.
+WHEN the Back runs a turn of its own that no message started
+THEN its last words land in a Front turn of the bot's own.
+A turn that a person types in the Back stays in the Back.
 A bot that names no agent gets a Back on the default agent of the host.
 
 ### A restart during a reply

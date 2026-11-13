@@ -196,7 +196,7 @@ it('puts the context block in front of a turn that wakes a session', async () =>
   // the three lines the wake knows about the message.
   expect(rest).toEqual([]);
   expect(words).toBe('hello');
-  expect(block).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nfrom: ana\ntime: [^\n]+\n<\/context>$/);
+  expect(block).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nthis chat: agent-host-session:\/\/bot-chat\/[^\n]+\nfrom: ana\ntime: [^\n]+\n<\/context>$/);
   expect(block).toMatch(/time: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/m);
 });
 
@@ -227,7 +227,7 @@ it('puts the context block in front of a message the main chat steers into its o
   const action = one.sent[1]?.action ?? {};
   expect(action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'queued' });
   const text = textOf(action);
-  expect(text).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nfrom: ana\ntime: [^\n]+\n<\/context>\n\nstop that$/);
+  expect(text).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nthis chat: agent-host-session:\/\/bot-chat\/[^\n]+\nfrom: ana\ntime: [^\n]+\n<\/context>\n\nstop that$/);
 });
 
 it('keeps the block out of the text the main chat shows', async () => {

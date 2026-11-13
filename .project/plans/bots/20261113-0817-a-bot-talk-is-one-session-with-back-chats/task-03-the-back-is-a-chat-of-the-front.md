@@ -67,6 +67,9 @@ A message in the Front wakes the one Back chat of that Front, found by its origi
 - A Back chat is titled `@main/<bot>/<person>` by `backTitle`. The root, and a talk with no owner, is `root`.
 - With `policies.check` on, a Back turn was refused as `plugin:bot`. The host now checks a plugin's turn in a session it does not own as the session owner's, in `lifecycle.ts`.
 - A subagent of the Back asks in its worker chat. `ask.ts` walks the `tool` origins up to the Back chat, so the question shows in the Front, and the answer goes to the worker chat.
+- The Back reached the Front only through the `answering` map, which holds one Front turn while it waits. A post or a question after that turn was refused or lost. `reach` in the wake now walks the origins to the Front and opens a bot turn with `speak` where none waits.
+- A Back turn with no sender, such as one the harness starts after a background task, says its last words in the Front through `spoke`.
+- `ToolCall.from` names a subagent's worker chat, so `send_message` lets a subagent message its Back.
 - With `askIn` at `own`, a Back chat of the Front's own session is not listed again, since the session lists it already.
 - Cases: `bot-wake.test.ts`, `bot-post.test.ts`, `bot-ask.test.ts`, `bot-context.test.ts`, and an end-to-end case in `bot-provider.test.ts`.
 
