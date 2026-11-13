@@ -12,7 +12,7 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 1. *Before 0.15.0-rc.2*, the first release from `ahpio/ahpd`. It also pushes the image and the machine parts to `ghcr.io/ahpio`, where a host looks for them since #290.
    - PR #311, the release notes of what merged since 0.15.0-rc.1, merges.
-   - The PR of task 06 of daemon/20261110-0947, the downgrade check read as semver, merges.
+   - PR #312, task 06 of daemon/20261110-0947, the downgrade check read as semver, merges.
    - A bump PR sets `0.15.0-rc.2` in each package of `PUBLISHED` and as the default `AHPD_TAG` of [docker/compose.yaml](../../docker/compose.yaml). It also dates the notes' Unreleased heading, as #231 and #233 did for 0.15.0-rc.1. The tag check in `release.yml` refuses a tag that the packages or the Compose file do not name.
 2. *Before 0.15.0*: a working day on the daemon, the checks by hand, and the digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md).
 
