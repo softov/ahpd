@@ -23,6 +23,8 @@ In one run of the computer suite these cases timed out at 5000 ms:
 
 The adopted container case also timed out alone, on main at `b4ad32951` and on the bot-talk branch, while the load was near 5.
 
+On 2026-11-13 the adopted container case and `reads a dev container's vault-named need again after a restart` timed out alone, at `46cec859d` and at `74b138b73`, with a load average of 1.5. So a busy machine is not the whole cause.
+
 ## Cause
 
 Each connect starts the fake `docker` and `devcontainer` CLIs as node processes.

@@ -134,6 +134,20 @@ const answered = async (state: string, calls: number): Promise<void> => {
   }
 };
 
+/** The `docker ps` listings the scripted Docker has recorded. */
+const listings = (state: string): number => dockerHeld(state).calls.filter((one) => one[0] === 'ps').length;
+
+/** Wait until the scripted Docker has answered `count` listings, and holds no call. */
+const listed = async (state: string, count: number): Promise<void> => {
+  const limit = Date.now() + WAIT_MS;
+  while (listings(state) < count || existsSync(`${state}.lock`)) {
+    if (Date.now() > limit) {
+      throw new Error(`the scripted docker never answered listing ${count} on ${state}: ${listings(state)} recorded`);
+    }
+    await new Promise((r) => { setTimeout(r, 5); });
+  }
+};
+
 /**
  * The plugin's options: the Docker fixture as the runtime, the CLI fixture as
  * the launcher and the maker, and both state files pointed at the same run.
@@ -162,6 +176,8 @@ const optionsOf = (devState: string, dockerState: string, more: Record<string, u
  * nothing of it.
  */
 const load = async (pluginOptions: Record<string, unknown>, agents: Agent[] = [], configDir = temp(), people = false) => {
+  const dockerState = (pluginOptions['env'] as Record<string, string> | undefined)?.['DOCKER_FAKE_STATE'];
+  const before = dockerState === undefined ? 0 : listings(dockerState);
   const result = await loadPlugins(
     [{ name: SOURCE, options: pluginOptions }],
     {
@@ -177,7 +193,14 @@ const load = async (pluginOptions: Record<string, unknown>, agents: Agent[] = []
     },
   );
   keeping(result.options);
-  return result;
+  /*
+   * Loading starts a `docker ps` listing that nothing awaits, and a machine is
+   * known only once it has answered. A case that asks for one right after a
+   * load waits for it with `listing`. On Windows each Docker call is a new
+   * Node process, and the listing can answer after the case asked.
+   */
+  const listing = async (): Promise<void> => { if (dockerState !== undefined) await listed(dockerState, before + 1); };
+  return { ...result, listing };
 };
 
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
@@ -1598,7 +1621,9 @@ it('refuses a command in a container that is not running, with the daemon\'s sen
     }],
     calls: [],
   }));
-  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  const { options: loaded, listing } = await load(optionsOf(devState, dockerState));
+  // The machine is known once the listing the load started has answered.
+  await listing();
   const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   const ran = String(await tool.run({ id: 'stopped', command: 'true' }, hostCall()));
   expect(ran).toContain('container stopped is not running');
@@ -1835,7 +1860,9 @@ it('reads the kept probe back after a restart, and runs no probe for it', async 
   });
   expect(probes(dockerState)).toBe(1);
 
-  const { options: later } = await load(options, [], configDir);
+  const { options: later, listing } = await load(options, [], configDir);
+  // The machine is known once the listing the load started has answered.
+  await listing();
   const tool = (later.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   expect(String(await tool.run({ id: 'box', command: 'true' }, hostCall()))).toContain('exit 0');
   expect(probes(dockerState)).toBe(1);
@@ -1882,7 +1909,9 @@ it('omits the dev container row for a URI it cannot read a folder from, and keep
     machines: [{ name: 'held', image: 'node:22', labels: { 'ahpd.computer': '1' } }],
     calls: [],
   }));
-  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  const { options: loaded, listing } = await load(optionsOf(devState, dockerState));
+  // The machine is known once the listing the load started has answered.
+  await listing();
   const answerer = loaded.sessionConfigCompletions?.computer as NonNullable<typeof loaded.sessionConfigCompletions>['computer'];
   for (const workingDirectory of ['file://elsewhere/w/app', 'file:///w/a%2Fb']) {
     const rows = await answerer({ property: 'computer', query: '', workingDirectory });

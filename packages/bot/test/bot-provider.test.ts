@@ -1447,10 +1447,13 @@ it('wakes a Back chat of the talk\'s own session, made by the Front turn\'s suba
   expect(reported).toEqual([]);
 
   // The Front turn shows the subagent call the origin names, linking the Back.
-  const frontState = (got(await call(soft, 'subscribe', { channel: front })) as { snapshot: { state: Bag } }).snapshot.state;
-  const parts = ((frontState['activeTurn'] as Bag | undefined)?.['responseParts'] ?? (frontState['turns'] as Bag[]).at(-1)?.['responseParts']) as Bag[];
-  const callPart = parts.find((one) => (one['toolCall'] as Bag | undefined)?.['toolName'] === 'subagent');
-  expect((callPart?.['toolCall'] as Bag)['toolCallId']).toBe((back?.['origin'] as Bag)['toolCallId']);
+  // The wake starts the Back before it adds the call, so the call is waited on.
+  await vi.waitFor(async () => {
+    const frontState = (got(await call(soft, 'subscribe', { channel: front })) as { snapshot: { state: Bag } }).snapshot.state;
+    const parts = ((frontState['activeTurn'] as Bag | undefined)?.['responseParts'] ?? (frontState['turns'] as Bag[]).at(-1)?.['responseParts']) as Bag[];
+    const callPart = parts.find((one) => (one['toolCall'] as Bag | undefined)?.['toolName'] === 'subagent');
+    expect((callPart?.['toolCall'] as Bag | undefined)?.['toolCallId']).toBe((back?.['origin'] as Bag)['toolCallId']);
+  }, { timeout: WAIT_MS });
 
   // A second message continues the same Back chat.
   await vi.waitFor(async () => {

@@ -43,7 +43,7 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 - With a problem file:
   - `computer-spawn.test.ts`: [the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md](../problems/the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md).
   - `agent-cofold-fork.test.ts`: [a-cofold-truncation-case-ends-its-third-turn-without-completing.md](../problems/a-cofold-truncation-case-ends-its-third-turn-without-completing.md).
-  - `computer-devcontainer.test.ts`, four cases: [dev-container-cases-ask-before-the-first-listing.md](../problems/dev-container-cases-ask-before-the-first-listing.md).
+  - `computer-devcontainer.test.ts`: three cases are fixed by container/20261113-2134, and the fourth is [a-dev-container-case-waits-on-a-late-docker-call.md](../problems/a-dev-container-case-waits-on-a-late-docker-call.md).
   - `nested-process.test.ts`, two cases: [a-test-removes-its-folder-while-a-child-writes-in-it.md](../problems/a-test-removes-its-folder-while-a-child-writes-in-it.md).
   - `host-attachments.test.ts`: [two-attachment-cases-time-out-on-windows.md](../problems/two-attachment-cases-time-out-on-windows.md).
   - `computer-servercheck.test.ts` "runs its own script under sh": task 02 of plugin/20261106-1058.
@@ -101,7 +101,7 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
   - The checks by hand after the merge are [pending/bot-talk-checks.md](../pending/bot-talk-checks.md), on the branch: a real restart, ahpw, VS Code and the webhook.
   - Softov's first run made about 45 Back chats in one session. First, the Back went to `bot-chat` itself, the first agent in load order. Then `bot-chat` reopened the open Front turn in every new chat. Both are fixed in the branch, and a record that names `bot-chat` is refused. The test daemon showed one Back on `claude` after the fix.
   - A talk is now kept by the session's owner, through the new `Start.owner`. Every root owner is one talker, `root` (Softov, 2026-11-13, "Count by owner").
-  - Found on main: [a bot never answers on a host with no users](../problems/a-bot-never-answers-on-a-host-with-no-users.md), and [the chats of a bot talk share one log](../problems/the-chats-of-a-bot-talk-share-one-log.md).
+  - Found on main: [the chats of a bot talk share one log](../problems/the-chats-of-a-bot-talk-share-one-log.md). A bot never answered on a host with no users, and [bots/20261113-1959](../plans/bots/20261113-1959-a-bot-answers-on-a-host-with-no-users/plan.md) fixes it.
   - Gumbo and ember in Softov's `~/.config/ahpd/bots` now name `provider: claude`, at his request.
   - With `policies.check` on, Telly's Back turn was refused as `plugin:bot`. The branch now checks a plugin's turn in a session it does not own as the session owner's (Softov, 2026-11-13).
   - A Back chat is titled `@main/<bot>/<person>`, with `main` fixed for now (Softov, 2026-11-13). The host name in `root:<host>` is `os.hostname()`, and nothing sets it yet.
