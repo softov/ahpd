@@ -42,7 +42,6 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 - `release.yml` runs the whole `pnpm test` under `timeout 1500` before it publishes, so a flaky case can fail a tag run. The suite took 520 s on 2026-11-12.
 - A case that fails at random gets a problem file, to be fixed. The CI runs since 2026-11-10 were read on 2026-11-13. A case counts when it failed on main, or passed on a rerun of the same commit.
 - With a problem file:
-  - `computer-spawn.test.ts`: [the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md](../problems/the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md).
   - `agent-cofold-fork.test.ts`: [a-cofold-truncation-case-ends-its-third-turn-without-completing.md](../problems/a-cofold-truncation-case-ends-its-third-turn-without-completing.md).
   - `computer-devcontainer.test.ts`: three cases are fixed by container/20261113-2134, and the fourth is [a-dev-container-case-waits-on-a-late-docker-call.md](../problems/a-dev-container-case-waits-on-a-late-docker-call.md).
   - `nested-process.test.ts`, two cases: [a-test-removes-its-folder-while-a-child-writes-in-it.md](../problems/a-test-removes-its-folder-while-a-child-writes-in-it.md).
@@ -51,7 +50,6 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
   - `computer-disposable.test.ts`: the teardown in the nested-process file's problem, and two cases in [a-disposable-machine-case-fails-at-random.md](../problems/a-disposable-machine-case-fails-at-random.md).
   - `usage-port.test.ts`: [a-usage-port-case-times-out-on-windows.md](../problems/a-usage-port-case-times-out-on-windows.md).
   - `changes-refresh.test.ts` and `worktrees.test.ts`: [git-cases-time-out-on-windows.md](../problems/git-cases-time-out-on-windows.md).
-  - `agents-channel.test.ts`: [an-agents-channel-case-hears-two-changes.md](../problems/an-agents-channel-case-hears-two-changes.md).
   - `computer-far-docker.test.ts`: [a-far-docker-listing-misses-one-profile-on-windows.md](../problems/a-far-docker-listing-misses-one-profile-on-windows.md).
   - `commands.test.ts`: [the-machine-commands-case-times-out-on-windows.md](../problems/the-machine-commands-case-times-out-on-windows.md).
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" was fixed by #314.

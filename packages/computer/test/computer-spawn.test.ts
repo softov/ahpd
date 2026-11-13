@@ -1,7 +1,9 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+// Imported here, not in the case: a cold import of the backend took longer than the case's limit.
+import { claude } from '../../agent-claude/src/claude.js';
 import { spawnInside } from '../../agent-claude/src/spawn.js';
 import type { Asked } from '../../agent-claude/src/spawn.js';
 
@@ -117,9 +119,11 @@ it('runs what the port answered, and nothing of its own', async () => {
  * draws as in progress - the bug this pins is a machine without the CLI in it
  * reading as an agent that is still thinking, with no reason anywhere.
  */
-it('fails a turn on a session whose CLI is gone, instead of thinking for ever', async () => {
-  const { claude } = await import('../../agent-claude/src/claude.js');
-  const agent = claude({ paths: [mkdtempSync(join(tmpdir(), 'ahpd-gone-'))] });
+it('fails a turn on a session whose CLI is gone, instead of thinking for ever', { timeout: 30_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-gone-'));
+  const agent = claude({ paths: [dir] });
+  // The stand-in CLI writes this file as it exits, so the case knows it ran.
+  const ran = join(dir, 'ran');
 
   const seen: { type: string; message?: string }[] = [];
   const session = agent.create({
@@ -129,7 +133,7 @@ it('fails a turn on a session whose CLI is gone, instead of thinking for ever', 
     settings: { computer: 'computer://box' },
     // A machine whose command exits at once, which is what `docker exec` does
     // for an image with no `claude` in it.
-    computers: { how: async () => node('process.exit(1)') },
+    computers: { how: async () => node(`require('node:fs').writeFileSync(${JSON.stringify(ran)}, ''); process.exit(1)`) },
     emit: (_channel: string, what: Record<string, unknown>) => {
       const type = String(what.type ?? '');
       const part = what.part as { error?: { message?: string } } | undefined;
@@ -137,14 +141,16 @@ it('fails a turn on a session whose CLI is gone, instead of thinking for ever', 
     },
   } as never);
 
-  // The CLI has to have exited before the turn, which is the case that broke:
-  // a person picks a machine, reads the screen, then types.
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  // The CLI has to have run and exited before the turn, which is the case that
+  // broke: a person picks a machine, reads the screen, then types. Waited on
+  // its file, not on a fixed time, which a slow runner did not keep to.
+  await vi.waitFor(() => { expect(existsSync(ran)).toBe(true); }, { timeout: 20_000, interval: 20 });
   session.sendMessage('t1', 'anything');
-  await new Promise((resolve) => setTimeout(resolve, 100));
 
+  await vi.waitFor(() => {
+    expect(seen.find((one) => one.type === 'chat/error'), `emitted: ${seen.map((one) => one.type).join(', ')}`).toBeDefined();
+  }, { timeout: 10_000, interval: 20 });
   const failure = seen.find((one) => one.type === 'chat/error');
-  expect(failure, `emitted: ${seen.map((one) => one.type).join(', ')}`).toBeDefined();
   expect(failure?.message).toMatch(/exited with code/);
   // The start is the host's to say, so the backend says only the failure.
   expect(seen.some((one) => one.type === 'chat/turnStarted')).toBe(false);

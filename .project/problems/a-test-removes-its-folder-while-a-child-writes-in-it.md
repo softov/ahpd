@@ -34,6 +34,8 @@ The likely cause is a child process that writes a file in the folder after the t
 The ACP teardown waits for one line in `requests.jsonl`, but not for the fake agent to exit.
 The nested-process teardown sends `SIGKILL` to each inner host, and removes its folder without waiting for the exit.
 
+Plan host/20261113-2319 makes the nested-process teardown wait for each inner host to exit, and the nested-process and disposable removals try again. The ACP and service-install teardowns are not changed.
+
 ## Impact
 
 A full test run fails at random, so a red CI run or gate run needs a second run before it says anything.

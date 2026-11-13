@@ -45,9 +45,11 @@ afterEach(async () => {
   // removal refused for that reason arms a timer all over again.
   vi.useRealTimers();
   await closeAll();
-  if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
+  // A process a machine started can still be writing for a moment after the
+  // close, which failed a removal with ENOTEMPTY, so each removal tries again.
+  if (loose !== undefined) rmSync(loose, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   loose = undefined;
-  if (state !== undefined) rmSync(state, { recursive: true, force: true });
+  if (state !== undefined) rmSync(state, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   state = undefined;
 });
 
