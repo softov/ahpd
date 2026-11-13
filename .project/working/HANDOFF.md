@@ -9,7 +9,7 @@ Current progress and pending items only, as of 2026-11-12. *Outside this reposit
 
 ## Main
 
-- The last stable release is 0.14.0 (`v0.14.0`). `v0.15.0-rc.2` is tagged on `8db0b85b5`, and its 13 packages are staged on npm under `next`, waiting for Softov's approval. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
+- The last stable release is 0.14.0 (`v0.14.0`). `0.15.0-rc.2` is on npm `next` (`v0.15.0-rc.2`, on `8db0b85b5`), the first release from `ahpio/ahpd`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
 - Main's last code merge is #313 (`8db0b85b5`), the bump. No PR is open.
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
@@ -28,7 +28,8 @@ Current progress and pending items only, as of 2026-11-12. *Outside this reposit
 - Run one vitest suite at a time: `TMPDIR=/home/softov/tmp/ahpd-test flock /home/softov/tmp/ahpd-test/vitest.lock npx vitest run <package>`. A fresh worktree needs `pnpm schema` first.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every run. Restore it with `git checkout --` and never print it.
 - An sdk host change is gated by the computer suite too.
-- CI on main at `8db0b85b5` (run 43351930159): `check` and `check-windows` pass, `windows (3/4)` after one rerun. `image` fails until npm serves `0.15.0-rc.2`.
+- CI on main is green at `150983cbe` (run 43357606552): `check`, `check-windows` and `image`, the image job after a rerun once npm served `0.15.0-rc.2`.
+- After a bump, the `image` job fails until npm serves the new version. Rerun it after the approval.
 - `release.yml` runs the whole `pnpm test` under `timeout 1500` before it publishes, so a flaky case can fail a tag run. The suite took 520 s on 2026-11-12.
 - #314 fixed the devtunnel view case below: it waits for its first read by the clock.
 - Flaky on main in the 100 CI runs since 2026-11-11 08:10 UTC, each passed on a rerun:
@@ -98,7 +99,7 @@ Its notepad is [release-run.md](release-run.md), its agent tests are in [release
 
 ## Waiting for Softov
 
-- Approve the 13 staged packages of `0.15.0-rc.2` on npm, `@ahpd/sdk` first. Then rerun main's `image` job. [pending/release.md](../pending/release.md#left) has the list.
+- What 0.15.0 needs is in [pending/release.md](../pending/release.md#left).
 - `0.15.0-rc.2` is tagged with the machine parts pulled by tag. The digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md) comes before 0.15.0 (Softov, 2026-11-12).
 - The GHCR package `ghcr.io/ahpio/ahpd` is private until he makes it public once. It holds `edge`, `0.15.0-rc.2` and `next` now. Its visibility was not read: the `gh` token has no `read:packages`.
 - `edge.yml` has no paths filter, so a plan-only push to main builds the edge image. A `paths-ignore` is suggested.

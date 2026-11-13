@@ -4,16 +4,13 @@ title: What a release needs before its tag
 
 # What a release needs before its tag
 
-`v0.15.0-rc.2` is tagged on `8db0b85b5`, on 2026-11-12, and its 13 packages are staged on npm under `next`. `latest` stays on `0.14.0`. Status at 2026-11-12.
+`v0.15.0-rc.2` is out on npm under `next`, from `8db0b85b5`, on 2026-11-12. `latest` stays on `0.14.0`. Status at 2026-11-12.
 
 A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and stages every package. The tag comes last, and only on Softov's word.
 
 ## Left
 
-1. *0.15.0-rc.2*:
-   - Softov approves the 13 staged packages on npm, `@ahpd/sdk` first, as run 43354150219 lists them.
-   - Rerun the `image` job of main's CI after the approval. It fails until npm serves `@ahpd/sdk@0.15.0-rc.2`, as [problems/the-image-of-a-version-not-on-npm-cannot-install-a-plugin.md](../problems/the-image-of-a-version-not-on-npm-cannot-install-a-plugin.md) says.
-   - Softov makes `ghcr.io/ahpio/ahpd` public once, as [docker-image-first-push.md](docker-image-first-push.md) says.
+1. *0.15.0-rc.2*: Softov makes `ghcr.io/ahpio/ahpd` public once, as [docker-image-first-push.md](docker-image-first-push.md) says.
 2. *Before 0.15.0*:
    - A working day on the daemon, and the checks by hand.
    - The digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md).
@@ -22,6 +19,8 @@ A pushed `v*` tag runs [release.yml](../../.github/workflows/release.yml) and st
 
 ## Done
 
+- **0.15.0-rc.2 on npm.** Softov approved the 13 staged packages on 2026-11-12. `npm view` gives `next: 0.15.0-rc.2` and `latest: 0.14.0` for each. `@ahpd/server@next` installs in an empty folder and says `0.15.0-rc.2`.
+- **Main's CI after the approval.** The `image` job of run 43357606552 passed on its rerun, so `check`, `check-windows` and `image` are green at `150983cbe`.
 - **The 0.15.0-rc.2 tag run.** Four PRs merged on 2026-11-12. PR #311 is the release notes, #312 the downgrade check read as semver, #313 the bump and #314 a flaky case. Dry run 43347391118 passed on the tree of `8db0b85b5`. Release run 43354150219 passed 9679 tests, staged the 13 packages under `next`, and pushed `ghcr.io/ahpio/ahpd:0.15.0-rc.2` and `:next`.
 - **The release run's limits.** #313 runs the tests under `timeout 1500` and the job under 45 minutes. The first rc.2 dry run, 43336912861, reached the old limit of 600 s.
 - **The ahpd part at 0.15.0-rc.1.** #313 moves it from 0.8.0, so the release pushed `ghcr.io/ahpio/ahpd-part/ahpd:0.15.0-rc.1-<hash>`.
