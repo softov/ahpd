@@ -20,7 +20,7 @@
     "id": "ahpd",
     "name": "ahpd",
     "kind": "ahpd",
-    "version": "0.8.0",
+    "version": "0.15.0-rc.1",
     "requires": ["node"],
     "plugins": ["@ahpd/agent-cofold", "@ahpd/agent-pi"],
     "bin": ["ahpd"]
