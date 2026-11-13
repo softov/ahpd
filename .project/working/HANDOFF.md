@@ -103,6 +103,8 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
   - A talk is now kept by the session's owner, through the new `Start.owner`. Every root owner is one talker, `root` (Softov, 2026-11-13, "Count by owner").
   - Found on main: [a bot never answers on a host with no users](../problems/a-bot-never-answers-on-a-host-with-no-users.md), and [the chats of a bot talk share one log](../problems/the-chats-of-a-bot-talk-share-one-log.md).
   - Gumbo and ember in Softov's `~/.config/ahpd/bots` now name `provider: claude`, at his request.
+  - With `policies.check` on, Telly's Back turn was refused as `plugin:bot`. The branch now checks a plugin's turn in a session it does not own as the session owner's (Softov, 2026-11-13).
+  - A Back chat is titled `@main/<bot>/<person>`, with `main` fixed for now (Softov, 2026-11-13). The host name in `root:<host>` is `os.hostname()`, and nothing sets it yet.
 - AHP 1.1.0 is on npm since 2026-11-13, and goes in 0.16 (Softov, 2026-11-13). 0.15.0 stays on AHP 1.0.0. The first 0.16 work is a new read of host/117 against 1.1.0, as [pending/release.md](../pending/release.md#not-in-this-release) says.
 - ahpc's `cli/20261112-0821-create-session-waits-on-progress`, in the ahpc repository, can be built. A create that makes no machine sends no progress, so ahpc keeps its timeout for it.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`. Softov chose deletion as VS Code does. Its Resume state holds the research and two questions before task 01 is rewritten.
