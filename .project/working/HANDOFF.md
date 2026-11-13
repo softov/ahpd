@@ -100,7 +100,7 @@ Its notepad is [release-run.md](release-run.md), its agent tests are in [release
 ## Waiting for Softov
 
 - What 0.15.0 needs is in [pending/release.md](../pending/release.md#left).
-- `0.15.0-rc.2` is tagged with the machine parts pulled by tag. The digest pin of [problems/part-images-are-pulled-by-a-tag-with-no-digest.md](../problems/part-images-are-pulled-by-a-tag-with-no-digest.md) comes before 0.15.0 (Softov, 2026-11-12).
+- `0.15.0-rc.2` is tagged with the machine parts pulled by tag. The digest pin comes before 0.15.0 (Softov, 2026-11-12). It is planned as [container/20261113-0408](../plans/container/20261113-0408-a-part-is-pulled-by-its-digest/plan.md), `planned`, four tasks `todo`.
 - `ghcr.io/ahpio/ahpd` and the 17 part packages are public since 2026-11-12. A new part gets a private package on its first push, and Softov makes it public on its settings page. An anonymous token from `https://ghcr.io/token?scope=repository:<name>:pull&service=ghcr.io` reads a manifest to check one.
 - `edge.yml` has no paths filter, so a plan-only push to main builds the edge image. A `paths-ignore` is suggested.
 - The API keys in his private env file were shown in a chat on 2026-11-11. He rotates them.
