@@ -10,8 +10,8 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## Main
 
 - The last stable release is 0.14.0 (`v0.14.0`). `0.15.0-rc.2` is on npm `next` (`v0.15.0-rc.2`, on `8db0b85b5`), the first release from `ahpio/ahpd`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
-- Main's last code merge is #316 (`58d8e6e68`): the parts bump moves the ahpd part to the last release on npm. Run `parts-bump.yml` by hand to propose `0.15.0-rc.2` for it.
-- #317 is open and green: plan plugin/20261113-0534, a piece shows its host mark again. `1ea68fcb8` had removed the table from piece to mark. It merges on Softov's word.
+- Main's last code merge is #317 (`e338a1c98`): a piece shows its host mark again, plan plugin/20261113-0534. Softov curates the new Postgres mark in [pending/plugin-58-icon-curation.md](../pending/plugin-58-icon-curation.md). No PR is open.
+- #316 (`58d8e6e68`) moves the ahpd part to the last release on npm. Run `parts-bump.yml` by hand to propose `0.15.0-rc.2` for it.
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
 - `check` and `check-windows` must both be green before a merge; no ruleset requires them now. A rerun is not the fix for a case that fails at random: each one gets a problem file, to be fixed. `gh run rerun <id> -R ahpio/ahpd --failed` reruns a job.
@@ -20,7 +20,7 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 ## The dev daemon
 
 - Softov's dev daemon runs from `/github/ahpd` with `~/.config/ahpd/config-dev.json`, on ports 5180 and 37537. It runs from `src`, so a restart is all a merge needs. It needs `DEEPSEEK_API_KEY` in its environment. Never restart it or use its ports yourself.
-- It was last restarted at 02:22 local on 2026-11-12, on #303. It needs a restart for #304 to #310.
+- It was last restarted at 02:22 local on 2026-11-12, on #303. It needs a restart for #304 to #317.
 - `/github/ahpd` is a shared checkout. Work in a worktree from `origin/main` under `/github/ahpd.worktrees/`.
 - A test daemon for checks: `source .project/pending/test-daemon.sh`, on port 39200, with its token at `~/ahpd-check/token`. Check `ss -ltnp` before you start one, and stop it by pid.
 
@@ -40,16 +40,14 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
   - `nested-process.test.ts`, two cases: [a-test-removes-its-folder-while-a-child-writes-in-it.md](../problems/a-test-removes-its-folder-while-a-child-writes-in-it.md).
   - `host-attachments.test.ts`: [two-attachment-cases-time-out-on-windows.md](../problems/two-attachment-cases-time-out-on-windows.md).
   - `computer-servercheck.test.ts` "runs its own script under sh": task 02 of plugin/20261106-1058.
+  - `computer-disposable.test.ts`: the teardown in the nested-process file's problem, and two cases in [a-disposable-machine-case-fails-at-random.md](../problems/a-disposable-machine-case-fails-at-random.md).
+  - `usage-port.test.ts`: [a-usage-port-case-times-out-on-windows.md](../problems/a-usage-port-case-times-out-on-windows.md).
+  - `changes-refresh.test.ts` and `worktrees.test.ts`: [git-cases-time-out-on-windows.md](../problems/git-cases-time-out-on-windows.md).
+  - `host-tools.test.ts`: [a-dropped-client-case-loses-its-window-on-windows.md](../problems/a-dropped-client-case-loses-its-window-on-windows.md).
+  - `agents-channel.test.ts`: [an-agents-channel-case-hears-two-changes.md](../problems/an-agents-channel-case-hears-two-changes.md).
+  - `computer-far-docker.test.ts`: [a-far-docker-listing-misses-one-profile-on-windows.md](../problems/a-far-docker-listing-misses-one-profile-on-windows.md).
+  - `commands.test.ts`: [the-machine-commands-case-times-out-on-windows.md](../problems/the-machine-commands-case-times-out-on-windows.md).
 - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read" was fixed by #314.
-- With no problem file yet, each failed once or twice:
-  - `usage-port.test.ts` "tells a plugin that its usage store was not wanted": Windows, main, 42832274878 and 43351930159.
-  - `computer-disposable.test.ts`, three cases: 42753469981, 42804449764, 42727088464 and 43044491680.
-  - `changes-refresh.test.ts`, two cases, Windows: 42760023503 and 42984895620.
-  - `worktrees.test.ts` "answers the branches a client types for", Windows: 42760023503.
-  - `host-tools.test.ts` "fails a dropped client's streaming call", Windows, main: 42842552404.
-  - `agents-channel.test.ts` "sends one root/agentsChanged with the new agent", Windows, main: 43331759178.
-  - `computer-far-docker.test.ts` "lists, for two profiles on one box", Windows: 42807821787.
-  - `commands.test.ts` "makes, stops, starts, restarts and removes a machine", Windows: 42747912760.
 
 ## Builders
 
@@ -68,7 +66,7 @@ Remove each only on Softov's word.
 - Ten `build-agents-*` worktrees, each on a branch that is on main: the plans of #301 to #310. Their daemon sessions stay.
 - `release-report`: detached, for plan-only commits of the release check.
 - `ahpd-part-bump`: the branch of #316, merged.
-- `piece-marks`: the branch of #317.
+- `piece-marks`: the branch of #317, merged.
 - `notes-catch-up`, `downgrade-semver`, `release-rc2` and `devtunnel-flake`: the branches of #311, #312, #313 and #314, each merged.
 - Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334`, `host/20261031-0804-actions-answered`, `host/20261101-0329-maycxc-union`, `host/20261101-0331-maycxc-cancel-4e6d5cb8` and `pr-250`.
 
@@ -81,6 +79,7 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
 - The release run of 2026-11-11: thirteen plans, from #273 to #281, #286 and #293 to #295. They are acp/20261110-0813, cofold/20261110-0813 (two), host/20261110-0813 (six), host/20261111-0609 (two), host/20261111-1203 and pi/20261110-0813.
 - The five fixes of the release run's problems, #296 to #300: pi/20261111-1444, cofold/20261111-1445, daemon/20261111-1447, container/20261111-1507 and plugin/20261111-1507.
 - daemon/20261110-0947, ahpd runs from an image: task 06 is #312, and tasks 01 to 05 were reviewed on 2026-11-11.
+- plugin/20261113-0534, a piece shows its host mark again: #317.
 - container/20261113-0507, the ahpd part follows the last release: #316.
 - container/20261113-0408, a part is pulled by its digest: #315. Dry run 43367407253 on its branch passed on 2026-11-13, with `parts`, `release` and `image` each after the one before. Its first tag run checks the artifact steps, which a dry run skips.
 

@@ -7,6 +7,7 @@ refs:
   - "[code://packages/agent-acp/test/agent-acp-ports.test.ts#L87-L95](../../packages/agent-acp/test/agent-acp-ports.test.ts#L87-L95) - the teardown that failed in the policy/02 gates"
   - "[code://packages/server/test/server-cli-service.test.ts](../../packages/server/test/server-cli-service.test.ts) - the test that failed on CI"
   - https://github.com/softov/ahpd/actions/runs/39122204393 - the CI run that failed and then passed on a second run
+  - "[code://packages/computer/test/computer-disposable.test.ts#L44-L50](../../packages/computer/test/computer-disposable.test.ts#L44-L50) - the disposable teardown, which removes its folders after `closeAll`"
   - "[code://packages/sdk/test/nested-process.test.ts#L54-L61](../../packages/sdk/test/nested-process.test.ts#L54-L61) - the teardown that kills each inner host and removes its folder at once"
 ---
 
@@ -23,6 +24,8 @@ In `nested-process.test.ts`, the teardown failed the same way in `processes (2/2
 | --- | --- |
 | a restart waits for the inner host it replaces, and resumes its conversation | 42925229918 |
 | a daemon that stops leaves the session inside the machine for the next one | 43132937874 |
+
+In `computer-disposable.test.ts`, the teardown of "lets the machine go when the new value is refused" failed the same way. It failed in `processes (1/2)`, in runs 42753469981 and 42804449764, and each passed when the job ran again.
 
 ## Cause
 
