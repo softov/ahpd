@@ -107,6 +107,7 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
   - A Back chat is titled `@main/<bot>/<person>`, with `main` fixed for now (Softov, 2026-11-13). The host name in `root:<host>` is `os.hostname()`, and nothing sets it yet.
   - Ember's timer hung: a subagent of the Back asked to run `Bash`, and the host sent the approval to the session's lead, `bot-chat`. The branch now sends it to the backend of the chat that started the worker, `workerLead`. The test daemon ran the subagent's `Bash` after the fix.
   - A `post_message` after the Front turn ended still fails: it posts only into an open Front turn.
+  - A subagent's question was not copied to the Front, because the wake knows only Back chats. `ask.ts` now walks the worker's origin up to its Back. The test daemon showed the question in the Front, and the approval there ran the command.
 - AHP 1.1.0 is on npm since 2026-11-13, and goes in 0.16 (Softov, 2026-11-13). 0.15.0 stays on AHP 1.0.0. The first 0.16 work is a new read of host/117 against 1.1.0, as [pending/release.md](../pending/release.md#not-in-this-release) says.
 - ahpc's `cli/20261112-0821-create-session-waits-on-progress`, in the ahpc repository, can be built. A create that makes no machine sends no progress, so ahpc keeps its timeout for it.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`. Softov chose deletion as VS Code does. Its Resume state holds the research and two questions before task 01 is rewritten.
