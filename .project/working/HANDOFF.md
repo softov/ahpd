@@ -14,7 +14,7 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 - #317 is open: plan plugin/20261113-0534, a piece shows its host mark again. `1ea68fcb8` had removed the table from piece to mark. It merges on Softov's word with its checks green.
 - The repository is `ahpio/ahpd` since 2026-11-11 (#290). MayCXC's fork has no work missing from main.
 - Code goes through a PR on `ahpio/ahpd`; plan-only commits go to main. Show a PR's text in chat before opening it. Merge with `gh pr merge <n> -R ahpio/ahpd --admin --merge`, only on Softov's word.
-- `check` and `check-windows` must both be green before a merge; no ruleset requires them now. A slow runner can fail a job with nothing wrong: rerun once with `gh run rerun <id> -R ahpio/ahpd --failed`.
+- `check` and `check-windows` must both be green before a merge; no ruleset requires them now. A rerun is not the fix for a case that fails at random: each one gets a problem file, to be fixed. `gh run rerun <id> -R ahpio/ahpd --failed` reruns a job.
 - `gh pr checks` has no `--json` here, and `gh pr edit` fails. Read a job's log with `gh api repos/ahpio/ahpd/actions/jobs/<id>/logs`, and set a PR body with `gh api repos/ahpio/ahpd/pulls/<n> -X PATCH -F body=@<file>`.
 
 ## The dev daemon
@@ -36,7 +36,7 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 - Flaky on main in the 100 CI runs since 2026-11-11 08:10 UTC, each passed on a rerun:
   - `tunnel-devtunnel-view.test.ts` "starts no poll when the tunnel stops during its first read": 5 runs, on Linux and Windows, last 43229860508. It fails at line 237, after the 50 event-loop turns of line 236. No problem file, no plan.
   - `agent-cofold-fork.test.ts` "keeps the chat going when the store cannot truncate the conversation": 3 runs on Linux. No problem file, no plan.
-  - `computer-spawn.test.ts` "fails a turn on a session whose CLI is gone": once on CI (43162247025), and it times out on this box.
+  - `computer-spawn.test.ts` "fails a turn on a session whose CLI is gone": on Linux (43162247025) and on Windows (43374043657), and it times out on this box. In [problems/the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md](../problems/the-case-of-a-claude-cli-that-is-gone-waits-on-fixed-times.md).
   - `nested-process.test.ts` "a daemon that stops leaves the session inside the machine for the next one": once (43132937874).
   - `computer-devcontainer.test.ts` "omits the dev container row for a URI it cannot read a folder from": once on Windows (43114109287).
   - `computer-servercheck.test.ts` "runs its own script under sh": once (43115235109). Task 02 of plugin/20261106-1058 fixes it.
