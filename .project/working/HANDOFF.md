@@ -9,9 +9,10 @@ Current progress and pending items only, as of 2026-11-13. *Outside this reposit
 
 ## Main
 
-- The last stable release is 0.14.0 (`v0.14.0`). `v0.15.0-rc.3` is tagged on `28dd315e0` (#320), and its release run 43394827388 stages the packages under `next` for Softov's approval. `0.15.0-rc.2` is on npm `next`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
-- Main's last merge is #320 (`28dd315e0`), the bump to `0.15.0-rc.3`. No PR is open.
-- The steps after the rc.3 release run are in *rc.3, after its release run* of [pending/release.md](../pending/release.md#left).
+- The last stable release is 0.14.0 (`v0.14.0`). `v0.15.0-rc.3` is tagged on `28dd315e0` (#320). Its release run 43394827388 passed `parts`, `release` and `image` on 2026-11-13, and staged the 13 packages under `next` for Softov's approval. `0.15.0-rc.2` is on npm `next`. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
+- Main's last merge is #320 (`28dd315e0`), the bump to `0.15.0-rc.3`. No PR is open. The last plan commit is `b04536ce8`, the three bot plans.
+- The steps after the rc.3 release run are in *rc.3, after its release run* of [pending/release.md](../pending/release.md#left). The run and the digest check are done. The next step is Softov's approval of the 13 staged packages.
+- The staged `@ahpd/computer@0.15.0-rc.3` holds `images/digests.json` with 17 entries, `ahpd-agents` and 16 parts, the first tag run of #315. Its step logs `tar: stdout: write error`, from `grep -q` closing the pipe. That is harmless now, and it turns the check over if the step ever runs under `pipefail`.
 - #318 (`de1924b99`) is the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushes the branch and the PR is opened by hand.
 - #317 (`e338a1c98`): a piece shows its host mark again. Softov accepted the icons and marks on 2026-11-13, the Postgres mark among them.
 - #319 (`9b17317d7`): plan container/20261113-0721, a part on a prerelease takes a newer prerelease. The next run of `parts-bump.yml` proposes dsh 0.2.2-rc.1.
@@ -71,6 +72,7 @@ Remove each only on Softov's word.
 - `pr302-check`: detached at #302's head, merged.
 - Ten `build-agents-*` worktrees, each on a branch that is on main: the plans of #301 to #310. Their daemon sessions stay.
 - `release-report`: detached, for plan-only commits of the release check.
+- `bot-talk`: branch `bots/20261113-0817-a-bot-talk-is-one-session`, from `b04536ce8`, where the three bot plans are built.
 - `ahpd-part-bump`: the branch of #316, merged.
 - `piece-marks`: the branch of #317, merged.
 - `prerelease-part` and `release-rc3`: the branches of #319 and #320, merged.
@@ -93,6 +95,8 @@ Each plan here has every task `implemented`, and closes as `built` on Softov's w
 
 ## Next
 
+- The three bot plans of `b04536ce8` are `planned`, and this session builds them in `bot-talk` (Softov, 2026-11-13): host/20261113-0817-an-agent-sets-a-new-sessions-folder, host/20261113-0817-a-plugin-chat-has-an-origin-and-tools, then bots/20261113-0817-a-bot-talk-is-one-session-with-back-chats. One PR at the end.
+  - host/20261113-0817-an-agent-sets-a-new-sessions-folder task 01 is written and not committed, with `packages/sdk/test/session-place.test.ts`. A computer that the agent names skipped the door's `computer:write`, because the door reads only the client's config. The task now checks it after the hook.
 - AHP 1.1.0 is on npm since 2026-11-13, and goes in 0.16 (Softov, 2026-11-13). 0.15.0 stays on AHP 1.0.0. The first 0.16 work is a new read of host/117 against 1.1.0, as [pending/release.md](../pending/release.md#not-in-this-release) says.
 - ahpc's `cli/20261112-0821-create-session-waits-on-progress`, in the ahpc repository, can be built. A create that makes no machine sends no progress, so ahpc keeps its timeout for it.
 - [host/20261112-0821-an-unused-new-session-is-removed](../plans/host/20261112-0821-an-unused-new-session-is-removed/plan.md) stays `draft`. Softov chose deletion as VS Code does. Its Resume state holds the research and two questions before task 01 is rewritten.
