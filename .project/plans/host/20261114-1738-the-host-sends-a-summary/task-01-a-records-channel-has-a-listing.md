@@ -1,6 +1,6 @@
 ---
 title: A records channel has a listing
-status: todo
+status: done
 depends: []
 layer: sdk
 refs:
@@ -35,3 +35,5 @@ Each records channel answers its rows, whether a reader opens the list, and whet
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Built as the steps say. The listener runs after the refresh settles, also after a refresh that failed.

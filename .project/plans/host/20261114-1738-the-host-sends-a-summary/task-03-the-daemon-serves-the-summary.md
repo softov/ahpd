@@ -1,6 +1,6 @@
 ---
 title: The daemon serves the summary
-status: todo
+status: done
 depends: [task-02-the-summary-channel.md]
 layer: server
 refs:
@@ -33,3 +33,5 @@ The daemon serves `x-ahpd-summary://` over the plugins, connectors, agents, tunn
 - A subscribe to `x-ahpd-summary://` on a daemon from this branch answers the five areas.
 
 ## Resume
+
+Built as the steps say. The daemon also lists a `summary` subject in its `grants`, because the start said `plugin ahpd requires summary:read, which no entry of ahpd.grants lists`.
