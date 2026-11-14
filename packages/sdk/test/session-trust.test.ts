@@ -70,15 +70,19 @@ function backend(): { agent: Agent; told: () => Told } {
  * built by hand.
  */
 function starting({
-  grants, tokens, store,
+  grants, tokens, store, folders,
 }: {
   grants: Grant[];
   tokens: Record<string, Grant[]>;
   store?: SessionStore;
+  /** The folders the plugin registers as its own, which its contracts then announce. */
+  folders?: string[];
 }) {
   const sessions = store ?? memorySessions();
   const { agent, told } = backend();
-  const { host: plugin, contribution } = pluginHost('bots', context(), { grants });
+  const contracts = folders === undefined ? undefined : { folders: ['its own'] };
+  const { host: plugin, contribution } = pluginHost('bots', context(), { grants, ...(contracts === undefined ? {} : { contracts }) });
+  for (const folder of folders ?? []) plugin.registerFolder(folder);
   const base: HostOptions = {
     path: DIR,
     agents: [agent],
@@ -133,6 +137,21 @@ it('refuses a trusted start from a plugin without the grant, naming it', async (
   expect(refused?.message).toContain('session:trust');
   // Nothing was started, and so nothing was told any folder was trusted.
   expect(told()).toEqual([]);
+});
+
+it('trusts a start in a folder the plugin registered, with no grant, and refuses one outside it', async () => {
+  const { plugin, host, told } = starting({ grants: [], tokens: { soft: ['session:*'] }, folders: [FOLDER] });
+  await open(host, 'soft');
+
+  await plugin.startSession({ owner: 'user:soft', workingDirectory: INSIDE, trusted: true });
+  await settle();
+  expect(about(told(), INSIDE)).toBe(true);
+  expect(about(told(), ELSEWHERE)).toBe(false);
+
+  const refused = await plugin
+    .startSession({ owner: 'user:soft', workingDirectory: ELSEWHERE, trusted: true })
+    .then(() => undefined, (error: { code?: number; message: string }) => error);
+  expect(refused?.message).toContain('session:trust');
 });
 
 it('reads the trusted folder back after a restart', async () => {

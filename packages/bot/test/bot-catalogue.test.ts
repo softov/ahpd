@@ -21,6 +21,7 @@ import type { BotRecord } from '../src/record.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Grant, Principal, Users } from '../../sdk/src/types/users.js';
+import { CONTRACTS } from './manifest.js';
 
 /*
  * The `x-ahpd-bots://` catalogue the bot plugin serves.
@@ -110,7 +111,7 @@ function made(tokens: Record<string, Grant[]>, members: Record<string, string[]>
   };
   const sessions = memorySessions();
   const records = memoryRecords();
-  const { host: plugin, contribution } = pluginHost('bot', context, { sessions: () => sessions, records: () => records });
+  const { host: plugin, contribution } = pluginHost('bot', context, { sessions: () => sessions, records: () => records, contracts: CONTRACTS });
   const bots = join(root, 'bots');
   apply(plugin, { root: bots });
   const { users, changed } = directory(tokens, members);

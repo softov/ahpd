@@ -28,6 +28,7 @@ import type { Claimed, Held, LiveSubagent } from './state.js';
 import type { ConnectionContext, HostContext } from './context.js';
 import type { Connection } from '../types/host.js';
 import { formIn, hostCatalogs } from './formlocale.js';
+import { mayTrust } from './trust.js';
 
 /**
  * The backends whose session config schema has been walked.
@@ -1346,13 +1347,15 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
            * it: a bot's talk runs in the bot's folder whatever folder the
            * client sent. Asked before the folder is picked and the config is
            * checked, so the computer it names is admitted as a client's is. A
-           * trusted folder is the plugin's word, so it needs the plugin's own
-           * `session:trust`, refused in the words a plugin's start gets.
+           * trusted folder is the plugin's word, so it needs a folder the
+           * plugin registered as its own or the plugin's own `session:trust`,
+           * refused in the words a plugin's start gets.
            */
           const placed = await agents.get(provider)?.placeSession?.(config, connection.principal);
           if (placed?.trusted === true) {
             const plugin = options.agentStarts?.[provider];
-            if (plugin?.can?.('session:trust') !== true)
+            const folder = placed.workingDirectory ?? (Array.isArray(params.workingDirectories) && typeof params.workingDirectories[0] === 'string' ? params.workingDirectories[0] : undefined);
+            if (folder === undefined ? plugin?.can?.('session:trust') !== true : !mayTrust(plugin, folder))
               throw new RpcError(-32009, refusalReason(`plugin:${plugin?.by ?? 'unknown'}`, 'session:trust'), {});
           }
           if (placed?.computer !== undefined) {

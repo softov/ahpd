@@ -22,6 +22,7 @@ import type { ToolCall } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Owner } from '../../sdk/src/types/usage.js';
 import { botAsk } from '../src/ask.js';
+import { CONTRACTS } from './manifest.js';
 
 /*
  * The tool a back session answers its main chat with.
@@ -527,6 +528,7 @@ it('reports a value outside the table, and loads anyway', () => {
   };
   const problems: string[] = [];
   const { host } = pluginHost('bot', context, {
+    contracts: CONTRACTS,
     sessions: () => memorySessions(),
     records: () => memoryRecords(),
     alert: (alert) => problems.push(alert.text),

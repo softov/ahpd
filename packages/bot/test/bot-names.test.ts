@@ -20,6 +20,7 @@ import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Grant, Principal, Users } from '../../sdk/src/types/users.js';
+import { CONTRACTS } from './manifest.js';
 
 /*
  * The names a bot and its back sessions are kept by.
@@ -97,6 +98,7 @@ function made(tokens: Record<string, Grant[]> = {}) {
   const sessions = memorySessions();
   const records = memoryRecords();
   const { host: plugin, contribution } = pluginHost('bot', context, {
+    contracts: CONTRACTS,
     sessions: () => sessions,
     records: () => records,
     alert: () => {},

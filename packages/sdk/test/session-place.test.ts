@@ -1,5 +1,5 @@
 import { loggerOf } from '../src/log.js';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -28,8 +28,16 @@ import type { Grant } from '../src/types/users.js';
 const DIR = mkdtempSync(join(tmpdir(), 'ahpd-session-place-'));
 const BOT = join(DIR, 'bot');
 const CLIENT = join(DIR, 'client');
+/** A folder a plugin registers as its own, and one bot's folder under it. */
+const ROOT = join(DIR, 'root');
+const SLUG = join(ROOT, 'slug');
+/** A link under the root that points out of it. */
+const LINK = join(ROOT, 'out');
 mkdirSync(BOT, { recursive: true });
 mkdirSync(CLIENT, { recursive: true });
+mkdirSync(SLUG, { recursive: true });
+// A junction on Windows, which needs no privilege; a directory link elsewhere.
+symlinkSync(CLIENT, LINK, process.platform === 'win32' ? 'junction' : 'dir');
 
 /** What the last start of the backend was told. */
 type Told = { folder?: string; trusted?: boolean; userSettings?: boolean; config?: Record<string, unknown> };
@@ -44,11 +52,13 @@ const context = (): LoaderContext => ({
  * backend as `placed`, with `place` as its hook.
  */
 function placing({
-  grants, place, store,
+  grants, place, store, folders,
 }: {
   grants: Grant[];
   place?: (settings: Readonly<Record<string, unknown>>) => SessionPlace | undefined;
   store?: SessionStore;
+  /** The folders the plugin registers as its own, which its contracts then announce. */
+  folders?: string[];
 }) {
   const sessions = store ?? memorySessions();
   const base = echo({ path: DIR, pace: 0 });
@@ -67,8 +77,10 @@ function placing({
     },
     ...(place === undefined ? {} : { placeSession: place }),
   };
-  const { host: plugin, contribution } = pluginHost('bots', context(), { grants });
+  const contracts = folders === undefined ? undefined : { agents: ['placed'], folders: ['the bots\' workspaces'] };
+  const { host: plugin, contribution } = pluginHost('bots', context(), { grants, ...(contracts === undefined ? {} : { contracts }) });
   plugin.registerAgent(agent);
+  for (const folder of folders ?? []) plugin.registerFolder(folder);
   const { options } = foldHostOptions({ path: DIR, agents: [], sessions, users: directory({ soft: ['session:*'] }) }, [contribution]);
   return { host: createHost(options), sessions, told: () => told };
 }
@@ -81,9 +93,9 @@ async function open(host: ReturnType<typeof createHost>) {
   return client;
 }
 
-/** A client's create of a session on `placed`, in the client's own folder. */
-const create = (client: Awaited<ReturnType<typeof open>>, uri: string, config: Record<string, unknown> = {}) =>
-  call(client, 'createSession', { channel: uri, provider: 'placed', workingDirectories: [`file://${CLIENT}`], config });
+/** A client's create of a session on `placed`, in the client's own folder or `folder`. */
+const create = (client: Awaited<ReturnType<typeof open>>, uri: string, config: Record<string, unknown> = {}, folder = CLIENT) =>
+  call(client, 'createSession', { channel: uri, provider: 'placed', workingDirectories: [`file://${folder}`], config });
 
 it('runs a client\'s session where its agent places it, trusted and without user settings', async () => {
   const { host, told } = placing({ grants: ['session:trust'], place: () => ({ workingDirectory: BOT, trusted: true, userSettings: false }) });
@@ -141,4 +153,54 @@ it('runs a session in the client\'s folder when its agent has no hook', async ()
 
   expect(told().folder).toBe(CLIENT);
   expect(told().userSettings).toBeUndefined();
+});
+
+it('trusts a place under a folder the plugin registered, with no grant', async () => {
+  const { host, told } = placing({ grants: [], folders: [ROOT], place: () => ({ workingDirectory: SLUG, trusted: true, userSettings: false }) });
+  const client = await open(host);
+
+  const made = await create(client, 'placed:/six');
+
+  expect(made).toEqual({ result: null });
+  expect(told()).toMatchObject({ folder: SLUG, trusted: true });
+});
+
+it('refuses a trusted place outside the folder the plugin registered, naming session:trust', async () => {
+  const { host, told } = placing({ grants: [], folders: [ROOT], place: () => ({ workingDirectory: BOT, trusted: true }) });
+  const client = await open(host);
+
+  const refused = await create(client, 'placed:/seven') as { code?: number; message?: string };
+
+  expect(refused).toMatchObject({ code: -32009, message: 'plugin:bots may not session:trust here' });
+  expect(told()).toEqual({});
+});
+
+it('refuses a trusted place through a link that leaves the registered folder', async () => {
+  const { host, told } = placing({ grants: [], folders: [ROOT], place: () => ({ workingDirectory: LINK, trusted: true }) });
+  const client = await open(host);
+
+  const refused = await create(client, 'placed:/eight') as { code?: number; message?: string };
+
+  expect(refused.message).toContain('session:trust');
+  expect(told()).toEqual({});
+});
+
+it('does not trust a plain session a client opens in the registered folder', async () => {
+  const { host, told } = placing({ grants: [], folders: [ROOT] });
+  const client = await open(host);
+
+  await create(client, 'placed:/nine', {}, SLUG);
+
+  expect(told()).toMatchObject({ folder: SLUG, trusted: false });
+});
+
+it('refuses a folder the manifest does not announce, and a relative one', () => {
+  const none = pluginHost('bare', context(), {}).host;
+  expect(() => { none.registerFolder(ROOT); }).toThrow(/contracts declare folders/);
+
+  const other = pluginHost('other', context(), { contracts: { agents: ['placed'] } }).host;
+  expect(() => { other.registerFolder(ROOT); }).toThrow(/contracts\.folders/);
+
+  const announced = pluginHost('announced', context(), { contracts: { folders: ['its own'] } }).host;
+  expect(() => { announced.registerFolder('relative/folder'); }).toThrow(/an absolute path/);
 });

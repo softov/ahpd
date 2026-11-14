@@ -21,6 +21,7 @@ import type { WakeFacts } from '../automations/wakemessage.js';
 import type { AutomationWake, SessionEventKind, SessionRule } from '../types/triggers.js';
 import type { Owner } from '../types/usage.js';
 import type { HostContext } from './context.js';
+import { mayTrust } from './trust.js';
 
 /** How long the window the hourly cap counts runs over is. */
 const HOUR_MS = 3_600_000;
@@ -1009,10 +1010,11 @@ export function createAutomations(ctx: HostContext): Automations {
    * business - a bot's own folder, a machine it works in - and nobody at the
    * keyboard vouched for it. So it is asked before anything is started, and
    * the refusal names `session:trust`, which is the one thing an operator has
-   * to add.
+   * to add. A folder the plugin registered as its own, or one under it, needs
+   * no grant: the manifest announced it before the install.
    */
   const beginPluginSession = async (wanted: StartSession, who?: PluginStarts, named?: (uri: string) => void): Promise<string> => {
-    if (wanted.trusted === true && who?.can?.('session:trust') !== true) {
+    if (wanted.trusted === true && (wanted.workingDirectory === undefined ? who?.can?.('session:trust') !== true : !mayTrust(who, wanted.workingDirectory))) {
       throw new RpcError(-32009, refusalReason(`plugin:${who?.by ?? 'unknown'}`, 'session:trust'), {});
     }
     const owner = wanted.owner;

@@ -275,6 +275,14 @@ export interface PluginStarts {
    * the same pair a subscribe is answered from.
    */
   opens?: (uri: string) => Promise<boolean>;
+  /**
+   * The folders this plugin said are its own, with `registerFolder`.
+   *
+   * A session of this plugin placed or started in one of them, or under it,
+   * is trusted without `session:trust`. Absent for a plugin that registered
+   * none.
+   */
+  folders?: readonly string[];
 }
 
 /**
@@ -1550,6 +1558,19 @@ export interface PluginHost extends PluginContext {
    * `plugin/20-a-plugin-is-a-client-of-its-own-host`.
    */
   registerRoute(handler: Route): void;
+  /**
+   * Say that a folder is this plugin's own, such as a bot's workspaces.
+   *
+   * A session the plugin places or starts in this folder, or under it, is
+   * trusted without `session:trust`, and the trust is kept with that one
+   * session: a session somebody else opens in the folder is not trusted by it.
+   * An absolute path, compared once links are followed.
+   *
+   * The manifest has to announce it in `contracts.folders`, so a person reads
+   * that the plugin trusts a folder of its own before installing it. A plugin
+   * with no contracts may not call it.
+   */
+  registerFolder(path: string): void;
   /**
    * Register what this plugin runs when the host closes.
    *

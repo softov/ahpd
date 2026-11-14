@@ -26,6 +26,7 @@ import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Grant, Principal, Users } from '../../sdk/src/types/users.js';
+import { CONTRACTS } from './manifest.js';
 
 /*
  * The scheme the bot plugin serves.
@@ -158,6 +159,7 @@ function made(
    */
   const agents: Agent[] = [{ ...echo({ path: root, pace: 0 }), provider: 'base', displayName: 'Base' }, ...extra];
   const { host: plugin, contribution } = pluginHost('bot', context, {
+    contracts: CONTRACTS,
     sessions: () => sessions,
     records: () => records,
     agents: () => agents,

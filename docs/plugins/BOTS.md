@@ -308,7 +308,7 @@ An edit that asks for a provider, leaving everything else as it was:
 { "plugins": [{ "name": "@ahpd/bot", "options": { "root": "/srv/bots" } }] }
 ```
 
-The plugin's own entry needs `session:read` and `session:write`. A message is sent to a Back as a client's chat action, which `session:write` covers, and the session's state is read with `session:read`. The write group also holds `session:trust`, which a talk asks for, since it runs in the bot's folder, trusted; without the grant the create is refused naming it.
+The plugin's own entry needs `session:read` and `session:write`. A message is sent to a Back as a client's chat action, which `session:write` covers, and the session's state is read with `session:read`. A talk runs in the bot's folder, trusted, and needs no grant for it: the plugin registers its `root` as its own folder.
 
 ```json
 { "plugins": [{ "name": "@ahpd/bot", "grants": ["session:read", "session:write"], "options": { "root": "/srv/bots" } }] }
