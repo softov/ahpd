@@ -1,6 +1,6 @@
 ---
 title: A plugin reaches its own agents' sessions
-status: todo
+status: implemented
 depends: [task-01-a-plugins-own-folder-is-trusted.md]
 layer: "sdk, docs"
 refs:
@@ -42,3 +42,8 @@ Only `session:` and `chat:` grants are excused, and only on a session whose agen
 
 ## Resume
 
+Built on 2026-11-14.
+The webhook-bot server case now loads the bot plugin with no grants, on a host with users.
+So the whole road from a call to a Back runs without them.
+`schema-gaps.test.ts` applied each plugin with no contracts, so it now passes each manifest's contracts, as the daemon does.
+The bot README, AGENT.md, USERS.md and the pending bot check named the grants too, and say they are not needed now.

@@ -1,7 +1,7 @@
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { computerSource } from '../machines/computers.js';
 import { isRootChannel, methodIn, parseResourceWatchChannelUri, schemeOf, servedIn } from './channels.js';
-import { NEEDS, UNGATED, channelRead, ownIn, refusalReason } from './gate.js';
+import { NEEDS, UNGATED, channelRead, ownAgentExcused, ownIn, refusalReason } from './gate.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
@@ -373,11 +373,17 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
         resources: [ctx.options.users.resource],
       });
     }
+    /*
+     * A plugin's own connection is excused a session or chat grant on a
+     * session of an agent it registered, as a bot's plugin reads its talks.
+     */
+    const channel = typeof params.channel === 'string' ? params.channel : '';
+    const own = needed.filter((one) => ownAgentExcused(ctx, who, channel, one));
     const excused = ownRecord(method, params, who)
       ? new Set<Grant>(['user:get'])
       : excusedBy(method, params, who);
-    if (excused instanceof Promise) return excused.then((held) => { denied(who, needed, held); });
-    denied(who, needed, excused);
+    if (excused instanceof Promise) return excused.then((held) => { denied(who, needed, new Set([...held, ...own])); });
+    denied(who, needed, new Set([...excused, ...own]));
   };
 
   return { admit };

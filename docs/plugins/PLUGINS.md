@@ -1176,6 +1176,7 @@ host.on('listening', async () => {
 
 The connection is served as the principal `plugin:<name>`, and it may do what its configuration entry's `grants` say and nothing else.
 On a host with no user directory nothing is gated, as for any other connection.
+A session of an agent your plugin registered is your plugin's own, so its `session:` and `chat:` grants are not asked there: the bot plugin reads and writes its talks with no grant. A session of any other agent needs the grant, and so does a machine, a file or a terminal.
 What the host says reaches the plugin through `onMessage`, and what the plugin asks for settles a promise, so the connection is used exactly as a client's socket is.
 
 ### Starting a session as an owner
@@ -2086,7 +2087,7 @@ Or in the configuration file:
   "plugins": [
     "@acme/agent-mine",
     { "source": "./my-plugin", "options": { "token": "…" }, "enabled": false },
-    { "source": "@ahpd/bot", "grants": ["session:read", "session:write"] }
+    { "source": "@ahpd/webhook", "grants": ["session:read", "session:create", "session:write", "chat:create"] }
   ]
 }
 ```

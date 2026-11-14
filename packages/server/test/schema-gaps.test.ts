@@ -21,7 +21,7 @@
  */
 
 import { loggerOf } from '@ahpd/sdk';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -101,6 +101,12 @@ const SAMPLES: Sample[] = [
   { dir: 'tunnel-devtunnel', name: 'tunnel-devtunnel', apply: tunnel },
   { dir: 'webhook', name: 'webhook', apply: webhook },
 ];
+
+/** The contracts a package's manifest declares, or nothing where it declares none. */
+const contractsOf = (dir: string): { contracts?: Record<string, string[]> } => {
+  const read = JSON.parse(readFileSync(new URL(`../../${dir}/package.json`, import.meta.url), 'utf8')) as { ahpd?: { contracts?: Record<string, string[]> } };
+  return read.ahpd?.contracts === undefined ? {} : { contracts: read.ahpd.contracts };
+};
 
 /** One line for each gap the walk found, in the wording the daemon uses. */
 const gapsOf = (by: string, where: string, schema: unknown): string[] =>
@@ -212,6 +218,9 @@ beforeAll(async () => {
       alert: (alert) => { alerts.push(alert.text); },
       records: () => undefined,
       sessions: () => undefined,
+      // The manifest's contracts, as the daemon hands them, so a registration
+      // that needs the manifest to announce it is made as it is there.
+      ...contractsOf(sample.dir),
     });
 
     await sample.apply(held.host, sample.options ?? {});

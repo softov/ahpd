@@ -8,7 +8,7 @@ plans:
 
 # Check a talk with a bot, its Back chat and a restart
 
-The tests cover each part, but no test restarts a daemon or draws the Back in a client. Run these after the merge, on the test daemon: `source .project/pending/test-daemon.sh bot agent-claude`. Give the bot plugin's entry `"grants": ["session:read", "session:write"]`, as BOTS.md prints it.
+The tests cover each part, but no test restarts a daemon or draws the Back in a client. Run these after the merge, on the test daemon: `source .project/pending/test-daemon.sh bot agent-claude`. The bot plugin's entry needs no grants.
 
 ## One talk, and the Back as a subagent
 

@@ -308,11 +308,7 @@ An edit that asks for a provider, leaving everything else as it was:
 { "plugins": [{ "name": "@ahpd/bot", "options": { "root": "/srv/bots" } }] }
 ```
 
-The plugin's own entry needs `session:read` and `session:write`. A message is sent to a Back as a client's chat action, which `session:write` covers, and the session's state is read with `session:read`. A talk runs in the bot's folder, trusted, and needs no grant for it: the plugin registers its `root` as its own folder.
-
-```json
-{ "plugins": [{ "name": "@ahpd/bot", "grants": ["session:read", "session:write"], "options": { "root": "/srv/bots" } }] }
-```
+The plugin's own entry needs no grants. A talk runs in the bot's folder, trusted, because the plugin registers its `root` as its own folder. The plugin reads a talk's state and sends a message to a Back on its own connection, and a talk is a session of the plugin's own agent, so the host asks no grant for it.
 
 All the data of one bot is in `<configDir>/bots/<slug>/`: its record is `bot.md` - [The record file](#the-record-file) shows one - its Front rows are in `fronts/`, the rows of the Back sessions an older daemon started in `sessions/`, and its talk logs in `logs/`. A delete removes that folder. The tombstones are in `<configDir>/bots-gone/`. Named templates are in `<configDir>/templates/<name>.md`, and the default `AGENTS.md` template is `<configDir>/templates/bots/AGENTS.md`. A bot's `AGENTS.md` is not in the configuration folder: it is in the bot's work folder, which the `root` option places - [The persona](#the-persona). A plugin that takes the record store over keeps the records and the tombstones wherever that store keeps them; the work folder and its `AGENTS.md` stay where they are.
 

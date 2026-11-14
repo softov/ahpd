@@ -98,7 +98,7 @@ The subjects the host decides are these nineteen:
 
 | Subject | Read group | Write group | What they cover |
 | --- | --- | --- | --- |
-| `session` | `list`, `state` | `create`, `dispose`, `rename`, `configure`, `folders`, `attach`, `mark`, `review`, `changes`, `worktree`, `artifacts`, `trust` | Agent sessions: seeing them, starting them and changing them. `session:trust` lets a plugin ask for its own folder to be trusted |
+| `session` | `list`, `state` | `create`, `dispose`, `rename`, `configure`, `folders`, `attach`, `mark`, `review`, `changes`, `worktree`, `artifacts`, `trust` | Agent sessions: seeing them, starting them and changing them. `session:trust` lets a plugin ask for a folder that is not its own to be trusted |
 | `chat` | `turns` | `create`, `fork`, `dispose`, `move`, `send`, `cancel`, `answer`, `tool`, `draft`, `folders`, `mark`, `truncate` | The conversations inside a session. A `session:` grant covers them too |
 | `terminal` | `output` | `create`, `dispose`, `input`, `resize`, `claim`, `rename`, `clear` | Shells on this machine |
 | `automation` | `list` | `create`, `update`, `remove`, `run`, `cancel` | Agent runs that start on a schedule or a trigger |

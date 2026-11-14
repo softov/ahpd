@@ -1,7 +1,9 @@
 import { computerSource } from '../machines/computers.js';
 import type { Connection } from '../types/host.js';
-import type { Grant } from '../types/users.js';
+import { idOf } from '../sessions/catalog.js';
+import type { Grant, Principal } from '../types/users.js';
 import { ROOT, AUTOMATIONS, isRootChannel, spaceOf } from './channels.js';
+import type { HostContext } from './context.js';
 import type { ChannelKind } from './channels.js';
 
 export const GREETINGS = new Set(['initialize', 'reconnect', 'ping']);
@@ -445,4 +447,31 @@ export const DECLARED: Record<string, string | undefined> = {
   listAutomationTriggerDefinitions: ROOT,
   runAutomation: AUTOMATIONS,
   fetchAutomationRuns: AUTOMATIONS,
+};
+/**
+ * Whether a plugin's connection is excused `grant` on the session `channel` is
+ * in, because that session is of an agent the plugin registered.
+ *
+ * A plugin reads and writes the sessions of its own agents, and their chats,
+ * as a bot's plugin reads and writes its talks, so its entry needs no grant
+ * for them. Only `session:` and `chat:` grants are excused: a machine, a file
+ * or a terminal is something else's, and needs its grant as it does for
+ * anybody. A session of any other agent needs the plugin's own grant.
+ *
+ * The agent is read from the live session, then from the session being
+ * charged to an owner, then from the session's row, so a session that is
+ * asleep is the plugin's as much as one that is running.
+ */
+export const ownAgentExcused = (
+  ctx: Pick<HostContext, 'sessions' | 'owners' | 'kept' | 'sessionFor' | 'options'>,
+  who: Principal | undefined,
+  channel: string,
+  grant: Grant,
+): boolean => {
+  const plugin = who?.plugin;
+  if (plugin === undefined || channel === '') return false;
+  if (!grant.startsWith('session:') && !grant.startsWith('chat:')) return false;
+  const session = ctx.sessionFor(channel);
+  const provider = ctx.sessions.get(session)?.agent.provider ?? ctx.owners.get(session)?.provider ?? ctx.kept.provider(idOf(session));
+  return provider !== undefined && ctx.options.agentStarts?.[provider]?.by === plugin;
 };
