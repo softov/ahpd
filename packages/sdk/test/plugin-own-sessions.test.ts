@@ -74,6 +74,12 @@ const outcome = (asked: Promise<unknown>): Promise<unknown> =>
 const chatOf = async (conn: PluginPeer, session: string): Promise<string> =>
   String(((await conn.request('subscribe', { channel: session })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat);
 
+/** Wait until `check` holds, for at most two seconds. */
+const until = async (check: () => boolean): Promise<void> => {
+  const end = Date.now() + 2000;
+  while (!check() && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 10));
+};
+
 /** The refusals the host sent on the connection, as `channel: reason`. */
 const refusals = (heard: Bag[]): string[] => heard
   .filter((one) => one.method === 'action' && typeof one.params?.rejectionReason === 'string')
@@ -99,10 +105,11 @@ it('lets a plugin with no grants send a turn on a chat of its own agent', async 
     clientSeq: 1,
     action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } },
   });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  const echoed = (): boolean => heard.some((one) => one.method === 'action' && one.params?.action?.type === 'chat/turnStarted');
+  await until(() => echoed() || refusals(heard).length > 0);
 
   expect(refusals(heard)).toEqual([]);
-  expect(heard.some((one) => one.method === 'action' && one.params?.action?.type === 'chat/turnStarted')).toBe(true);
+  expect(echoed()).toBe(true);
 });
 
 it('refuses a plugin with no grants on a session of another agent', async () => {

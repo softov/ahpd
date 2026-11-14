@@ -29,7 +29,7 @@ A row on `x-ahpd-clients://` now says what the host already held about each conn
 - `pnpm exec tsc -p tsconfig.json --noEmit` is clean.
 - The by-hand check in task 01 found the missing `name` in ahpc's client library, not the host. `AhpClient.initialize` in `@microsoft/agent-host-protocol` 1.0.0 sends no `clientInfo` and no `capabilities`.
 - Reviewed on 2026-11-14: `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.
-- `npx vitest run packages/sdk` under the vitest lock passes 4810 with 5 skipped and 1 failed. The failure is `plugin-own-sessions.test.ts`, which passed three runs out of three on its own: [a-plugin-turn-case-waits-a-fixed-20-ms.md](../../../problems/a-plugin-turn-case-waits-a-fixed-20-ms.md).
+- `npx vitest run packages/sdk` under the vitest lock passes 4810 with 5 skipped and 1 failed. The failure is `plugin-own-sessions.test.ts`, which passed three runs out of three on its own: its fixed 20 ms wait, which #331 replaced with a wait for the echo.
 
 ## Departures from the plan
 
