@@ -388,12 +388,94 @@ describe('a connection accepted with what the listener knew', () => {
     expect(typeof row?.connectedAt).toBe('number');
   });
 
+  it('keeps the path the socket opened on and the node that admitted it', async () => {
+    const host = serving(WORK);
+    host.accept(peer(), undefined, false, { path: '/join', node: 'node-a' });
+
+    const [row] = host.clientRegistry.connected();
+    expect(row).toMatchObject({ path: '/join', node: 'node-a' });
+  });
+
   it('lists a connection that came in with nothing said about it without a socket or a claim', async () => {
     const host = serving(WORK);
     host.accept(peer());
     const [row] = host.clientRegistry.connected();
     expect(row?.socket).toBeUndefined();
     expect(row?.forwardedFor).toBeUndefined();
+  });
+});
+
+describe('what the row says of the client', () => {
+  it('carries the version and the title the client declared, beside its name', async () => {
+    const host = serving(WORK);
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0'], { clientInfo: { name: 'probe', version: '2.1.0', title: 'Probe' } }));
+
+    const [row] = host.clientRegistry.connected();
+    expect(row).toMatchObject({ name: 'probe', clientVersion: '2.1.0', clientTitle: 'Probe' });
+  });
+
+  it('carries the names of the capabilities the client declared', async () => {
+    const host = serving(WORK);
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0'], { capabilities: { mcpApps: {} } }));
+
+    const [row] = host.clientRegistry.connected();
+    expect(row).toMatchObject({ capabilities: ['mcpApps'] });
+  });
+
+  it('keeps the version, the title and the capabilities after a reconnect', async () => {
+    const host = serving(WORK);
+    const a = host.accept(peer());
+    await a.handle(hello(['0.9.0'], {
+      clientInfo: { name: 'probe', version: '2.1.0', title: 'Probe' },
+      capabilities: { mcpApps: {} },
+    }));
+    a.close();
+
+    const back = host.accept(peer());
+    await back.handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [] },
+    });
+
+    const [row] = host.clientRegistry.connected();
+    expect(row).toMatchObject({ clientId: 'probe', clientVersion: '2.1.0', clientTitle: 'Probe', capabilities: ['mcpApps'] });
+  });
+
+  it('marks a socket admitted on the deployment token, and leaves the others unmarked', async () => {
+    const host = serving(WORK);
+    host.accept(peer(), undefined, true, { socket: 1 });
+    host.accept(peer(), undefined, false, { socket: 2 });
+
+    const rows = host.clientRegistry.connected();
+    expect(rows.find((one) => one.socket === 1)).toMatchObject({ root: true });
+    expect(rows.find((one) => one.socket === 2)?.root).toBeUndefined();
+  });
+
+  it('carries the bytes the wire still holds for it, when its peer can say', async () => {
+    const host = serving(WORK);
+    const p = peer();
+    p.buffered = () => 42;
+    host.accept(p);
+
+    const [row] = host.clientRegistry.connected();
+    expect(row?.queuedBytes).toBe(42);
+  });
+
+  it('carries the sessions it is present in, by URI', async () => {
+    const host = serving(WORK);
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/live', action: { type: 'session/activeClientSet', activeClient: { clientId: 'probe' } } },
+    });
+    await settle();
+
+    const [row] = host.clientRegistry.connected();
+    expect(row).toMatchObject({ sessions: ['ahp-session:/live'] });
   });
 });
 
@@ -711,6 +793,18 @@ describe('authenticating', () => {
       method: 'authenticate',
       params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-test-1' },
     })).resolves.toEqual({});
+  });
+
+  it('carries the resource of a pushed token on the row, and no token text', async () => {
+    const { host, client } = await opened();
+    await client.handle({
+      method: 'authenticate',
+      params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-test-1' },
+    });
+
+    const [row] = host.clientRegistry.connected();
+    expect(row).toMatchObject({ authenticated: [ANTHROPIC] });
+    expect(JSON.stringify(row)).not.toContain('sk-test-1');
   });
 
   it('refuses one for a resource it never advertised', async () => {

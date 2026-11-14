@@ -40,6 +40,8 @@ export interface Raw {
 export interface Opened {
   /** The URL it was opened on, as the request carried it. */
   url?: string;
+  /** The path of `url`, with no query. */
+  path?: string;
   /** The node whose own token admitted it, on the join path. */
   node?: string;
   /** The number this socket was given, the one `Tap` reports each frame under. */

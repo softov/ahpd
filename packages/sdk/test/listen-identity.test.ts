@@ -142,6 +142,19 @@ it('gives a Node socket its address, its number and the forwarded claim the requ
   expect(openings[0]).toMatchObject({ socket: 1, address: '127.0.0.1', forwardedFor: '203.0.113.9' });
 });
 
+it('cuts the query off the path it reports, so what a row carries holds no token', async () => {
+  openings.length = 0;
+  running = await listen({ port: 0 }, watching);
+  const url = `ws://127.0.0.1:${running.port}`;
+  expect(await knock(`${url}/?tkn=secret`)).toBe('open');
+  // The path is the URL cut at its query; the token itself stays in `url`,
+  // the one field no row carries.
+  expect(openings[0]?.path).toBe('/');
+  const row = { ...openings[0] } as Record<string, unknown>;
+  delete row.url;
+  expect(JSON.stringify(row)).not.toContain('secret');
+});
+
 it('leaves the forwarded claim off a socket whose request carried none', async () => {
   openings.length = 0;
   running = await listen({ port: 0 }, watching);
