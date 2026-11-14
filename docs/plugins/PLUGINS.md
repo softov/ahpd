@@ -1908,6 +1908,21 @@ A drop is not a ban. The client may connect again at once, and is a new row: the
 
 `?owner=me` is refused. A connection belongs to the host, and the grant is the whole of who may read the list.
 
+### `x-ahpd-summary`
+
+The counts a client draws a badge from, without a subscribe to each list. The state is `{ areas }`, with one entry for each area the reader may open: `plugins`, `connectors`, `agents`, `tunnels` and `clients`.
+
+| Field | What it holds |
+|---|---|
+| `channel` | The area's channel URI, such as `x-ahpd-plugins://` |
+| `total` | How many rows of the area the reader may read |
+| `states` | Those rows counted by state: `state` for plugins, connectors and agents, `status` for tunnels. Clients have none |
+| `alerts` | Their alerts, one group for each level and text: `{ level, text, count, rows }`, where `rows` lists each row's `id` and `title`. The worst level comes first. Plugins, connectors and agents have it |
+
+Each reader is counted by the area's own grants, so a person with `connector:list` counts their own connectors, their teams' and the host's. An area the reader may not open is left out, not sent as zero. Every connection may subscribe. The rows keep their own alerts: the summary groups them, so a client says what is wrong and on which rows.
+
+The summary waits one second after a change to any area, so a burst of changes is one send. A reader is then sent `x-ahpd-summary/changed` with the whole summary, as `{ areas }`, and only when their counts moved. A constant stream of changes sends at most once a second.
+
 ### `x-ahpd/invokeOperation`
 
 One command runs an operation that a channel's state lists, and the same command serves every channel with operations. It takes `{ channel, operationId, target?, input? }`:

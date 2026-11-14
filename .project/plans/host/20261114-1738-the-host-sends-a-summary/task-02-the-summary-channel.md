@@ -1,6 +1,6 @@
 ---
 title: The summary channel
-status: todo
+status: done
 depends: [task-01-a-records-channel-has-a-listing.md]
 layer: sdk
 refs:
@@ -37,3 +37,5 @@ refs:
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Built as the steps say, with one change: the timer starts with no subscriber too. A subscribe is answered before the host records it, so a change in between reaches the new reader when the timer ends. With no subscriber at the end, nothing is read.

@@ -83,6 +83,32 @@ export interface RecordEntry {
   record: Record<string, unknown>;
 }
 
+/**
+ * What a records channel answers about its list to another part of the host.
+ *
+ * The summary counts an area through it: the rows as the store holds them, who
+ * may read them, and when the list moved.
+ */
+export interface RecordsListing {
+  /** Every record the store holds now, in the order a snapshot lists them. */
+  rows(): Promise<RecordEntry[]>;
+  /**
+   * Whether this reader may open the list by grant alone.
+   *
+   * No reader, a holder of `grant` and a holder of `alsoGrant` open it. A
+   * reader `mayRead` lets see one row opens it too, which `readable` answers.
+   */
+  opens(reader: Principal | undefined): boolean;
+  /** Whether this reader sees this record, by the same test every send goes through. */
+  readable(id: string, reader: Principal | undefined): boolean;
+  /**
+   * Call `listener` after each refresh, whether or not the list has a subscriber.
+   *
+   * Answers the step that stops the calls.
+   */
+  onRefresh(listener: () => void): () => void;
+}
+
 /** A records channel, and the steps its server wires to the host. */
 export interface RecordsChannel {
   /** The channel's scheme, such as `x-ahpd-teams`. */
@@ -101,6 +127,8 @@ export interface RecordsChannel {
    * for it. A record nobody holds is not sent, and `change` is not called.
    */
   notify(id: string, action: { type: string } & Record<string, unknown>, change: (record: Record<string, unknown>) => Record<string, unknown>): Promise<void>;
+  /** The list as another part of the host reads it. */
+  listing: RecordsListing;
 }
 
 export function recordsChannel(scheme: string, source: RecordsSource, options: RecordsChannelOptions): RecordsChannel {
@@ -116,6 +144,8 @@ export function recordsChannel(scheme: string, source: RecordsSource, options: R
   let tail: Promise<void> = Promise.resolve();
   /** The refresh queued and not yet started, which a further call shares. */
   let pending: Promise<void> | undefined;
+  /** Who is told after each refresh. */
+  const listeners = new Set<() => void>();
 
   /**
    * The query a channel URI carries, or nothing when it carries none this
@@ -289,6 +319,17 @@ export function recordsChannel(scheme: string, source: RecordsSource, options: R
     options.onProblem?.(`${scheme}: the list could not be read: ${error instanceof Error ? error.message : String(error)}`);
   };
 
+  /** Tell each listener the list moved; one that throws does not stop the rest. */
+  const told = (): void => {
+    for (const listener of [...listeners]) {
+      try {
+        listener();
+      } catch (error) {
+        options.onProblem?.(`${scheme}: a listener of the list failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  };
+
   return {
     scheme,
     channel: {
@@ -344,7 +385,7 @@ export function recordsChannel(scheme: string, source: RecordsSource, options: R
       const queued = exclusive(async () => {
         pending = undefined;
         await step();
-      }).catch(problem);
+      }).catch(problem).finally(told);
       pending = queued;
       return queued;
     },
@@ -362,6 +403,17 @@ export function recordsChannel(scheme: string, source: RecordsSource, options: R
         send(asked, client, reader, { ...action, id }, record);
       }
     }).catch(problem),
+    listing: {
+      rows: every,
+      opens: (reader) => reader === undefined
+        || reader.can(options.grant)
+        || (options.alsoGrant !== undefined && reader.can(options.alsoGrant)),
+      readable,
+      onRefresh: (listener) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      },
+    },
   };
 }
 
@@ -453,7 +505,7 @@ export interface ServedRecords {
  * Each channel is bound to a handle that sends through the entry the host
  * sets `publish` and `subscribers` on, as a plugin's handle does.
  */
-export const servedRecords = (by: string, channels: RecordsChannel[], methods: Record<string, PluginMethod>): ServedRecords => {
+export const servedRecords = (by: string, channels: Pick<RecordsChannel, 'scheme' | 'channel' | 'bind'>[], methods: Record<string, PluginMethod>): ServedRecords => {
   const served: Record<string, ServedChannel> = {};
   for (const one of channels) {
     const entry: ServedChannel = { by, scheme: one.scheme, channel: one.channel };

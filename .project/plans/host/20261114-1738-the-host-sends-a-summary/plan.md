@@ -1,7 +1,7 @@
 ---
 title: The host sends a summary
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-11-14
 revalidated: 2026-11-14
@@ -85,9 +85,9 @@ row change -> area refresh -> listing tells the summary -> one second -> rows re
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a-records-channel-has-a-listing](task-01-a-records-channel-has-a-listing.md) | todo | - |
-| [02 - the-summary-channel](task-02-the-summary-channel.md) | todo | 01 |
-| [03 - the-daemon-serves-the-summary](task-03-the-daemon-serves-the-summary.md) | todo | 02 |
+| [01 - a-records-channel-has-a-listing](task-01-a-records-channel-has-a-listing.md) | done | - |
+| [02 - the-summary-channel](task-02-the-summary-channel.md) | done | 01 |
+| [03 - the-daemon-serves-the-summary](task-03-the-daemon-serves-the-summary.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -96,14 +96,14 @@ row change -> area refresh -> listing tells the summary -> one second -> rows re
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-records-channel-has-a-listing.md](task-01-a-records-channel-has-a-listing.md).
+- **Done so far:** tasks 01 to 03 done on 2026-11-14, as [implemented.md](implemented.md) says. Softov validated the build with the ahpw badges.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the tunnels channel lists the records channel's fields by hand, so it must pass `listing` on.
 
 ## Final verification checklist
 
-- [ ] `pnpm typecheck` passes.
-- [ ] The sdk suite passes, with the new summary cases.
-- [ ] The server suite passes.
-- [ ] A daemon from this branch answers a subscribe to `x-ahpd-summary://` with the five areas.
+- [x] `pnpm typecheck` passes.
+- [x] The sdk suite passes, with the new summary cases.
+- [x] The server suite passes.
+- [x] A daemon from this branch answers a subscribe to `x-ahpd-summary://` with the five areas.
