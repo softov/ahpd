@@ -89,6 +89,15 @@ interface Sock {
   close(): void;
 }
 
+/** A peer nobody drives, for a connection whose row is read and nothing else. */
+const idle = (): Peer => ({
+  send: () => {},
+  notify: () => {},
+  request: async () => ({}),
+  answered: () => {},
+  close: () => {},
+});
+
 /** A connection on `socket`, introduced as `clientId`, and signed in as `id` when it is given. */
 const connect = async (socket: number, clientId: string, id?: string, locale?: string): Promise<Sock> => {
   const notes: Sock['notes'] = [];
@@ -157,6 +166,21 @@ it('lists one row for each connection, with the address and the claim the listen
   expect(rows['8']).toMatchObject({ id: '8', socket: 8, clientId: 'bo-window' });
   // The claim is the text that arrived, not a resolved address.
   expect(rows['8']?.['forwardedFor']).toBe('203.0.113.9');
+});
+
+it('puts a principal\'s roles and team beside their id, and marks a root socket', async () => {
+  await served();
+  const ana = await connect(8, 'ana-window', 'ana');
+  // A connection handed a principal at the door, with roles and a team.
+  host.accept(idle(), { id: 'bo', roles: ['reader', 'admin'], team: 'core', can: () => true }, false, { socket: 9, address: '127.0.0.1' });
+  // A socket admitted on the deployment's own token is the host itself.
+  host.accept(idle(), undefined, true, { socket: 10, address: '127.0.0.1' });
+
+  const rows = await subscribe(ana);
+  expect(rows['9']).toMatchObject({ id: '9', principal: 'bo', roles: ['reader', 'admin'], team: 'core' });
+  expect(rows['10']).toMatchObject({ id: '10', root: true });
+  expect(rows['8']).toMatchObject({ id: '8', principal: 'ana', roles: ['reader'] });
+  expect(rows['8']).not.toHaveProperty('root');
 });
 
 it('tells every reader that a connection closed, and its row is gone', async () => {

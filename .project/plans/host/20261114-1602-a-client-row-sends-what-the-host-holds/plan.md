@@ -1,7 +1,7 @@
 ---
 title: A client row sends what the host holds
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-14
 revalidated: 2026-11-14
@@ -100,8 +100,8 @@ listener (Opened) -> host.accept (Connection) -> initialize (by-client-id maps) 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The row says who and which client](task-01-the-row-says-who-and-which-client.md) | todo | - |
-| [02 - The row says where and what it holds](task-02-the-row-says-where-and-what-it-holds.md) | todo | 01 |
+| [01 - The row says who and which client](task-01-the-row-says-who-and-which-client.md) | done | - |
+| [02 - The row says where and what it holds](task-02-the-row-says-where-and-what-it-holds.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -112,8 +112,8 @@ listener (Opened) -> host.accept (Connection) -> initialize (by-client-id maps) 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-row-says-who-and-which-client.md](task-01-the-row-says-who-and-which-client.md).
+- **Done so far:** both tasks. Task 01 sent `root`, `principalUntil`, `clientVersion`, `clientTitle`, `capabilities`, `roles` and `team`. Its by-hand check found the missing `name` in ahpc's client library, not the host. Task 02 sent `path`, `node`, `authenticated`, `sessions`, `queuedBytes` and `queueLimit`.
+- **Next action:** none; built on 2026-11-14. Plan [A client row says when it last moved](../20261114-1602-a-client-row-says-when-it-last-moved/plan.md) is next.
 - **Open questions:** none.
 - **Watch out for:** never send `Opened.url`, because its query can carry the token. `clientRow` is the only place a field joins the row; `rowOf` only reshapes `principal`.
 

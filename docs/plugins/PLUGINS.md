@@ -1890,11 +1890,13 @@ After `listening` the host adds each kind's system tunnel, when the list holds n
 
 ### `x-ahpd-clients`
 
-One row for each connection the daemon is serving, keyed by the number the listener gave its socket, as a string. A row carries `socket`, and `clientId`, `name`, `protocolVersion` and `locale` when the connection said them at `initialize`. It carries `principal` when it signed in, `subscriptions` (the channels it is subscribed to), and `connectedAt`, a wall-clock millisecond. It also carries `address`, the remote address the socket reported, and `forwardedFor`, the `X-Forwarded-For` text the request carried.
+One row for each connection the daemon is serving, keyed by the number the listener gave its socket, as a string. A row carries `socket`, and `clientId`, `name`, `protocolVersion` and `locale` when the connection said them at `initialize`. It also carries `clientVersion` and `clientTitle` when the client said them in `clientInfo`, and `capabilities`, the names of the capabilities it declared. It carries `principal` when it signed in, with `roles` and `team` beside it when the record holds them, and `principalUntil` when the sign-in has an expiry. It carries `subscriptions` (the channels it is subscribed to), and `connectedAt`, a wall-clock millisecond. It also carries `root` when the socket arrived on the deployment's own token, `address`, the remote address the socket reported, and `forwardedFor`, the `X-Forwarded-For` text the request carried. It carries `path`, the path the socket opened on with no query, and `node` when a node's own token admitted it.
+
+`authenticated` is the resources of the tokens the client pushed, each once. `sessions` is the URIs of the sessions it is present in. `queuedBytes` is what the wire still holds for it, when its peer can say, and `queueLimit` is the most the wire may hold.
 
 A row carries `framesIn`, `framesOut`, `bytesIn` and `bytesOut`: the frames its socket has carried in each direction, and the UTF-8 bytes of those frames. A daemon that counts nothing sends no counters.
 
-`forwardedFor` is a claim the client made, kept as it was sent. Nothing in the host parses it into an address or trusts it: `address` is the only one the socket itself reported, and behind a proxy that is the proxy's.
+`forwardedFor` is a claim the client made, kept as it was sent. Nothing in the host parses it into an address or trusts it: `address` is the only one the socket itself reported, and behind a proxy that is the proxy's. `clientVersion`, `clientTitle` and `capabilities` are the client's claims too, kept as it declared them. A row never carries the URL's query or a token: `path` is the URL cut at its query, and `authenticated` is the resources alone.
 
 A row exists while its socket is open. Reading the list needs `client:read`.
 
