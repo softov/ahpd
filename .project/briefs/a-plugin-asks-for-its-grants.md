@@ -38,7 +38,7 @@ Nothing in a client says that this is needed, and nothing in a client can do it.
 | Where to start | The plugin grants, before the other settings | 2026-11-14 |
 | One "Allow" or one for each grant | One "Allow" for every grant the plugin asks for | 2026-11-14 |
 | What the plan covers | Plugin grants only. The feature keys wait for a later plan | 2026-11-14 |
-| Which plan comes first | This one. The bot folder's trust follows it, in [a-bots-folder-is-trusted.md](a-bots-folder-is-trusted.md) | 2026-11-14 |
+| When it is planned | Not now. A bot talk needs no grant after [plugin/20261114-1455](../plans/plugin/20261114-1455-a-bot-talk-needs-no-grant/plan.md), which does not use `asks` | 2026-11-14 |
 | An agent of a plugin that cannot work | Not offered. A plugin that lacks a grant it asks for shows an alarm and does not run | 2026-11-14 |
 
 ## A first draft, for Softov's review

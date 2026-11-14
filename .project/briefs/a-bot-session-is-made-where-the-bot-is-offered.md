@@ -5,7 +5,7 @@ refs:
   - git://9b15ce74a - the commit of ahpd the facts were checked at
   - "[code://packages/bot/src/chat.ts#L1405-L1425](../../packages/bot/src/chat.ts#L1405-L1425) - `placeSession`, which moves a talk to the bot's folder whatever folder the client sent"
   - "[code://packages/bot/src/wake.ts](../../packages/bot/src/wake.ts) - `backOf`, which starts the Back chat on the bot's `preset` or `provider`"
-  - "[code://.project/briefs/a-bots-folder-is-trusted.md](a-bots-folder-is-trusted.md) - the trust of the bot's folder, a brief of its own"
+  - "[code://.project/plans/plugin/20261114-1455-a-bot-talk-needs-no-grant/plan.md](../plans/plugin/20261114-1455-a-bot-talk-needs-no-grant/plan.md) - the trust of the bot's folder, a plan of its own"
 ---
 
 # A bot session is made where the bot is offered
