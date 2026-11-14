@@ -1,6 +1,6 @@
 ---
 title: The row says where and what it holds
-status: todo
+status: done
 depends: [task-01-the-row-says-who-and-which-client.md]
 layer: "sdk listen, sdk host, docs"
 refs:
@@ -55,3 +55,13 @@ It also says the services it pushed a token for, the sessions it is in, and the 
 - By hand on a test daemon: ahpw's own row carries `path`, `sessions` while a session is open, and `queuedBytes`.
 
 ## Resume
+
+The six row fields are built: `path`, `node`, `authenticated`, `sessions`, `queuedBytes` and `queueLimit`.
+`path` is cut by `pathOf` in `openedOf`, and `accept` keeps `path` and `node` on the connection.
+`clientRow` reads `authenticated` from the distinct resource of each pushed token, `sessions` from `presence`, and `queuedBytes` from `peer.buffered()`.
+`queueLimit` is always set, since `clientQueueBytes` always answers a number; the plan named it absent when unknown, which never happens.
+`listen-identity.test.ts` checks that `path` is `/` for a socket opened on `/?tkn=secret`, and that no field a row carries holds the token.
+`host-handshake.test.ts` checks `path` and `node` on the row, `authenticated` with no token text, `sessions` after `session/activeClientSet`, and `queuedBytes: 42`.
+Both test files pass, and `pnpm exec tsc -p tsconfig.json --noEmit` is clean.
+`PLUGINS.md` names the six fields and says a row never carries the URL's query or a token.
+The by-hand check on a test daemon was not run; the same row is read by `clientRegistry.connected()` in the tests.

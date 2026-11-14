@@ -1,6 +1,6 @@
 ---
 title: The row says who and which client
-status: todo
+status: done
 depends: []
 layer: "sdk host, sdk clients, docs"
 refs:
@@ -60,3 +60,20 @@ It also says the client's version, title and capabilities.
 - By hand: ahpc's row on a test daemon carries `name: 'ahpc'`, or *Resume* names the cause.
 
 ## Resume
+
+2026-11-14. The five fields joined `ConnectedClient`.
+`clientInfos` keeps the version, title and capabilities by client id, beside `clientNames`.
+`initialize` writes it and `attached` forgets it.
+`clientRow` spreads it as `clientVersion`, `clientTitle` and `capabilities`, and copies `root` and `principalUntil`.
+`rowOf` adds `roles` when not empty and `team` when present, beside the principal's id.
+`packages/sdk/test/host-handshake.test.ts` gained the four cases *Validation* names: version and title, capabilities, all three over a reconnect, and `root`.
+`packages/sdk/test/clients-channel.test.ts` gained the roles, team and root case.
+The `x-ahpd-clients` section of `PLUGINS.md` names the fields and calls `clientVersion`, `clientTitle` and `capabilities` the client's claims.
+`tsc -p` is clean and both files pass.
+
+The by-hand check answered the plan's open point, and the missing `name` cause is not in the host.
+ahpc at f20c948 writes `clientInfo: { name: 'ahpc' }` in its `initialize` call.
+`AhpClient.initialize` in `@microsoft/agent-host-protocol` 1.0.0 serializes only `channel`, `clientId`, `protocolVersions`, `initialSubscriptions` and `locale`.
+So the `--wire` frame carries no `clientInfo`.
+The host's `initialize` reads `clientInfo.name` into `clientNames` and `clientRow` copies it, which the handshake tests prove with a real `initialize` that sends one.
+So step 13 has no host cause to fix and no host test to add - the open point is answered "the client, not the host".

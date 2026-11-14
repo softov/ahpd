@@ -183,16 +183,38 @@ export interface ConnectedClient {
   clientId: string;
   /** The name the client last said for itself, when it said one. */
   name?: string;
+  /** The version the client said for itself in `clientInfo`, when it said one. */
+  clientVersion?: string;
+  /** The title the client said for itself in `clientInfo`, when it said one. */
+  clientTitle?: string;
+  /** The names of the capabilities the client declared at `initialize`. */
+  capabilities?: string[];
   /** The remote address the listener reported for the socket. */
   address?: string;
   /** The `X-Forwarded-For` claim the request carried, kept as sent and never trusted. */
   forwardedFor?: string;
+  /** The path the socket's URL opened on, with no query. */
+  path?: string;
+  /** The node whose own token admitted it, on the join path. */
+  node?: string;
   /** The protocol version this connection agreed on at `initialize`. */
   protocolVersion?: string;
   /** The BCP 47 tag the client sent, when it sent one. */
   locale?: string;
   /** The person this connection signed in as, when it did. */
   principal?: Principal;
+  /** Whether this socket arrived on the deployment's own connection token. */
+  root?: boolean;
+  /** When the sign-in runs out, when the client said. */
+  principalUntil?: number;
+  /** The protected resources this connection pushed a token for, each once. */
+  authenticated?: string[];
+  /** The sessions this client is present in, by URI. */
+  sessions?: string[];
+  /** The bytes the wire still holds for this client, when its peer can say. */
+  queuedBytes?: number;
+  /** The most the wire may hold for this client, in bytes. */
+  queueLimit?: number;
   /** The channels this client subscribed to, each by the host's own channel. */
   subscriptions: string[];
   /** When the connection was accepted, as a wall-clock millisecond. */
@@ -2031,6 +2053,10 @@ export interface Connection {
    * it, and a listener behind a proxy is what makes it worth reading.
    */
   forwardedFor?: string;
+  /** The path the socket's URL opened on, with no query. */
+  path?: string;
+  /** The node whose own token admitted it, on the join path. */
+  node?: string;
   /** When the connection was accepted, as a wall-clock millisecond. */
   connectedAt: number;
   /**

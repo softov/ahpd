@@ -455,6 +455,7 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
     },
     refresh,
     notify: records.notify,
+    listing: records.listing,
   };
 
   /** Say one operation has started: on its record, or on the list when it has none. */

@@ -60,6 +60,7 @@ import {
   reason,
   servedRecords,
   shellTerminals,
+  summaryChannel,
   signInRecord,
   meMethods,
   tokenMethods,
@@ -1199,9 +1200,21 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     }
     return { ...from, ...hostAdapterSet };
   };
+  /*
+   * The counts a client draws its badges from, over the five lists a person
+   * keeps an eye on. Each list tells the summary after its refresh, and the
+   * summary sends each reader their counts a second after a change.
+   */
+  const summary = summaryChannel([
+    { name: 'plugins', list: pluginLists.channel, state: 'state', alerts: true },
+    { name: 'connectors', list: connectorLists.channel, state: 'state', alerts: true },
+    { name: 'agents', list: agentLists.channel, state: 'state', alerts: true },
+    { name: 'tunnels', list: tunnels.channel, state: 'status' },
+    { name: 'clients', list: clients.channel },
+  ], { onProblem: listProblem });
   const lists = servedRecords(
     'ahpd',
-    [...(peopleLists?.channels ?? []), ...policyLists.channels, pluginLists.channel, adapterLists.channel, engineLists.channel, connectorLists.channel, agentLists.channel, tunnels.channel, clients.channel],
+    [...(peopleLists?.channels ?? []), ...policyLists.channels, pluginLists.channel, adapterLists.channel, engineLists.channel, connectorLists.channel, agentLists.channel, tunnels.channel, clients.channel, summary],
     { ...peopleLists?.methods, ...policyLists.methods, ...pluginLists.methods, ...connectorLists.methods, ...agentLists.methods, [OPERATION_COMMAND]: channelOperations, [COMPLETIONS_COMMAND]: completionsCommand({ connectors: () => connectorLists.refs() }) },
   );
 
@@ -1434,6 +1447,15 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
         title: 'Tunnels',
         description: 'The tunnels this host keeps, and the operations each one takes.',
         operations: ['put', 'delete'],
+      },
+      /*
+       * The summary's `summary:read`, which its `read` group answers. Every
+       * connection is let in all the same, so a role needs nothing here.
+       */
+      summary: {
+        title: 'Summary',
+        description: 'How many rows each area holds, by state and by alert.',
+        operations: [],
       },
       /*
        * The one command over the channels that offer operations. It is served
@@ -2401,6 +2423,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       // The client list is refreshed by the host, which is going with it.
       clientWatch.close();
       clients.stop();
+      summary.stop();
       await raise(liveEvents, { type: 'stopping' }, failed('stopping'));
       peopleLists?.close();
       // The hourly fetch of the provider lists stops with the daemon that reads them.

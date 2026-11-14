@@ -57,13 +57,17 @@ const openedOf = (seen: {
   socket?: number | undefined;
   address?: string | undefined;
   forwardedFor?: string | undefined;
-}): Opened => ({
-  ...(seen.url === undefined ? {} : { url: seen.url }),
-  ...(seen.node === undefined ? {} : { node: seen.node }),
-  ...(seen.socket === undefined ? {} : { socket: seen.socket }),
-  ...(seen.address === undefined ? {} : { address: seen.address }),
-  ...(seen.forwardedFor === undefined ? {} : { forwardedFor: seen.forwardedFor }),
-});
+}): Opened => {
+  const path = pathOf(seen.url);
+  return {
+    ...(seen.url === undefined ? {} : { url: seen.url }),
+    ...(path === '' ? {} : { path }),
+    ...(seen.node === undefined ? {} : { node: seen.node }),
+    ...(seen.socket === undefined ? {} : { socket: seen.socket }),
+    ...(seen.address === undefined ? {} : { address: seen.address }),
+    ...(seen.forwardedFor === undefined ? {} : { forwardedFor: seen.forwardedFor }),
+  };
+};
 
 /**
  * The token a connection presented, if it presented one.

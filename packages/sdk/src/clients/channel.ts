@@ -90,10 +90,15 @@ export function clientsChannel(options: ClientsChannelOptions): ClientsChannel {
   /** One connection as a row: the socket number is the id, the person is their id, and the counts are the socket's. */
   const rowOf = (client: ConnectedClient): Record<string, unknown> => {
     const counts = client.socket === undefined ? undefined : options.counters?.(client.socket);
+    const principal = client.principal;
     return {
       ...client,
       id: String(client.socket),
-      ...(client.principal === undefined ? {} : { principal: client.principal.id }),
+      ...(principal === undefined ? {} : {
+        principal: principal.id,
+        ...(principal.roles.length === 0 ? {} : { roles: principal.roles }),
+        ...(principal.team === undefined ? {} : { team: principal.team }),
+      }),
       ...(counts === undefined ? {} : counts),
       // A live connection offers its one operation, and the list offers no other.
       operations: ['drop'],

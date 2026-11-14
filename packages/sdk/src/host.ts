@@ -462,6 +462,8 @@ export function createHost(options: HostOptions): Host {
   const clientNames = new Map<string, string>();
   /** The protocol version each client agreed at `initialize`, by client id. */
   const clientVersions = new Map<string, string>();
+  /** The version, title and capabilities each client declared at `initialize`, by client id. */
+  const clientInfos = new Map<string, { version?: string; title?: string; capabilities?: string[] }>();
   const learned = new Map<string, Learned>();
   const about = (provider: string): Learned => {
     const held = learned.get(provider);
@@ -1575,7 +1577,7 @@ export function createHost(options: HostOptions): Host {
    * and the helpers declared above it.
    */
   const ctx = {
-    options, dir, known, lastSeen, baselineDebt, clearBaselineDebt, waitsOver, locales, clientNames, clientVersions, localeOf: (clientId: string) => locales.get(clientId),
+    options, dir, known, lastSeen, baselineDebt, clearBaselineDebt, waitsOver, locales, clientNames, clientVersions, clientInfos, localeOf: (clientId: string) => locales.get(clientId),
     catalogsOf: (key: string, provider: string): readonly (Catalogs | undefined)[] => [
       options.sessionConfig !== undefined && Object.hasOwn(options.sessionConfig, key)
         ? options.catalogs?.sessionConfig?.[key]
@@ -1970,18 +1972,35 @@ export function createHost(options: HostOptions): Host {
    * and the connection is where each field is as it stands now, so a client
    * that signed in or subscribed after it arrived is shown that way.
    */
-  const clientRow = (connection: Connection): ConnectedClient => ({
-    ...(connection.socket === undefined ? {} : { socket: connection.socket }),
-    clientId: connection.clientId,
-    ...(clientNames.get(connection.clientId) === undefined ? {} : { name: clientNames.get(connection.clientId) as string }),
-    ...(connection.address === undefined ? {} : { address: connection.address }),
-    ...(connection.forwardedFor === undefined ? {} : { forwardedFor: connection.forwardedFor }),
-    ...(connection.protocolVersion === undefined ? {} : { protocolVersion: connection.protocolVersion }),
-    ...(connection.locale === undefined ? {} : { locale: connection.locale }),
-    ...(connection.principal === undefined ? {} : { principal: connection.principal }),
-    subscriptions: [...connection.activeSubscriptions],
-    connectedAt: connection.connectedAt,
-  });
+  const clientRow = (connection: Connection): ConnectedClient => {
+    const info = clientInfos.get(connection.clientId);
+    const buffered = connection.peer.buffered?.();
+    const authenticated = [...new Set([...connection.tokens.values()].map((credential) => credential.resource))];
+    const sessions = [...presence].flatMap(([id, members]) => members.has(connection.clientId) ? [nameOf(id)] : []);
+    return {
+      ...(connection.socket === undefined ? {} : { socket: connection.socket }),
+      clientId: connection.clientId,
+      ...(clientNames.get(connection.clientId) === undefined ? {} : { name: clientNames.get(connection.clientId) as string }),
+      ...(info?.version === undefined ? {} : { clientVersion: info.version }),
+      ...(info?.title === undefined ? {} : { clientTitle: info.title }),
+      ...(info?.capabilities === undefined ? {} : { capabilities: info.capabilities }),
+      ...(connection.address === undefined ? {} : { address: connection.address }),
+      ...(connection.forwardedFor === undefined ? {} : { forwardedFor: connection.forwardedFor }),
+      ...(connection.path === undefined ? {} : { path: connection.path }),
+      ...(connection.node === undefined ? {} : { node: connection.node }),
+      ...(connection.protocolVersion === undefined ? {} : { protocolVersion: connection.protocolVersion }),
+      ...(connection.locale === undefined ? {} : { locale: connection.locale }),
+      ...(connection.principal === undefined ? {} : { principal: connection.principal }),
+      ...(connection.root === true ? { root: true } : {}),
+      ...(connection.principalUntil === undefined ? {} : { principalUntil: connection.principalUntil }),
+      ...(authenticated.length === 0 ? {} : { authenticated }),
+      ...(sessions.length === 0 ? {} : { sessions }),
+      ...(buffered === undefined ? {} : { queuedBytes: buffered }),
+      queueLimit: clientQueueBytes(rootConfig),
+      subscriptions: [...connection.activeSubscriptions],
+      connectedAt: connection.connectedAt,
+    };
+  };
 
   const host: Host = {
     clients,
@@ -2241,6 +2260,8 @@ export function createHost(options: HostOptions): Host {
         ...(opened?.socket === undefined ? {} : { socket: opened.socket }),
         ...(opened?.address === undefined ? {} : { address: opened.address }),
         ...(opened?.forwardedFor === undefined ? {} : { forwardedFor: opened.forwardedFor }),
+        ...(opened?.path === undefined ? {} : { path: opened.path }),
+        ...(opened?.node === undefined ? {} : { node: opened.node }),
         /*
          * A socket that arrived on a personal connection token is already
          * somebody, so the gate reads this before the first command rather

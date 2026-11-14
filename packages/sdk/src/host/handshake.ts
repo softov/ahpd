@@ -85,7 +85,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
   const { connection } = conn;
   const {
     advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, projectSnapshot, browsable, authRequiredChannel,
-    clientNames, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, releaseActiveClientForSession,locales, authenticationResource, log, LOGS, METRICS, metaChanged,
+    clientNames, clientInfos, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, releaseActiveClientForSession,locales, authenticationResource, log, LOGS, METRICS, metaChanged,
     metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, projectActionForClient, sessions,
     snapshotOf, TRACES, visible, subscribedAs,
   } = ctx;
@@ -130,6 +130,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       ctx.baselineDebt.delete(id);
       clientNames.delete(id);
       clientVersions.delete(id);
+      clientInfos.delete(id);
       locales.delete(id);
     }
   };
@@ -345,6 +346,26 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       if (typeof named === 'string') clientNames.set(connection.clientId, named);
       else clientNames.delete(connection.clientId);
       markLegacy(clientNames.get(connection.clientId), params._meta);
+      /*
+       * And the rest of what it declared, kept by client id beside the name: a
+       * `reconnect` carries no `clientInfo` and no `capabilities`, so the row
+       * reads these for the client's whole stay.
+       */
+      const info = bag(params.clientInfo);
+      const version = str(info.version);
+      const title = str(info.title);
+      const capabilities = Object.entries(bag(params.capabilities))
+        .filter(([, value]) => typeof value === 'object' && value !== null && !Array.isArray(value))
+        .map(([key]) => key);
+      if (version === undefined && title === undefined && capabilities.length === 0) {
+        clientInfos.delete(connection.clientId);
+      } else {
+        clientInfos.set(connection.clientId, {
+          ...(version === undefined ? {} : { version }),
+          ...(title === undefined ? {} : { title }),
+          ...(capabilities.length === 0 ? {} : { capabilities }),
+        });
+      }
       keepLocale(params.locale, false);
       void fire({ type: 'client_connect', client: connection.clientId });
       // The client list is told once the connection has said who it is.
