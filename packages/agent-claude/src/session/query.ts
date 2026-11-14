@@ -859,6 +859,16 @@ export function createQuery(ctx: SessionContext): Query {
    */
   const CONTEXT_WAIT_MS = 2000;
 
+  /**
+   * The shortest time between two mid-turn asks for the context breakdown.
+   *
+   * A long turn grows its window with every reply, and asking on each one
+   * would be a control round-trip per model round. The clock runs from the
+   * last ask of any kind, the handshake's too. A compaction ignores it: the
+   * figure from before a compaction is the wrong one.
+   */
+  const CONTEXT_FOLLOW_MS = 30_000;
+
   /** What `inTime` answers for a control request that did not answer in time. */
   const LATE = Symbol('late');
 
@@ -883,6 +893,9 @@ export function createQuery(ctx: SessionContext): Query {
    * may not, so a missing method is no answer rather than a failure. A late
    * answer and a failed one are both logged once and left out: nothing a
    * person reads is worth holding a turn open for.
+   *
+   * Every ask is timed, because `followContext` throttles the asks a running
+   * turn makes by the last one of any kind.
    */
   const askContext = async (): Promise<ContextFigure | undefined> => {
     const handle = ctx.query as unknown as {
@@ -890,6 +903,7 @@ export function createQuery(ctx: SessionContext): Query {
     };
     const ask = handle.getContextUsage;
     if (typeof ask !== 'function') return undefined;
+    ctx.contextAskedAt = Date.now();
     try {
       const answer = await inTime(ask.call(handle, { detail: 'summary' }));
       if (answer === LATE) {
@@ -947,6 +961,45 @@ export function createQuery(ctx: SessionContext): Query {
     // A turn that ended meanwhile gave a later breakdown, which stands.
     if (figure !== undefined && ctx.contextFigure === held) ctx.contextFigure = figure;
     sayMeta();
+  };
+
+  /**
+   * Ask the context breakdown again while a turn runs.
+   *
+   * A long turn grows its window, and a compaction changes it outright, so
+   * the figure a client holds would be the one from before until the turn
+   * ended. `compacted` asks whatever the clock says, because the figure from
+   * before a compaction is the wrong one; a reply asks only when
+   * `CONTEXT_FOLLOW_MS` has passed since the last ask of any kind.
+   *
+   * The ask runs beside the stream and never holds the turn: its answer is
+   * kept only when no later figure came meanwhile, as `introduce` keeps one.
+   * One ask runs at a time, and a compaction while one runs is owed another,
+   * because that ask answers from before the compaction.
+   */
+  const followContext = (compacted: boolean): void => {
+    if (ctx.contextAsking) {
+      if (compacted) ctx.contextOwed = true;
+      return;
+    }
+    if (!compacted && ctx.contextAskedAt !== undefined
+      && Date.now() - ctx.contextAskedAt < CONTEXT_FOLLOW_MS) return;
+    const handle = ctx.query;
+    const held = ctx.contextFigure;
+    ctx.contextAsking = true;
+    void askContext().then((figure) => {
+      ctx.contextAsking = false;
+      // A CLI this session has since put away answered about its own context.
+      if (ctx.query !== handle || ctx.disposed) return;
+      // A turn that ended meanwhile gave a later breakdown, which stands.
+      if (figure !== undefined && ctx.contextFigure === held) ctx.contextFigure = figure;
+      sayMeta();
+      // This answer was asked for before a compaction the session knows of.
+      if (ctx.contextOwed) {
+        ctx.contextOwed = false;
+        followContext(true);
+      }
+    });
   };
 
   /** The usage keys of the session's `_meta`, from what the session last heard. */
@@ -1029,7 +1082,11 @@ export function createQuery(ctx: SessionContext): Query {
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L305-L314
          */
         if (type === 'system' && str(message.subtype) === 'compact_boundary') {
-          if (ctx.active) ctx.addPart(ctx.mainScope, { kind: 'systemNotification', content: 'Conversation compacted' });
+          if (ctx.active) {
+            ctx.addPart(ctx.mainScope, { kind: 'systemNotification', content: 'Conversation compacted' });
+            // The figure from before the compaction is the wrong one.
+            followContext(true);
+          }
           continue;
         }
 
@@ -1086,6 +1143,9 @@ export function createQuery(ctx: SessionContext): Query {
         if (ctx.active !== undefined && type === 'assistant' && str(message.parent_tool_use_id) === undefined) {
           const entry = str(message.uuid);
           if (entry !== undefined) forkAnchorUuids.set(String(ctx.active.id), entry);
+          // A reply is where a long turn's window grew, so it is where the
+          // figure is asked again.
+          followContext(false);
         }
 
         /*

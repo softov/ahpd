@@ -385,10 +385,17 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   /** The CLI's `init` frame, the SDK's `system`/`init` message, once it has answered with one. */
   init: Bag | undefined;
   /**
-   * The last context breakdown the CLI gave, at its handshake or at a turn's
-   * end, which the session's `_meta` carries before and between turns.
+   * The last context breakdown the CLI gave: at its handshake, at a turn's
+   * end, and during a long turn after a compaction or a model reply, which
+   * the session's `_meta` carries before and between turns.
    */
   contextFigure: ContextFigure | undefined;
+  /** When the context breakdown was last asked for, on this host's clock. */
+  contextAskedAt: number | undefined;
+  /** Whether a mid-turn ask for the context breakdown is running. */
+  contextAsking: boolean;
+  /** Whether a compaction asked again while an ask was already running. */
+  contextOwed: boolean;
   /** The usage keys of `_meta` the session's clients were last told, as text. */
   usageSaid: string | undefined;
   /**
