@@ -11,6 +11,7 @@
  * mutated.
  */
 
+import { isAbsolute } from 'node:path';
 import type { Agent } from '../types/agent.js';
 import type { AgentOwner, ServedEngine } from '../types/agents.js';
 import type { SessionConfigAnswerer } from '../types/completions.js';
@@ -1973,6 +1974,23 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
         throw new Error(miss(by, 'registerRoute', 'handler', 'registered only once'));
       }
       contribution.routes = handler;
+    },
+    registerFolder(path) {
+      open();
+      /*
+       * Announced or refused: a folder of its own is trusted with no grant, so
+       * the manifest is where a person reads it before the install. A plugin
+       * with no contracts announces nothing, and is refused rather than let
+       * through as it is for every other kind.
+       */
+      if (options.contracts === undefined) {
+        throw new Error(miss(by, 'registerFolder', 'the folder', 'a manifest whose contracts declare folders'));
+      }
+      declared(by, options.contracts, 'folders');
+      if (typeof path !== 'string' || !isAbsolute(path)) {
+        throw new Error(miss(by, 'registerFolder', String(path), 'an absolute path'));
+      }
+      starts.folders = [...(starts.folders ?? []), path];
     },
     registerClose(close) {
       open();

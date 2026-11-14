@@ -230,6 +230,7 @@ against its contract before it is recorded.
 | `registerChatPreamble(preamble)` | append | text the host puts before the first turn of each chat a person or a tool opens |
 | `registerSessionMeta(key, read)` | register, open key | one key in every session's `_meta`, answered synchronously for a session URI; `sessionMetaChanged(uri)` announces a new value |
 | `registerClose(close)` | register, open key | one function the host runs when it closes, once its sessions have closed and before its stores do |
+| `registerFolder(path)` | append | a folder that is this plugin's own, where its sessions are trusted with no grant |
 
 ### A route authenticates its own caller
 
@@ -310,6 +311,20 @@ export const apply: Plugin['apply'] = (host) => {
 A function may answer a promise, and the host waits for it before it closes its stores. A plugin with a removal or a child process still running waits for it here, rather than answering while it writes into something the daemon is taking away.
 
 Called more than once, each function is kept and each runs, in the order they were registered. A failure is logged against your plugin's name and does not stop the next plugin's close. A plugin that registered none is not asked for one: having nothing to stop is the ordinary case.
+
+### A plugin's own folder is trusted
+
+`registerFolder(path)` says that a folder is your plugin's own, such as the bot plugin's root of bot workspaces. A session your plugin puts in that folder or under it, trusted, is trusted with no grant: one your agent places with `placeSession`, or one `host.startSession` starts. Any other trusted folder needs `session:trust` on your plugin's entry.
+
+```ts
+export const apply: Plugin['apply'] = (host) => {
+  host.registerFolder('/srv/bots');
+};
+```
+
+The trust is kept with that one session. A session somebody else opens in the folder is not trusted by it. The path is absolute, and the host compares it once links are followed, so a link inside the folder that points out of it is not your folder.
+
+Your manifest announces it in `contracts.folders`, so a person reads that your plugin trusts a folder of its own before installing it. A plugin with no contracts may not call it.
 
 ### What a backend needs from a machine
 
@@ -1161,6 +1176,7 @@ host.on('listening', async () => {
 
 The connection is served as the principal `plugin:<name>`, and it may do what its configuration entry's `grants` say and nothing else.
 On a host with no user directory nothing is gated, as for any other connection.
+A session of an agent your plugin registered is your plugin's own, so its `session:` and `chat:` grants are not asked there: the bot plugin reads and writes its talks with no grant. A session of any other agent needs the grant, and so does a machine, a file or a terminal.
 What the host says reaches the plugin through `onMessage`, and what the plugin asks for settles a promise, so the connection is used exactly as a client's socket is.
 
 ### Starting a session as an owner
@@ -1646,6 +1662,7 @@ that method may be called with:
 | `chatPreambles` | `registerChatPreamble(preamble)` |
 | `plans` | `registerPlan(plan)` |
 | `closers` | `registerClose(close)` |
+| `folders` | `registerFolder(path)`, which takes no name, so the list says what the folder is |
 
 An entry may end in `*`, such as `claude-*`, or be `*`, for a name the plugin
 takes from its options. Anything else is the name exactly.
@@ -2070,7 +2087,7 @@ Or in the configuration file:
   "plugins": [
     "@acme/agent-mine",
     { "source": "./my-plugin", "options": { "token": "…" }, "enabled": false },
-    { "source": "@ahpd/bot", "grants": ["session:read", "session:write"] }
+    { "source": "@ahpd/webhook", "grants": ["session:read", "session:create", "session:write", "chat:create"] }
   ]
 }
 ```

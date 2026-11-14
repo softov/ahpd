@@ -4,6 +4,7 @@ import { localPath, uriOf } from '../resources/fileuri.js';
 import { isWorktreeUnderRepository } from '../repo/worktrees.js';
 import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
+import type { PluginStarts } from '../types/plugin.js';
 
 /*
  * Whether a folder is trusted, read from the host's `workspaceTrust` value,
@@ -101,6 +102,24 @@ const under = (folder: string, parent: string): boolean => {
   // needs, and one that is not gets it - so `/ab` is a sibling of `/a` and
   // never one of its children, which is what a bare `startsWith` would say.
   return one.startsWith(two.endsWith(sep) ? two : `${two}${sep}`);
+};
+
+/**
+ * Whether a plugin may have `folder` trusted for a session of its own.
+ *
+ * Its entry's `session:trust`, or a folder it registered as its own that
+ * `folder` is or is under. Both paths are compared once their links are
+ * followed, so a link inside the plugin's folder that points out of it is not
+ * the plugin's folder.
+ */
+export const mayTrust = (who: PluginStarts | undefined, folder: string): boolean => {
+  if (who?.can?.('session:trust') === true) return true;
+  const asked = settled(localPath(folder));
+  if (asked === undefined) return false;
+  return (who?.folders ?? []).some((one) => {
+    const own = settled(one);
+    return own !== undefined && under(asked, own);
+  });
 };
 
 /** Whether two paths name the same folder, once both are settled. */

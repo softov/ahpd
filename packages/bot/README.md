@@ -36,10 +36,10 @@ In the configuration file, with every option set:
 | `askIn` | `main` | Where the Back's question or approval is shown: `main`, copied into the Front turn and answered there, or `own`, left in the Back and listed on the talk's `inputNeeded`, as VS Code lists a subagent's requests on its session |
 | `secondSession` | `refuse` | What a person's second session with the same bot gets: `refuse`, refused naming their talk, or `allow`, opened, and the bot answers the one they used last |
 
-The plugin's own entry needs `session:read` and `session:write`: a message is sent to a Back as a client's chat action, and the session's state is read the same way. The write group also holds `session:trust`, which a talk asks for, since it runs in the bot's folder, trusted.
+The plugin's own entry needs no grants. A talk runs in the bot's folder, trusted, because the plugin registers its `root` as its own folder, and a talk is a session of the plugin's own agent, so the plugin reads and writes it with no grant.
 
 ```json
-{ "plugins": [{ "name": "@ahpd/bot", "grants": ["session:read", "session:write"], "options": { "root": "/srv/bots" } }] }
+{ "plugins": [{ "name": "@ahpd/bot", "options": { "root": "/srv/bots" } }] }
 ```
 
 A bot is a record of the host's record store, so the daemon keeps each one in a folder of its own: `<configDir>/bots/<slug>/bot.md`, the fields as YAML frontmatter, with the tombstones in `<configDir>/bots-gone/`. Beside the record are `fronts/` for the talk rows, `sessions/` for the rows of the Back sessions an older daemon started, and `logs/` for the talk logs. A file there that cannot be read is reported and skipped, and every other bot is kept. A bot's `AGENTS.md` is not there: it is in the bot's work folder, `<root>/<slug>/`.

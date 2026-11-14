@@ -1,6 +1,6 @@
 ---
 title: A plugin's own folder is trusted
-status: todo
+status: implemented
 depends: []
 layer: "sdk, bot, docs"
 refs:
@@ -47,3 +47,6 @@ A session of the plugin placed or started in that folder, or under it, is truste
 
 ## Resume
 
+Built on 2026-11-14.
+The bot tests build the plugin host by hand, so they now pass the manifest's contracts through `packages/bot/test/manifest.ts`.
+A trusted place with no folder at all still needs `session:trust`, because there is no folder to compare.

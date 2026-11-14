@@ -13,6 +13,7 @@ import { apply } from '../src/plugin.js';
 import { agentsFilled, agentsTemplatePath, agentsTextOf, DEFAULT_AGENTS_TEMPLATE } from '../src/template.js';
 import type { BotRecord } from '../src/record.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
+import { CONTRACTS } from './manifest.js';
 
 /*
  * The files a bot's folder holds, and the template that makes them.
@@ -75,6 +76,7 @@ function loaded(config: string, root = join(temp(), 'bots')): string[] {
     path, paths: [path], version: sdkVersion(), hostName: 'test', configDir: config, log: loggerOf(() => {}), say: () => {},
   };
   const { host } = pluginHost('bot', context, {
+    contracts: CONTRACTS,
     sessions: () => memorySessions(),
     records: () => memoryRecords(),
     alert: (alert) => { reported.push(alert.text); },

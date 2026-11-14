@@ -34,8 +34,6 @@ const WEBHOOK = './packages/webhook/src/index.ts';
 /** The grants the webhook plugin needs to make its session with a bot, open a thread's chat there and queue a message. */
 const GRANTS = ['bot:get', 'bot:chat', 'session:read', 'session:create', 'session:write', 'chat:create'];
 
-/** The grants the bot plugin needs to start a back session in the bot's folder and send it a message. */
-const BOT_GRANTS = ['session:read', 'session:write', 'session:trust'];
 
 let loose: string[] = [];
 afterEach(() => {
@@ -103,9 +101,9 @@ async function started(grants: string[] = GRANTS) {
     users: directory(),
   };
   const { options, problems, routes } = await loadPlugins([
-    // What the bot's wake needs to start its back session in the bot's trusted
-    // folder and hand the message on; a wake that cannot ends the turn failed.
-    { name: BOT, options: { root: join(dir, 'bots') }, grants: [...BOT_GRANTS, 'session:state', 'chat:turns', 'chat:send'] },
+    // No grants: a talk runs in the bot's own folder, and the bot plugin reads
+    // and writes its talks, which are sessions of its own agent.
+    { name: BOT, options: { root: join(dir, 'bots') } },
     { name: WEBHOOK, grants },
   ], { base, configDir: join(dir, 'config'), cwd: REPO, log: (line) => { lines.push(line); } });
   const host = createHost(options);

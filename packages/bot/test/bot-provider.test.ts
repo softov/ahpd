@@ -26,6 +26,7 @@ import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Grant, Principal, Users } from '../../sdk/src/types/users.js';
+import { CONTRACTS } from './manifest.js';
 
 /*
  * The scheme the bot plugin serves.
@@ -158,6 +159,7 @@ function made(
    */
   const agents: Agent[] = [{ ...echo({ path: root, pace: 0 }), provider: 'base', displayName: 'Base' }, ...extra];
   const { host: plugin, contribution } = pluginHost('bot', context, {
+    contracts: CONTRACTS,
     sessions: () => sessions,
     records: () => records,
     agents: () => agents,
@@ -165,11 +167,10 @@ function made(
     // case can say who the agents are.
     ...(over.agentOwners === undefined ? {} : { agentOwners: over.agentOwners }),
     alert: (alert) => { reported.push(alert.text); },
-    // The grants the daemon's entry for this plugin holds, as BOTS.md prints
-    // it: a talk runs in the bot's own folder, trusted, which the write group's
-    // `session:trust` allows, and the wake reads a session's state and sends a
-    // message on the plugin's own connection.
-    grants: ['session:read', 'session:write'],
+    // No grants, as BOTS.md prints the entry: a talk runs in the bot's own
+    // folder, which the plugin registers, and the wake reads and writes its
+    // talks, which are sessions of the plugin's own agent.
+    grants: [],
   });
   prepare?.(configDir, bots);
   apply(plugin, { root: bots, ...pluginOptions });

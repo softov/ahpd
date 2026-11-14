@@ -30,6 +30,7 @@ import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Principal } from '../../sdk/src/types/users.js';
 import { undeclaredIn } from '../../sdk/test/support/wire.js';
 import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
+import { CONTRACTS } from './manifest.js';
 
 /*
  * A chat with a bot is a session with no harness.
@@ -141,6 +142,7 @@ function made(more: Partial<HostOptions> = {}, grants: `${string}:${string}`[] =
   const sessions = memorySessions();
   const records = memoryRecords();
   const { host: plugin, contribution } = pluginHost('bot', context, {
+    contracts: CONTRACTS,
     sessions: () => sessions,
     records: () => records,
     alert: () => {},
@@ -438,6 +440,24 @@ it('tells whoever answers the chat the words and the chat they were said in, and
  * L1854-L1860 at a4e689ae) and types the part `sendFailed` (L2564-L2573 at
  * 6b68d3fe), and a read back keeps it failed.
  */
+it('makes a talk in the bot\'s folder, trusted, with no grant on the plugin\'s entry', async () => {
+  const { host } = made({}, [], null);
+  const client = await anyone(host);
+  await client.handle({
+    method: 'resourceWrite',
+    params: { uri: 'bot://backer', data: JSON.stringify({ name: 'Backer' }), createOnly: true },
+  });
+
+  const answered = await client.handle({
+    method: 'createSession',
+    params: { channel: SESSION, provider: CHAT_PROVIDER, config: { bot: 'backer' } },
+  });
+
+  // The bot's folder is under the root the plugin registered, so the trust
+  // needs no `session:trust`.
+  expect(answered).toBeNull();
+});
+
 it('ends a turn nothing answers in chat/error, as VS Code ends a turn it has no agent for', async () => {
   // A chat with nobody behind it.
   const { host, configDir } = made({}, ['session:trust'], null);

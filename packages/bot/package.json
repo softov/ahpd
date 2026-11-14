@@ -81,7 +81,8 @@
       "grants": ["bot"],
       "resourceProviders": ["bot"],
       "tools": ["post_message"],
-      "bindings": ["*"]
+      "bindings": ["*"],
+      "folders": ["the bots' workspaces, one folder per bot under root"]
     },
     "optionsSchema": {
       "type": "object",

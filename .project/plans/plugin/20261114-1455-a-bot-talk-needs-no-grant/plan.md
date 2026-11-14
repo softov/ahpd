@@ -1,7 +1,7 @@
 ---
 title: A bot talk needs no grant
 domain: plugin
-status: planned
+status: active
 priority: high
 created: 2026-11-14
 revalidated: 2026-11-14
@@ -86,8 +86,8 @@ plugin:bot subscribe/dispatchAction -> users gate -> session of an agent of plug
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a plugin's own folder is trusted](task-01-a-plugins-own-folder-is-trusted.md) | todo | - |
-| [02 - a plugin reaches its own agents' sessions](task-02-a-plugin-reaches-its-own-sessions.md) | todo | 01 |
+| [01 - a plugin's own folder is trusted](task-01-a-plugins-own-folder-is-trusted.md) | implemented | - |
+| [02 - a plugin reaches its own agents' sessions](task-02-a-plugin-reaches-its-own-sessions.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -97,8 +97,8 @@ plugin:bot subscribe/dispatchAction -> users gate -> session of an agent of plug
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-plugins-own-folder-is-trusted.md](task-01-a-plugins-own-folder-is-trusted.md).
+- **Done so far:** tasks 01 and 02, 2026-11-14, waiting for Softov's review.
+- **Next action:** Softov's review of the PR, then [implemented.md](implemented.md) closes the plan.
 - **Open questions:** none.
 - **Watch out for:** the folder check follows links, through `trust.ts`. So a link inside the root that points out of it is not trusted.
 

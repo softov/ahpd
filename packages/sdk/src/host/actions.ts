@@ -5,7 +5,7 @@ import { idOf, Status } from '../sessions/catalog.js';
 import { disableConditionsProblem } from '../automations/automations.js';
 import { localPath } from '../resources/fileuri.js';
 import { reason } from '../utils/values.js';
-import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn } from './gate.js';
+import { computerNeeds, dispatchNeeds, ownAgentExcused, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn } from './gate.js';
 import { ANNOTATIONS_PATH_SEGMENT, AUTOMATIONS, chatUriFor, isAutomationResource, isRootChannel, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
@@ -161,8 +161,13 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * key needs no grant at all, which no operation can say on its own.
        */
       const onRoot = isRootChannel(asked) || isRootChannel(channel);
+      /*
+       * A plugin's own connection is excused a session or chat grant on a
+       * session of an agent it registered, as a bot's plugin writes its talks.
+       */
       const all = [...new Set([onRoot ? undefined : ownIn(ACTION_NEEDS, type), dispatchNeeds(asked, channelKind(asked), action), dispatchNeeds(channel, channelKind(channel), action), computerNeeds(action)])]
-        .filter((one): one is Grant => one !== undefined);
+        .filter((one): one is Grant => one !== undefined)
+        .filter((one) => onRoot || !ownAgentExcused(ctx, connection.principal, channel, one));
       const needed = all.find((one) => connection.principal !== undefined && !connection.principal.can(one)) ?? all[0];
       const needs = needed === undefined ? '' : ` needs ${needed}`;
       const who = connection.principal;

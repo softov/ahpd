@@ -424,6 +424,8 @@ export const apply: Plugin['apply'] = (host, options) => {
   if (inside) {
     host.problem(`${name}: root ${JSON.stringify(chosen)} is inside the configuration folder ${JSON.stringify(resolve(host.configDir))}; using ${JSON.stringify(root)}`);
   }
+  // A talk runs in its bot's folder, trusted, and the folder is under the root.
+  host.registerFolder(resolve(root));
   /*
    * The default `AGENTS.md` template, written once where there is none.
    *
