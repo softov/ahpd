@@ -69,7 +69,7 @@ CLI frame (compact_boundary, or assistant on the main chain) -> consume -> follo
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the figure is asked during a turn](task-01-the-figure-is-asked-during-a-turn.md) | todo | - |
+| [01 - the figure is asked during a turn](task-01-the-figure-is-asked-during-a-turn.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -78,10 +78,14 @@ CLI frame (compact_boundary, or assistant on the main chain) -> consume -> follo
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-figure-is-asked-during-a-turn.md](task-01-the-figure-is-asked-during-a-turn.md).
+- **Done so far:** task 01 implemented, 2026-11-14, uncommitted in the build worktree.
+  - A compaction in a running turn asks the figure again.
+  - A main-chain reply asks it again once 30 s have passed since the last ask.
+  - Each answer goes to clients as `session/metaChanged`.
+  - Review: the answer is dropped when the CLI was put away during the ask, as `introduce` does. The agent-claude suite passes, 672 of 672.
+- **Next action:** the PR, then check and check-windows. The plan closes as `built` on Softov's word.
 - **Open questions:** none.
-- **Watch out for:** `agent-claude-context.test.ts` expects two asks for a short turn. The 30 s clock that starts at the handshake keeps that count, so the case does not change.
+- **Watch out for:** `agent-claude-context.test.ts` expects two asks for a short turn, and still reads two. The mid-turn cases advance `Date` 30 s because the handshake's ask starts the throttle.
 
 ## Final verification checklist
 

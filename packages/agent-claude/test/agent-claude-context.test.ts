@@ -11,9 +11,12 @@ import { learnLimits, limitOf, onLimitLearned } from '../src/session/parts.js';
  *
  * The CLI's model list carries no limit, so a model row learns its window and
  * output cap from the result that names them, and each turn asks the CLI for a
- * breakdown once it has ended. The breakdown is VS Code's `contextAttribution`
- * beside `ahpd.context`, and an answer that is late or fails leaves the usage
- * without either rather than holding the turn open.
+ * breakdown once it has ended. A long turn asks while it runs too: after a
+ * compaction, and after a reply once 30 s have passed since the last ask, so a
+ * client's figure is not the one from before the window grew.
+ * The breakdown is VS Code's `contextAttribution` beside `ahpd.context`, and
+ * an answer that is late or fails leaves the usage without either rather than
+ * holding the turn open.
  */
 
 const sdk = vi.hoisted(() => {
@@ -323,4 +326,177 @@ it('ends the turn without the breakdown when the answer is late', { timeout: 200
   expect(main.some((one) => one.type === 'chat/turnComplete')).toBe(true);
   expect(lastUsage(main)._meta).not.toHaveProperty('contextAttribution');
   expect(logged.join('\n')).toContain('took too long');
+});
+
+/** A model reply on the main chain, the frame a long turn asks its figure on. */
+const reply = (id = 'msg-two'): Record<string, unknown> => ({
+  type: 'assistant',
+  parent_tool_use_id: null,
+  uuid: `end-${id}`,
+  session_id: 'cli-1',
+  message: { id, role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: 'answer' }] },
+});
+
+/** The frame the harness sends when it compacts the model's context. */
+const compaction = (): Record<string, unknown> => ({ type: 'system', subtype: 'compact_boundary' });
+
+/** A context answer whose window holds `used` tokens. */
+const windowOf = (used: number): Bag => ({ model: 'claude-opus-5', totalTokens: used, rawMaxTokens: 200000 });
+
+/** The `_meta` of the last `session/metaChanged` the session sent, if any. */
+const lastMovedMeta = (main: Bag[]): Bag => {
+  const said = main.filter((one) => one.type === 'session/metaChanged');
+  return (said.at(-1)?._meta ?? {}) as Bag;
+};
+
+it('asks the figure again at a compaction in a running turn, and says it', async () => {
+  let calls = 0;
+  sdk.answer = async () => {
+    calls += 1;
+    return calls === 1 ? contextAnswer() : windowOf(12000);
+  };
+  const { main } = await replay([compaction()]);
+
+  // The handshake's ask and the compaction's.
+  expect(sdk.asked).toBe(2);
+  expect(lastMovedMeta(main)['ahpd.context']).toMatchObject({ used: 12000 });
+});
+
+it('asks the figure on a reply once 30 s have passed since the last ask', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+  try {
+    let calls = 0;
+    sdk.answer = async () => {
+      calls += 1;
+      return calls === 1 ? contextAnswer() : windowOf(60000);
+    };
+    const { main } = await replay(round());
+    expect(sdk.asked).toBe(1);
+
+    vi.setSystemTime(new Date('2026-01-01T00:00:30Z'));
+    sdk.push(reply());
+    await settle();
+
+    expect(sdk.asked).toBe(2);
+    expect(lastMovedMeta(main)['ahpd.context']).toMatchObject({ used: 60000 });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('asks nothing on a second reply within those 30 s', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+  try {
+    sdk.answer = async () => contextAnswer();
+    await replay(round());
+
+    vi.setSystemTime(new Date('2026-01-01T00:00:30Z'));
+    sdk.push(reply());
+    await settle();
+    expect(sdk.asked).toBe(2);
+
+    vi.setSystemTime(new Date('2026-01-01T00:00:35Z'));
+    sdk.push(reply('msg-three'));
+    await settle();
+
+    expect(sdk.asked).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('does not hold the turn\'s end on a mid-turn ask with no answer', { timeout: 15000 }, async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+  try {
+    let calls = 0;
+    // The handshake and the turn's end answer; the mid-turn ask never does.
+    sdk.answer = async () => {
+      calls += 1;
+      return calls === 2 ? new Promise(() => {}) : contextAnswer();
+    };
+    const { main } = await replay(round());
+    vi.setSystemTime(new Date('2026-01-01T00:00:30Z'));
+    sdk.push(reply());
+    await settle();
+    sdk.push(result());
+    await settle();
+
+    expect(main.some((one) => one.type === 'chat/turnComplete')).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('keeps the last figure when a mid-turn ask has no answer', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+  try {
+    let calls = 0;
+    sdk.answer = async () => {
+      calls += 1;
+      return calls === 1 ? contextAnswer() : undefined;
+    };
+    const { session } = await replay(round());
+    vi.setSystemTime(new Date('2026-01-01T00:00:30Z'));
+    sdk.push(reply());
+    await settle();
+
+    expect(sdk.asked).toBe(2);
+    const meta = (session.sessionState()._meta ?? {}) as Bag;
+    expect(meta['ahpd.context']).toMatchObject({ used: 50000 });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('asks once more at a compaction when a mid-turn ask is running', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+  try {
+    let calls = 0;
+    let settleHeld: ((answer: unknown) => void) | undefined;
+    sdk.answer = () => {
+      calls += 1;
+      if (calls === 2) return new Promise((resolve) => { settleHeld = resolve; });
+      return Promise.resolve(calls === 1 ? contextAnswer() : windowOf(12000));
+    };
+    const { main } = await replay(round());
+    vi.setSystemTime(new Date('2026-01-01T00:00:30Z'));
+    sdk.push(reply());
+    await settle();
+    expect(sdk.asked).toBe(2);
+
+    // The compaction finds the ask running, and is owed one once it settles.
+    sdk.push(compaction());
+    await settle();
+    expect(sdk.asked).toBe(2);
+
+    settleHeld?.(windowOf(55000));
+    await settle();
+
+    expect(sdk.asked).toBe(3);
+    expect(lastMovedMeta(main)['ahpd.context']).toMatchObject({ used: 12000 });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('asks nothing on a subagent\'s reply', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+  try {
+    sdk.answer = async () => contextAnswer();
+    await replay(round());
+
+    vi.setSystemTime(new Date('2026-01-01T00:01:00Z'));
+    sdk.push({ ...reply('msg-worker'), parent_tool_use_id: 'toolu-1' });
+    await settle();
+
+    expect(sdk.asked).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });
