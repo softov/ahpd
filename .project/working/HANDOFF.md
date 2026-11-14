@@ -4,13 +4,15 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 # Handoff: where `ahpd` stands, and what is pending
 
-Current progress and pending items only, as of 2026-11-13. *Outside this repository* was last checked on 2026-11-04.
+Current progress and pending items only, as of 2026-11-14. *Outside this repository* was last checked on 2026-11-04.
 `node ~/.claude/skills/do-spec/scripts/plans.mjs` lists the backlog, and each plan's Resume state is its detail. What merged is in `git log`, and what was released is in [docs/updates/](../../docs/updates/).
 
 ## Main
 
 - The last stable release is 0.14.0 (`v0.14.0`). `v0.15.0-rc.3` is tagged on `28dd315e0` (#320). Its release run 43394827388 passed `parts`, `release` and `image` on 2026-11-13, and staged the 13 packages under `next`. Softov approved them on 2026-11-13, and npm serves `0.15.0-rc.3` under `next` since 14:36 UTC. What the release needs is in [pending/release.md](../pending/release.md), and the checks by hand are ordered in [pending/triage.md](../pending/triage.md).
 - Main's last merge is #328 (`169f231d8`). #321 to #328 merged on 2026-11-13, after the rc.3 release. No PR is open.
+- Plan [plugin/20261114-1455](../plans/plugin/20261114-1455-a-bot-talk-needs-no-grant/plan.md), a bot talk needs no grant, is built on branch `plugin/20261114-1455-a-bot-talk-needs-no-grant`, two commits, pushed. Its PR waits for Softov's word on the text.
+- Briefs of 2026-11-14 wait: [a-plugin-asks-for-its-grants.md](../briefs/a-plugin-asks-for-its-grants.md), with no plan for now, [a-bot-session-is-made-where-the-bot-is-offered.md](../briefs/a-bot-session-is-made-where-the-bot-is-offered.md) and [plugin-runtimes-external.md](../briefs/plugin-runtimes-external.md).
 - The steps after the rc.3 release run are in *rc.3, after its release run* of [pending/release.md](../pending/release.md#left). The run, the digest check, the approval and the ghcr check of the parts of #318 are done: 17 of 17 digests match. Softov makes `compclau` again, and the parts bump PR waits for his word.
 - The staged `@ahpd/computer@0.15.0-rc.3` holds `images/digests.json` with 17 entries, `ahpd-agents` and 16 parts, the first tag run of #315. Its step logs `tar: stdout: write error`, from `grep -q` closing the pipe. That is harmless now, and it turns the check over if the step ever runs under `pipefail`.
 - #318 (`de1924b99`) is the parts bump of 2026-11-13, ten parts, the ahpd part to `0.15.0-rc.2`. Actions may not open a PR in `ahpio/ahpd`, so the workflow pushes the branch and the PR is opened by hand.
@@ -74,6 +76,7 @@ Remove each only on Softov's word.
 - `release-report`: detached, for plan-only commits of the release check.
 - `bot-talk`, `bot-no-users`, `op-text`, `dc-listing`, `flakes`, `console-log`, `flakes2` and `flakes3`: the branches of #321 to #328, each merged.
 - `parts-bump`: branch `parts-bump-20261113-2`, pushed, with no PR yet.
+- `bot-trust`: the branch of plugin/20261114-1455, pushed, with no PR yet.
 - `ahpd-part-bump`: the branch of #316, merged.
 - `piece-marks`: the branch of #317, merged.
 - `prerelease-part` and `release-rc3`: the branches of #319 and #320, merged.

@@ -25,7 +25,9 @@ The adopted container case also timed out alone, on main at `b4ad32951` and on t
 
 On 2026-11-13 the adopted container case and `reads a dev container's vault-named need again after a restart` timed out alone, at `46cec859d` and at `74b138b73`, with a load average of 1.5. So a busy machine is not the whole cause.
 
-On the same day `computer-disposable.test.ts`: `takes the machine's own git volume with it, and asks for none where the profile leaves it open` timed out alone the same way, at `2bf97a6c1`.
+On 2026-11-14, in a full run with a load average near 6, `computer-libvirt.test.ts`: `suspends and resumes a VM through its state, with a stretch closed at each hold` and `computer-state-seed.test.ts`: `seeds a state volume once, again only for a seed that changed, and keeps what the agent wrote` timed out at 5000 ms. Both files passed alone at `0d95f584c`.
+
+On 2026-11-13 `computer-disposable.test.ts`: `takes the machine's own git volume with it, and asks for none where the profile leaves it open` timed out alone the same way, at `2bf97a6c1`.
 
 ## Cause
 
