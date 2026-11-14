@@ -217,6 +217,44 @@ it('sends nothing when nothing differs', async () => {
   expect(heard).toHaveLength(1);
 });
 
+it('answers its rows through the listing, and who opens the list and reads each row', async () => {
+  const teams = store({ backend: { id: 'backend' }, web: { id: 'web' } });
+  const list = recordsChannel(SCHEME, teams, { grant: 'team:read', alsoGrant: 'team:all', mayRead: (id, reader) => id === reader.id });
+  expect(await list.listing.rows()).toEqual([{ id: 'backend', record: { id: 'backend' } }, { id: 'web', record: { id: 'web' } }]);
+  // The grant, the second grant and no reader open the list; `mayRead` alone does not.
+  expect(list.listing.opens(person('ana', ['team:read']))).toBe(true);
+  expect(list.listing.opens(person('ana', ['team:all']))).toBe(true);
+  expect(list.listing.opens(undefined)).toBe(true);
+  expect(list.listing.opens(person('web', []))).toBe(false);
+  // A row is read by the same test a send is.
+  expect(list.listing.readable('web', person('web', []))).toBe(true);
+  expect(list.listing.readable('backend', person('web', []))).toBe(false);
+  expect(list.listing.readable('backend', person('ana', ['team:read']))).toBe(true);
+});
+
+it('tells a listener after each refresh, also when the list has no subscriber', async () => {
+  const teams = store({ backend: { id: 'backend' } });
+  const list = recordsChannel(SCHEME, teams, { grant: 'team:read' });
+  list.bind(fakeHandle([]).handle);
+  let heard = 0;
+  const stop = list.listing.onRefresh(() => { heard += 1; });
+  await list.refresh();
+  expect(heard).toBe(1);
+  // A listener that throws is said, and the one after it is still told.
+  const problems: string[] = [];
+  const failing = recordsChannel(SCHEME, teams, { grant: 'team:read', onProblem: (message) => { problems.push(message); } });
+  failing.bind(fakeHandle([]).handle);
+  let after = 0;
+  failing.listing.onRefresh(() => { throw new Error('boom'); });
+  failing.listing.onRefresh(() => { after += 1; });
+  await failing.refresh();
+  expect(after).toBe(1);
+  expect(problems).toEqual([`${SCHEME}: a listener of the list failed: boom`]);
+  stop();
+  await list.refresh();
+  expect(heard).toBe(1);
+});
+
 it('forgets a client at left, and starts it again from the next refresh', async () => {
   const teams = store({ backend: { id: 'backend' } });
   const list = recordsChannel(SCHEME, teams, { grant: 'team:read' });
