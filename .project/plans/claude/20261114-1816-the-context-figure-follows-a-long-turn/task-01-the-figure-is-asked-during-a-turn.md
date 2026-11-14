@@ -1,6 +1,6 @@
 ---
 title: The figure is asked during a turn
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude"
 refs:
@@ -53,3 +53,17 @@ Each new figure goes to clients with `sayMeta`.
 - Run `pnpm exec tsc -p tsconfig.json --noEmit` in `packages/agent-claude`.
 
 ## Resume
+
+Implemented 2026-11-14, uncommitted in the build worktree.
+
+- `contextAskedAt`, `contextAsking` and `contextOwed` are three fields on the session's state, initialized in `createSession`.
+- `askContext` times every ask, once the SDK build is known to have the method, so the handshake's ask starts the throttle too.
+- `followContext` asks beside the stream: a compaction always, a reply only when 30 s have passed since the last ask of any kind. One ask runs at a time, and a compaction during one is owed another after it settles. The answer is kept only when no later figure came meanwhile.
+- `consume` calls it on a `compact_boundary` and on a main-chain `assistant` frame while a turn runs. A subagent's `assistant` frame asks nothing.
+- Seven new cases in `agent-claude-context.test.ts`; the short-turn case still reads two asks. `npx vitest run packages/agent-claude/test/agent-claude-context.test.ts` passes 14 of 14, and `pnpm exec tsc -p tsconfig.json --noEmit` in `packages/agent-claude` is clean.
+
+What the plan did not know:
+
+- The package's `tsconfig.json` has no `@ahpd/sdk` path mapping, so its check needs `packages/sdk/dist`. `pnpm exec tsc -p packages/sdk/tsconfig.json` was run first; `dist` is ignored by git.
+- The reply cases advance the clock 30 s past the handshake's ask, because that ask starts the throttle. They fake `Date` alone with `vi.useFakeTimers({ toFake: ['Date'] })`, so `settle` and the 2 s wait keep real timers.
+- A CLI build with no `getContextUsage` never records an ask time, so a reply there calls the missing method and re-says `_meta` without a request. Nothing is sent and the one-ask slot is unchanged.
